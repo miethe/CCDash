@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { MOCK_SESSIONS, MOCK_DOCUMENTS } from '../constants';
 import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 
 // --- Sub-Components ---
@@ -447,60 +447,313 @@ const ArtifactsView: React.FC<{ session: AgentSession }> = ({ session }) => {
     );
 };
 
-const AnalyticsView: React.FC<{ session: AgentSession }> = ({ session }) => {
-    const toolData = session.toolsUsed.map(t => ({ name: t.name, value: t.count }));
-    const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+// --- Analytics Sub-Components ---
+
+const AnalyticsDetailsModal: React.FC<{ 
+    title: string;
+    data: any; 
+    onClose: () => void;
+    onViewTranscript: (agentName?: string) => void;
+}> = ({ title, data, onClose, onViewTranscript }) => {
+    if (!data) return null;
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full overflow-y-auto pb-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><PieChartIcon size={16}/> Tool Usage Distribution</h3>
-                <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie
-                                data={toolData}
-                                innerRadius={60}
-                                outerRadius={80}
-                                paddingAngle={5}
-                                dataKey="value"
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+                <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+                    <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                        <Activity size={18} className="text-indigo-500" />
+                        {title}: {data.name}
+                    </h3>
+                    <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+                <div className="p-6 space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+                            <div className="text-xs text-slate-500 uppercase font-bold mb-1">Total Interactions</div>
+                            <div className="text-2xl font-mono text-white">{data.value || 0}</div>
+                        </div>
+                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+                            <div className="text-xs text-slate-500 uppercase font-bold mb-1">Estimated Cost</div>
+                            <div className="text-2xl font-mono text-emerald-400">${(data.cost || 0).toFixed(4)}</div>
+                        </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                         <div className="flex justify-between text-sm border-b border-slate-800 pb-2">
+                            <span className="text-slate-400">Tokens Consumed</span>
+                            <span className="font-mono text-slate-200">{(data.tokens || 0).toLocaleString()}</span>
+                         </div>
+                         <div className="flex justify-between text-sm border-b border-slate-800 pb-2">
+                            <span className="text-slate-400">Tools Called</span>
+                            <span className="font-mono text-slate-200">{data.toolCount || 0}</span>
+                         </div>
+                    </div>
+
+                    <button 
+                        onClick={() => onViewTranscript(data.type === 'agent' ? data.name : undefined)}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                        <MessageSquare size={16} /> Filter Transcript
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
+    // Transform logs into cumulative timeline data
+    const timelineData = useMemo(() => {
+        let cumulativeTokens = 0;
+        return session.logs.map((log, index) => {
+            // Mock token estimation per step
+            const stepTokens = (log.content.length / 4) + (log.toolCall ? 100 : 0); 
+            cumulativeTokens += stepTokens;
+            
+            // Map file edits to this timestamp if they exist
+            const fileUpdates = session.updatedFiles?.filter(f => {
+                // Approximate matching by index or timestamp string would be better in real app
+                // For mock, we'll just check if speaker is agent and index matches roughly
+                return log.speaker === 'agent' && Math.random() > 0.9; 
+            });
+
+            return {
+                index,
+                time: log.timestamp,
+                tokens: Math.round(cumulativeTokens),
+                stepTokens: Math.round(stepTokens),
+                agent: log.agentName,
+                tool: log.toolCall ? log.toolCall.name : null,
+                fileCount: fileUpdates?.length || 0,
+                speaker: log.speaker
+            };
+        });
+    }, [session]);
+
+    return (
+        <div className="h-80 w-full relative">
+            <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={timelineData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                     <defs>
+                        <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="time" stroke="#475569" tick={{ fontSize: 10 }} interval={Math.floor(timelineData.length / 5)} />
+                    <YAxis stroke="#475569" tick={{ fontSize: 10 }} label={{ value: 'Tokens', angle: -90, position: 'insideLeft', fill: '#64748b' }} />
+                    <Tooltip 
+                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                        itemStyle={{ color: '#e2e8f0' }}
+                        labelStyle={{ color: '#94a3b8' }}
+                    />
+                    
+                    {/* Token Area */}
+                    <Area type="monotone" dataKey="tokens" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTokens)" name="Cumulative Tokens" />
+                    
+                    {/* Tool Usage Scatter */}
+                    <Scatter name="Tool Used" dataKey="tool" fill="#f59e0b" shape="circle" />
+                    
+                    {/* File Edit Scatter (Using dummy value 1 for y-placement normalization, but ideally should be on timeline) */}
+                    {/* Note: Recharts scatter on composed chart is tricky with categorical data, simulating via customized dots on line if needed, 
+                        but for now relying on toolTip to show details */}
+                </ComposedChart>
+            </ResponsiveContainer>
+            
+            {/* Overlay Event Markers (Custom HTML overlay for better control than SVG scatter sometimes) */}
+             <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden">
+                {timelineData.filter(d => d.tool).map((d, i) => (
+                    <div key={`tool-${i}`} className="absolute bottom-2" style={{ left: `${(i / timelineData.length) * 100}%` }}>
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`Tool: ${d.tool}`} />
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+
+const AnalyticsView: React.FC<{ 
+    session: AgentSession; 
+    goToTranscript: (agentName?: string) => void; 
+}> = ({ session, goToTranscript }) => {
+    const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
+    const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
+    
+    const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+
+    // --- Data Aggregation ---
+    
+    // 1. Tool Data
+    const toolData = session.toolsUsed.map(t => ({ 
+        name: t.name, 
+        value: t.count, 
+        type: 'tool',
+        cost: session.totalCost * 0.1, // Mock portion
+        tokens: Math.round(session.tokensIn * 0.1) // Mock portion
+    }));
+
+    // 2. Agent Data
+    const agentStats = useMemo(() => {
+        const stats: Record<string, { count: number, tokens: number, tools: number }> = {};
+        session.logs.forEach(log => {
+            if (log.speaker === 'agent') {
+                const name = log.agentName || 'Main';
+                if (!stats[name]) stats[name] = { count: 0, tokens: 0, tools: 0 };
+                stats[name].count += 1;
+                stats[name].tokens += log.content.length / 4; // Approx
+                if (log.type === 'tool') stats[name].tools += 1;
+            }
+        });
+        return Object.entries(stats).map(([name, stat]) => ({
+            name,
+            value: stat.count,
+            tokens: Math.round(stat.tokens),
+            toolCount: stat.tools,
+            cost: (stat.tokens / 1000000) * 15, // Mock pricing
+            type: 'agent'
+        }));
+    }, [session]);
+
+    // 3. Model Data
+    const modelData = useMemo(() => {
+        // Mocking: assuming Agents use different models or the session model is primary
+        // In a real app, logs would have `modelId`
+        return [{
+            name: session.model,
+            value: session.logs.length,
+            tokens: session.tokensIn + session.tokensOut,
+            toolCount: session.toolsUsed.reduce((acc, t) => acc + t.count, 0),
+            cost: session.totalCost,
+            type: 'model'
+        }];
+    }, [session]);
+
+    return (
+        <div className="h-full overflow-y-auto pb-6 relative">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                
+                {/* 1. AGENTS CHART */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><Users size={16}/> Active Agents</h3>
+                    <div className="h-64 cursor-pointer">
+                        <ResponsiveContainer width="100%" height="100%">
+                             <BarChart data={agentStats} onClick={(data: any) => data && data.activePayload && setModalData({ title: 'Agent Details', data: data.activePayload[0].payload })}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                                <XAxis dataKey="name" stroke="#475569" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#475569" tick={{ fontSize: 12 }} />
+                                <Tooltip cursor={{fill: '#1e293b'}} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                                <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} name="Interactions" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* 2. TOOLS CHART */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><PieChartIcon size={16}/> Tool Usage</h3>
+                    <div className="h-64 cursor-pointer">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={toolData}
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                    onClick={(data) => setModalData({ title: 'Tool Details', data: data })}
+                                >
+                                    {toolData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }} itemStyle={{ color: '#e2e8f0' }} />
+                                <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* 3. MODELS CHART */}
+                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><Cpu size={16}/> Model Allocation</h3>
+                    <div className="h-64 cursor-pointer">
+                        <ResponsiveContainer width="100%" height="100%">
+                             <BarChart layout="vertical" data={modelData} onClick={(data: any) => data && data.activePayload && setModalData({ title: 'Model Details', data: data.activePayload[0].payload })}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                                <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
+                                <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 10 }} width={100} />
+                                <Tooltip cursor={{fill: '#1e293b'}} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* 4. TOKEN CONSUMPTION (Toggleable) */}
+                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><BarChart2 size={16}/> Token Consumption</h3>
+                        <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                            <button 
+                                onClick={() => setTokenViewMode('summary')}
+                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'summary' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
                             >
-                                {toolData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }} itemStyle={{ color: '#e2e8f0' }} />
-                            <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                        </PieChart>
-                    </ResponsiveContainer>
+                                Summary
+                            </button>
+                            <button 
+                                onClick={() => setTokenViewMode('timeline')}
+                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'timeline' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                Timeline
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="h-64">
+                        {tokenViewMode === 'summary' ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={[
+                                    { name: 'Input', tokens: session.tokensIn, fill: '#3b82f6' },
+                                    { name: 'Output', tokens: session.tokensOut, fill: '#10b981' }
+                                ]} layout="vertical">
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                                    <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
+                                    <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                    <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                                    <Bar dataKey="tokens" radius={[0, 4, 4, 0]} barSize={32} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <TokenTimeline session={session} />
+                        )}
+                    </div>
                 </div>
+
+                {/* 5. MASTER TIMELINE VIEW (Full Width) */}
+                <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Layers size={16}/> Session Master Timeline</h3>
+                    <p className="text-xs text-slate-500 mb-6">Correlated view of token usage, tool executions, and file edits over the session lifecycle.</p>
+                    <TokenTimeline session={session} />
+                     <div className="mt-4 flex gap-4 justify-center">
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <div className="w-3 h-3 bg-blue-500/50 border border-blue-500 rounded-sm"></div> Token Volume
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <div className="w-2 h-2 rounded-full bg-amber-500"></div> Tool Execution
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
-             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><BarChart2 size={16}/> Token Consumption</h3>
-                <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={[
-                            { name: 'Input', tokens: session.tokensIn, fill: '#3b82f6' },
-                            { name: 'Output', tokens: session.tokensOut, fill: '#10b981' }
-                        ]} layout="vertical">
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                            <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
-                            <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 12 }} />
-                            <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                            <Bar dataKey="tokens" radius={[0, 4, 4, 0]} barSize={32} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-                <div className="mt-4 text-center">
-                    <span className="text-2xl font-bold text-slate-100">{(session.tokensIn + session.tokensOut).toLocaleString()}</span>
-                    <span className="text-xs text-slate-500 ml-2 uppercase tracking-wider">Total Tokens</span>
-                </div>
-            </div>
-
-            <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
+            {/* COST SUMMARY */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h3 className="text-sm font-bold text-slate-300 mb-2">Cost Analysis</h3>
-                <p className="text-xs text-slate-500 mb-6">Estimated cost breakdown based on model pricing per 1M tokens.</p>
                 <div className="flex items-center gap-8">
                      <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                          <div className="text-xs text-slate-500 mb-1">Total Cost</div>
@@ -516,6 +769,19 @@ const AnalyticsView: React.FC<{ session: AgentSession }> = ({ session }) => {
                      </div>
                 </div>
             </div>
+
+            {/* DETAIL MODAL */}
+            {modalData && (
+                <AnalyticsDetailsModal 
+                    title={modalData.title} 
+                    data={modalData.data} 
+                    onClose={() => setModalData(null)} 
+                    onViewTranscript={(agent) => {
+                        goToTranscript(agent);
+                        setModalData(null);
+                    }}
+                />
+            )}
         </div>
     );
 };
@@ -673,6 +939,12 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
         setActiveTab('transcript');
     };
 
+    const handleJumpToTranscript = (agentName?: string) => {
+        if (agentName) setFilterAgent(agentName);
+        else setFilterAgent(null);
+        setActiveTab('transcript');
+    }
+
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
             {/* Header */}
@@ -741,7 +1013,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
                 )}
                 {activeTab === 'files' && <FilesView session={session} onOpenDoc={setViewingDoc} />}
                 {activeTab === 'artifacts' && <ArtifactsView session={session} />}
-                {activeTab === 'analytics' && <AnalyticsView session={session} />}
+                {activeTab === 'analytics' && <AnalyticsView session={session} goToTranscript={handleJumpToTranscript} />}
                 {activeTab === 'agents' && <AgentsView session={session} onSelectAgent={handleSelectAgent} />}
                 {activeTab === 'impact' && <ImpactView session={session} />}
             </div>

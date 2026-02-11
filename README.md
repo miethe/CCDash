@@ -15,7 +15,7 @@
 *   **Frontend**: React 19, TypeScript, Vite
 *   **Styling**: Tailwind CSS (Slate dark mode theme)
 *   **Icons**: Lucide React
-*   **Visualization**: Recharts (Area, Bar, Pie, Line charts)
+*   **Visualization**: Recharts (Area, Bar, Pie, Line, Composed charts)
 *   **Routing**: React Router DOM (v7)
 *   **AI Integration**: Google Gemini SDK (`@google/genai`)
 
@@ -73,10 +73,10 @@ The core debugging loop for AI interactions.
     4.  **App Impact**: 
         *   **Codebase Impact Chart**: Line chart tracking LOC added/removed and file touch-counts over the session duration.
         *   **Test Stability Chart**: Area chart visualizing Test Pass vs. Fail counts over time.
-    5.  **Analytics**: 
-        *   Tool Usage Pie Chart.
-        *   Token Consumption Bar Chart (Input vs. Output).
-        *   Cost breakdown per step.
+    5.  **Analytics (Advanced)**: 
+        *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
+        *   **Token Timeline**: Switch between summary bar charts and a detailed cumulative area chart overlaying discrete events (Tool Executions, File Edits).
+        *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Agents**: 
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
