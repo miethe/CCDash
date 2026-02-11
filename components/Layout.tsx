@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
+import { ProjectSelector } from './ProjectSelector';
 
 const NavItem = ({ to, icon: Icon, label, active, isCollapsed }: { to: string; icon: any; label: string; active: boolean; isCollapsed: boolean }) => (
   <Link
     to={to}
     className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${active
-        ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+      ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+      : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
       }`}
   >
     <Icon size={20} className="shrink-0" />
@@ -41,6 +42,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           </div>
         </div>
 
+        {!isCollapsed && <ProjectSelector />}
+
         {/* Collapse Toggle */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
@@ -63,8 +66,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <Link
             to="/settings"
             className={`flex items-center justify-between px-4 py-3 rounded-lg transition-colors group relative ${location.pathname === '/settings'
-                ? 'bg-indigo-500/10 text-indigo-400'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+              ? 'bg-indigo-500/10 text-indigo-400'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
               }`}
           >
             <div className="flex items-center gap-3">

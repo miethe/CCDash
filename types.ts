@@ -146,3 +146,13 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
 }
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  description: string;
+  repoUrl: string;
+  agentPlatforms: string[];
+  planDocsPath: string;
+}

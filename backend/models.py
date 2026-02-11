@@ -146,3 +146,16 @@ class Notification(BaseModel):
     message: str
     timestamp: str = ""
     isRead: bool = False
+
+
+# ── Project model ──────────────────────────────────────────────────
+
+class Project(BaseModel):
+    id: str
+    name: str
+    path: str
+    description: str = ""
+    repoUrl: str = ""
+    agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
+    planDocsPath: str = "docs/project_plans/"
+

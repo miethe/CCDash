@@ -1,0 +1,27 @@
+{
+  "activeProjectId": "default-skillmeat",
+  "projects": [
+    {
+      "id": "default-skillmeat",
+      "name": "SkillMeat Example",
+      "path": "/Users/miethe/dev/homelab/development/CCDash/examples/skillmeat",
+      "description": "Default example project demonstrating CCDash capabilities.",
+      "repoUrl": "",
+      "agentPlatforms": [
+        "Claude Code"
+      ],
+      "planDocsPath": "project_plans"
+    },
+    {
+      "id": "test-project-1",
+      "name": "Test Project 1",
+      "path": "/tmp/test-project-1",
+      "description": "A test project",
+      "repoUrl": "",
+      "agentPlatforms": [
+        "Claude Code"
+      ],
+      "planDocsPath": "plans"
+    }
+  ]
+}

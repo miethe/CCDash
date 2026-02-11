@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification } from '../types';
+import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project } from '../types';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -11,6 +11,10 @@ interface DataContextValue {
     alerts: AlertConfig[];
     notifications: Notification[];
 
+    // Projects
+    projects: Project[];
+    activeProject: Project | null;
+
     // Status
     loading: boolean;
     error: string | null;
@@ -20,6 +24,11 @@ interface DataContextValue {
     refreshSessions: () => Promise<void>;
     refreshDocuments: () => Promise<void>;
     refreshTasks: () => Promise<void>;
+
+    // Project Actions
+    refreshProjects: () => Promise<void>;
+    addProject: (project: Project) => Promise<void>;
+    switchProject: (projectId: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -46,6 +55,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -94,6 +105,55 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
+    const refreshProjects = useCallback(async () => {
+        try {
+            const data = await fetchJson<Project[]>('/projects');
+            setProjects(data);
+            try {
+                const active = await fetchJson<Project>('/projects/active');
+                setActiveProject(active);
+            } catch (e) {
+                setActiveProject(null);
+            }
+        } catch (e) {
+            console.error('Failed to fetch projects:', e);
+        }
+    }, []);
+
+    const addProject = useCallback(async (project: Project) => {
+        try {
+            await fetch(`${API_BASE}/projects`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(project),
+            });
+            await refreshProjects();
+        } catch (e) {
+            console.error('Failed to add project:', e);
+            throw e;
+        }
+    }, [refreshProjects]);
+
+    const switchProject = useCallback(async (projectId: string) => {
+        try {
+            await fetch(`${API_BASE}/projects/active/${projectId}`, {
+                method: 'POST',
+            });
+            await refreshProjects();
+            // Refresh all data immediately
+            await Promise.all([
+                refreshSessions(),
+                refreshDocuments(),
+                refreshTasks(),
+                refreshAlerts(),
+                refreshNotifications(),
+            ]);
+        } catch (e) {
+            console.error('Failed to switch project:', e);
+            throw e;
+        }
+    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks]);
+
     const refreshAll = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -104,13 +164,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 refreshTasks(),
                 refreshAlerts(),
                 refreshNotifications(),
+                refreshProjects(),
             ]);
         } catch (e: any) {
             setError(e.message || 'Failed to load data');
         } finally {
             setLoading(false);
         }
-    }, [refreshSessions, refreshDocuments, refreshTasks, refreshAlerts, refreshNotifications]);
+    }, [refreshSessions, refreshDocuments, refreshTasks, refreshAlerts, refreshNotifications, refreshProjects]);
 
     // Initial load
     useEffect(() => {
@@ -139,6 +200,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 refreshSessions,
                 refreshDocuments,
                 refreshTasks,
+                projects,
+                activeProject,
+                refreshProjects,
+                addProject,
+                switchProject,
             }}
         >
             {children}

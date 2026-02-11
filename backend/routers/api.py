@@ -10,6 +10,7 @@ from backend.models import (
 from backend.parsers.sessions import scan_sessions
 from backend.parsers.documents import scan_documents
 from backend.parsers.progress import scan_progress
+from backend.project_manager import project_manager
 from backend import config
 
 # ── Sessions router ─────────────────────────────────────────────────
@@ -20,13 +21,15 @@ sessions_router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 @sessions_router.get("", response_model=list[AgentSession])
 def list_sessions():
     """Return all parsed agent sessions."""
-    return scan_sessions(config.SESSIONS_DIR)
+    sessions_dir, _, _ = project_manager.get_active_paths()
+    return scan_sessions(sessions_dir)
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)
 def get_session(session_id: str):
     """Return a single session by ID."""
-    sessions = scan_sessions(config.SESSIONS_DIR)
+    sessions_dir, _, _ = project_manager.get_active_paths()
+    sessions = scan_sessions(sessions_dir)
     for s in sessions:
         if s.id == session_id:
             return s
@@ -41,7 +44,8 @@ documents_router = APIRouter(prefix="/api/documents", tags=["documents"])
 @documents_router.get("", response_model=list[PlanDocument])
 def list_documents():
     """Return all parsed plan documents (frontmatter only)."""
-    docs = scan_documents(config.DOCUMENTS_DIR)
+    _, docs_dir, _ = project_manager.get_active_paths()
+    docs = scan_documents(docs_dir)
     # Strip content for list endpoint
     for doc in docs:
         doc.content = None
@@ -51,7 +55,8 @@ def list_documents():
 @documents_router.get("/{doc_id}", response_model=PlanDocument)
 def get_document(doc_id: str):
     """Return a single document with full content."""
-    docs = scan_documents(config.DOCUMENTS_DIR)
+    _, docs_dir, _ = project_manager.get_active_paths()
+    docs = scan_documents(docs_dir)
     for d in docs:
         if d.id == doc_id:
             return d
@@ -66,7 +71,8 @@ tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 @tasks_router.get("", response_model=list[ProjectTask])
 def list_tasks():
     """Return all tasks derived from progress files."""
-    return scan_progress(config.PROGRESS_DIR)
+    _, _, progress_dir = project_manager.get_active_paths()
+    return scan_progress(progress_dir)
 
 
 # ── Analytics router ────────────────────────────────────────────────
@@ -77,8 +83,9 @@ analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 @analytics_router.get("/metrics", response_model=list[AnalyticsMetric])
 def get_metrics():
     """Derive analytics metrics from sessions and tasks."""
-    sessions = scan_sessions(config.SESSIONS_DIR)
-    tasks = scan_progress(config.PROGRESS_DIR)
+    sessions_dir, _, progress_dir = project_manager.get_active_paths()
+    sessions = scan_sessions(sessions_dir)
+    tasks = scan_progress(progress_dir)
 
     total_cost = sum(s.totalCost for s in sessions)
     total_tokens = sum(s.tokensIn + s.tokensOut for s in sessions)
@@ -134,7 +141,8 @@ def get_alerts():
 @analytics_router.get("/notifications", response_model=list[Notification])
 def get_notifications():
     """Generate notifications from recent session data."""
-    sessions = scan_sessions(config.SESSIONS_DIR)
+    sessions_dir, _, _ = project_manager.get_active_paths()
+    sessions = scan_sessions(sessions_dir)
     notifications: list[Notification] = []
 
     for i, session in enumerate(sessions[:5]):
