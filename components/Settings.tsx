@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bell, Trash2, Plus, AlertCircle, Save } from 'lucide-react';
-import { MOCK_ALERTS } from '../constants';
+import { useData } from '../contexts/DataContext';
 import { AlertConfig } from '../types';
 
 export const Settings: React.FC = () => {
-  const [alerts, setAlerts] = useState<AlertConfig[]>(MOCK_ALERTS);
+  const { alerts: apiAlerts } = useData();
+  const [alerts, setAlerts] = useState<AlertConfig[]>([]);
+
+  useEffect(() => {
+    setAlerts(apiAlerts);
+  }, [apiAlerts]);
 
   const toggleAlert = (id: string) => {
     setAlerts(alerts.map(a => a.id === id ? { ...a, isActive: !a.isActive } : a));
@@ -44,15 +49,14 @@ export const Settings: React.FC = () => {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
                   <h4 className="font-medium text-slate-200">{alert.name}</h4>
-                  <span className={`text-[10px] px-2 py-0.5 rounded border ${
-                    alert.isActive 
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                  <span className={`text-[10px] px-2 py-0.5 rounded border ${alert.isActive
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                       : 'bg-slate-800 text-slate-500 border-slate-700'
-                  }`}>
+                    }`}>
                     {alert.isActive ? 'ACTIVE' : 'INACTIVE'}
                   </span>
                 </div>
-                
+
                 <div className="flex items-center gap-2 text-sm text-slate-400 mt-2">
                   <span className="font-mono text-indigo-400 bg-indigo-500/10 px-1.5 rounded">{alert.scope}</span>
                   <span>if</span>
@@ -63,27 +67,27 @@ export const Settings: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-4">
-                 <div className="flex flex-col items-end gap-1">
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={alert.isActive}
-                        onChange={() => toggleAlert(alert.id)}
-                      />
-                      <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                 </div>
-                 <button 
-                    onClick={() => deleteAlert(alert.id)}
-                    className="p-2 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
-                 >
-                    <Trash2 size={18} />
-                 </button>
+                <div className="flex flex-col items-end gap-1">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={alert.isActive}
+                      onChange={() => toggleAlert(alert.id)}
+                    />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                <button
+                  onClick={() => deleteAlert(alert.id)}
+                  className="p-2 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
             </div>
           ))}
-          
+
           {alerts.length === 0 && (
             <div className="p-8 text-center text-slate-500 flex flex-col items-center">
               <AlertCircle size={32} className="mb-2 opacity-50" />
@@ -93,27 +97,27 @@ export const Settings: React.FC = () => {
         </div>
       </div>
 
-       {/* General Settings (Mock) */}
-       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 opacity-60 pointer-events-none">
-          <div className="flex justify-between items-center mb-4">
-             <h3 className="font-semibold text-slate-100">General Preferences</h3>
-             <Save size={18} />
+      {/* General Settings (Mock) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 opacity-60 pointer-events-none">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold text-slate-100">General Preferences</h3>
+          <Save size={18} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm text-slate-400 mb-1">Theme</label>
+            <select className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm">
+              <option>Dark (Default)</option>
+              <option>Light</option>
+              <option>System</option>
+            </select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-              <div>
-                 <label className="block text-sm text-slate-400 mb-1">Theme</label>
-                 <select className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm">
-                    <option>Dark (Default)</option>
-                    <option>Light</option>
-                    <option>System</option>
-                 </select>
-              </div>
-               <div>
-                 <label className="block text-sm text-slate-400 mb-1">Local Project Path</label>
-                 <input type="text" value="~/dev/ccdash" className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm" readOnly />
-              </div>
+          <div>
+            <label className="block text-sm text-slate-400 mb-1">Local Project Path</label>
+            <input type="text" value="~/dev/ccdash" className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm" readOnly />
           </div>
-       </div>
+        </div>
+      </div>
     </div>
   );
 };
