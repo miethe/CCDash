@@ -1,3 +1,4 @@
+
 import { ProjectTask, AgentSession, AnalyticsMetric, AlertConfig, Notification, PlanDocument } from './types';
 
 export const MOCK_TASKS: ProjectTask[] = [
@@ -10,9 +11,18 @@ export const MOCK_TASKS: ProjectTask[] = [
     lastAgent: 'Claude 3.7 Sonnet',
     cost: 4.25,
     priority: 'high',
+    projectType: 'Feature',
+    projectLevel: 'Full',
     tags: ['backend', 'database', 'ai'],
     updatedAt: '2026-02-01T14:30:00Z',
-    relatedFiles: ['docs/prd/vector-search.md', 'src/lib/db/schema.prisma', 'src/api/search.ts']
+    relatedFiles: [
+      'docs/prd/vector-search.md', 
+      'docs/arch/vector-search-plan.md',
+      'docs/progress/phase-1-schema.md',
+      'docs/progress/phase-2-api.md',
+      'src/lib/db/schema.prisma', 
+      'src/api/search.ts'
+    ]
   },
   {
     id: 'T-102',
@@ -23,9 +33,16 @@ export const MOCK_TASKS: ProjectTask[] = [
     lastAgent: 'Claude 3.7 Sonnet',
     cost: 12.50,
     priority: 'high',
+    projectType: 'Refactor',
+    projectLevel: 'Full',
     tags: ['security', 'auth'],
     updatedAt: '2026-02-03T09:15:00Z',
-    relatedFiles: ['docs/arch/auth-migration.md', 'src/components/AuthProvider.tsx', 'src/middleware.ts']
+    relatedFiles: [
+      'docs/arch/auth-migration.md', 
+      'docs/progress/auth-phase-1-cleanup.md',
+      'src/components/AuthProvider.tsx', 
+      'src/middleware.ts'
+    ]
   },
   {
     id: 'T-103',
@@ -36,9 +53,14 @@ export const MOCK_TASKS: ProjectTask[] = [
     lastAgent: 'Claude 3.5 Haiku',
     cost: 0.85,
     priority: 'medium',
+    projectType: 'Feature',
+    projectLevel: 'Quick',
     tags: ['frontend', 'ui/ux'],
     updatedAt: '2026-02-02T16:45:00Z',
-    relatedFiles: ['docs/design/dashboard-mockups.fig', 'src/components/Dashboard.tsx']
+    relatedFiles: [
+      'docs/design/dashboard.md', 
+      'src/components/Dashboard.tsx'
+    ]
   },
   {
     id: 'T-104',
@@ -49,9 +71,13 @@ export const MOCK_TASKS: ProjectTask[] = [
     lastAgent: 'n/a',
     cost: 0,
     priority: 'medium',
+    projectType: 'Bugfix',
+    projectLevel: 'Quick',
     tags: ['backend', 'perf'],
     updatedAt: '2026-02-03T10:00:00Z',
-    relatedFiles: ['docs/reports/latency-analysis.md']
+    relatedFiles: [
+      'docs/reports/latency-analysis.md'
+    ]
   },
 ];
 
@@ -183,6 +209,43 @@ export const MOCK_DOCUMENTS: PlanDocument[] = [
     }
   },
   {
+    id: 'DOC-001A',
+    title: 'Vector Search Master Plan',
+    filePath: 'docs/arch/vector-search-plan.md',
+    status: 'active',
+    lastModified: '2026-02-01T11:00:00Z',
+    author: 'Architect',
+    frontmatter: {
+      tags: ['plan', 'backend'],
+      linkedFeatures: ['T-101'],
+      version: '1.0'
+    }
+  },
+  {
+    id: 'DOC-001B',
+    title: 'Phase 1: DB Schema',
+    filePath: 'docs/progress/phase-1-schema.md',
+    status: 'completed',
+    lastModified: '2026-02-02T09:00:00Z',
+    author: 'Coder',
+    frontmatter: {
+      tags: ['progress', 'phase-1'],
+      linkedFeatures: ['T-101']
+    }
+  },
+  {
+    id: 'DOC-001C',
+    title: 'Phase 2: API Endpoints',
+    filePath: 'docs/progress/phase-2-api.md',
+    status: 'completed',
+    lastModified: '2026-02-02T16:00:00Z',
+    author: 'Coder',
+    frontmatter: {
+      tags: ['progress', 'phase-2'],
+      linkedFeatures: ['T-101']
+    }
+  },
+  {
     id: 'DOC-002',
     title: 'Auth Migration Arch',
     filePath: 'docs/arch/auth-migration.md',
@@ -195,6 +258,18 @@ export const MOCK_DOCUMENTS: PlanDocument[] = [
       relatedFiles: ['docs/arch/legacy-auth.md'],
       version: '0.9',
       commits: ['e4f5g6h']
+    }
+  },
+  {
+    id: 'DOC-002B',
+    title: 'Phase 1: Cleanup',
+    filePath: 'docs/progress/auth-phase-1-cleanup.md',
+    status: 'active',
+    lastModified: '2026-02-03T11:00:00Z',
+    author: 'Coder',
+    frontmatter: {
+      tags: ['progress', 'phase-1'],
+      linkedFeatures: ['T-102']
     }
   },
   {

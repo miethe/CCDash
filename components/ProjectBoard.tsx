@@ -1,8 +1,9 @@
+
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { MOCK_TASKS, MOCK_SESSIONS } from '../constants';
-import { ProjectTask, TaskStatus, AgentSession } from '../types';
-import { MoreHorizontal, Tag, User, CircleDollarSign, X, FileText, Calendar, Terminal, GitCommit, GitBranch, ExternalLink, LayoutTemplate, FileJson, FileCode, Clock, Database, ChevronRight, GitPullRequest, LayoutGrid, List, Search, Filter, ArrowUpDown, Bot, PenTool } from 'lucide-react';
+import { MOCK_TASKS, MOCK_SESSIONS, MOCK_DOCUMENTS } from '../constants';
+import { ProjectTask, TaskStatus, AgentSession, PlanDocument } from '../types';
+import { MoreHorizontal, Tag, User, CircleDollarSign, X, FileText, Calendar, Terminal, GitCommit, GitBranch, ExternalLink, LayoutTemplate, FileJson, FileCode, Clock, Database, ChevronRight, GitPullRequest, LayoutGrid, List, Search, Filter, ArrowUpDown, Bot, PenTool, CheckCircle2, Circle, Workflow, Layers, Box, FileType } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 // --- Mock Content Generator for File Viewer ---
@@ -78,7 +79,137 @@ const OverflowList = ({
 
 // --- Sub-Components ---
 
-const OverviewTab = ({ task }: { task: ProjectTask }) => (
+const ProjectStructureTree = ({ task, onOpenFile }: { task: ProjectTask; onOpenFile: (path: string) => void }) => {
+    // Categorize files
+    const { prds, plans, phases, context } = useMemo(() => {
+        const result = {
+            prds: [] as { path: string; doc?: PlanDocument }[],
+            plans: [] as { path: string; doc?: PlanDocument }[],
+            phases: [] as { path: string; doc?: PlanDocument }[],
+            context: [] as { path: string; doc?: PlanDocument }[]
+        };
+
+        (task.relatedFiles || []).forEach(file => {
+            const doc = MOCK_DOCUMENTS.find(d => d.filePath === file);
+            const lowerPath = file.toLowerCase();
+
+            if (lowerPath.includes('/prd/') || lowerPath.includes('spec')) {
+                result.prds.push({ path: file, doc });
+            } else if (lowerPath.includes('/arch/') || lowerPath.includes('/plans/') || lowerPath.includes('plan')) {
+                result.plans.push({ path: file, doc });
+            } else if (lowerPath.includes('/progress/') || lowerPath.includes('phase')) {
+                result.phases.push({ path: file, doc });
+            } else {
+                result.context.push({ path: file, doc });
+            }
+        });
+        return result;
+    }, [task.relatedFiles]);
+
+    // Calculate statuses
+    const getStatusIcon = (doc?: PlanDocument) => {
+        if (!doc) return <Circle size={12} className="text-slate-600" />;
+        if (doc.status === 'completed' || doc.status === 'archived') return <CheckCircle2 size={12} className="text-emerald-500" />;
+        if (doc.status === 'active') return <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />;
+        if (doc.status === 'draft') return <div className="w-2.5 h-2.5 rounded-full border border-slate-500" />;
+        return <Circle size={12} className="text-slate-600" />;
+    };
+
+    const isPhaseComplete = phases.length > 0 && phases.every(p => p.doc?.status === 'completed' || p.doc?.status === 'archived');
+
+    return (
+        <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+            <div className="p-3 bg-slate-950/50 border-b border-slate-800 flex justify-between items-center">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <Layers size={14} /> Project Structure
+                </h3>
+                <div className="flex gap-2">
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${task.projectLevel === 'Full' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                        {task.projectLevel}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-slate-800 text-slate-400">
+                        {task.projectType}
+                    </span>
+                </div>
+            </div>
+
+            <div className="p-4 space-y-4">
+                {/* 1. Definition Layer */}
+                {task.projectLevel === 'Full' && (
+                    <div className="relative pl-4 border-l border-slate-800">
+                        <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-slate-800 border-2 border-slate-700"></div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Definition</h4>
+                        <div className="space-y-1">
+                            {prds.map(f => (
+                                <div 
+                                    key={f.path} 
+                                    onClick={() => onOpenFile(f.path)}
+                                    className="flex items-center gap-2 text-sm text-slate-300 p-2 hover:bg-slate-800 rounded cursor-pointer group"
+                                >
+                                    {getStatusIcon(f.doc)}
+                                    <FileText size={14} className="text-indigo-400" />
+                                    <span className="truncate group-hover:text-white transition-colors">
+                                        {f.doc?.title || f.path.split('/').pop()}
+                                    </span>
+                                </div>
+                            ))}
+                            {prds.length === 0 && <div className="text-xs text-slate-600 italic pl-2">No PRD linked</div>}
+                        </div>
+                    </div>
+                )}
+
+                {/* 2. Planning Layer */}
+                <div className="relative pl-4 border-l border-slate-800">
+                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-slate-800 border-2 border-slate-700"></div>
+                    <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2">Architecture & Plan</h4>
+                    <div className="space-y-1">
+                        {plans.map(f => (
+                            <div 
+                                key={f.path} 
+                                onClick={() => onOpenFile(f.path)}
+                                className="flex items-center gap-2 text-sm text-slate-300 p-2 hover:bg-slate-800 rounded cursor-pointer group"
+                            >
+                                {getStatusIcon(f.doc)}
+                                <Workflow size={14} className="text-amber-400" />
+                                <span className="truncate group-hover:text-white transition-colors">
+                                    {f.doc?.title || f.path.split('/').pop()}
+                                </span>
+                            </div>
+                        ))}
+                         {plans.length === 0 && <div className="text-xs text-slate-600 italic pl-2">No Plan linked</div>}
+                    </div>
+                </div>
+
+                {/* 3. Execution Layer */}
+                <div className="relative pl-4 border-l border-slate-800">
+                    <div className={`absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full border-2 ${isPhaseComplete ? 'bg-emerald-500 border-emerald-600' : 'bg-slate-800 border-slate-700'}`}></div>
+                    <h4 className="text-xs font-semibold text-slate-500 uppercase mb-2 flex justify-between items-center">
+                        Execution Phases
+                        {isPhaseComplete && <span className="text-[9px] text-emerald-500 bg-emerald-500/10 px-1.5 rounded font-bold">COMPLETE</span>}
+                    </h4>
+                    <div className="space-y-1">
+                         {phases.map(f => (
+                            <div 
+                                key={f.path} 
+                                onClick={() => onOpenFile(f.path)}
+                                className="flex items-center gap-2 text-sm text-slate-300 p-2 hover:bg-slate-800 rounded cursor-pointer group"
+                            >
+                                {getStatusIcon(f.doc)}
+                                <FileType size={14} className="text-emerald-400" />
+                                <span className="truncate group-hover:text-white transition-colors">
+                                    {f.doc?.title || f.path.split('/').pop()}
+                                </span>
+                            </div>
+                        ))}
+                        {phases.length === 0 && <div className="text-xs text-slate-600 italic pl-2">No Phases tracked</div>}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+const OverviewTab = ({ task, onOpenFile }: { task: ProjectTask; onOpenFile: (path: string) => void }) => (
   <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
     <div className="lg:col-span-2 space-y-8">
       <section>
@@ -86,6 +217,11 @@ const OverviewTab = ({ task }: { task: ProjectTask }) => (
         <p className="text-slate-300 leading-relaxed text-sm bg-slate-900/50 p-4 rounded-lg border border-slate-800">
           {task.description}
         </p>
+      </section>
+
+      {/* Project Structure Tree Injection */}
+      <section>
+          <ProjectStructureTree task={task} onOpenFile={onOpenFile} />
       </section>
 
       <section>
@@ -120,6 +256,10 @@ const OverviewTab = ({ task }: { task: ProjectTask }) => (
           <span className="text-xs text-slate-500 flex items-center gap-2"><Calendar size={14} /> Updated</span>
           <span className="text-xs text-slate-300 font-mono">{new Date(task.updatedAt).toLocaleDateString()}</span>
         </div>
+        <div className="flex justify-between items-center">
+             <span className="text-xs text-slate-500 flex items-center gap-2"><Box size={14} /> Type</span>
+             <span className="text-xs text-slate-300">{task.projectType}</span>
+        </div>
         <div>
           <span className="text-xs text-slate-500 block mb-2">Tags</span>
           <div className="flex flex-wrap gap-2">
@@ -135,8 +275,13 @@ const OverviewTab = ({ task }: { task: ProjectTask }) => (
   </div>
 );
 
-const ContextTab = ({ task }: { task: ProjectTask }) => {
-  const [selectedFile, setSelectedFile] = useState<string | null>(task.relatedFiles?.[0] || null);
+const ContextTab = ({ task, initialFile }: { task: ProjectTask; initialFile?: string | null }) => {
+  const [selectedFile, setSelectedFile] = useState<string | null>(initialFile || task.relatedFiles?.[0] || null);
+  
+  // Update internal state if initialFile prop changes (usually from parent navigating)
+  React.useEffect(() => {
+      if (initialFile) setSelectedFile(initialFile);
+  }, [initialFile]);
   
   return (
     <div className="flex h-full gap-4 min-h-[400px]">
@@ -301,6 +446,7 @@ const GitTab = ({ sessions }: { sessions: AgentSession[] }) => {
 const TaskModal = ({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
   const linkedSessions = MOCK_SESSIONS.filter(s => s.taskId === task.id);
   const [activeTab, setActiveTab] = useState<'overview' | 'context' | 'sessions' | 'git'>('overview');
+  const [contextFile, setContextFile] = useState<string | null>(null);
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutTemplate },
@@ -308,6 +454,11 @@ const TaskModal = ({ task, onClose }: { task: ProjectTask; onClose: () => void }
     { id: 'sessions', label: 'Agent Sessions', icon: Terminal },
     { id: 'git', label: 'Git History', icon: GitBranch },
   ];
+
+  const handleOpenContextFile = (path: string) => {
+      setContextFile(path);
+      setActiveTab('context');
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -357,8 +508,8 @@ const TaskModal = ({ task, onClose }: { task: ProjectTask; onClose: () => void }
 
         {/* Scrollable Content Area */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
-          {activeTab === 'overview' && <OverviewTab task={task} />}
-          {activeTab === 'context' && <ContextTab task={task} />}
+          {activeTab === 'overview' && <OverviewTab task={task} onOpenFile={handleOpenContextFile} />}
+          {activeTab === 'context' && <ContextTab task={task} initialFile={contextFile} />}
           {activeTab === 'sessions' && <SessionsTab sessions={linkedSessions} />}
           {activeTab === 'git' && <GitTab sessions={linkedSessions} />}
         </div>
@@ -483,6 +634,9 @@ const ListViewCard: React.FC<{ task: ProjectTask; onClick: () => void }> = ({ ta
                 'bg-slate-500/10 text-slate-500'
               }`}>
                 {task.status}
+              </span>
+              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
+                  {task.projectType}
               </span>
           </div>
           <h3 className="font-bold text-slate-200 text-lg group-hover:text-indigo-400 transition-colors">{task.title}</h3>

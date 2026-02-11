@@ -1,3 +1,4 @@
+
 # CCDash — Agentic Project Dashboard & Analytics Platform
 
 **CCDash** is a local-first dashboard designed to orchestrate, monitor, and analyze the work of AI Agents within a software project. It bridges the gap between traditional project management (Kanban/Docs) and AI-driven development (Session logs, Tool usage, Token metrics).
@@ -40,7 +41,10 @@
 *   **Filtering**: Search by keyword, filter by status, sort by date/cost.
 *   **Task Cards**: Display owner, cost, priority, and derived metadata (agents used, tools used).
 *   **Task Detail Modal**:
-    *   **Overview**: Description, quick stats, tags, and ownership.
+    *   **Overview**: 
+        *   **Project Structure Tree**: Hierarchical view of linked plan documents (PRDs, Plans, Phases).
+        *   **Phase Tracking**: Visual status indicators for project phases (active, completed, draft).
+        *   **Quick vs Full**: Distinct UI for lightweight features vs. complex multi-phase projects.
     *   **Context Tab**: Built-in file viewer for related code/docs.
     *   **Sessions Tab**: Linked list of all Agent Sessions that worked on this specific task.
     *   **Git Tab**: Timeline of commits associated with the task/agents.

@@ -1,3 +1,4 @@
+
 export type TaskStatus = 'todo' | 'in-progress' | 'review' | 'done';
 
 export interface ProjectTask {
@@ -9,6 +10,9 @@ export interface ProjectTask {
   lastAgent: string;
   cost: number;
   priority: 'low' | 'medium' | 'high';
+  // New fields for Project Structure
+  projectType: 'Feature' | 'Enhancement' | 'Refactor' | 'Bugfix';
+  projectLevel: 'Quick' | 'Full';
   tags: string[];
   updatedAt: string;
   relatedFiles?: string[];
@@ -99,7 +103,7 @@ export interface PlanDocument {
   id: string;
   title: string;
   filePath: string;
-  status: 'draft' | 'active' | 'archived' | 'deprecated';
+  status: 'draft' | 'active' | 'archived' | 'deprecated' | 'completed';
   lastModified: string;
   author: string;
   content?: string; // Raw markdown content
