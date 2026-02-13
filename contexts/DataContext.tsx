@@ -31,6 +31,11 @@ interface DataContextValue {
     refreshProjects: () => Promise<void>;
     addProject: (project: Project) => Promise<void>;
     switchProject: (projectId: string) => Promise<void>;
+
+    // Status Update Actions
+    updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
+    updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
+    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -167,6 +172,50 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures]);
 
+    // ── Status update methods ──────────────────────────────────────
+
+    const updateFeatureStatus = useCallback(async (featureId: string, status: string) => {
+        try {
+            await fetch(`${API_BASE}/features/${featureId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status }),
+            });
+            await refreshFeatures();
+        } catch (e) {
+            console.error('Failed to update feature status:', e);
+            throw e;
+        }
+    }, [refreshFeatures]);
+
+    const updatePhaseStatus = useCallback(async (featureId: string, phaseId: string, status: string) => {
+        try {
+            await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status }),
+            });
+            await refreshFeatures();
+        } catch (e) {
+            console.error('Failed to update phase status:', e);
+            throw e;
+        }
+    }, [refreshFeatures]);
+
+    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: string) => {
+        try {
+            await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status }),
+            });
+            await refreshFeatures();
+        } catch (e) {
+            console.error('Failed to update task status:', e);
+            throw e;
+        }
+    }, [refreshFeatures]);
+
     const refreshAll = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -221,6 +270,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 refreshProjects,
                 addProject,
                 switchProject,
+                updateFeatureStatus,
+                updatePhaseStatus,
+                updateTaskStatus,
             }}
         >
             {children}

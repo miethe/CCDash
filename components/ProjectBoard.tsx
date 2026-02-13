@@ -1,12 +1,13 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { Feature, FeaturePhase, LinkedDocument } from '../types';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
-  FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3,
+  FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
 } from 'lucide-react';
 
 // ── Status helpers ─────────────────────────────────────────────────
@@ -17,6 +18,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string 
   'review': { label: 'Review', color: 'bg-amber-500/10 text-amber-500', dot: 'bg-amber-500' },
   'backlog': { label: 'Backlog', color: 'bg-slate-500/10 text-slate-500', dot: 'bg-slate-500' },
 };
+
+const STATUS_OPTIONS = ['backlog', 'in-progress', 'review', 'done'] as const;
 
 const getStatusStyle = (status: string) => STATUS_CONFIG[status] || STATUS_CONFIG['backlog'];
 
@@ -58,11 +61,56 @@ const DocTypeBadge = ({ docType }: { docType: string }) => {
   return <span className="text-[9px] uppercase font-bold">{labels[docType] || docType}</span>;
 };
 
+// ── Status Dropdown ────────────────────────────────────────────────
+
+const StatusDropdown = ({
+  status,
+  onStatusChange,
+  size = 'sm',
+}: {
+  status: string;
+  onStatusChange: (newStatus: string) => void;
+  size?: 'sm' | 'xs';
+}) => {
+  const style = getStatusStyle(status);
+  const sizeClasses = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1';
+
+  return (
+    <select
+      value={status}
+      onChange={(e) => {
+        e.stopPropagation();
+        onStatusChange(e.target.value);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className={`font-bold uppercase rounded cursor-pointer border-0 appearance-none ${sizeClasses} ${style.color} bg-transparent hover:ring-1 hover:ring-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all`}
+      style={{ WebkitAppearance: 'none' }}
+    >
+      {STATUS_OPTIONS.map(s => (
+        <option key={s} value={s} className="bg-slate-900 text-slate-300">
+          {getStatusStyle(s).label}
+        </option>
+      ))}
+    </select>
+  );
+};
+
 // ── Feature Detail Modal ───────────────────────────────────────────
 
-const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => void }) => {
+const FeatureModal = ({
+  feature,
+  onClose,
+  onFeatureUpdated,
+}: {
+  feature: Feature;
+  onClose: () => void;
+  onFeatureUpdated?: (updated: Feature) => void;
+}) => {
+  const navigate = useNavigate();
+  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus } = useData();
   const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const togglePhase = (phase: string) => {
     setExpandedPhases(prev => {
@@ -88,6 +136,45 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
   const phases = fullFeature?.phases || feature.phases;
   const linkedDocs = fullFeature?.linkedDocs || feature.linkedDocs;
 
+  const handleFeatureStatusChange = async (newStatus: string) => {
+    setUpdatingStatus(true);
+    try {
+      await updateFeatureStatus(feature.id, newStatus);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handlePhaseStatusChange = async (phaseId: string, newStatus: string) => {
+    setUpdatingStatus(true);
+    try {
+      await updatePhaseStatus(feature.id, phaseId, newStatus);
+      // Refresh the detail
+      const res = await fetch(`/api/features/${feature.id}`);
+      setFullFeature(await res.json());
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleTaskStatusChange = async (phaseId: string, taskId: string, newStatus: string) => {
+    setUpdatingStatus(true);
+    try {
+      await updateTaskStatus(feature.id, phaseId, taskId, newStatus);
+      const res = await fetch(`/api/features/${feature.id}`);
+      setFullFeature(await res.json());
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleDocClick = (doc: LinkedDocument) => {
+    // Navigate to Documents tab and pre-select this doc
+    const docId = `DOC-${doc.filePath.replace(/\//g, '-').replace('.md', '')}`;
+    onClose();
+    navigate(`/plans?doc=${encodeURIComponent(docId)}`);
+  };
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
@@ -104,9 +191,8 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-2">
                 <span className="font-mono text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 truncate max-w-[200px]">{feature.id}</span>
-                <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${statusStyle.color}`}>
-                  {statusStyle.label}
-                </span>
+                <StatusDropdown status={feature.status} onStatusChange={handleFeatureStatusChange} />
+                {updatingStatus && <RefreshCw size={14} className="text-indigo-400 animate-spin" />}
                 {feature.category && (
                   <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
                     {feature.category}
@@ -177,17 +263,22 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
                 </div>
               </div>
 
-              {/* Linked Documents */}
+              {/* Linked Documents — clickable */}
               {linkedDocs.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Linked Documents</h3>
                   <div className="space-y-2">
                     {linkedDocs.map(doc => (
-                      <div key={doc.id} className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg p-3 hover:border-slate-700 transition-colors">
+                      <button
+                        key={doc.id}
+                        onClick={() => handleDocClick(doc)}
+                        className="w-full flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg p-3 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                      >
                         <DocTypeIcon docType={doc.docType} />
-                        <span className="text-sm text-slate-300 flex-1 truncate">{doc.title}</span>
+                        <span className="text-sm text-slate-300 flex-1 truncate group-hover:text-indigo-400 transition-colors">{doc.title}</span>
                         <DocTypeBadge docType={doc.docType} />
-                      </div>
+                        <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -237,40 +328,51 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
                 const isExpanded = expandedPhases.has(phase.phase);
                 return (
                   <div key={phase.phase} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-                    <button
-                      onClick={() => togglePhase(phase.phase)}
-                      className="w-full flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors text-left"
-                    >
-                      {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
-                      <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
-                          {phase.title && (
-                            <span className="text-sm text-slate-400 truncate">— {phase.title}</span>
-                          )}
+                    <div className="flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors">
+                      <button
+                        onClick={() => togglePhase(phase.phase)}
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                      >
+                        {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                        <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
+                            {phase.title && (
+                              <span className="text-sm text-slate-400 truncate">— {phase.title}</span>
+                            )}
+                          </div>
+                          <div className="mt-1">
+                            <ProgressBar completed={phase.completedTasks} total={phase.totalTasks} />
+                          </div>
                         </div>
-                        <div className="mt-1">
-                          <ProgressBar completed={phase.completedTasks} total={phase.totalTasks} />
-                        </div>
-                      </div>
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${phaseStatus.color}`}>
-                        {phaseStatus.label}
-                      </span>
-                    </button>
+                      </button>
+                      <StatusDropdown
+                        status={phase.status}
+                        onStatusChange={(s) => handlePhaseStatusChange(phase.phase, s)}
+                        size="xs"
+                      />
+                    </div>
 
                     {/* Expanded task list */}
                     {isExpanded && phase.tasks.length > 0 && (
                       <div className="border-t border-slate-800 px-4 py-3 space-y-1.5 bg-slate-950/30">
                         {phase.tasks.map(task => {
                           const taskDone = task.status === 'done';
+                          const nextStatus = taskDone ? 'backlog' : 'done';
                           return (
                             <div key={task.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
-                              {taskDone ? (
-                                <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
-                              ) : (
-                                <Circle size={14} className="text-slate-600 flex-shrink-0" />
-                              )}
+                              <button
+                                onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus)}
+                                className="flex-shrink-0 hover:scale-110 transition-transform"
+                                title={taskDone ? 'Mark incomplete' : 'Mark done'}
+                              >
+                                {taskDone ? (
+                                  <CheckCircle2 size={14} className="text-emerald-500" />
+                                ) : (
+                                  <Circle size={14} className="text-slate-600 hover:text-indigo-400" />
+                                )}
+                              </button>
                               <span className="font-mono text-[10px] text-slate-500 w-16 flex-shrink-0">{task.id}</span>
                               <span className={`text-sm flex-1 truncate ${taskDone ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
                                 {task.title}
@@ -294,7 +396,7 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
             </div>
           )}
 
-          {/* Documents Tab */}
+          {/* Documents Tab — clickable */}
           {activeTab === 'docs' && (
             <div className="space-y-3">
               {linkedDocs.length === 0 && (
@@ -304,21 +406,28 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
                 </div>
               )}
               {linkedDocs.map(doc => (
-                <div key={doc.id} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
+                <button
+                  key={doc.id}
+                  onClick={() => handleDocClick(doc)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <DocTypeIcon docType={doc.docType} />
-                      <span className="text-sm font-medium text-slate-200">{doc.title}</span>
+                      <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
                     </div>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                      <DocTypeBadge docType={doc.docType} />
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                        <DocTypeBadge docType={doc.docType} />
+                      </span>
+                      <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                    </div>
                   </div>
                   <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
                     <FolderOpen size={12} />
                     {doc.filePath}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -330,7 +439,15 @@ const FeatureModal = ({ feature, onClose }: { feature: Feature; onClose: () => v
 
 // ── Feature Card ───────────────────────────────────────────────────
 
-const FeatureCard = ({ feature, onClick }: { feature: Feature; onClick: () => void }) => {
+const FeatureCard = ({
+  feature,
+  onClick,
+  onStatusChange,
+}: {
+  feature: Feature;
+  onClick: () => void;
+  onStatusChange: (newStatus: string) => void;
+}) => {
   const statusStyle = getStatusStyle(feature.status);
   const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
   const planDoc = feature.linkedDocs.find(d => d.docType === 'implementation_plan');
@@ -343,9 +460,7 @@ const FeatureCard = ({ feature, onClick }: { feature: Feature; onClick: () => vo
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
         <span className="font-mono text-[10px] text-slate-500 truncate max-w-[180px]">{feature.id}</span>
-        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${statusStyle.color}`}>
-          {statusStyle.label}
-        </span>
+        <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
       </div>
 
       <h4 className="font-medium text-slate-200 mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
@@ -389,9 +504,16 @@ const FeatureCard = ({ feature, onClick }: { feature: Feature; onClick: () => vo
 
 // ── List View Card ─────────────────────────────────────────────────
 
-const FeatureListCard = ({ feature, onClick }: { feature: Feature; onClick: () => void }) => {
+const FeatureListCard = ({
+  feature,
+  onClick,
+  onStatusChange,
+}: {
+  feature: Feature;
+  onClick: () => void;
+  onStatusChange: (newStatus: string) => void;
+}) => {
   const statusStyle = getStatusStyle(feature.status);
-  const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
 
   return (
     <div
@@ -402,7 +524,7 @@ const FeatureListCard = ({ feature, onClick }: { feature: Feature; onClick: () =
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
             <span className="font-mono text-xs text-slate-500 border border-slate-800 px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
-            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${statusStyle.color}`}>{statusStyle.label}</span>
+            <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
             {feature.category && (
               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 capitalize">{feature.category}</span>
             )}
@@ -445,11 +567,13 @@ const StatusColumn = ({
   status,
   features,
   onFeatureClick,
+  onStatusChange,
 }: {
   title: string;
   status: string;
   features: Feature[];
   onFeatureClick: (f: Feature) => void;
+  onStatusChange: (featureId: string, newStatus: string) => void;
 }) => {
   const style = getStatusStyle(status);
 
@@ -465,7 +589,12 @@ const StatusColumn = ({
 
       <div className="flex flex-col gap-3 min-h-[200px] rounded-lg bg-slate-900/30 p-2 border border-slate-800/30 overflow-y-auto max-h-[calc(100vh-280px)]">
         {features.map(f => (
-          <FeatureCard key={f.id} feature={f} onClick={() => onFeatureClick(f)} />
+          <FeatureCard
+            key={f.id}
+            feature={f}
+            onClick={() => onFeatureClick(f)}
+            onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
+          />
         ))}
         {features.length === 0 && (
           <div className="h-full flex items-center justify-center text-slate-700 text-sm border-2 border-dashed border-slate-800 rounded-lg p-4">
@@ -480,9 +609,24 @@ const StatusColumn = ({
 // ── Main Component ─────────────────────────────────────────────────
 
 export const ProjectBoard: React.FC = () => {
-  const { features: apiFeatures } = useData();
+  const { features: apiFeatures, updateFeatureStatus } = useData();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
+
+  // Auto-select feature from URL search params
+  useEffect(() => {
+    const featureId = searchParams.get('feature');
+    if (featureId && apiFeatures.length > 0) {
+      const feat = apiFeatures.find(f => f.id === featureId);
+      if (feat) {
+        setSelectedFeature(feat);
+        // Clear param to avoid re-triggering, or keep it for sharable URLs?
+        // Let's clear it to keep URL clean after opening, similar to PlanCatalog
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, apiFeatures, setSearchParams]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -527,6 +671,20 @@ export const ProjectBoard: React.FC = () => {
       return (b.updatedAt || '').localeCompare(a.updatedAt || '');
     });
   }, [apiFeatures, searchQuery, statusFilter, categoryFilter, sortBy]);
+
+  const handleStatusChange = async (featureId: string, newStatus: string) => {
+    await updateFeatureStatus(featureId, newStatus);
+  };
+
+  // Keep selected feature in sync with API data
+  useEffect(() => {
+    if (selectedFeature) {
+      const updated = apiFeatures.find(f => f.id === selectedFeature.id);
+      if (updated) {
+        setSelectedFeature(updated);
+      }
+    }
+  }, [apiFeatures]);
 
   const sidebarPortal = document.getElementById('sidebar-portal');
 
@@ -612,7 +770,7 @@ export const ProjectBoard: React.FC = () => {
         <div>
           <h2 className="text-2xl font-bold text-slate-100">Feature Board</h2>
           <p className="text-slate-400 text-sm">
-            {filteredFeatures.length} features · Synced from project plans \u0026 progress files
+            {filteredFeatures.length} features · Synced from project plans &amp; progress files
           </p>
         </div>
         <div className="flex gap-3">
@@ -644,24 +802,28 @@ export const ProjectBoard: React.FC = () => {
               status="backlog"
               features={filteredFeatures.filter(f => f.status === 'backlog')}
               onFeatureClick={setSelectedFeature}
+              onStatusChange={handleStatusChange}
             />
             <StatusColumn
               title="In Progress"
               status="in-progress"
               features={filteredFeatures.filter(f => f.status === 'in-progress')}
               onFeatureClick={setSelectedFeature}
+              onStatusChange={handleStatusChange}
             />
             <StatusColumn
               title="Review"
               status="review"
               features={filteredFeatures.filter(f => f.status === 'review')}
               onFeatureClick={setSelectedFeature}
+              onStatusChange={handleStatusChange}
             />
             <StatusColumn
               title="Done"
               status="done"
               features={filteredFeatures.filter(f => f.status === 'done')}
               onFeatureClick={setSelectedFeature}
+              onStatusChange={handleStatusChange}
             />
           </div>
         ) : (
@@ -671,6 +833,7 @@ export const ProjectBoard: React.FC = () => {
                 key={f.id}
                 feature={f}
                 onClick={() => setSelectedFeature(f)}
+                onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
               />
             ))}
             {filteredFeatures.length === 0 && (

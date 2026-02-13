@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { PlanDocument } from '../types';
-import { FileText, X, Tag, User, Calendar, GitCommit, GitBranch, GitPullRequest, ListTodo, Terminal, Maximize2 } from 'lucide-react';
+import { PlanDocument, Feature } from '../types';
+import { FileText, X, Tag, User, Calendar, GitCommit, GitBranch, GitPullRequest, ListTodo, Terminal, Maximize2, ExternalLink, ArrowRight } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // --- Mock Content Helper ---
 export const getFileContent = (doc: PlanDocument): string => {
@@ -31,11 +34,31 @@ ${JSON.stringify(doc.frontmatter, null, 2)}
   `;
 };
 
-export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: () => void }) => {
-   const { tasks, sessions } = useData();
+export const DocumentModal = ({ doc: initialDoc, onClose }: { doc: PlanDocument; onClose: () => void }) => {
+   const navigate = useNavigate();
+   const { tasks, sessions, features } = useData();
    const [activeTab, setActiveTab] = useState<'overview' | 'content' | 'linked_files' | 'linked_entities'>('overview');
+   const [fullDoc, setFullDoc] = useState<PlanDocument>(initialDoc);
 
-   const linkedTasks = tasks.filter(t => doc.frontmatter.linkedFeatures?.includes(t.id));
+   // Fetch full content on mount
+   React.useEffect(() => {
+      fetch(`/api/documents/${initialDoc.id}`)
+         .then(res => res.json())
+         .then(data => setFullDoc(data))
+         .catch(err => console.error("Failed to fetch full document:", err));
+   }, [initialDoc.id]);
+
+   const doc = fullDoc || initialDoc;
+
+   // Resolve linked features from frontmatter IDs
+   const linkedFeatureObjs = React.useMemo(() => {
+      if (!doc.frontmatter.linkedFeatures) return [];
+      return doc.frontmatter.linkedFeatures
+         .map(id => features.find(f => f.id === id))
+         .filter(Boolean) as Feature[];
+   }, [doc.frontmatter.linkedFeatures, features]);
+
+   const linkedTasks = tasks.filter(t => doc.frontmatter.linkedFeatures?.includes(t.id)); // Keeping explicit task links if any
    const linkedSessions = sessions.filter(s => doc.frontmatter.linkedSessions?.includes(s.id));
 
    return (
@@ -48,8 +71,8 @@ export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: ()
                   <div className="flex items-center gap-3 mb-2">
                      <span className="font-mono text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{doc.id}</span>
                      <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${doc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' :
-                           doc.status === 'draft' ? 'bg-indigo-500/10 text-indigo-500' :
-                              'bg-slate-500/10 text-slate-500'
+                        doc.status === 'draft' ? 'bg-indigo-500/10 text-indigo-500' :
+                           'bg-slate-500/10 text-slate-500'
                         }`}>
                         {doc.status}
                      </span>
@@ -76,8 +99,8 @@ export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: ()
                      key={tab.id}
                      onClick={() => setActiveTab(tab.id as any)}
                      className={`flex items-center gap-2 py-4 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
-                           ? 'border-indigo-500 text-indigo-400'
-                           : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                        ? 'border-indigo-500 text-indigo-400'
+                        : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'
                         }`}
                   >
                      {tab.label}
@@ -152,9 +175,11 @@ export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: ()
                {/* CONTENT TAB */}
                {activeTab === 'content' && (
                   <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
-                     <pre className="font-mono text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
-                        {getFileContent(doc)}
-                     </pre>
+                     <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400 [&_table]:border-collapse [&_th]:bg-slate-800 [&_th]:text-slate-300 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2 [&_td]:border-t [&_td]:border-slate-800">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                           {getFileContent(doc)}
+                        </ReactMarkdown>
+                     </div>
                   </div>
                )}
 
@@ -179,15 +204,36 @@ export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: ()
                      <div>
                         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><ListTodo size={14} /> Features / Tasks</h3>
                         <div className="space-y-2">
-                           {linkedTasks.map(task => (
-                              <div key={task.id} className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
-                                 <div className="flex justify-between items-center mb-1">
-                                    <span className="text-xs font-mono text-slate-500">{task.id}</span>
-                                    <span className="text-[10px] uppercase text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded">{task.status}</span>
+                           {linkedTasks.map(task => {
+                              // Find the feature this task belongs to
+                              const parentFeature = features.find(f =>
+                                 f.phases.some(p => p.tasks.some(t => t.id === task.id))
+                              );
+
+                              return (
+                                 <div
+                                    key={task.id}
+                                    onClick={() => {
+                                       if (parentFeature) {
+                                          onClose();
+                                          navigate(`/board?feature=${parentFeature.id}`);
+                                       }
+                                    }}
+                                    className={`p-3 bg-slate-900 border border-slate-800 rounded-lg group text-left transition-all ${parentFeature ? 'cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800/50' : ''}`}
+                                 >
+                                    <div className="flex justify-between items-center mb-1">
+                                       <span className="text-xs font-mono text-slate-500 group-hover:text-indigo-400 transition-colors">{task.id}</span>
+                                       <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${task.status === 'done' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700 text-slate-400'}`}>{task.status}</span>
+                                    </div>
+                                    <div className="text-sm text-slate-200 font-medium truncate">{task.title}</div>
+                                    {parentFeature && (
+                                       <div className="mt-1 text-[10px] text-slate-500 flex items-center gap-1">
+                                          via {parentFeature.name} <ArrowRight size={10} />
+                                       </div>
+                                    )}
                                  </div>
-                                 <div className="text-sm text-slate-200 font-medium">{task.title}</div>
-                              </div>
-                           ))}
+                              );
+                           })}
                            {linkedTasks.length === 0 && <p className="text-slate-500 text-sm italic">No linked tasks.</p>}
                         </div>
                      </div>
@@ -196,15 +242,22 @@ export const DocumentModal = ({ doc, onClose }: { doc: PlanDocument; onClose: ()
                         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><Terminal size={14} /> Sessions</h3>
                         <div className="space-y-2">
                            {linkedSessions.map(session => (
-                              <div key={session.id} className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+                              <button
+                                 key={session.id}
+                                 onClick={() => {
+                                    onClose();
+                                    navigate(`/sessions/${session.id}`);
+                                 }}
+                                 className="w-full text-left p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all group"
+                              >
                                  <div className="flex justify-between items-center mb-1">
-                                    <span className="text-xs font-mono text-indigo-400 font-bold">{session.id}</span>
+                                    <span className="text-xs font-mono text-indigo-400 font-bold group-hover:text-indigo-300">{session.id}</span>
                                     <span className="text-xs text-slate-500">{new Date(session.startedAt).toLocaleDateString()}</span>
                                  </div>
                                  <div className="text-xs text-slate-400 mt-1">
                                     Model: <span className="text-slate-300">{session.model}</span>
                                  </div>
-                              </div>
+                              </button>
                            ))}
                            {linkedSessions.length === 0 && <p className="text-slate-500 text-sm italic">No linked sessions.</p>}
                         </div>

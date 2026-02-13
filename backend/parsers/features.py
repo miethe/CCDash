@@ -22,6 +22,10 @@ logger = logging.getLogger("ccdash")
 
 # ── Status helpers ──────────────────────────────────────────────────
 
+# Ordering for "furthest progression" inference
+_STATUS_ORDER = {"backlog": 0, "in-progress": 1, "review": 2, "done": 3}
+
+
 _STATUS_MAP = {
     "completed": "done",
     "complete": "done",
@@ -361,6 +365,65 @@ def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
     return progress_data
 
 
+# ── File resolution helpers (for status write-back) ────────────────
+
+
+def resolve_file_for_feature(
+    feature_id: str, docs_dir: Path, progress_dir: Path
+) -> Optional[Path]:
+    """Return the top-level file for a feature (PRD first, then impl plan)."""
+    # Check PRDs
+    prd_dir = docs_dir / "PRDs"
+    if prd_dir.exists():
+        for path in prd_dir.rglob("*.md"):
+            if _slug_from_path(path) == feature_id or _base_slug(_slug_from_path(path)) == _base_slug(feature_id):
+                return path
+
+    # Check impl plans
+    impl_dir = docs_dir / "implementation_plans"
+    if impl_dir.exists():
+        for path in impl_dir.rglob("*.md"):
+            if _slug_from_path(path) == feature_id or _base_slug(_slug_from_path(path)) == _base_slug(feature_id):
+                return path
+
+    return None
+
+
+def resolve_file_for_phase(
+    feature_id: str, phase_id: str, progress_dir: Path
+) -> Optional[Path]:
+    """Return the progress file for a specific phase of a feature."""
+    subdir = progress_dir / feature_id
+    if not subdir.exists():
+        # Try base-slug matching
+        for d in progress_dir.iterdir():
+            if d.is_dir() and _base_slug(d.name.lower()) == _base_slug(feature_id):
+                subdir = d
+                break
+        else:
+            return None
+
+    for md_file in sorted(subdir.glob("*.md")):
+        try:
+            text = md_file.read_text(encoding="utf-8")
+            fm = _extract_frontmatter(text)
+            if str(fm.get("phase", "all")) == phase_id:
+                return md_file
+        except Exception:
+            continue
+
+    return None
+
+
+def _max_status(*statuses: str) -> str:
+    """Return the status with the highest progression."""
+    best = "backlog"
+    for s in statuses:
+        if _STATUS_ORDER.get(s, 0) > _STATUS_ORDER.get(best, 0):
+            best = s
+    return best
+
+
 # ── Merge into Features ─────────────────────────────────────────────
 
 def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
@@ -485,8 +548,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
             feat = features[matched_feature_id]
             feat.phases = prog["phases"]
 
-            # Update status from progress (highest priority)
-            feat.status = prog["status"]
+            # Smart status inference: take the furthest progression
+            feat.status = _max_status(feat.status, prog["status"])
 
             # Update counts
             feat.totalTasks = sum(p.totalTasks for p in feat.phases)
