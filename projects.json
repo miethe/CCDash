@@ -22,6 +22,17 @@
         "Claude Code"
       ],
       "planDocsPath": "plans"
+    },
+    {
+      "id": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
+      "name": "SkillMeat",
+      "path": "/Users/miethe/dev/homelab/development/skillmeat",
+      "description": "",
+      "repoUrl": "https://github.com/miethe/skillmeat",
+      "agentPlatforms": [
+        "Claude Code"
+      ],
+      "planDocsPath": "docs/project_plans/"
     }
   ]
 }

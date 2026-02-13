@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project } from '../types';
+import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -10,6 +10,7 @@ interface DataContextValue {
     tasks: ProjectTask[];
     alerts: AlertConfig[];
     notifications: Notification[];
+    features: Feature[];
 
     // Projects
     projects: Project[];
@@ -24,6 +25,7 @@ interface DataContextValue {
     refreshSessions: () => Promise<void>;
     refreshDocuments: () => Promise<void>;
     refreshTasks: () => Promise<void>;
+    refreshFeatures: () => Promise<void>;
 
     // Project Actions
     refreshProjects: () => Promise<void>;
@@ -55,6 +57,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
+    const [features, setFeatures] = useState<Feature[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
@@ -105,6 +108,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
+    const refreshFeatures = useCallback(async () => {
+        try {
+            const data = await fetchJson<Feature[]>('/features');
+            setFeatures(data);
+        } catch (e) {
+            console.error('Failed to fetch features:', e);
+        }
+    }, []);
+
     const refreshProjects = useCallback(async () => {
         try {
             const data = await fetchJson<Project[]>('/projects');
@@ -145,6 +157,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 refreshSessions(),
                 refreshDocuments(),
                 refreshTasks(),
+                refreshFeatures(),
                 refreshAlerts(),
                 refreshNotifications(),
             ]);
@@ -152,7 +165,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.error('Failed to switch project:', e);
             throw e;
         }
-    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks]);
+    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures]);
 
     const refreshAll = useCallback(async () => {
         setLoading(true);
@@ -162,6 +175,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 refreshSessions(),
                 refreshDocuments(),
                 refreshTasks(),
+                refreshFeatures(),
                 refreshAlerts(),
                 refreshNotifications(),
                 refreshProjects(),
@@ -171,7 +185,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } finally {
             setLoading(false);
         }
-    }, [refreshSessions, refreshDocuments, refreshTasks, refreshAlerts, refreshNotifications, refreshProjects]);
+    }, [refreshSessions, refreshDocuments, refreshTasks, refreshFeatures, refreshAlerts, refreshNotifications, refreshProjects]);
 
     // Initial load
     useEffect(() => {
@@ -194,12 +208,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 tasks,
                 alerts,
                 notifications,
+                features,
                 loading,
                 error,
                 refreshAll,
                 refreshSessions,
                 refreshDocuments,
                 refreshTasks,
+                refreshFeatures,
                 projects,
                 activeProject,
                 refreshProjects,

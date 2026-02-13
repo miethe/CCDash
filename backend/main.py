@@ -15,6 +15,7 @@ from backend.routers.api import (
     analytics_router,
 )
 from backend.routers.projects import projects_router
+from backend.routers.features import features_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ccdash")
@@ -69,6 +70,7 @@ app.include_router(documents_router)
 app.include_router(tasks_router)
 app.include_router(analytics_router)
 app.include_router(projects_router)
+app.include_router(features_router)
 
 
 @app.get("/api/health")

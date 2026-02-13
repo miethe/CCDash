@@ -159,3 +159,36 @@ class Project(BaseModel):
     agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
     planDocsPath: str = "docs/project_plans/"
 
+
+# ── Feature models ─────────────────────────────────────────────────
+
+class LinkedDocument(BaseModel):
+    id: str
+    title: str
+    filePath: str
+    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "spec"
+
+
+class FeaturePhase(BaseModel):
+    phase: str  # "1", "2", "all"
+    title: str = ""
+    status: str = "backlog"  # "completed" | "in-progress" | "backlog"
+    progress: int = 0  # 0-100
+    totalTasks: int = 0
+    completedTasks: int = 0
+    tasks: list[ProjectTask] = Field(default_factory=list)
+
+
+class Feature(BaseModel):
+    id: str  # slug, e.g. "discovery-import-fixes-v1"
+    name: str
+    status: str = "backlog"  # overall: done | in-progress | review | backlog
+    totalTasks: int = 0
+    completedTasks: int = 0
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
+    updatedAt: str = ""
+    linkedDocs: list[LinkedDocument] = Field(default_factory=list)
+    phases: list[FeaturePhase] = Field(default_factory=list)
+    relatedFeatures: list[str] = Field(default_factory=list)
+

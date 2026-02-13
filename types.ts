@@ -156,3 +156,35 @@ export interface Project {
   agentPlatforms: string[];
   planDocsPath: string;
 }
+
+export interface LinkedDocument {
+  id: string;
+  title: string;
+  filePath: string;
+  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'spec';
+}
+
+export interface FeaturePhase {
+  phase: string;
+  title: string;
+  status: string;
+  progress: number;
+  totalTasks: number;
+  completedTasks: number;
+  tasks: ProjectTask[];
+}
+
+export interface Feature {
+  id: string;
+  name: string;
+  status: string;
+  totalTasks: number;
+  completedTasks: number;
+  category: string;
+  tags: string[];
+  updatedAt: string;
+  linkedDocs: LinkedDocument[];
+  phases: FeaturePhase[];
+  relatedFeatures: string[];
+}
+
