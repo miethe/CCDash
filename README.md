@@ -36,20 +36,22 @@
     *   **Cost vs. Quality Area Chart**: Tracks spending against code quality over time.
     *   **Model Usage Bar Chart**: Breakdown of underlying LLM usage (Claude vs. Gemini).
 
-### 3. Project Board (Feature Management)
-*   **Views**: Toggle between **Kanban Board** (Drag & Drop) and **List View** (Detailed metadata).
-*   **Filtering**: Search by keyword, filter by status, sort by date/cost.
-*   **Task Cards**: Display owner, cost, priority, and derived metadata (agents used, tools used).
-*   **Task Detail Modal**:
-    *   **Overview**: 
-        *   **Project Structure Tree**: Hierarchical view of linked plan documents (PRDs, Plans, Phases).
-        *   **Phase Tracking**: Visual status indicators for project phases (active, completed, draft).
-        *   **Quick vs Full**: Distinct UI for lightweight features vs. complex multi-phase projects.
-    *   **Context Tab**: Built-in file viewer for related code/docs.
-    *   **Sessions Tab**: Linked list of all Agent Sessions that worked on this specific task.
-    *   **Git Tab**: Timeline of commits associated with the task/agents.
+### 3. Feature Board (Aggregate Delivery View)
+*   **Feature-Centric View**: Redesigned board that groups work into **Features** discovered from project documentation (PRDs and Implementation Plans).
+*   **Document-First Discovery**: Automatically cross-references PRDs, Implementation Plans, and Progress files to build a cohesive view of each feature.
+*   **Views**: Toggle between **Kanban Board** (grouped by feature status: Backlog, In Progress, Review, Done) and **List View**.
+*   **Drill-Down Modal**: 
+    *   **Overview**: Visualize linked documents (PRDs, Plans, Reports), category badges, and related feature variants (v1, v2).
+    *   **Phases tab**: Accordion view of implementation phases. Each phase expands to show a checklist of individual tasks with their real-time status.
+    *   **Documents tab**: Quick access to all documentation files associated with the feature.
+*   **Filtering**: Search features by name/slug/tag, filter by category/status, and sort by update date or total task count.
 
-### 4. Plan Catalog (Documentation)
+### 4. Project Management
+*   **Dynamic Project Switching**: Easily switch between multiple local projects from the sidebar.
+*   **Project Context**: Each project maintains its own configuration for session logs, plan documentation, and progress tracking.
+*   **Project Creation**: Add new projects by specifying local paths and metadata, which are persisted for future sessions.
+
+### 5. Plan Catalog (Documentation)
 *   **Views**:
     *   **Card Grid**: Visual overview of PRDs, RFCs, and Architecture docs.
     *   **List**: Sortable table view.
@@ -60,7 +62,7 @@
     *   **Version Control**: Lists linked Commits and PRs.
     *   **Bi-directional Linking**: Tabs showing "Linked Files" and "Linked Entities" (Tasks/Sessions).
 
-### 5. Session Inspector (Agent Forensics)
+### 6. Session Inspector (Agent Forensics)
 The core debugging loop for AI interactions.
 *   **Session Index**: Grid view of Active (Live) vs. Historical sessions with cost and health indicators.
 *   **Deep Dive View (Tabbed Interface)**:
@@ -85,13 +87,19 @@ The core debugging loop for AI interactions.
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
 
-### 6. Settings
+### 7. Settings
 *   **Alert Rules Engine**: Configure thresholds for active monitoring (e.g., "Alert if Session Cost > $5.00").
 *   **Toggle System**: Activate/Deactivate specific rules.
 
 ---
 
 ## 📊 Data Models
+
+### Feature
+The primary unit of delivery. Aggregates:
+*   `linkedDocs`: References to PRDs, Implementation Plans, and Reports.
+*   `phases`: Implementation phases containing granular `ProjectTask` items.
+*   `relatedFeatures`: Bi-directional links to other version variants of the same feature.
 
 ### AgentSession
 The atomic unit of work. Contains:
@@ -101,9 +109,9 @@ The atomic unit of work. Contains:
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
 
 ### ProjectTask
-Represents a feature or bug. Links to:
-*   `relatedFiles`: Context files.
-*   `lastAgent`: The last model to touch the task.
+Represents a specific unit of implementation.
+*   `status`: Mapped from frontmatter (pending, in-progress, completed).
+*   `cost`: Derived from estimated effort.
 
 ### PlanDocument
 Represents Markdown documentation. Contains:
