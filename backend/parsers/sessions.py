@@ -236,13 +236,24 @@ def parse_session_file(path: Path) -> AgentSession | None:
     )
 
 
-def scan_sessions(sessions_dir: Path) -> list[AgentSession]:
-    """Scan a directory for JSONL session files and parse them all."""
+def scan_sessions(sessions_dir: Path, max_files: int = 50) -> list[AgentSession]:
+    """Scan a directory for JSONL session files and parse them.
+
+    To avoid excessive load with large session directories, only the
+    *max_files* most recently modified files are parsed.
+    """
     sessions = []
     if not sessions_dir.exists():
         return sessions
 
-    for path in sorted(sessions_dir.glob("*.jsonl")):
+    # Sort by modification time (newest first), then limit
+    jsonl_files = sorted(
+        sessions_dir.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:max_files]
+
+    for path in jsonl_files:
         session = parse_session_file(path)
         if session:
             sessions.append(session)
