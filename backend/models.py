@@ -161,6 +161,8 @@ class Project(BaseModel):
     repoUrl: str = ""
     agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
     planDocsPath: str = "docs/project_plans/"
+    sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
+    progressPath: str = "progress"  # relative to project root
 
 
 # ── Feature models ─────────────────────────────────────────────────

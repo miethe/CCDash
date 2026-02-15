@@ -24,6 +24,21 @@ def add_project(project: Project):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@projects_router.put("/{project_id}", response_model=Project)
+def update_project(project_id: str, project: Project):
+    """Update an existing project."""
+    try:
+        project_manager.update_project(project_id, project)
+        updated = project_manager.get_project(project_id)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Project not found after update")
+        return updated
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @projects_router.get("/active", response_model=Project)
 def get_active_project():
     """Get the currently active project."""

@@ -30,6 +30,7 @@ interface DataContextValue {
     // Project Actions
     refreshProjects: () => Promise<void>;
     addProject: (project: Project) => Promise<void>;
+    updateProject: (projectId: string, project: Project) => Promise<void>;
     switchProject: (projectId: string) => Promise<void>;
 
     // Status Update Actions
@@ -151,6 +152,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [refreshProjects]);
 
+    const updateProject = useCallback(async (projectId: string, project: Project) => {
+        try {
+            const res = await fetch(`${API_BASE}/projects/${projectId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(project),
+            });
+            if (!res.ok) {
+                throw new Error(`Failed to update project: ${res.status}`);
+            }
+            await refreshProjects();
+            // Refresh all data since paths may have changed
+            await Promise.all([
+                refreshSessions(),
+                refreshDocuments(),
+                refreshTasks(),
+                refreshFeatures(),
+            ]);
+        } catch (e) {
+            console.error('Failed to update project:', e);
+            throw e;
+        }
+    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures]);
+
     const switchProject = useCallback(async (projectId: string) => {
         try {
             await fetch(`${API_BASE}/projects/active/${projectId}`, {
@@ -269,6 +294,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 activeProject,
                 refreshProjects,
                 addProject,
+                updateProject,
                 switchProject,
                 updateFeatureStatus,
                 updatePhaseStatus,

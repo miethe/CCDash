@@ -158,6 +158,8 @@ export interface Project {
   repoUrl: string;
   agentPlatforms: string[];
   planDocsPath: string;
+  sessionsPath: string;
+  progressPath: string;
 }
 
 export interface LinkedDocument {

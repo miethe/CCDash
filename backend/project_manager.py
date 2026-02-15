@@ -87,6 +87,15 @@ class ProjectManager:
         self._projects[project.id] = project
         self._save()
 
+    def update_project(self, project_id: str, project: Project):
+        """Update an existing project in-place."""
+        if project_id not in self._projects:
+            raise ValueError(f"Project {project_id} not found")
+        project.id = project_id  # ensure ID is preserved
+        self._projects[project_id] = project
+        self._save()
+        logger.info(f"Updated project: {project.name}")
+
     def set_active_project(self, project_id: str):
         if project_id in self._projects:
             self._active_project_id = project_id
@@ -114,28 +123,17 @@ class ProjectManager:
 
         project_root = Path(project.path)
 
-        # 1. Sessions logic
-        # For Claude Code, sessions are typically in ~/.claude/sessions or project/.claude/sessions
-        # We'll use the user-level ~/.claude/sessions as the primary source for now
-        # per the requirement: "Claude Code pulling from the user-level ~/.claude/ related session logs"
-        sessions_path = Path.home() / ".claude" / "sessions"
-        
-        # If the project has a local .claude/sessions, maybe we should prefer that?
-        # The prompt says "and project-level agentic details, ie the project-level .claude/ dir".
-        # This implies we might want to look there too.
-        # But `scan_sessions` takes one path. Let's stick to user-level for sessions for now as it's more common.
-        # Or, we could check if project/.claude/sessions exists and use it?
-        # Let's keep it simple: ~/.claude/sessions for new projects.
+        # 1. Sessions — use project.sessionsPath if set, otherwise fall back to ~/.claude/sessions
+        if project.sessionsPath and project.sessionsPath.strip():
+            sessions_path = Path(project.sessionsPath)
+        else:
+            sessions_path = Path.home() / ".claude" / "sessions"
 
-        # 2. Documents logic
-        # "defaulting to our current structure of it being in the project root docs/project_plans/ etc"
-        # The default planDocsPath is docs/project_plans/
+        # 2. Documents — relative to project root
         docs_path = project_root / project.planDocsPath
 
-        # 3. Progress logic
-        # Not explicitly defined, defaulting to a consistent location within the project
-        # e.g., project_root / "progress"
-        progress_path = project_root / "progress"
+        # 3. Progress — use project.progressPath (relative to project root)
+        progress_path = project_root / (project.progressPath or "progress")
 
         return sessions_path, docs_path, progress_path
 

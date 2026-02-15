@@ -17,6 +17,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [agentPlatforms, setAgentPlatforms] = useState<string[]>(['Claude Code']);
     const [planDocsPath, setPlanDocsPath] = useState('docs/project_plans/');
+    const [sessionsPath, setSessionsPath] = useState('');
+    const [progressPath, setProgressPath] = useState('progress');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +37,9 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                 description,
                 repoUrl,
                 agentPlatforms,
-                planDocsPath
+                planDocsPath,
+                sessionsPath,
+                progressPath,
             };
             await addProject(newProject);
             onClose();
@@ -45,6 +49,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
             setDescription('');
             setRepoUrl('');
             setPlanDocsPath('docs/project_plans/');
+            setSessionsPath('');
+            setProgressPath('progress');
         } catch (e: any) {
             setError(e.message || 'Failed to add project');
         } finally {
@@ -120,6 +126,30 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                             onChange={e => setPlanDocsPath(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
                             placeholder="docs/project_plans/"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Relative to project root</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Sessions Path</label>
+                        <input
+                            type="text"
+                            value={sessionsPath}
+                            onChange={e => setSessionsPath(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
+                            placeholder="~/.claude/projects/<hash>/"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Absolute path to Claude session JSONL files</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Progress Path</label>
+                        <input
+                            type="text"
+                            value={progressPath}
+                            onChange={e => setProgressPath(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
+                            placeholder="progress"
                         />
                         <p className="text-xs text-gray-500 mt-1">Relative to project root</p>
                     </div>
