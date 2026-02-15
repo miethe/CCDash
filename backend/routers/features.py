@@ -31,6 +31,13 @@ _REVERSE_STATUS = {
 }
 
 
+# ── Response models ─────────────────────────────────────────────────
+
+class TaskSourceResponse(BaseModel):
+    filePath: str
+    content: str
+
+
 # ── GET endpoints ───────────────────────────────────────────────────
 
 @features_router.get("", response_model=list[Feature])
@@ -48,6 +55,37 @@ def list_features():
         ]
         lite.append(f_copy)
     return lite
+
+
+@features_router.get("/task-source", response_model=TaskSourceResponse)
+def get_task_source(file: str):
+    """Return the raw markdown content of a progress/plan file for viewing task source."""
+    from pathlib import Path
+
+    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
+    project_root = progress_dir.parent
+
+    target = project_root / file
+    if not target.exists():
+        target = docs_dir.parent / file
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Source file not found: {file}")
+
+    # Security check: ensure the resolved path is within the project
+    try:
+        target.resolve().relative_to(project_root.resolve())
+    except ValueError:
+        try:
+            target.resolve().relative_to(docs_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+
+    return TaskSourceResponse(filePath=file, content=content)
 
 
 @features_router.get("/{feature_id}", response_model=Feature)
@@ -138,3 +176,5 @@ def update_task_status(feature_id: str, phase_id: str, task_id: str, req: Status
             return f
 
     raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found after update")
+
+

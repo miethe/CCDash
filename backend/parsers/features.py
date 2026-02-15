@@ -213,7 +213,7 @@ def _scan_prds(docs_dir: Path) -> dict[str, dict]:
 
 # ── Phase 3: Scan Progress directories ──────────────────────────────
 
-def _parse_progress_tasks(tasks_raw: list) -> list[ProjectTask]:
+def _parse_progress_tasks(tasks_raw: list, source_file: str = "") -> list[ProjectTask]:
     """Parse task entries from progress file frontmatter."""
     tasks: list[ProjectTask] = []
     for t in tasks_raw:
@@ -241,6 +241,10 @@ def _parse_progress_tasks(tasks_raw: list) -> list[ProjectTask]:
         if m:
             cost = float(m.group(1)) * 0.50
 
+        # Session and commit linking
+        session_id = str(t.get("session_id", t.get("sessionId", ""))) if t.get("session_id") or t.get("sessionId") else ""
+        commit_hash = str(t.get("git_commit", t.get("commitHash", ""))) if t.get("git_commit") or t.get("commitHash") else ""
+
         tasks.append(ProjectTask(
             id=task_id,
             title=title,
@@ -255,6 +259,9 @@ def _parse_progress_tasks(tasks_raw: list) -> list[ProjectTask]:
             tags=[],
             updatedAt=str(t.get("completed_at", "")),
             relatedFiles=[str(d) for d in (t.get("deliverables", []) or [])[:10]],
+            sourceFile=source_file,
+            sessionId=session_id,
+            commitHash=commit_hash,
         ))
     return tasks
 
@@ -310,7 +317,12 @@ def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
             tasks_raw = fm.get("tasks", [])
             if not isinstance(tasks_raw, list):
                 tasks_raw = []
-            tasks = _parse_progress_tasks(tasks_raw)
+            # Pass relative path so tasks know their source file
+            try:
+                source_rel = str(md_file.relative_to(progress_dir.parent))
+            except ValueError:
+                source_rel = str(md_file)
+            tasks = _parse_progress_tasks(tasks_raw, source_file=source_rel)
 
             # If total/completed not provided, derive from tasks
             if total == 0 and tasks:

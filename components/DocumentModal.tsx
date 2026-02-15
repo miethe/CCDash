@@ -62,8 +62,8 @@ export const DocumentModal = ({ doc: initialDoc, onClose }: { doc: PlanDocument;
    const linkedSessions = sessions.filter(s => doc.frontmatter.linkedSessions?.includes(s.id));
 
    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-         <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+         <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
 
             {/* Header */}
             <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-900">

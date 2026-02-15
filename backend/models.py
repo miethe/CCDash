@@ -119,6 +119,9 @@ class ProjectTask(BaseModel):
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""
     relatedFiles: list[str] = Field(default_factory=list)
+    sourceFile: str = ""       # relative path to the progress file this task was parsed from
+    sessionId: str = ""        # linked session ID (from frontmatter)
+    commitHash: str = ""       # linked git commit hash (from frontmatter)
 
 
 # ── Analytics models ───────────────────────────────────────────────

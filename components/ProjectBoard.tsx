@@ -3,11 +3,12 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, LinkedDocument } from '../types';
+import { Feature, FeaturePhase, LinkedDocument, ProjectTask, AgentSession } from '../types';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
+  Terminal, GitCommit,
 } from 'lucide-react';
 
 // ── Status helpers ─────────────────────────────────────────────────
@@ -95,6 +96,72 @@ const StatusDropdown = ({
   );
 };
 
+// ── Task Source Dialog ─────────────────────────────────────────────
+
+const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () => void }) => {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!task.sourceFile) {
+      setError('No source file linked to this task.');
+      setLoading(false);
+      return;
+    }
+    fetch(`/api/features/task-source?file=${encodeURIComponent(task.sourceFile)}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`Failed to load (${r.status})`);
+        return r.json();
+      })
+      .then(data => { setContent(data.content); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [task.sourceFile]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-3xl h-[70vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2 truncate">
+              <FileText size={16} className="text-indigo-400 flex-shrink-0" />
+              {task.title}
+            </h3>
+            <div className="flex items-center gap-3 mt-1">
+              <span className="font-mono text-[10px] text-slate-500">{task.id}</span>
+              {task.sourceFile && (
+                <span className="text-[10px] text-slate-600 font-mono truncate flex items-center gap-1">
+                  <FolderOpen size={10} />
+                  {task.sourceFile}
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
+          {loading && (
+            <div className="flex items-center justify-center h-full text-slate-500">
+              <RefreshCw size={20} className="animate-spin mr-2" /> Loading source file…
+            </div>
+          )}
+          {error && (
+            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+              <FileText size={32} className="mb-3 opacity-30" />
+              <p className="text-sm">{error}</p>
+            </div>
+          )}
+          {content && (
+            <pre className="text-sm text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">{content}</pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Feature Detail Modal ───────────────────────────────────────────
 
 const FeatureModal = ({
@@ -107,10 +174,11 @@ const FeatureModal = ({
   onFeatureUpdated?: (updated: Feature) => void;
 }) => {
   const navigate = useNavigate();
-  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus } = useData();
-  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs'>('overview');
+  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, sessions } = useData();
+  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
 
   const togglePhase = (phase: string) => {
     setExpandedPhases(prev => {
@@ -175,15 +243,28 @@ const FeatureModal = ({
     navigate(`/plans?doc=${encodeURIComponent(docId)}`);
   };
 
+  // Compute linked sessions from task sessionIds
+  const linkedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    phases.forEach(p => p.tasks.forEach(t => { if (t.sessionId) ids.add(t.sessionId); }));
+    return ids;
+  }, [phases]);
+
+  const linkedSessions = useMemo(() =>
+    sessions.filter(s => linkedSessionIds.has(s.id)),
+    [sessions, linkedSessionIds]
+  );
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
     { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
+    { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className="p-6 border-b border-slate-800 bg-slate-900">
@@ -373,12 +454,38 @@ const FeatureModal = ({
                                   <Circle size={14} className="text-slate-600 hover:text-indigo-400" />
                                 )}
                               </button>
-                              <span className="font-mono text-[10px] text-slate-500 w-16 flex-shrink-0">{task.id}</span>
-                              <span className={`text-sm flex-1 truncate ${taskDone ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
+                              <button
+                                onClick={() => setViewingTask(task)}
+                                className="font-mono text-[10px] text-slate-500 w-16 flex-shrink-0 hover:text-indigo-400 transition-colors cursor-pointer text-left"
+                                title="View source file"
+                              >
+                                {task.id}
+                              </button>
+                              <button
+                                onClick={() => setViewingTask(task)}
+                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskDone ? 'text-slate-500 line-through' : 'text-slate-300'}`}
+                                title="View source file"
+                              >
                                 {task.title}
-                              </span>
+                              </button>
+                              {task.commitHash && (
+                                <span className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono flex-shrink-0" title={`Commit: ${task.commitHash}`}>
+                                  <GitCommit size={10} />
+                                  {task.commitHash.slice(0, 7)}
+                                </span>
+                              )}
+                              {task.sessionId && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(task.sessionId!)}`); }}
+                                  className="flex items-center gap-1 text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/30 font-mono hover:bg-indigo-500/20 transition-colors flex-shrink-0"
+                                  title="Go to session"
+                                >
+                                  <Terminal size={10} />
+                                  {task.sessionId}
+                                </button>
+                              )}
                               {task.owner && (
-                                <span className="text-[10px] text-slate-600 truncate max-w-[120px]">{task.owner}</span>
+                                <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
                               )}
                             </div>
                           );
@@ -431,7 +538,91 @@ const FeatureModal = ({
               ))}
             </div>
           )}
+          {/* Sessions Tab */}
+          {activeTab === 'sessions' && (
+            <div className="space-y-3">
+              {linkedSessions.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <Terminal size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>No sessions linked to this feature.</p>
+                  <p className="text-xs mt-1 text-slate-600">Sessions are linked when tasks have session IDs in their progress files.</p>
+                </div>
+              )}
+              {linkedSessions.map(session => {
+                // Find which phases/tasks link to this session
+                const relatedTasks = phases.flatMap(p =>
+                  p.tasks.filter(t => t.sessionId === session.id).map(t => ({ phase: p, task: t }))
+                );
+
+                return (
+                  <div key={session.id} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
+                          <Terminal size={16} />
+                        </div>
+                        <div>
+                          <button
+                            onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.id)}`); }}
+                            className="font-mono text-sm font-bold text-slate-200 hover:text-indigo-400 transition-colors"
+                          >
+                            {session.id}
+                          </button>
+                          <div className="flex items-center gap-3 mt-0.5">
+                            <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                              <Calendar size={10} />
+                              {new Date(session.startedAt).toLocaleDateString()}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">{session.model}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 text-right">
+                        <div>
+                          <div className="text-[9px] text-slate-600 uppercase">Cost</div>
+                          <div className="text-xs font-mono text-emerald-400">${session.totalCost.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-slate-600 uppercase">Duration</div>
+                          <div className="text-xs font-mono text-slate-400">{Math.round(session.durationSeconds / 60)}m</div>
+                        </div>
+                        {session.gitCommitHash && (
+                          <span className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                            <GitCommit size={10} />
+                            {session.gitCommitHash.slice(0, 7)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Related tasks */}
+                    {relatedTasks.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-800/60">
+                        <div className="text-[10px] text-slate-600 uppercase font-bold mb-2">Linked Tasks</div>
+                        <div className="space-y-1">
+                          {relatedTasks.map(({ phase, task }) => (
+                            <div key={task.id} className="flex items-center gap-2 text-xs">
+                              <span className="text-slate-600">Phase {phase.phase}</span>
+                              <span className="text-slate-700">→</span>
+                              <span className="font-mono text-slate-500">{task.id}</span>
+                              <span className="text-slate-400 truncate">{task.title}</span>
+                              <span className={`text-[9px] uppercase font-bold ml-auto ${getStatusStyle(task.status).color}`}>
+                                {getStatusStyle(task.status).label}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+
+        {/* Task Source Dialog */}
+        {viewingTask && <TaskSourceDialog task={viewingTask} onClose={() => setViewingTask(null)} />}
       </div>
     </div>
   );

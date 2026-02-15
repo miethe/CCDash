@@ -53,8 +53,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-700">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-700" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold text-gray-100">Add New Project</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white">

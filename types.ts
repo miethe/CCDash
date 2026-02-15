@@ -16,6 +16,9 @@ export interface ProjectTask {
   tags: string[];
   updatedAt: string;
   relatedFiles?: string[];
+  sourceFile?: string;
+  sessionId?: string;
+  commitHash?: string;
 }
 
 export interface ToolUsage {

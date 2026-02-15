@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers } from 'lucide-react';
@@ -453,8 +454,8 @@ const AnalyticsDetailsModal: React.FC<{
     if (!data) return null;
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950">
                     <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
                         <Activity size={18} className="text-indigo-500" />
@@ -1019,7 +1020,21 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
 
 export const SessionInspector: React.FC = () => {
     const { sessions } = useData();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
+    // Deep-link: auto-select session from URL params
+    useEffect(() => {
+        const sessionParam = searchParams.get('session');
+        if (sessionParam && sessions.length > 0) {
+            const exists = sessions.find(s => s.id === sessionParam);
+            if (exists) {
+                setSelectedSessionId(sessionParam);
+            }
+            // Clear the param after consuming it
+            setSearchParams({}, { replace: true });
+        }
+    }, [searchParams, sessions]);
 
     const activeSessions = sessions.filter(s => s.status === 'active');
     const pastSessions = sessions.filter(s => s.status !== 'active');
