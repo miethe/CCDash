@@ -350,20 +350,24 @@ class SyncEngine:
 
         features = scan_features(docs_dir, progress_dir)
         for feature in features:
-            f_dict = feature.model_dump()
-            await self.feature_repo.upsert(f_dict, project_id)
+            try:
+                f_dict = feature.model_dump()
+                await self.feature_repo.upsert(f_dict, project_id)
 
-            # Upsert phases
-            phases = [p.model_dump() for p in feature.phases]
-            await self.feature_repo.upsert_phases(feature.id, phases)
+                # Upsert phases
+                phases = [p.model_dump() for p in feature.phases]
+                await self.feature_repo.upsert_phases(feature.id, phases)
 
-            # Auto-tag
-            for tag_name in feature.tags:
-                if tag_name:
-                    tag_id = await self.tag_repo.get_or_create(str(tag_name))
-                    await self.tag_repo.tag_entity("feature", feature.id, tag_id)
+                # Auto-tag
+                for tag_name in feature.tags:
+                    if tag_name:
+                        tag_id = await self.tag_repo.get_or_create(str(tag_name))
+                        await self.tag_repo.tag_entity("feature", feature.id, tag_id)
 
-            stats["synced"] += 1
+                stats["synced"] += 1
+            except Exception as e:
+                logger.error(f"Failed to sync feature {feature.id}: {e}")
+
 
         return stats
 

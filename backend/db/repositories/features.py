@@ -71,8 +71,13 @@ class SqliteFeatureRepository:
 
     async def upsert_phases(self, feature_id: str, phases: list[dict]) -> None:
         await self.db.execute("DELETE FROM feature_phases WHERE feature_id = ?", (feature_id,))
-        for p in phases:
-            phase_id = p.get("id", f"{feature_id}:phase-{p.get('phase', '0')}")
+        for idx, p in enumerate(phases):
+            # Generate ID if missing. Append index to ensure uniqueness since multiple phases
+            # might share the same 'phase' value (e.g. 'all').
+            phase_id = p.get("id")
+            if not phase_id:
+                phase_id = f"{feature_id}:phase-{str(p.get('phase', '0'))}-{idx}"
+
             await self.db.execute(
                 """INSERT INTO feature_phases
                     (id, feature_id, phase, title, status, progress, total_tasks, completed_tasks)

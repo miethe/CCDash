@@ -84,13 +84,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const refreshSessions = useCallback(async (reset = true) => {
         try {
-            const offset = reset ? 0 : sessions.length;
-            // Catch case where we already have all sessions and it's not a reset (though caller should check)
-            if (!reset && sessions.length >= sessionTotal && sessionTotal > 0) return;
+            // If resetting (background poll), we want to fetch enough items to cover what the user has currently loaded
+            // so they don't lose their scroll position or see items disappear.
+            // Minimum 50, but if they loaded 300, fetch 300.
+            const currentCount = sessions.length;
+            const limit = reset ? Math.max(SESSIONS_PER_PAGE, currentCount) : SESSIONS_PER_PAGE;
+            const offset = reset ? 0 : currentCount;
 
             const params = new URLSearchParams({
                 offset: offset.toString(),
-                limit: SESSIONS_PER_PAGE.toString(),
+                limit: limit.toString(),
                 sort_by: 'started_at',
                 sort_order: 'desc'
             });
@@ -106,7 +109,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (e) {
             console.error('Failed to fetch sessions:', e);
         }
-    }, [sessions.length, sessionTotal]);
+    }, [sessions.length]);
 
     const loadMoreSessions = useCallback(async () => {
         if (sessions.length < sessionTotal) {
@@ -117,7 +120,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const getSessionById = useCallback(async (sessionId: string): Promise<AgentSession | null> => {
         // First check if we already have it in state
         const existing = sessions.find(s => s.id === sessionId);
-        if (existing) return existing;
+
+        // Only return cached if it has logs (meaning it's a full detail object, not a list item)
+        // List items have empty logs arrays usually.
+        if (existing && existing.logs && existing.logs.length > 0) {
+            return existing;
+        }
 
         // If not, fetch it
         try {
