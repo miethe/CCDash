@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.models import Feature, ProjectTask, FeaturePhase
 from backend.project_manager import project_manager
@@ -56,16 +56,24 @@ class TaskSourceResponse(BaseModel):
 class FeatureSessionLink(BaseModel):
     sessionId: str
     confidence: float = 0.0
-    reasons: list[str] = []
-    commands: list[str] = []
-    commitHashes: list[str] = []
+    reasons: list[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    commitHashes: list[str] = Field(default_factory=list)
     status: str = "completed"
     model: str = ""
     startedAt: str = ""
     totalCost: float = 0.0
     durationSeconds: int = 0
     gitCommitHash: str | None = None
-    gitCommitHashes: list[str] = []
+    gitCommitHashes: list[str] = Field(default_factory=list)
+    sessionType: str = ""
+    parentSessionId: str | None = None
+    rootSessionId: str = ""
+    agentId: str | None = None
+    isSubthread: bool = False
+    isPrimaryLink: bool = False
+    linkStrategy: str = ""
+    workflowType: str = ""
 
 
 def _safe_json(raw: str | None) -> dict:
@@ -85,6 +93,31 @@ def _safe_json_list(raw: str | None) -> list:
     except Exception:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _is_primary_session_link(strategy: str, confidence: float, signal_types: set[str]) -> bool:
+    if strategy == "task_frontmatter":
+        return True
+    if confidence >= 0.9:
+        return True
+    if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
+        return True
+    return False
+
+
+def _classify_session_workflow(strategy: str, commands: list[str], signal_types: set[str], session_type: str) -> str:
+    haystack = " ".join([strategy, session_type, *commands, *sorted(signal_types)]).lower()
+    if "/plan:" in haystack or "planning" in haystack or "plan" in haystack:
+        return "Planning"
+    if any(token in haystack for token in ("debug", "bug", "fix", "error", "traceback")):
+        return "Debug"
+    if any(token in haystack for token in ("enhance", "improve", "refactor", "optimiz", "cleanup")):
+        return "Enhancement"
+    if any(token in haystack for token in ("execute", "implement", "quick-feature", "file_write", "command_args_path")):
+        return "Execution"
+    if "subagent" in haystack:
+        return "Execution"
+    return "Related"
 
 
 def _task_from_db_row(row: dict[str, Any]) -> ProjectTask:
@@ -325,12 +358,14 @@ async def get_feature_linked_sessions(feature_id: str):
         strategy = str(metadata.get("linkStrategy") or "").strip()
         if strategy:
             reasons.append(strategy)
+        signal_types: set[str] = set()
         signals = metadata.get("signals", [])
         if isinstance(signals, list):
             for signal in signals[:8]:
                 if isinstance(signal, dict):
                     signal_type = str(signal.get("type") or "").strip()
                     if signal_type:
+                        signal_types.add(signal_type)
                         reasons.append(signal_type)
 
         commands = metadata.get("commands", [])
@@ -341,11 +376,19 @@ async def get_feature_linked_sessions(feature_id: str):
             metadata_hashes = []
         row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
         merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
+        confidence = float(link.get("confidence") or 0.0)
+        session_type = str(session_row.get("session_type") or "")
+        parent_session_id = session_row.get("parent_session_id")
+        root_session_id = str(session_row.get("root_session_id") or session_id)
+        is_subthread = bool(parent_session_id) or session_type == "subagent"
+        is_primary_link = _is_primary_session_link(strategy, confidence, signal_types)
+        workflow_type = _classify_session_workflow(strategy, [str(v) for v in commands if isinstance(v, str)], signal_types, session_type)
+        reasons = list(dict.fromkeys(reasons))
 
         items.append(
             FeatureSessionLink(
                 sessionId=session_id,
-                confidence=float(link.get("confidence") or 0.0),
+                confidence=confidence,
                 reasons=reasons,
                 commands=[str(v) for v in commands if isinstance(v, str)][:12],
                 commitHashes=merged_hashes,
@@ -356,6 +399,14 @@ async def get_feature_linked_sessions(feature_id: str):
                 durationSeconds=int(session_row.get("duration_seconds") or 0),
                 gitCommitHash=session_row.get("git_commit_hash"),
                 gitCommitHashes=merged_hashes,
+                sessionType=session_type,
+                parentSessionId=parent_session_id,
+                rootSessionId=root_session_id,
+                agentId=session_row.get("agent_id"),
+                isSubthread=is_subthread,
+                isPrimaryLink=is_primary_link,
+                linkStrategy=strategy,
+                workflowType=workflow_type,
             )
         )
 

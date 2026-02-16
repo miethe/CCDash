@@ -24,7 +24,43 @@ interface FeatureSessionLink {
   durationSeconds: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
+  sessionType?: string;
+  parentSessionId?: string | null;
+  rootSessionId?: string;
+  agentId?: string | null;
+  isSubthread?: boolean;
+  isPrimaryLink?: boolean;
+  linkStrategy?: string;
+  workflowType?: string;
 }
+
+const SHORT_COMMIT_LENGTH = 7;
+
+const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
+
+const formatSessionReason = (reason: string): string => {
+  const normalized = (reason || '').trim();
+  if (!normalized) return 'related';
+  if (normalized === 'task_frontmatter') return 'task linkage';
+  if (normalized === 'session_evidence') return 'session evidence';
+  if (normalized === 'command_args_path') return 'command path';
+  if (normalized === 'file_write') return 'file write';
+  if (normalized === 'shell_reference') return 'shell reference';
+  if (normalized === 'search_reference') return 'search reference';
+  if (normalized === 'file_read') return 'file read';
+  return normalized.replace(/_/g, ' ');
+};
+
+const isSubthreadSession = (session: FeatureSessionLink): boolean => {
+  if (session.isSubthread) return true;
+  if (session.parentSessionId) return true;
+  return (session.sessionType || '').toLowerCase() === 'subagent';
+};
+
+const isPrimarySession = (session: FeatureSessionLink): boolean => {
+  if (session.isPrimaryLink) return true;
+  return session.confidence >= 0.9;
+};
 
 // ── Status helpers ─────────────────────────────────────────────────
 
@@ -194,6 +230,9 @@ const FeatureModal = ({
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
+  const [showPrimarySubthreads, setShowPrimarySubthreads] = useState(false);
+  const [showSecondarySessions, setShowSecondarySessions] = useState(false);
+  const [showSecondarySubthreads, setShowSecondarySubthreads] = useState(false);
 
   const refreshFeatureDetail = useCallback(async () => {
     try {
@@ -219,6 +258,9 @@ const FeatureModal = ({
   useEffect(() => {
     setFullFeature(null);
     setLinkedSessionLinks([]);
+    setShowPrimarySubthreads(false);
+    setShowSecondarySessions(false);
+    setShowSecondarySubthreads(false);
     refreshFeatureDetail();
     refreshLinkedSessions();
   }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
@@ -283,7 +325,32 @@ const FeatureModal = ({
     navigate(`/plans?doc=${encodeURIComponent(docId)}`);
   };
 
-  const linkedSessions = linkedSessionLinks;
+  const linkedSessions = useMemo(() => {
+    return [...linkedSessionLinks].sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      const aTime = Date.parse(a.startedAt || '') || 0;
+      const bTime = Date.parse(b.startedAt || '') || 0;
+      return bTime - aTime;
+    });
+  }, [linkedSessionLinks]);
+
+  const groupedSessions = useMemo(() => {
+    const primaryMain: FeatureSessionLink[] = [];
+    const primarySub: FeatureSessionLink[] = [];
+    const secondaryMain: FeatureSessionLink[] = [];
+    const secondarySub: FeatureSessionLink[] = [];
+
+    linkedSessions.forEach(session => {
+      const isPrimary = isPrimarySession(session);
+      const isSubthread = isSubthreadSession(session);
+      if (isPrimary && isSubthread) primarySub.push(session);
+      else if (isPrimary) primaryMain.push(session);
+      else if (isSubthread) secondarySub.push(session);
+      else secondaryMain.push(session);
+    });
+
+    return { primaryMain, primarySub, secondaryMain, secondarySub };
+  }, [linkedSessions]);
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
@@ -291,6 +358,116 @@ const FeatureModal = ({
     { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
     { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
   ];
+
+  const renderSessionCard = (session: FeatureSessionLink) => {
+    const relatedTasks = phases.flatMap(p =>
+      p.tasks.filter(t => t.sessionId === session.sessionId).map(t => ({ phase: p, task: t }))
+    );
+    const primaryCommit = session.gitCommitHash || session.gitCommitHashes?.[0] || session.commitHashes?.[0];
+    const threadLabel = isSubthreadSession(session) ? 'Sub-thread' : 'Main Thread';
+    const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
+    const workflow = (session.workflowType || '').trim() || 'Related';
+
+    return (
+      <div key={session.sessionId} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-lg ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
+              <Terminal size={16} />
+            </div>
+            <div>
+              <button
+                onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`); }}
+                className="font-mono text-sm font-bold text-slate-200 hover:text-indigo-400 transition-colors"
+              >
+                {session.sessionId}
+              </button>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                  <Calendar size={10} />
+                  {new Date(session.startedAt).toLocaleDateString()}
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">{session.model}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+                  {Math.round(session.confidence * 100)}% confidence
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-right">
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase">Cost</div>
+              <div className="text-xs font-mono text-emerald-400">${session.totalCost.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase">Duration</div>
+              <div className="text-xs font-mono text-slate-400">{Math.round(session.durationSeconds / 60)}m</div>
+            </div>
+            {primaryCommit && (
+              <span
+                title={primaryCommit}
+                className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono"
+              >
+                <GitCommit size={10} />
+                {toShortCommitHash(primaryCommit)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-3 text-[10px] flex flex-wrap items-center gap-2">
+          <span className={`px-1.5 py-0.5 rounded border ${linkRole === 'Primary' ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800/60'}`}>
+            {linkRole}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded border ${threadLabel === 'Sub-thread' ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-blue-500/30 text-blue-300 bg-blue-500/10'}`}>
+            {threadLabel}
+          </span>
+          <span className="px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10">
+            {workflow}
+          </span>
+          {session.linkStrategy && (
+            <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-400">
+              {formatSessionReason(session.linkStrategy)}
+            </span>
+          )}
+        </div>
+
+        {(session.reasons.length > 0 || session.commands.length > 0) && (
+          <div className="mb-3 text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
+            {session.reasons.slice(0, 3).map(reason => (
+              <span key={`${session.sessionId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
+                {formatSessionReason(reason)}
+              </span>
+            ))}
+            {session.commands.slice(0, 2).map(command => (
+              <span key={`${session.sessionId}-${command}`} className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono">
+                {command}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {relatedTasks.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-800/60">
+            <div className="text-[10px] text-slate-600 uppercase font-bold mb-2">Linked Tasks</div>
+            <div className="space-y-1">
+              {relatedTasks.map(({ phase, task }) => (
+                <div key={task.id} className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-600">Phase {phase.phase}</span>
+                  <span className="text-slate-700">→</span>
+                  <span className="font-mono text-slate-500">{task.id}</span>
+                  <span className="text-slate-400 truncate">{task.title}</span>
+                  <span className={`text-[9px] uppercase font-bold ml-auto ${getStatusStyle(task.status).color}`}>
+                    {getStatusStyle(task.status).label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
@@ -579,94 +756,71 @@ const FeatureModal = ({
                   <p className="text-xs mt-1 text-slate-600">No high-confidence session evidence found yet.</p>
                 </div>
               )}
-              {linkedSessions.map(session => {
-                // Find which phases/tasks link to this session
-                const relatedTasks = phases.flatMap(p =>
-                  p.tasks.filter(t => t.sessionId === session.sessionId).map(t => ({ phase: p, task: t }))
-                );
-                const primaryCommit = session.gitCommitHash || session.gitCommitHashes?.[0] || session.commitHashes?.[0];
-
-                return (
-                  <div key={session.sessionId} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
-                          <Terminal size={16} />
-                        </div>
-                        <div>
-                          <button
-                            onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`); }}
-                            className="font-mono text-sm font-bold text-slate-200 hover:text-indigo-400 transition-colors"
-                          >
-                            {session.sessionId}
-                          </button>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                              <Calendar size={10} />
-                              {new Date(session.startedAt).toLocaleDateString()}
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">{session.model}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
-                              {Math.round(session.confidence * 100)}% confidence
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-right">
-                        <div>
-                          <div className="text-[9px] text-slate-600 uppercase">Cost</div>
-                          <div className="text-xs font-mono text-emerald-400">${session.totalCost.toFixed(2)}</div>
-                        </div>
-                        <div>
-                          <div className="text-[9px] text-slate-600 uppercase">Duration</div>
-                          <div className="text-xs font-mono text-slate-400">{Math.round(session.durationSeconds / 60)}m</div>
-                        </div>
-                        {primaryCommit && (
-                          <span className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                            <GitCommit size={10} />
-                            {primaryCommit.slice(0, 7)}
-                          </span>
-                        )}
+              {linkedSessions.length > 0 && (
+                <>
+                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Core Focus Sessions</div>
+                      <div className="text-[11px] text-emerald-200/80">
+                        {groupedSessions.primaryMain.length + groupedSessions.primarySub.length}
                       </div>
                     </div>
+                    <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary execution/planning sessions for this feature.</p>
+                  </div>
 
-                    {(session.reasons.length > 0 || session.commands.length > 0) && (
-                      <div className="mb-3 text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
-                        {session.reasons.slice(0, 3).map(reason => (
-                          <span key={`${session.sessionId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
-                            {reason}
-                          </span>
-                        ))}
-                        {session.commands.slice(0, 2).map(command => (
-                          <span key={`${session.sessionId}-${command}`} className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono">
-                            {command}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                  {groupedSessions.primaryMain.map(renderSessionCard)}
 
-                    {/* Related tasks */}
-                    {relatedTasks.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-slate-800/60">
-                        <div className="text-[10px] text-slate-600 uppercase font-bold mb-2">Linked Tasks</div>
-                        <div className="space-y-1">
-                          {relatedTasks.map(({ phase, task }) => (
-                            <div key={task.id} className="flex items-center gap-2 text-xs">
-                              <span className="text-slate-600">Phase {phase.phase}</span>
-                              <span className="text-slate-700">→</span>
-                              <span className="font-mono text-slate-500">{task.id}</span>
-                              <span className="text-slate-400 truncate">{task.title}</span>
-                              <span className={`text-[9px] uppercase font-bold ml-auto ${getStatusStyle(task.status).color}`}>
-                                {getStatusStyle(task.status).label}
-                              </span>
-                            </div>
-                          ))}
+                  {groupedSessions.primarySub.length > 0 && (
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => setShowPrimarySubthreads(prev => !prev)}
+                        className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                          {showPrimarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          Core Sub-Threads
                         </div>
+                        <span className="text-[11px] text-slate-500">{groupedSessions.primarySub.length}</span>
+                      </button>
+                      {showPrimarySubthreads && groupedSessions.primarySub.map(renderSessionCard)}
+                    </div>
+                  )}
+
+                  <div className="space-y-2 pt-2">
+                    <button
+                      onClick={() => setShowSecondarySessions(prev => !prev)}
+                      className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        Secondary Linkages
+                      </div>
+                      <span className="text-[11px] text-slate-500">{groupedSessions.secondaryMain.length + groupedSessions.secondarySub.length}</span>
+                    </button>
+
+                    {showSecondarySessions && (
+                      <div className="space-y-3">
+                        {groupedSessions.secondaryMain.map(renderSessionCard)}
+                        {groupedSessions.secondarySub.length > 0 && (
+                          <div className="space-y-2">
+                            <button
+                              onClick={() => setShowSecondarySubthreads(prev => !prev)}
+                              className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                            >
+                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                                {showSecondarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                Related Sub-Threads
+                              </div>
+                              <span className="text-[11px] text-slate-500">{groupedSessions.secondarySub.length}</span>
+                            </button>
+                            {showSecondarySubthreads && groupedSessions.secondarySub.map(renderSessionCard)}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                );
-              })}
+                </>
+              )}
             </div>
           )}
         </div>

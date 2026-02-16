@@ -8,6 +8,22 @@ import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 
 const MAIN_SESSION_AGENT = 'Main Session';
+const SHORT_COMMIT_LENGTH = 7;
+
+const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
+
+const collectSessionCommitHashes = (session: AgentSession): string[] => {
+    const commits: string[] = [];
+    if (session.gitCommitHash && session.gitCommitHash.trim()) {
+        commits.push(session.gitCommitHash.trim());
+    }
+    (session.gitCommitHashes || []).forEach(commit => {
+        if (typeof commit === 'string' && commit.trim()) {
+            commits.push(commit.trim());
+        }
+    });
+    return Array.from(new Set(commits));
+};
 
 const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
     if (!raw || !raw.trim()) {
@@ -626,6 +642,9 @@ const TranscriptView: React.FC<{
         }
         return (artifactsByLogId.get(selectedLog.id) || []).filter(artifact => artifact.type === 'command');
     }, [artifactsByLogId, selectedLog]);
+    const commitHashes = useMemo(() => collectSessionCommitHashes(session), [session]);
+    const displayedCommitHashes = commitHashes.slice(0, 6);
+    const hiddenCommitCount = Math.max(0, commitHashes.length - displayedCommitHashes.length);
 
     return (
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
@@ -695,22 +714,41 @@ const TranscriptView: React.FC<{
                 </div>
 
                 {/* Git Context */}
-                {session.gitCommitHash && (
+                {(commitHashes.length > 0 || (session.gitBranch && session.gitBranch.trim())) && (
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
                         <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Version Control</h3>
                         <div className="space-y-4">
-                            <div className="group">
-                                <div className="text-[9px] text-slate-600 uppercase font-bold mb-1 group-hover:text-slate-400 transition-colors">Commit Hash</div>
-                                <div className="flex items-center gap-2 text-xs font-mono text-indigo-400 bg-indigo-500/5 p-1.5 rounded border border-indigo-500/10">
-                                    <GitCommit size={14} /> {session.gitCommitHash}
+                            {displayedCommitHashes.length > 0 && (
+                                <div className="group">
+                                    <div className="text-[9px] text-slate-600 uppercase font-bold mb-1 group-hover:text-slate-400 transition-colors">
+                                        Commit{commitHashes.length === 1 ? '' : 's'}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        {displayedCommitHashes.map(commit => (
+                                            <span
+                                                key={commit}
+                                                title={commit}
+                                                className="inline-flex items-center gap-1 text-[10px] font-mono text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20"
+                                            >
+                                                <GitCommit size={10} /> {toShortCommitHash(commit)}
+                                            </span>
+                                        ))}
+                                        {hiddenCommitCount > 0 && (
+                                            <span className="text-[10px] font-mono text-slate-400">
+                                                +{hiddenCommitCount} more
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="group">
-                                <div className="text-[9px] text-slate-600 uppercase font-bold mb-1">Branch</div>
-                                <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-                                    <GitBranch size={14} className="text-slate-500" /> {session.gitBranch}
+                            )}
+                            {session.gitBranch && session.gitBranch.trim() && (
+                                <div className="group">
+                                    <div className="text-[9px] text-slate-600 uppercase font-bold mb-1">Branch</div>
+                                    <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
+                                        <GitBranch size={14} className="text-slate-500" /> {session.gitBranch}
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
                     </div>
                 )}
