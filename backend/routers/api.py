@@ -26,6 +26,12 @@ async def list_sessions(
     limit: int = 50,
     sort_by: str = "started_at",
     sort_order: str = "desc",
+    status: str | None = Query(None, description="Filter by session status"),
+    model: str | None = Query(None, description="Filter by model name (partial match)"),
+    start_date: str | None = Query(None, description="ISO timestamp for start range"),
+    end_date: str | None = Query(None, description="ISO timestamp for end range"),
+    min_duration: int | None = Query(None, description="Minimum duration in seconds"),
+    max_duration: int | None = Query(None, description="Maximum duration in seconds"),
 ):
     """Return paginated sessions from DB."""
     project = project_manager.get_active_project()
@@ -35,11 +41,20 @@ async def list_sessions(
     db = await connection.get_connection()
     repo = get_session_repository(db)
     
+    # Construct filter dict
+    filters = {}
+    if status: filters["status"] = status
+    if model: filters["model"] = model
+    if start_date: filters["start_date"] = start_date
+    if end_date: filters["end_date"] = end_date
+    if min_duration is not None: filters["min_duration"] = min_duration
+    if max_duration is not None: filters["max_duration"] = max_duration
+
     # DB returns dicts, Pydantic will validate them
     sessions_data = await repo.list_paginated(
-        offset, limit, project.id, sort_by, sort_order
+        offset, limit, project.id, sort_by, sort_order, filters
     )
-    total_count = await repo.count(project.id)
+    total_count = await repo.count(project.id, filters)
     
     # Hydrate items (minimal for list view)
     results = []

@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────

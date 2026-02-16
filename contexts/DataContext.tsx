@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
 
+export interface SessionFilters {
+    status?: string;
+    model?: string;
+    start_date?: string;
+    end_date?: string;
+    min_duration?: number;
+    max_duration?: number;
+}
+
 // ── Types ──────────────────────────────────────────────────────────
 
 interface DataContextValue {
@@ -8,6 +17,8 @@ interface DataContextValue {
     sessions: AgentSession[];
     sessionTotal: number;
     hasMoreSessions: boolean;
+    sessionFilters: SessionFilters;
+    setSessionFilters: (filters: SessionFilters) => void;
     documents: PlanDocument[];
     tasks: ProjectTask[];
     alerts: AlertConfig[];
@@ -72,6 +83,7 @@ const SESSIONS_PER_PAGE = 50;
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
     const [sessionTotal, setSessionTotal] = useState(0);
+    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({});
     const [documents, setDocuments] = useState<PlanDocument[]>([]);
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
@@ -98,6 +110,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 sort_order: 'desc'
             });
 
+            if (sessionFilters.status) params.append('status', sessionFilters.status);
+            if (sessionFilters.model) params.append('model', sessionFilters.model);
+            if (sessionFilters.start_date) params.append('start_date', sessionFilters.start_date);
+            if (sessionFilters.end_date) params.append('end_date', sessionFilters.end_date);
+            if (sessionFilters.min_duration) params.append('min_duration', sessionFilters.min_duration.toString());
+            if (sessionFilters.max_duration) params.append('max_duration', sessionFilters.max_duration.toString());
+
             const data = await fetchJson<PaginatedResponse<AgentSession>>(`/sessions?${params}`);
 
             if (reset) {
@@ -109,7 +128,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (e) {
             console.error('Failed to fetch sessions:', e);
         }
-    }, [sessions.length]);
+    }, [sessions.length, sessionFilters]);
+
+    // Refresh when filters change
+    useEffect(() => {
+        refreshSessions(true);
+    }, [sessionFilters]);
 
     const loadMoreSessions = useCallback(async () => {
         if (sessions.length < sessionTotal) {
@@ -338,6 +362,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 sessions,
                 sessionTotal,
                 hasMoreSessions: sessions.length < sessionTotal,
+                sessionFilters,
+                setSessionFilters,
                 documents,
                 tasks,
                 alerts,

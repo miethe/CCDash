@@ -71,35 +71,103 @@ class SqliteSessionRepository:
             return self._row_to_dict(row)
 
     async def list_paginated(
-        self, offset: int, limit: int, project_id: str | None = None,
-        sort_by: str = "started_at", sort_order: str = "desc",
+        self,
+        offset: int,
+        limit: int,
+        project_id: str | None = None,
+        sort_by: str = "started_at",
+        sort_order: str = "desc",
+        filters: dict | None = None,
     ) -> list[dict]:
         # Whitelist sortable columns
+        
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
-        if project_id:
-            query = f"SELECT * FROM sessions WHERE project_id = ? ORDER BY {sort_by} {order} LIMIT ? OFFSET ?"
-            params = (project_id, limit, offset)
-        else:
-            query = f"SELECT * FROM sessions ORDER BY {sort_by} {order} LIMIT ? OFFSET ?"
-            params = (limit, offset)
+        query_parts = ["SELECT * FROM sessions"]
+        params = []
+        where_clauses = []
 
-        async with self.db.execute(query, params) as cur:
+        if project_id:
+            where_clauses.append("project_id = ?")
+            params.append(project_id)
+
+        if filters:
+            if filters.get("status"):
+                where_clauses.append("status = ?")
+                params.append(filters["status"])
+            if filters.get("model"):
+                where_clauses.append("model LIKE ?")
+                params.append(f"%{filters['model']}%")
+            
+            # Date range (started_at)
+            if filters.get("start_date"):
+                where_clauses.append("started_at >= ?")
+                params.append(filters["start_date"])
+            if filters.get("end_date"):
+                where_clauses.append("started_at <= ?")
+                params.append(filters["end_date"])
+
+            # Duration range
+            if filters.get("min_duration") is not None:
+                where_clauses.append("duration_seconds >= ?")
+                params.append(filters["min_duration"])
+            if filters.get("max_duration") is not None:
+                where_clauses.append("duration_seconds <= ?")
+                params.append(filters["max_duration"])
+
+        if where_clauses:
+            query_parts.append("WHERE " + " AND ".join(where_clauses))
+
+        query_parts.append(f"ORDER BY {sort_by} {order}")
+        query_parts.append("LIMIT ? OFFSET ?")
+        params.append(limit)
+        params.append(offset)
+
+        query = " ".join(query_parts)
+
+        async with self.db.execute(query, tuple(params)) as cur:
             rows = await cur.fetchall()
             return [self._row_to_dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
+        query_parts = ["SELECT COUNT(*) FROM sessions"]
+        params = []
+        where_clauses = []
+
         if project_id:
-            async with self.db.execute(
-                "SELECT COUNT(*) FROM sessions WHERE project_id = ?", (project_id,)
-            ) as cur:
-                row = await cur.fetchone()
-        else:
-            async with self.db.execute("SELECT COUNT(*) FROM sessions") as cur:
-                row = await cur.fetchone()
+            where_clauses.append("project_id = ?")
+            params.append(project_id)
+            
+        if filters:
+            if filters.get("status"):
+                where_clauses.append("status = ?")
+                params.append(filters["status"])
+            if filters.get("model"):
+                where_clauses.append("model LIKE ?")
+                params.append(f"%{filters['model']}%")
+            if filters.get("start_date"):
+                where_clauses.append("started_at >= ?")
+                params.append(filters["start_date"])
+            if filters.get("end_date"):
+                where_clauses.append("started_at <= ?")
+                params.append(filters["end_date"])
+            if filters.get("min_duration") is not None:
+                where_clauses.append("duration_seconds >= ?")
+                params.append(filters["min_duration"])
+            if filters.get("max_duration") is not None:
+                where_clauses.append("duration_seconds <= ?")
+                params.append(filters["max_duration"])
+
+        if where_clauses:
+            query_parts.append("WHERE " + " AND ".join(where_clauses))
+
+        query = " ".join(query_parts)
+
+        async with self.db.execute(query, tuple(params)) as cur:
+            row = await cur.fetchone()
         return row[0] if row else 0
 
     async def delete_by_source(self, source_file: str) -> None:

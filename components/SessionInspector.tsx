@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers } from 'lucide-react';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 
@@ -924,6 +924,84 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
 
 // --- Main Container ---
 
+const SessionFilterBar: React.FC = () => {
+    const { sessionFilters, setSessionFilters } = useData();
+    const [localFilters, setLocalFilters] = useState(sessionFilters);
+
+    // Debounce triggers
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (JSON.stringify(localFilters) !== JSON.stringify(sessionFilters)) {
+                setSessionFilters(localFilters);
+            }
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [localFilters, sessionFilters, setSessionFilters]);
+
+    const handleChange = (key: keyof typeof sessionFilters, value: any) => {
+        setLocalFilters(prev => ({ ...prev, [key]: value || undefined }));
+    };
+
+    return (
+        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-4 items-center mb-6">
+            <div className="flex items-center gap-2 text-slate-400 text-sm font-bold uppercase tracking-wider">
+                <Filter size={14} /> Filters
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <Activity size={12} className="text-slate-500" />
+                <select
+                    className="bg-transparent border-none text-xs text-slate-300 focus:ring-0 cursor-pointer outline-none"
+                    value={localFilters.status || ''}
+                    onChange={e => handleChange('status', e.target.value)}
+                >
+                    <option value="">All Statuses</option>
+                    <option value="active">Active</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                </select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <Cpu size={12} className="text-slate-500" />
+                <input
+                    type="text"
+                    placeholder="Model..."
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-24"
+                    value={localFilters.model || ''}
+                    onChange={e => handleChange('model', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <Calendar size={12} className="text-slate-500" />
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.start_date || ''}
+                    onChange={e => handleChange('start_date', e.target.value)}
+                />
+                <span className="text-slate-600">-</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.end_date || ''}
+                    onChange={e => handleChange('end_date', e.target.value)}
+                />
+            </div>
+
+            {(localFilters.status || localFilters.model || localFilters.start_date || localFilters.end_date) && (
+                <button
+                    onClick={() => setLocalFilters({})}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
+                >
+                    Clear
+                </button>
+            )}
+        </div>
+    );
+};
+
 const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = ({ session, onBack }) => {
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts'>('transcript');
@@ -1054,7 +1132,8 @@ export const SessionInspector: React.FC = () => {
         <div className="h-full flex flex-col gap-8 animate-in fade-in duration-500 overflow-y-auto pb-8">
             <div>
                 <h2 className="text-3xl font-bold text-slate-100 mb-2 font-mono tracking-tighter">Session Forensics</h2>
-                <p className="text-slate-400 max-w-2xl">Examine agent behavior, tool call chains, and multi-agent orchestration logs with millisecond-precision timestamps.</p>
+                <p className="text-slate-400 max-w-2xl mb-6">Examine agent behavior, tool call chains, and multi-agent orchestration logs with millisecond-precision timestamps.</p>
+                <SessionFilterBar />
             </div>
 
             <div className="space-y-10">
