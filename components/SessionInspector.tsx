@@ -12,9 +12,15 @@ const LogItemBlurb: React.FC<{
     log: SessionLog;
     isSelected: boolean;
     onClick: () => void;
-}> = ({ log, isSelected, onClick }) => {
+    fileCount?: number;
+    artifactCount?: number;
+    onShowFiles?: () => void;
+    onShowArtifacts?: () => void;
+    onOpenThread?: (threadId: string) => void;
+}> = ({ log, isSelected, onClick, fileCount = 0, artifactCount = 0, onShowFiles, onShowArtifacts, onOpenThread }) => {
     const isAgent = log.speaker === 'agent';
     const isUser = log.speaker === 'user';
+    const isSystem = log.speaker === 'system';
 
     if (log.type === 'message') {
         return (
@@ -27,9 +33,11 @@ const LogItemBlurb: React.FC<{
                     ? 'border-indigo-500 bg-indigo-500/20 text-indigo-400'
                     : isUser
                         ? 'bg-slate-800 border-slate-700 text-slate-400'
+                        : isSystem
+                            ? 'bg-slate-900 border-slate-700 text-slate-300'
                         : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
                     }`}>
-                    {isUser ? <span className="text-xs font-bold">U</span> : <Bot size={16} />}
+                    {isUser ? <span className="text-xs font-bold">U</span> : isSystem ? <span className="text-xs font-bold">S</span> : <Bot size={16} />}
                 </div>
 
                 <div className={`flex flex-col max-w-[85%] ${isUser ? 'items-end' : 'items-start'}`}>
@@ -42,9 +50,35 @@ const LogItemBlurb: React.FC<{
                         ? 'bg-transparent border-transparent text-indigo-100'
                         : isUser
                             ? 'bg-slate-800 border-slate-700 text-slate-300'
+                            : isSystem
+                                ? 'bg-slate-900/60 border-slate-700 text-slate-300'
                             : 'bg-slate-900 border-slate-800 text-slate-300'
                         }`}>
                         <p className="line-clamp-3 leading-relaxed">{log.content}</p>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                        {fileCount > 0 && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onShowFiles?.();
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded border border-blue-500/30 text-blue-300 bg-blue-500/10 hover:bg-blue-500/20"
+                            >
+                                Files: {fileCount}
+                            </button>
+                        )}
+                        {artifactCount > 0 && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onShowArtifacts?.();
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+                            >
+                                Artifacts: {artifactCount}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -55,9 +89,17 @@ const LogItemBlurb: React.FC<{
         tool: <Terminal size={12} className="text-amber-500" />,
         subagent: <Zap size={12} className="text-purple-400" />,
         skill: <Cpu size={12} className="text-blue-400" />,
+        thought: <MessageSquare size={12} className="text-slate-300" />,
+        system: <ShieldAlert size={12} className="text-slate-400" />,
+        command: <Terminal size={12} className="text-emerald-400" />,
+        subagent_start: <Zap size={12} className="text-purple-300" />,
     };
 
     const label = log.type === 'tool' ? `Used Tool: ${log.toolCall?.name}` :
+        log.type === 'subagent_start' ? `Sub-thread Started` :
+            log.type === 'thought' ? 'Agent Thought' :
+                log.type === 'system' ? 'System Event' :
+                    log.type === 'command' ? `Command: ${log.content}` :
         log.type === 'subagent' ? `Spawned Agent: ${log.agentName || 'Subagent'}` :
             `Loaded Skill: ${log.skillDetails?.name}`;
 
@@ -75,7 +117,42 @@ const LogItemBlurb: React.FC<{
                     {label}
                 </span>
             </div>
-            <ChevronRight size={12} className={`text-slate-600 transition-transform ${isSelected ? 'rotate-90 text-indigo-400' : 'group-hover:translate-x-0.5'}`} />
+            <div className="flex items-center gap-2">
+                {log.linkedSessionId && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenThread?.(log.linkedSessionId!);
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20"
+                    >
+                        Open Thread
+                    </button>
+                )}
+                {fileCount > 0 && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onShowFiles?.();
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-blue-500/30 text-blue-300 bg-blue-500/10 hover:bg-blue-500/20"
+                    >
+                        F:{fileCount}
+                    </button>
+                )}
+                {artifactCount > 0 && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onShowArtifacts?.();
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+                    >
+                        A:{artifactCount}
+                    </button>
+                )}
+                <ChevronRight size={12} className={`text-slate-600 transition-transform ${isSelected ? 'rotate-90 text-indigo-400' : 'group-hover:translate-x-0.5'}`} />
+            </div>
         </div>
     );
 };
@@ -95,11 +172,17 @@ const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
             <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg shadow-inner">
-                        {log.type === 'message' ? <MessageSquare size={16} /> : log.type === 'tool' ? <Terminal size={16} /> : <Zap size={16} />}
+                        {log.type === 'tool'
+                            ? <Terminal size={16} />
+                            : log.type === 'subagent' || log.type === 'subagent_start'
+                                ? <Zap size={16} />
+                                : log.type === 'skill'
+                                    ? <Cpu size={16} />
+                                    : <MessageSquare size={16} />}
                     </div>
                     <div>
                         <h4 className="text-sm font-bold text-slate-100 uppercase tracking-tight">
-                            {log.type === 'subagent' ? 'Subagent Thread' : log.type === 'tool' ? 'Tool Execution' : 'Log Details'}
+                            {log.type === 'subagent' ? 'Subagent Thread' : log.type === 'tool' ? 'Tool Execution' : log.type === 'subagent_start' ? 'Subagent Start' : 'Log Details'}
                         </h4>
                         <p className="text-[10px] text-slate-500 font-mono">{log.timestamp}</p>
                     </div>
@@ -192,10 +275,13 @@ const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
                     </div>
                 )}
 
-                {/* FALLBACK FOR REGULAR MESSAGES */}
-                {log.type === 'message' && (
+                {/* FALLBACK FOR REGULAR/TYPED MESSAGES */}
+                {log.type !== 'tool' && log.type !== 'subagent' && log.type !== 'skill' && (
                     <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
                         <p className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">{log.content}</p>
+                        {log.linkedSessionId && (
+                            <p className="mt-3 text-[11px] text-indigo-300 font-mono">Linked Thread: {log.linkedSessionId}</p>
+                        )}
                     </div>
                 )}
 
@@ -224,13 +310,35 @@ const TranscriptView: React.FC<{
     selectedLogId: string | null;
     setSelectedLogId: (id: string | null) => void;
     filterAgent?: string | null;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent }) => {
+    threadSessions: AgentSession[];
+    onOpenThread: (sessionId: string) => void;
+    onShowLinked: (tab: 'files' | 'artifacts', sourceLogId: string) => void;
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, onOpenThread, onShowLinked }) => {
 
     const logs = filterAgent
-        ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user')
+        ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
         : session.logs;
 
     const selectedLog = logs.find(l => l.id === selectedLogId);
+    const threadLinks = threadSessions.filter(t => t.id !== session.id);
+
+    const filesByLogId = useMemo(() => {
+        const map = new Map<string, number>();
+        (session.updatedFiles || []).forEach(file => {
+            if (!file.sourceLogId) return;
+            map.set(file.sourceLogId, (map.get(file.sourceLogId) || 0) + 1);
+        });
+        return map;
+    }, [session.updatedFiles]);
+
+    const artifactsByLogId = useMemo(() => {
+        const map = new Map<string, number>();
+        (session.linkedArtifacts || []).forEach(artifact => {
+            if (!artifact.sourceLogId) return;
+            map.set(artifact.sourceLogId, (map.get(artifact.sourceLogId) || 0) + 1);
+        });
+        return map;
+    }, [session.linkedArtifacts]);
 
     return (
         <div className="flex-1 flex gap-6 min-h-0 min-w-full h-full">
@@ -252,6 +360,11 @@ const TranscriptView: React.FC<{
                             log={log}
                             isSelected={selectedLogId === log.id}
                             onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
+                            fileCount={filesByLogId.get(log.id) || 0}
+                            artifactCount={artifactsByLogId.get(log.id) || 0}
+                            onShowFiles={() => onShowLinked('files', log.id)}
+                            onShowArtifacts={() => onShowLinked('artifacts', log.id)}
+                            onOpenThread={onOpenThread}
                         />
                     ))}
                     {logs.length === 0 && <div className="p-8 text-center text-slate-500 italic">No logs found for this view.</div>}
@@ -330,12 +443,38 @@ const TranscriptView: React.FC<{
                         ))}
                     </div>
                 </div>
+
+                {/* Linked Sub-Threads */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Linked Sub-Threads</h3>
+                    <div className="space-y-2 max-h-56 overflow-y-auto">
+                        {threadLinks.length === 0 && (
+                            <div className="text-xs text-slate-500">No linked sub-threads found.</div>
+                        )}
+                        {threadLinks.map(thread => (
+                            <button
+                                key={thread.id}
+                                onClick={() => onOpenThread(thread.id)}
+                                className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
+                            >
+                                <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
+                                <div className="text-[10px] text-slate-500 mt-1">
+                                    {(thread.agentId ? `agent-${thread.agentId}` : thread.sessionType) || 'thread'}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
         </div>
     );
 };
 
-const FilesView: React.FC<{ session: AgentSession; onOpenDoc: (doc: PlanDocument) => void }> = ({ session, onOpenDoc }) => {
+const FilesView: React.FC<{
+    session: AgentSession;
+    onOpenDoc: (doc: PlanDocument) => void;
+    highlightedSourceLogId?: string | null;
+}> = ({ session, onOpenDoc, highlightedSourceLogId }) => {
     const { documents } = useData();
     if (!session.updatedFiles || session.updatedFiles.length === 0) {
         return (
@@ -367,7 +506,7 @@ const FilesView: React.FC<{ session: AgentSession; onOpenDoc: (doc: PlanDocument
             </div>
             <div className="divide-y divide-slate-800">
                 {session.updatedFiles.map((file, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-4 p-4 hover:bg-slate-800/30 transition-colors items-center group">
+                    <div key={idx} className={`grid grid-cols-12 gap-4 p-4 hover:bg-slate-800/30 transition-colors items-center group ${highlightedSourceLogId && file.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-y border-indigo-500/30' : ''}`}>
                         <div className="col-span-4 flex items-center gap-3">
                             <FileText size={16} className="text-indigo-400" />
                             <span className="text-sm font-mono text-slate-300 truncate" title={file.filePath}>{file.filePath}</span>
@@ -400,7 +539,7 @@ const FilesView: React.FC<{ session: AgentSession; onOpenDoc: (doc: PlanDocument
     );
 };
 
-const ArtifactsView: React.FC<{ session: AgentSession }> = ({ session }) => {
+const ArtifactsView: React.FC<{ session: AgentSession; highlightedSourceLogId?: string | null }> = ({ session, highlightedSourceLogId }) => {
     if (!session.linkedArtifacts || session.linkedArtifacts.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
@@ -413,7 +552,7 @@ const ArtifactsView: React.FC<{ session: AgentSession }> = ({ session }) => {
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {session.linkedArtifacts.map(artifact => (
-                <div key={artifact.id} className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-500/50 transition-all group">
+                <div key={artifact.id} className={`bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && artifact.sourceLogId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}>
                     <div className="flex justify-between items-start mb-4">
                         <div className={`p-2 rounded-lg ${artifact.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
                             artifact.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
@@ -785,48 +924,67 @@ const AnalyticsView: React.FC<{
 const AgentsView: React.FC<{
     session: AgentSession;
     onSelectAgent: (agentName: string) => void;
-}> = ({ session, onSelectAgent }) => {
-    // Extract unique agents
-    const agents = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Main Agent')));
+    threadSessions: AgentSession[];
+    onOpenThread: (sessionId: string) => void;
+}> = ({ session, onSelectAgent, threadSessions, onOpenThread }) => {
+    const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+
+    const logAgents = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Main Session')));
+    const threadAgents = Array.from(new Set(threadSessions.map(t => t.agentId ? `agent-${t.agentId}` : 'Main Session')));
+    const agents = Array.from(new Set([...logAgents, ...threadAgents]));
+
+    const agentThreads = (agent: string) => threadSessions.filter(t => (t.agentId ? `agent-${t.agentId}` : 'Main Session') === agent);
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="space-y-4">
             {agents.map(agent => {
-                const agentLogs = session.logs.filter(l => l.agentName === agent || (agent === 'Main Agent' && !l.agentName && l.speaker === 'agent'));
-                const toolsUsed = new Set(agentLogs.filter(l => l.type === 'tool').map(l => l.toolCall?.name));
+                const isOpen = expandedAgent === agent;
+                const agentLogs = session.logs.filter(l => l.agentName === agent || (agent === 'Main Session' && (!l.agentName || l.agentName === 'Main Agent') && l.speaker === 'agent'));
+                const threads = agentThreads(agent);
 
                 return (
-                    <div
-                        key={agent}
-                        onClick={() => onSelectAgent(agent === 'Main Agent' ? '' : agent)}
-                        className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-500/50 hover:shadow-lg transition-all cursor-pointer group"
-                    >
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-12 h-12 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center text-xl font-bold text-indigo-400 group-hover:border-indigo-500 transition-colors">
-                                {agent[0]}
+                    <div key={agent} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                        <button
+                            onClick={() => setExpandedAgent(isOpen ? null : agent)}
+                            className="w-full p-4 flex items-center justify-between hover:bg-slate-800/30 transition-colors"
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-sm font-bold text-indigo-400">
+                                    {agent[0]}
+                                </div>
+                                <div className="text-left">
+                                    <div className="font-bold text-slate-200">{agent}</div>
+                                    <div className="text-xs text-slate-500 font-mono">{agentLogs.length} interactions · {threads.length} threads</div>
+                                </div>
                             </div>
-                            <div>
-                                <h3 className="font-bold text-slate-200 group-hover:text-indigo-400 transition-colors">{agent}</h3>
-                                <p className="text-xs text-slate-500 font-mono">{agentLogs.length} interactions</p>
-                            </div>
-                        </div>
+                            {isOpen ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
+                        </button>
 
-                        <div className="space-y-3 mb-4">
-                            <div className="flex justify-between text-xs">
-                                <span className="text-slate-500">Tools Accessed</span>
-                                <span className="text-slate-300 font-mono">{toolsUsed.size}</span>
+                        {isOpen && (
+                            <div className="p-4 border-t border-slate-800 space-y-3">
+                                <button
+                                    onClick={() => onSelectAgent(agent === 'Main Session' ? '' : agent)}
+                                    className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20"
+                                >
+                                    Filter Transcript
+                                </button>
+                                <div className="space-y-2">
+                                    {threads.length === 0 && (
+                                        <div className="text-xs text-slate-500">No linked threads for this agent.</div>
+                                    )}
+                                    {threads.map(thread => (
+                                        <button
+                                            key={thread.id}
+                                            onClick={() => onOpenThread(thread.id)}
+                                            className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
+                                        >
+                                            <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
+                                            <div className="text-[10px] text-slate-500 mt-1">{thread.sessionType || 'thread'}</div>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-slate-500">Avg. Response Time</span>
-                                <span className="text-slate-300 font-mono">~1.2s</span>
-                            </div>
-                        </div>
-
-                        <div className="pt-4 border-t border-slate-800">
-                            <button className="text-xs font-bold text-indigo-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                                View Transcript <ArrowLeft size={12} className="rotate-180" />
-                            </button>
-                        </div>
+                        )}
                     </div>
                 );
             })}
@@ -926,7 +1084,7 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
 
 const SessionFilterBar: React.FC = () => {
     const { sessionFilters, setSessionFilters } = useData();
-    const [localFilters, setLocalFilters] = useState(sessionFilters);
+    const [localFilters, setLocalFilters] = useState({ ...sessionFilters, include_subagents: sessionFilters.include_subagents ?? false });
 
     // Debounce triggers
     useEffect(() => {
@@ -973,6 +1131,16 @@ const SessionFilterBar: React.FC = () => {
                 />
             </div>
 
+            <label className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
+                <input
+                    type="checkbox"
+                    checked={!!localFilters.include_subagents}
+                    onChange={e => handleChange('include_subagents', e.target.checked)}
+                    className="accent-indigo-500"
+                />
+                Show Sub-agents
+            </label>
+
             <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
                 <Calendar size={12} className="text-slate-500" />
                 <input
@@ -990,9 +1158,9 @@ const SessionFilterBar: React.FC = () => {
                 />
             </div>
 
-            {(localFilters.status || localFilters.model || localFilters.start_date || localFilters.end_date) && (
+            {(localFilters.status || localFilters.model || localFilters.start_date || localFilters.end_date || localFilters.include_subagents) && (
                 <button
-                    onClick={() => setLocalFilters({})}
+                    onClick={() => setLocalFilters({ include_subagents: false })}
                     className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
                 >
                     Clear
@@ -1025,11 +1193,42 @@ const SessionFilterBar: React.FC = () => {
     );
 };
 
-const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = ({ session, onBack }) => {
+const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpenSession: (sessionId: string) => void }> = ({ session, onBack, onOpenSession }) => {
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
+    const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
+    const [linkedSourceLogId, setLinkedSourceLogId] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        const rootSessionId = session.rootSessionId || session.id;
+        const load = async () => {
+            try {
+                const params = new URLSearchParams({
+                    offset: '0',
+                    limit: '500',
+                    sort_by: 'started_at',
+                    sort_order: 'desc',
+                    include_subagents: 'true',
+                    root_session_id: rootSessionId,
+                });
+                const res = await fetch(`/api/sessions?${params.toString()}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) {
+                    setThreadSessions(data.items || []);
+                }
+            } catch (e) {
+                console.error('Failed to load thread sessions', e);
+            }
+        };
+        void load();
+        return () => {
+            cancelled = true;
+        };
+    }, [session.id, session.rootSessionId]);
 
     const handleSelectAgent = (agent: string) => {
         setFilterAgent(agent || null); // Empty string resets filter
@@ -1041,6 +1240,11 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
         else setFilterAgent(null);
         setActiveTab('transcript');
     }
+
+    const handleShowLinked = (tab: 'files' | 'artifacts', sourceLogId: string) => {
+        setLinkedSourceLogId(sourceLogId);
+        setActiveTab(tab);
+    };
 
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
@@ -1105,12 +1309,15 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
                         selectedLogId={selectedLogId}
                         setSelectedLogId={setSelectedLogId}
                         filterAgent={filterAgent}
+                        threadSessions={threadSessions}
+                        onOpenThread={onOpenSession}
+                        onShowLinked={handleShowLinked}
                     />
                 )}
-                {activeTab === 'files' && <FilesView session={session} onOpenDoc={setViewingDoc} />}
-                {activeTab === 'artifacts' && <ArtifactsView session={session} />}
+                {activeTab === 'files' && <FilesView session={session} onOpenDoc={setViewingDoc} highlightedSourceLogId={linkedSourceLogId} />}
+                {activeTab === 'artifacts' && <ArtifactsView session={session} highlightedSourceLogId={linkedSourceLogId} />}
                 {activeTab === 'analytics' && <AnalyticsView session={session} goToTranscript={handleJumpToTranscript} />}
-                {activeTab === 'agents' && <AgentsView session={session} onSelectAgent={handleSelectAgent} />}
+                {activeTab === 'agents' && <AgentsView session={session} onSelectAgent={handleSelectAgent} threadSessions={threadSessions} onOpenThread={onOpenSession} />}
                 {activeTab === 'impact' && <ImpactView session={session} />}
             </div>
 
@@ -1149,7 +1356,7 @@ export const SessionInspector: React.FC = () => {
     const pastSessions = sessions.filter(s => s.status !== 'active');
 
     if (selectedSession) {
-        return <SessionDetail session={selectedSession} onBack={() => setSelectedSession(null)} />;
+        return <SessionDetail session={selectedSession} onBack={() => setSelectedSession(null)} onOpenSession={(sessionId) => { void openSession(sessionId); }} />;
     }
 
     return (

@@ -28,7 +28,7 @@ export interface ToolUsage {
   category: 'search' | 'edit' | 'test' | 'system';
 }
 
-export type LogType = 'message' | 'tool' | 'subagent' | 'skill';
+export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
 
 export interface SessionLog {
   id: string;
@@ -37,11 +37,16 @@ export interface SessionLog {
   type: LogType;
   agentName?: string;
   content: string;
+  linkedSessionId?: string;
+  relatedToolCallId?: string;
+  metadata?: Record<string, any>;
   toolCall?: {
+    id?: string;
     name: string;
     args: string;
     status: 'success' | 'error';
     output?: string;
+    isError?: boolean;
   };
   subagentThread?: SessionLog[]; // For subagent conversation recursion
   skillDetails?: {
@@ -67,16 +72,20 @@ export interface SessionFileUpdate {
   deletions: number;
   agentName: string;
   timestamp: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
 }
 
 export interface SessionArtifact {
   id: string;
-  type: 'memory' | 'request_log' | 'knowledge_base' | 'external_link';
+  type: 'memory' | 'request_log' | 'knowledge_base' | 'external_link' | 'command' | 'skill' | 'agent' | 'manifest' | string;
   title: string;
   source: string; // e.g., "SkillMeat", "MeatyCapture"
   description?: string;
   url?: string;
   preview?: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
 }
 
 export interface AgentSession {
@@ -85,6 +94,8 @@ export interface AgentSession {
   status: 'active' | 'completed';
   model: string;
   durationSeconds: number;
+  rootSessionId?: string;
+  agentId?: string;
   tokensIn: number;
   tokensOut: number;
   totalCost: number;

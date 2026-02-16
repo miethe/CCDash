@@ -1,17 +1,51 @@
 """Parse JSONL session log files into AgentSession models."""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
-from pathlib import Path
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from backend.models import (
-    AgentSession, SessionLog, ToolCallInfo, ToolUsage,
-    SessionFileUpdate, ImpactPoint,
+    AgentSession,
+    ImpactPoint,
+    SessionArtifact,
+    SessionFileUpdate,
+    SessionLog,
+    ToolCallInfo,
+    ToolUsage,
 )
+
+_PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
+_COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
+
+# Tools that commonly include paths in args/results.
+_FILE_TOOL_NAMES = {
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "Task",
+    "ReadFile",
+    "WriteFile",
+    "Exec",
+}
+
+# Basenames we treat as structured artifacts/manifests.
+_MANIFEST_BASENAMES = {
+    "SKILL.md",
+    "AGENTS.md",
+    "automation.toml",
+    "package.json",
+    "pyproject.toml",
+    "README.md",
+}
 
 
 def _normalize_session_id(raw_id: str) -> str:
@@ -34,16 +68,8 @@ def _make_id(path: Path) -> str:
     return _normalize_session_id(path.stem) or f"S-{hashlib.sha1(path.stem.encode('utf-8')).hexdigest()[:20]}"
 
 
-def _parse_timestamp(ts: str | None) -> str:
-    """Normalize a timestamp to ISO format, return empty string if None."""
-    if not ts:
-        return ""
-    return ts
-
-
 def _estimate_cost(tokens_in: int, tokens_out: int, model: str) -> float:
     """Rough cost estimate based on model pricing."""
-    # Approximate per-million-token rates
     rates = {
         "claude-3-5-sonnet": (3.0, 15.0),
         "claude-3-7-sonnet": (3.0, 15.0),
@@ -54,12 +80,110 @@ def _estimate_cost(tokens_in: int, tokens_out: int, model: str) -> float:
         "claude-haiku": (0.25, 1.25),
     }
     model_lower = model.lower()
-    in_rate, out_rate = 3.0, 15.0  # default sonnet pricing
+    in_rate, out_rate = 3.0, 15.0
     for key, (ir, outr) in rates.items():
         if key in model_lower:
             in_rate, out_rate = ir, outr
             break
     return (tokens_in / 1_000_000 * in_rate) + (tokens_out / 1_000_000 * out_rate)
+
+
+def _normalize_path(raw: str) -> str:
+    path = raw.strip().strip('"\'`<>[](),;')
+    if not path:
+        return ""
+    if path.startswith("./"):
+        path = path[2:]
+    if path.startswith("../"):
+        return ""
+    if "node_modules/" in path or "/.git/" in path or "/coverage/" in path:
+        return ""
+    return path
+
+
+def _looks_like_file_path(value: str) -> bool:
+    if "/" not in value:
+        return False
+    basename = value.rsplit("/", 1)[-1]
+    if basename in _MANIFEST_BASENAMES:
+        return True
+    if "." in basename:
+        return True
+    return value.startswith("/Users/")
+
+
+def _extract_paths_from_text(text: str) -> list[str]:
+    matches = []
+    for raw in _PATH_PATTERN.findall(text):
+        norm = _normalize_path(raw)
+        if norm and _looks_like_file_path(norm):
+            matches.append(norm)
+    return matches
+
+
+def _extract_paths_from_payload(payload: Any) -> list[str]:
+    paths: list[str] = []
+
+    if isinstance(payload, str):
+        norm = _normalize_path(payload)
+        if norm and _looks_like_file_path(norm):
+            paths.append(norm)
+        paths.extend(_extract_paths_from_text(payload))
+        return paths
+
+    if isinstance(payload, list):
+        for item in payload:
+            paths.extend(_extract_paths_from_payload(item))
+        return paths
+
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in {
+                "file_path",
+                "path",
+                "paths",
+                "target_file",
+                "source_file",
+                "old_file",
+                "new_file",
+                "cwd",
+                "workdir",
+                "command",
+            }:
+                paths.extend(_extract_paths_from_payload(value))
+            elif isinstance(value, (dict, list)):
+                paths.extend(_extract_paths_from_payload(value))
+            elif isinstance(value, str) and key.endswith("path"):
+                paths.extend(_extract_paths_from_payload(value))
+        return paths
+
+    return paths
+
+
+def _tool_result_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                chunks.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text)
+                elif isinstance(block.get("content"), str):
+                    chunks.append(block["content"])
+        return "\n".join(chunks)
+    try:
+        return json.dumps(content)
+    except Exception:
+        return str(content)
+
+
+def _hash_artifact_id(session_id: str, kind: str, title: str, source_log_id: str | None) -> str:
+    raw = f"{session_id}|{kind}|{title}|{source_log_id or ''}"
+    return f"{session_id}-art-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]}"
 
 
 def parse_session_file(path: Path) -> AgentSession | None:
@@ -86,10 +210,18 @@ def parse_session_file(path: Path) -> AgentSession | None:
         return None
 
     session_id = _make_id(path)
-    session_type = "subagent" if path.parent.name == "subagents" else "session"
+    is_subagent = path.parent.name == "subagents"
+    session_type = "subagent" if is_subagent else "session"
+
     parent_session_id = ""
-    if session_type == "subagent":
+    if is_subagent:
         parent_session_id = _normalize_session_id(path.parent.parent.name)
+
+    root_session_id = parent_session_id or session_id
+    agent_id: str | None = None
+    if is_subagent and path.stem.startswith("agent-"):
+        agent_id = path.stem.split("agent-", 1)[-1]
+
     task_id = ""
     model = ""
     git_branch = ""
@@ -99,132 +231,368 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tokens_out = 0
     first_ts = ""
     last_ts = ""
+
     logs: list[SessionLog] = []
     tool_counter: Counter[str] = Counter()
     tool_success: Counter[str] = Counter()
     tool_total: Counter[str] = Counter()
-    file_changes: dict[str, SessionFileUpdate] = {}
     impacts: list[ImpactPoint] = []
+
+    file_changes: dict[str, SessionFileUpdate] = {}
+    artifacts: dict[str, SessionArtifact] = {}
+
+    tool_logs_by_id: dict[str, int] = {}
+    subagent_link_by_parent_tool: dict[str, str] = {}
+    emitted_subagent_starts: set[tuple[str, str]] = set()
+
     log_idx = 0
+
+    def append_log(**kwargs: Any) -> int:
+        nonlocal log_idx
+        log = SessionLog(id=f"log-{log_idx}", **kwargs)
+        logs.append(log)
+        log_idx += 1
+        return len(logs) - 1
+
+    def track_file(path_value: str, log_id: str, tool_name: str | None, current_agent: str | None) -> None:
+        norm = _normalize_path(path_value)
+        if not norm or not _looks_like_file_path(norm):
+            return
+        if norm in file_changes:
+            return
+        file_changes[norm] = SessionFileUpdate(
+            filePath=norm,
+            additions=0,
+            deletions=0,
+            agentName=current_agent or "",
+            sourceLogId=log_id,
+            sourceToolName=tool_name,
+        )
+
+        basename = norm.rsplit("/", 1)[-1]
+        if basename in _MANIFEST_BASENAMES:
+            add_artifact(
+                kind="manifest",
+                title=basename,
+                description=f"Manifest referenced at {norm}",
+                source="filesystem",
+                source_log_id=log_id,
+                source_tool_name=tool_name,
+            )
+
+    def track_files_from_payload(payload: Any, log_id: str, tool_name: str | None, current_agent: str | None) -> None:
+        for p in _extract_paths_from_payload(payload):
+            track_file(p, log_id, tool_name, current_agent)
+
+    def add_artifact(
+        kind: str,
+        title: str,
+        description: str,
+        source: str,
+        source_log_id: str | None,
+        source_tool_name: str | None,
+        url: str | None = None,
+    ) -> None:
+        if not title:
+            return
+        artifact_id = _hash_artifact_id(session_id, kind, title, source_log_id)
+        if artifact_id in artifacts:
+            return
+        artifacts[artifact_id] = SessionArtifact(
+            id=artifact_id,
+            title=title,
+            type=kind,
+            description=description,
+            source=source,
+            url=url,
+            sourceLogId=source_log_id,
+            sourceToolName=source_tool_name,
+        )
+
+    def add_command_artifacts_from_text(text: str, source_log_id: str) -> None:
+        for match in _COMMAND_NAME_PATTERN.finditer(text):
+            command_name = match.group(1).strip()
+            if not command_name:
+                continue
+            append_log(
+                timestamp=current_ts,
+                speaker="user",
+                type="command",
+                content=command_name,
+                metadata={"origin": "command-tag"},
+            )
+            add_artifact(
+                kind="command",
+                title=command_name,
+                description="User command invoked in session transcript",
+                source="command-tag",
+                source_log_id=source_log_id,
+                source_tool_name=None,
+            )
 
     for entry in entries:
         entry_type = entry.get("type", "")
-        ts = entry.get("timestamp", "")
-        if ts and not first_ts:
-            first_ts = ts
-        if ts:
-            last_ts = ts
+        current_ts = entry.get("timestamp", "")
+        if current_ts and not first_ts:
+            first_ts = current_ts
+        if current_ts:
+            last_ts = current_ts
 
-        # Extract git info from initial snapshot
         if entry_type == "file-history-snapshot":
             git_branch = entry.get("gitBranch", git_branch)
             continue
 
-        # Extract session metadata
-        if "sessionId" in entry and not git_branch:
+        if isinstance(entry.get("gitBranch"), str) and not git_branch:
             git_branch = entry.get("gitBranch", "")
-        if not parent_session_id and isinstance(entry.get("sessionId"), str):
-            maybe_parent = _normalize_session_id(entry.get("sessionId", ""))
-            if maybe_parent and maybe_parent != session_id:
-                parent_session_id = maybe_parent
+
+        entry_session_id = entry.get("sessionId")
+        if isinstance(entry_session_id, str):
+            normalized_parent = _normalize_session_id(entry_session_id)
+            if not parent_session_id and normalized_parent and normalized_parent != session_id:
+                parent_session_id = normalized_parent
+                if not is_subagent:
+                    root_session_id = normalized_parent
+            if session_type == "subagent":
+                root_session_id = parent_session_id or root_session_id
+
         if not task_id:
             if isinstance(entry.get("taskId"), str):
                 task_id = entry.get("taskId", "")
             elif isinstance(entry.get("task_id"), str):
                 task_id = entry.get("task_id", "")
 
-        # Process messages
-        if entry_type in ("user", "assistant"):
-            message = entry.get("message", {})
-            if isinstance(message, str):
-                content = message
-                speaker = entry_type
-                agent_name = None
-            else:
-                content_blocks = message.get("content", [])
-                if isinstance(content_blocks, str):
-                    content = content_blocks
-                elif isinstance(content_blocks, list):
-                    text_parts = []
-                    tool_calls = []
-                    for block in content_blocks:
-                        if isinstance(block, dict):
-                            if block.get("type") == "text":
-                                text_parts.append(block.get("text", ""))
-                            elif block.get("type") == "tool_use":
-                                tool_calls.append(block)
-                            elif block.get("type") == "tool_result":
-                                # tool result feedback
-                                result_content = block.get("content", "")
-                                if isinstance(result_content, list):
-                                    result_content = " ".join(
-                                        r.get("text", "") for r in result_content if isinstance(r, dict)
-                                    )
-                                text_parts.append(f"[Tool result: {result_content[:200]}]")
-                        elif isinstance(block, str):
-                            text_parts.append(block)
-                    content = "\n".join(text_parts) if text_parts else ""
+        if not agent_id and isinstance(entry.get("agentId"), str):
+            agent_id = entry.get("agentId")
 
-                    # Create tool log entries
-                    for tc in tool_calls:
-                        tool_name = tc.get("name", "unknown")
-                        tool_input = tc.get("input", {})
-                        tool_counter[tool_name] += 1
-                        tool_total[tool_name] += 1
-                        tool_success[tool_name] += 1  # assume success unless we see an error
+        if entry_type == "progress":
+            data = entry.get("data", {})
+            if isinstance(data, dict) and data.get("type") == "agent_progress":
+                parent_tool_call_id = entry.get("parentToolUseID")
+                subagent_agent_id = data.get("agentId")
+                if isinstance(parent_tool_call_id, str) and isinstance(subagent_agent_id, str):
+                    linked_session = _normalize_session_id(f"agent-{subagent_agent_id}")
+                    subagent_link_by_parent_tool[parent_tool_call_id] = linked_session
 
-                        tool_log = SessionLog(
-                            id=f"log-{log_idx}",
-                            timestamp=ts,
-                            speaker="agent",
-                            type="tool",
-                            content=f"Called {tool_name}",
-                            agentName=entry.get("agentName"),
-                            toolCall=ToolCallInfo(
-                                name=tool_name,
-                                args=json.dumps(tool_input, indent=2)[:500],
-                                status="success",
-                            ),
+                    tool_log_idx = tool_logs_by_id.get(parent_tool_call_id)
+                    if tool_log_idx is not None:
+                        logs[tool_log_idx].linkedSessionId = linked_session
+                        logs[tool_log_idx].metadata["subagentAgentId"] = subagent_agent_id
+
+                    emit_key = (parent_tool_call_id, linked_session)
+                    if emit_key not in emitted_subagent_starts:
+                        emitted_subagent_starts.add(emit_key)
+                        start_idx = append_log(
+                            timestamp=current_ts,
+                            speaker="system",
+                            type="subagent_start",
+                            content=f"Subagent started: {subagent_agent_id}",
+                            linkedSessionId=linked_session,
+                            relatedToolCallId=parent_tool_call_id,
+                            metadata={"agentId": subagent_agent_id},
                         )
-                        logs.append(tool_log)
-                        log_idx += 1
-                else:
-                    content = str(content_blocks)
+                        start_log = logs[start_idx]
+                        add_artifact(
+                            kind="agent",
+                            title=f"agent-{subagent_agent_id}",
+                            description="Subagent thread spawned from a Task tool call",
+                            source="agent-progress",
+                            source_log_id=start_log.id,
+                            source_tool_name="Task",
+                        )
 
-                speaker = "user" if entry_type == "user" else "agent"
-                agent_name = entry.get("agentName")
+            elif isinstance(data, dict) and data.get("type") == "hook_progress":
+                msg = data.get("command") or data.get("hookName") or data.get("hookEvent") or "Hook progress"
+                append_log(
+                    timestamp=current_ts,
+                    speaker="system",
+                    type="system",
+                    content=str(msg),
+                    metadata={"hook": data.get("hookName", "")},
+                )
 
-                # Extract model info
-                if entry_type == "assistant":
-                    msg_model = message.get("model", "")
-                    if msg_model and not model:
-                        model = msg_model
-                    usage = message.get("usage", {})
-                    tokens_in += usage.get("input_tokens", 0)
-                    tokens_out += usage.get("output_tokens", 0)
+            label = data.get("message") if isinstance(data, dict) else "Progress event"
+            if isinstance(label, str) and label:
+                impacts.append(ImpactPoint(timestamp=current_ts, label=label[:200], type="info"))
+            continue
 
-            if content.strip():
-                log_entry = SessionLog(
-                    id=f"log-{log_idx}",
-                    timestamp=ts,
+        if entry_type not in ("user", "assistant"):
+            continue
+
+        message = entry.get("message", {})
+        message_role = entry_type
+        if isinstance(message, dict) and isinstance(message.get("role"), str):
+            message_role = message.get("role")
+
+        speaker = "agent" if message_role == "assistant" else "user"
+        agent_name = entry.get("agentName") if speaker == "agent" else None
+
+        if isinstance(message, dict) and speaker == "agent":
+            msg_model = message.get("model")
+            if isinstance(msg_model, str) and msg_model and not model:
+                model = msg_model
+            usage = message.get("usage", {})
+            if isinstance(usage, dict):
+                tokens_in += int(usage.get("input_tokens", 0) or 0)
+                tokens_out += int(usage.get("output_tokens", 0) or 0)
+
+        if isinstance(message, str):
+            content = message.strip()
+            if content:
+                idx = append_log(
+                    timestamp=current_ts,
                     speaker=speaker,
                     type="message",
-                    content=content[:2000],  # truncate very long messages
-                    agentName=agent_name if speaker == "agent" else None,
+                    content=content[:4000],
+                    agentName=agent_name,
                 )
-                logs.append(log_entry)
-                log_idx += 1
+                if speaker == "user":
+                    add_command_artifacts_from_text(content, logs[idx].id)
+            continue
 
-        # Track progress events
-        elif entry_type == "progress":
-            label = entry.get("message", "Progress event")
-            impacts.append(ImpactPoint(
-                timestamp=ts,
-                label=label[:200],
-                type="info",
-            ))
+        content_blocks = message.get("content", []) if isinstance(message, dict) else []
+        if isinstance(content_blocks, str):
+            content = content_blocks.strip()
+            if content:
+                idx = append_log(
+                    timestamp=current_ts,
+                    speaker=speaker,
+                    type="message",
+                    content=content[:4000],
+                    agentName=agent_name,
+                )
+                if speaker == "user":
+                    add_command_artifacts_from_text(content, logs[idx].id)
+            continue
 
-    # Calculate duration
+        if not isinstance(content_blocks, list):
+            continue
+
+        text_parts: list[str] = []
+        for block in content_blocks:
+            if isinstance(block, str):
+                text_parts.append(block)
+                continue
+
+            if not isinstance(block, dict):
+                continue
+
+            block_type = block.get("type")
+            if block_type == "text":
+                text = block.get("text", "")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+            elif block_type == "thinking":
+                thinking = block.get("thinking", "")
+                if isinstance(thinking, str) and thinking.strip():
+                    append_log(
+                        timestamp=current_ts,
+                        speaker="agent",
+                        type="thought",
+                        content=thinking[:8000],
+                        agentName=agent_name,
+                    )
+            elif block_type == "tool_use":
+                tool_name = str(block.get("name", "unknown"))
+                tool_id = block.get("id")
+                tool_input = block.get("input", {})
+                tool_args = json.dumps(tool_input, indent=2, ensure_ascii=True)[:12000]
+
+                linked_session = None
+                if isinstance(tool_id, str):
+                    linked_session = subagent_link_by_parent_tool.get(tool_id)
+
+                idx = append_log(
+                    timestamp=current_ts,
+                    speaker="agent",
+                    type="tool",
+                    content=f"Called {tool_name}",
+                    agentName=agent_name,
+                    linkedSessionId=linked_session,
+                    metadata={"toolInputKeys": list(tool_input.keys()) if isinstance(tool_input, dict) else []},
+                    toolCall=ToolCallInfo(
+                        id=tool_id if isinstance(tool_id, str) else None,
+                        name=tool_name,
+                        args=tool_args,
+                        status="success",
+                        isError=False,
+                    ),
+                )
+                tool_log = logs[idx]
+                if isinstance(tool_id, str):
+                    tool_logs_by_id[tool_id] = idx
+
+                tool_counter[tool_name] += 1
+                tool_total[tool_name] += 1
+                tool_success[tool_name] += 1
+
+                if tool_name in _FILE_TOOL_NAMES:
+                    track_files_from_payload(tool_input, tool_log.id, tool_name, agent_name)
+
+                if tool_name == "Skill" and isinstance(tool_input, dict):
+                    skill_name = tool_input.get("skill")
+                    if isinstance(skill_name, str) and skill_name:
+                        add_artifact(
+                            kind="skill",
+                            title=skill_name,
+                            description="Skill invocation in transcript",
+                            source="tool",
+                            source_log_id=tool_log.id,
+                            source_tool_name=tool_name,
+                        )
+                if tool_name == "Task" and isinstance(tool_input, dict):
+                    sub_type = tool_input.get("subagent_type")
+                    title = str(sub_type) if isinstance(sub_type, str) and sub_type else "Task subagent"
+                    add_artifact(
+                        kind="agent",
+                        title=title,
+                        description="Task tool invocation that may spawn a subagent",
+                        source="tool",
+                        source_log_id=tool_log.id,
+                        source_tool_name=tool_name,
+                    )
+
+            elif block_type == "tool_result":
+                related_id = block.get("tool_use_id")
+                output_text = _tool_result_to_text(block.get("content", ""))
+                is_error = bool(block.get("is_error", False))
+                related_idx = tool_logs_by_id.get(related_id) if isinstance(related_id, str) else None
+
+                if related_idx is not None:
+                    related_log = logs[related_idx]
+                    if related_log.toolCall:
+                        related_log.toolCall.output = output_text[:20000]
+                        related_log.toolCall.status = "error" if is_error else "success"
+                        related_log.toolCall.isError = is_error
+                    related_log.relatedToolCallId = related_id
+                    if is_error and related_log.toolCall:
+                        tool_success[related_log.toolCall.name] -= 1
+
+                    tool_name = related_log.toolCall.name if related_log.toolCall else None
+                    if tool_name in _FILE_TOOL_NAMES:
+                        track_files_from_payload(output_text, related_log.id, tool_name, related_log.agentName)
+                else:
+                    append_log(
+                        timestamp=current_ts,
+                        speaker="system",
+                        type="system",
+                        content=(f"Unmatched tool result for {related_id}: " if related_id else "Unmatched tool result: ")
+                        + output_text[:1000],
+                        relatedToolCallId=related_id if isinstance(related_id, str) else None,
+                        metadata={"isError": is_error},
+                    )
+
+        message_text = "\n".join(part for part in text_parts if part and part.strip()).strip()
+        if message_text:
+            idx = append_log(
+                timestamp=current_ts,
+                speaker=speaker,
+                type="message",
+                content=message_text[:8000],
+                agentName=agent_name,
+            )
+            if speaker == "user":
+                add_command_artifacts_from_text(message_text, logs[idx].id)
+
     duration = 0
     if first_ts and last_ts:
         try:
@@ -234,11 +602,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
         except (ValueError, TypeError):
             duration = 0
 
-    # Build tool usage summary
     tools_used = []
     for name, count in tool_counter.most_common():
         total = tool_total.get(name, count)
-        success = tool_success.get(name, count)
+        success = max(0, tool_success.get(name, count))
         rate = success / total if total > 0 else 1.0
         tools_used.append(ToolUsage(name=name, count=count, successRate=round(rate, 2)))
 
@@ -251,6 +618,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         model=model,
         sessionType=session_type,
         parentSessionId=parent_session_id or None,
+        rootSessionId=root_session_id,
+        agentId=agent_id,
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,
@@ -260,6 +629,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         gitAuthor=git_author or None,
         gitCommitHash=git_commit or None,
         updatedFiles=list(file_changes.values()),
+        linkedArtifacts=list(artifacts.values()),
         toolsUsed=tools_used,
         impactHistory=impacts,
         logs=logs,
@@ -276,7 +646,6 @@ def scan_sessions(sessions_dir: Path, max_files: int = 50) -> list[AgentSession]
     if not sessions_dir.exists():
         return sessions
 
-    # Sort by modification time (newest first), then limit
     jsonl_files = sorted(
         sessions_dir.glob("*.jsonl"),
         key=lambda p: p.stat().st_mtime,

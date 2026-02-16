@@ -22,9 +22,9 @@ class PostgresSessionRepository:
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
                 git_commit_hash, git_author, git_branch,
-                session_type, parent_session_id,
+                session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 duration_seconds=EXCLUDED.duration_seconds,
@@ -35,6 +35,8 @@ class PostgresSessionRepository:
                 git_branch=EXCLUDED.git_branch,
                 session_type=EXCLUDED.session_type,
                 parent_session_id=EXCLUDED.parent_session_id,
+                root_session_id=EXCLUDED.root_session_id,
+                agent_id=EXCLUDED.agent_id,
                 started_at=EXCLUDED.started_at, ended_at=EXCLUDED.ended_at,
                 updated_at=EXCLUDED.updated_at, source_file=EXCLUDED.source_file
         """
@@ -55,6 +57,8 @@ class PostgresSessionRepository:
             session_data.get("gitBranch"),
             session_data.get("sessionType", ""),
             session_data.get("parentSessionId"),
+            session_data.get("rootSessionId", session_data.get("id", "")),
+            session_data.get("agentId"),
             session_data.get("startedAt", ""),
             session_data.get("endedAt", ""),
             now, now,
@@ -70,26 +74,110 @@ class PostgresSessionRepository:
     async def list_paginated(
         self, offset: int, limit: int, project_id: str | None = None,
         sort_by: str = "started_at", sort_order: str = "desc",
+        filters: dict | None = None,
     ) -> list[dict]:
         allowed_sort = {"started_at", "total_cost", "duration_seconds", "tokens_in", "created_at"}
         if sort_by not in allowed_sort:
             sort_by = "started_at"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
 
+        where_parts: list[str] = []
+        params: list[Any] = []
+        idx = 1
+
         if project_id:
-            query = f"SELECT * FROM sessions WHERE project_id = $1 ORDER BY {sort_by} {order} LIMIT $2 OFFSET $3"
-            rows = await self.db.fetch(query, project_id, limit, offset)
-        else:
-            query = f"SELECT * FROM sessions ORDER BY {sort_by} {order} LIMIT $1 OFFSET $2"
-            rows = await self.db.fetch(query, limit, offset)
+            where_parts.append(f"project_id = ${idx}")
+            params.append(project_id)
+            idx += 1
+
+        filters = filters or {}
+        if filters.get("status"):
+            where_parts.append(f"status = ${idx}")
+            params.append(filters["status"])
+            idx += 1
+        if filters.get("model"):
+            where_parts.append(f"model ILIKE ${idx}")
+            params.append(f"%{filters['model']}%")
+            idx += 1
+        if not filters.get("include_subagents", False):
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("root_session_id"):
+            where_parts.append(f"root_session_id = ${idx}")
+            params.append(filters["root_session_id"])
+            idx += 1
+        if filters.get("start_date"):
+            where_parts.append(f"started_at >= ${idx}")
+            params.append(filters["start_date"])
+            idx += 1
+        if filters.get("end_date"):
+            where_parts.append(f"started_at <= ${idx}")
+            params.append(filters["end_date"])
+            idx += 1
+        if filters.get("min_duration") is not None:
+            where_parts.append(f"duration_seconds >= ${idx}")
+            params.append(filters["min_duration"])
+            idx += 1
+        if filters.get("max_duration") is not None:
+            where_parts.append(f"duration_seconds <= ${idx}")
+            params.append(filters["max_duration"])
+            idx += 1
+
+        where = ""
+        if where_parts:
+            where = " WHERE " + " AND ".join(where_parts)
+
+        query = f"SELECT * FROM sessions{where} ORDER BY {sort_by} {order} LIMIT ${idx} OFFSET ${idx + 1}"
+        params.extend([limit, offset])
+        rows = await self.db.fetch(query, *params)
         
         return [dict(r) for r in rows]
 
-    async def count(self, project_id: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, filters: dict | None = None) -> int:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        idx = 1
+
         if project_id:
-            val = await self.db.fetchval("SELECT COUNT(*) FROM sessions WHERE project_id = $1", project_id)
-        else:
-            val = await self.db.fetchval("SELECT COUNT(*) FROM sessions")
+            where_parts.append(f"project_id = ${idx}")
+            params.append(project_id)
+            idx += 1
+
+        filters = filters or {}
+        if filters.get("status"):
+            where_parts.append(f"status = ${idx}")
+            params.append(filters["status"])
+            idx += 1
+        if filters.get("model"):
+            where_parts.append(f"model ILIKE ${idx}")
+            params.append(f"%{filters['model']}%")
+            idx += 1
+        if not filters.get("include_subagents", False):
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("root_session_id"):
+            where_parts.append(f"root_session_id = ${idx}")
+            params.append(filters["root_session_id"])
+            idx += 1
+        if filters.get("start_date"):
+            where_parts.append(f"started_at >= ${idx}")
+            params.append(filters["start_date"])
+            idx += 1
+        if filters.get("end_date"):
+            where_parts.append(f"started_at <= ${idx}")
+            params.append(filters["end_date"])
+            idx += 1
+        if filters.get("min_duration") is not None:
+            where_parts.append(f"duration_seconds >= ${idx}")
+            params.append(filters["min_duration"])
+            idx += 1
+        if filters.get("max_duration") is not None:
+            where_parts.append(f"duration_seconds <= ${idx}")
+            params.append(filters["max_duration"])
+            idx += 1
+
+        where = ""
+        if where_parts:
+            where = " WHERE " + " AND ".join(where_parts)
+        val = await self.db.fetchval(f"SELECT COUNT(*) FROM sessions{where}", *params)
         return val or 0
 
     async def delete_by_source(self, source_file: str) -> None:
@@ -110,12 +198,16 @@ class PostgresSessionRepository:
             records = []
             for i, log in enumerate(logs):
                 tc = log.get("toolCall")
-                tool_name, tool_args, tool_output, tool_status = None, None, None, "success"
+                tool_name, tool_call_id, tool_args, tool_output, tool_status = None, None, None, None, "success"
                 if tc and isinstance(tc, dict):
                     tool_name = tc.get("name")
+                    tool_call_id = tc.get("id")
                     tool_args = tc.get("args")
                     tool_output = tc.get("output")
                     tool_status = tc.get("status", "success")
+                metadata_json = None
+                if isinstance(log.get("metadata"), dict) and log.get("metadata"):
+                    metadata_json = json.dumps(log.get("metadata"))
 
                 records.append((
                     session_id, i,
@@ -124,14 +216,16 @@ class PostgresSessionRepository:
                     log.get("type", ""),
                     log.get("content", ""),
                     log.get("agentName"),
-                    tool_name, tool_args, tool_output, tool_status,
+                    tool_name, tool_call_id, log.get("relatedToolCallId"),
+                    log.get("linkedSessionId"), tool_args, tool_output, tool_status, metadata_json,
                 ))
 
             await self.db.executemany(
                 """INSERT INTO session_logs
                     (session_id, log_index, timestamp, speaker, type, content,
-                     agent_name, tool_name, tool_args, tool_output, tool_status)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
+                     agent_name, tool_name, tool_call_id, related_tool_call_id,
+                     linked_session_id, tool_args, tool_output, tool_status, metadata_json)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)""",
                 records
             )
 
@@ -164,12 +258,14 @@ class PostgresSessionRepository:
             for u in updates:
                 records.append((
                     session_id, u.get("filePath", ""), u.get("additions", 0),
-                    u.get("deletions", 0), u.get("agentName", "")
+                    u.get("deletions", 0), u.get("agentName", ""),
+                    u.get("sourceLogId"), u.get("sourceToolName"),
                 ))
             
             await self.db.executemany(
-                """INSERT INTO session_file_updates (session_id, file_path, additions, deletions, agent_name)
-                   VALUES ($1, $2, $3, $4, $5)""",
+                """INSERT INTO session_file_updates (
+                    session_id, file_path, additions, deletions, agent_name, source_log_id, source_tool_name
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)""",
                 records
             )
 
@@ -183,12 +279,14 @@ class PostgresSessionRepository:
             for a in artifacts:
                 records.append((
                    a.get("id", ""), session_id, a.get("title", ""),
-                   a.get("type", "document"), a.get("description", ""), a.get("source", "")
+                   a.get("type", "document"), a.get("description", ""), a.get("source", ""),
+                   a.get("url"), a.get("sourceLogId"), a.get("sourceToolName"),
                 ))
 
             await self.db.executemany(
-                """INSERT INTO session_artifacts (id, session_id, title, type, description, source)
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                """INSERT INTO session_artifacts (
+                    id, session_id, title, type, description, source, url, source_log_id, source_tool_name
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
                 records
             )
 

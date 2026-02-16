@@ -18,9 +18,11 @@ from backend.db.factory import (
 )
 
 
-def _safe_json(raw: str | None) -> dict:
+def _safe_json(raw: str | dict | None) -> dict:
     if not raw:
         return {}
+    if isinstance(raw, dict):
+        return raw
     try:
         return json.loads(raw)
     except Exception:
@@ -39,6 +41,8 @@ async def list_sessions(
     sort_order: str = "desc",
     status: str | None = Query(None, description="Filter by session status"),
     model: str | None = Query(None, description="Filter by model name (partial match)"),
+    include_subagents: bool = Query(False, description="Include subagent sessions in list results"),
+    root_session_id: str | None = Query(None, description="Filter to a specific root thread family"),
     start_date: str | None = Query(None, description="ISO timestamp for start range"),
     end_date: str | None = Query(None, description="ISO timestamp for end range"),
     min_duration: int | None = Query(None, description="Minimum duration in seconds"),
@@ -56,6 +60,8 @@ async def list_sessions(
     filters = {}
     if status: filters["status"] = status
     if model: filters["model"] = model
+    filters["include_subagents"] = include_subagents
+    if root_session_id: filters["root_session_id"] = root_session_id
     if start_date: filters["start_date"] = start_date
     if end_date: filters["end_date"] = end_date
     if min_duration is not None: filters["min_duration"] = min_duration
@@ -77,6 +83,8 @@ async def list_sessions(
             model=s["model"] or "",
             sessionType=s["session_type"] or "",
             parentSessionId=s["parent_session_id"],
+            rootSessionId=s.get("root_session_id") or s["id"],
+            agentId=s.get("agent_id"),
             durationSeconds=s["duration_seconds"],
             tokensIn=s["tokens_in"],
             tokensOut=s["tokens_out"],
@@ -127,11 +135,14 @@ async def get_session(session_id: str):
         tc = None
         if l["type"] == "tool":
             tc = {
+                "id": l.get("tool_call_id"),
                 "name": l["tool_name"],
                 "args": l["tool_args"] or "",
                 "output": l["tool_output"],
                 "status": l["tool_status"],
+                "isError": (l["tool_status"] or "") == "error",
             }
+        metadata = _safe_json(l.get("metadata_json"))
             
         session_logs.append({
             "id": f"log-{l['log_index']}", # verify if we store the ID string or format it
@@ -140,6 +151,9 @@ async def get_session(session_id: str):
             "type": l["type"],
             "content": l["content"],
             "agentName": l["agent_name"],
+            "linkedSessionId": l.get("linked_session_id"),
+            "relatedToolCallId": l.get("related_tool_call_id"),
+            "metadata": metadata,
             "toolCall": tc,
         })
         
@@ -160,6 +174,8 @@ async def get_session(session_id: str):
             "additions": f["additions"],
             "deletions": f["deletions"],
             "agentName": f["agent_name"],
+            "sourceLogId": f.get("source_log_id"),
+            "sourceToolName": f.get("source_tool_name"),
         })
         
     # Artifacts
@@ -171,6 +187,9 @@ async def get_session(session_id: str):
             "type": a["type"],
             "description": a["description"],
             "source": a["source"],
+            "url": a.get("url"),
+            "sourceLogId": a.get("source_log_id"),
+            "sourceToolName": a.get("source_tool_name"),
         })
 
     return AgentSession(
@@ -180,6 +199,8 @@ async def get_session(session_id: str):
         model=s["model"] or "",
         sessionType=s["session_type"] or "",
         parentSessionId=s["parent_session_id"],
+        rootSessionId=s.get("root_session_id") or s["id"],
+        agentId=s.get("agent_id"),
         durationSeconds=s["duration_seconds"],
         tokensIn=s["tokens_in"],
         tokensOut=s["tokens_out"],
@@ -299,5 +320,3 @@ async def list_tasks():
             commitHash=t["commit_hash"],
         ))
     return results
-
-

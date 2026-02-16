@@ -6,7 +6,7 @@ import asyncpg
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     git_branch       TEXT,
     session_type     TEXT DEFAULT '',
     parent_session_id TEXT,
+    root_session_id  TEXT DEFAULT '',
+    agent_id         TEXT,
     started_at       TEXT DEFAULT '',
     ended_at         TEXT DEFAULT '',
     created_at       TEXT NOT NULL,
@@ -114,9 +116,13 @@ CREATE TABLE IF NOT EXISTS session_logs (
     content        TEXT DEFAULT '',
     agent_name     TEXT,
     tool_name      TEXT,
+    tool_call_id   TEXT,
+    related_tool_call_id TEXT,
+    linked_session_id TEXT,
     tool_args      TEXT,
     tool_output    TEXT,
-    tool_status    TEXT DEFAULT 'success'
+    tool_status    TEXT DEFAULT 'success',
+    metadata_json  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
@@ -139,7 +145,9 @@ CREATE TABLE IF NOT EXISTS session_file_updates (
     file_path    TEXT NOT NULL,
     additions    INTEGER DEFAULT 0,
     deletions    INTEGER DEFAULT 0,
-    agent_name   TEXT DEFAULT ''
+    agent_name   TEXT DEFAULT '',
+    source_log_id TEXT,
+    source_tool_name TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_updates_session ON session_file_updates(session_id);
@@ -152,7 +160,10 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
     title        TEXT NOT NULL,
     type         TEXT DEFAULT 'document',
     description  TEXT DEFAULT '',
-    source       TEXT DEFAULT ''
+    source       TEXT DEFAULT '',
+    url          TEXT,
+    source_log_id TEXT,
+    source_tool_name TEXT
 );
 
 -- ── 5. Documents ───────────────────────────────────────────────────
@@ -317,6 +328,26 @@ INSERT INTO alert_configs (id, project_id, name, metric, operator, threshold, is
 ON CONFLICT (id) DO NOTHING;
 """
 
+
+async def _column_exists(db: asyncpg.Connection, table: str, column: str) -> bool:
+    row = await db.fetchrow(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = $1 AND column_name = $2
+        LIMIT 1
+        """,
+        table,
+        column,
+    )
+    return row is not None
+
+
+async def _ensure_column(db: asyncpg.Connection, table: str, column: str, definition: str) -> None:
+    if await _column_exists(db, table, column):
+        return
+    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
 async def run_migrations(db: asyncpg.Connection) -> None:
     """Create all tables and seed data. Idempotent."""
     # Check current schema version
@@ -336,6 +367,23 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     # Execute all CREATE TABLE statements (split by semicolon if needed, but asyncpg execute() handles multiple statements?)
     # asyncpg execute() supports multiple statements.
     await db.execute(_TABLES)
+
+    # Explicit table upgrades for existing DBs.
+    await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "agent_id", "TEXT")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
+
+    await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
+    await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
+    await _ensure_column(db, "session_logs", "linked_session_id", "TEXT")
+    await _ensure_column(db, "session_logs", "metadata_json", "TEXT")
+
+    await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
+    await _ensure_column(db, "session_file_updates", "source_tool_name", "TEXT")
+
+    await _ensure_column(db, "session_artifacts", "url", "TEXT")
+    await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
+    await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
 
     # Seed metric types
     await db.execute(_SEED_METRIC_TYPES)

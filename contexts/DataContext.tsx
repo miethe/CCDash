@@ -4,6 +4,8 @@ import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Pro
 export interface SessionFilters {
     status?: string;
     model?: string;
+    include_subagents?: boolean;
+    root_session_id?: string;
     start_date?: string;
     end_date?: string;
     min_duration?: number;
@@ -112,6 +114,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (sessionFilters.status) params.append('status', sessionFilters.status);
             if (sessionFilters.model) params.append('model', sessionFilters.model);
+            if (sessionFilters.include_subagents) params.append('include_subagents', 'true');
+            if (sessionFilters.root_session_id) params.append('root_session_id', sessionFilters.root_session_id);
             if (sessionFilters.start_date) params.append('start_date', sessionFilters.start_date);
             if (sessionFilters.end_date) params.append('end_date', sessionFilters.end_date);
             if (sessionFilters.min_duration) params.append('min_duration', sessionFilters.min_duration.toString());

@@ -13,10 +13,12 @@ class PaginatedResponse(BaseModel, Generic[T]):
 # ── Session-related models ──────────────────────────────────────────
 
 class ToolCallInfo(BaseModel):
+    id: Optional[str] = None
     name: str = ""
     args: str = ""
     output: Optional[str] = None
     status: str = "success"
+    isError: bool = False
 
 
 class SkillDetails(BaseModel):
@@ -28,10 +30,13 @@ class SkillDetails(BaseModel):
 class SessionLog(BaseModel):
     id: str
     timestamp: str
-    speaker: str  # "user" | "agent"
-    type: str  # "message" | "tool" | "subagent" | "skill"
+    speaker: str  # "user" | "agent" | "system"
+    type: str  # "message" | "tool" | "skill" | "thought" | "system" | "command" | "subagent_start"
     content: str = ""
     agentName: Optional[str] = None
+    linkedSessionId: Optional[str] = None
+    relatedToolCallId: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
     toolCall: Optional[ToolCallInfo] = None
     skillDetails: Optional[SkillDetails] = None
     subagentThread: Optional[list[SessionLog]] = None
@@ -43,6 +48,8 @@ class SessionFileUpdate(BaseModel):
     deletions: int = 0
     commits: list[str] = Field(default_factory=list)
     agentName: str = ""
+    sourceLogId: Optional[str] = None
+    sourceToolName: Optional[str] = None
 
 
 class SessionArtifact(BaseModel):
@@ -51,6 +58,9 @@ class SessionArtifact(BaseModel):
     type: str = "document"
     description: str = ""
     source: str = ""
+    url: Optional[str] = None
+    sourceLogId: Optional[str] = None
+    sourceToolName: Optional[str] = None
 
 
 class ToolUsage(BaseModel):
@@ -72,6 +82,8 @@ class AgentSession(BaseModel):
     model: str = ""
     sessionType: str = ""
     parentSessionId: Optional[str] = None
+    rootSessionId: str = ""
+    agentId: Optional[str] = None
     durationSeconds: int = 0
     tokensIn: int = 0
     tokensOut: int = 0

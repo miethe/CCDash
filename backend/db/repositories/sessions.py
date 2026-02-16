@@ -21,9 +21,9 @@ class SqliteSessionRepository:
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
                 git_commit_hash, git_author, git_branch,
-                session_type, parent_session_id,
+                session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 duration_seconds=excluded.duration_seconds,
@@ -34,6 +34,8 @@ class SqliteSessionRepository:
                 git_branch=excluded.git_branch,
                 session_type=excluded.session_type,
                 parent_session_id=excluded.parent_session_id,
+                root_session_id=excluded.root_session_id,
+                agent_id=excluded.agent_id,
                 started_at=excluded.started_at, ended_at=excluded.ended_at,
                 updated_at=excluded.updated_at, source_file=excluded.source_file
             """,
@@ -53,6 +55,8 @@ class SqliteSessionRepository:
                 session_data.get("gitBranch"),
                 session_data.get("sessionType", ""),
                 session_data.get("parentSessionId"),
+                session_data.get("rootSessionId", session_data.get("id", "")),
+                session_data.get("agentId"),
                 session_data.get("startedAt", ""),
                 session_data.get("endedAt", ""),
                 now, now,
@@ -89,34 +93,39 @@ class SqliteSessionRepository:
         query_parts = ["SELECT * FROM sessions"]
         params = []
         where_clauses = []
+        filters = filters or {}
 
         if project_id:
             where_clauses.append("project_id = ?")
             params.append(project_id)
 
-        if filters:
-            if filters.get("status"):
-                where_clauses.append("status = ?")
-                params.append(filters["status"])
-            if filters.get("model"):
-                where_clauses.append("model LIKE ?")
-                params.append(f"%{filters['model']}%")
-            
-            # Date range (started_at)
-            if filters.get("start_date"):
-                where_clauses.append("started_at >= ?")
-                params.append(filters["start_date"])
-            if filters.get("end_date"):
-                where_clauses.append("started_at <= ?")
-                params.append(filters["end_date"])
+        if filters.get("status"):
+            where_clauses.append("status = ?")
+            params.append(filters["status"])
+        if filters.get("model"):
+            where_clauses.append("model LIKE ?")
+            params.append(f"%{filters['model']}%")
+        if not filters.get("include_subagents", False):
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("root_session_id"):
+            where_clauses.append("root_session_id = ?")
+            params.append(filters["root_session_id"])
+        
+        # Date range (started_at)
+        if filters.get("start_date"):
+            where_clauses.append("started_at >= ?")
+            params.append(filters["start_date"])
+        if filters.get("end_date"):
+            where_clauses.append("started_at <= ?")
+            params.append(filters["end_date"])
 
-            # Duration range
-            if filters.get("min_duration") is not None:
-                where_clauses.append("duration_seconds >= ?")
-                params.append(filters["min_duration"])
-            if filters.get("max_duration") is not None:
-                where_clauses.append("duration_seconds <= ?")
-                params.append(filters["max_duration"])
+        # Duration range
+        if filters.get("min_duration") is not None:
+            where_clauses.append("duration_seconds >= ?")
+            params.append(filters["min_duration"])
+        if filters.get("max_duration") is not None:
+            where_clauses.append("duration_seconds <= ?")
+            params.append(filters["max_duration"])
 
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -136,30 +145,35 @@ class SqliteSessionRepository:
         query_parts = ["SELECT COUNT(*) FROM sessions"]
         params = []
         where_clauses = []
+        filters = filters or {}
 
         if project_id:
             where_clauses.append("project_id = ?")
             params.append(project_id)
             
-        if filters:
-            if filters.get("status"):
-                where_clauses.append("status = ?")
-                params.append(filters["status"])
-            if filters.get("model"):
-                where_clauses.append("model LIKE ?")
-                params.append(f"%{filters['model']}%")
-            if filters.get("start_date"):
-                where_clauses.append("started_at >= ?")
-                params.append(filters["start_date"])
-            if filters.get("end_date"):
-                where_clauses.append("started_at <= ?")
-                params.append(filters["end_date"])
-            if filters.get("min_duration") is not None:
-                where_clauses.append("duration_seconds >= ?")
-                params.append(filters["min_duration"])
-            if filters.get("max_duration") is not None:
-                where_clauses.append("duration_seconds <= ?")
-                params.append(filters["max_duration"])
+        if filters.get("status"):
+            where_clauses.append("status = ?")
+            params.append(filters["status"])
+        if filters.get("model"):
+            where_clauses.append("model LIKE ?")
+            params.append(f"%{filters['model']}%")
+        if not filters.get("include_subagents", False):
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("root_session_id"):
+            where_clauses.append("root_session_id = ?")
+            params.append(filters["root_session_id"])
+        if filters.get("start_date"):
+            where_clauses.append("started_at >= ?")
+            params.append(filters["start_date"])
+        if filters.get("end_date"):
+            where_clauses.append("started_at <= ?")
+            params.append(filters["end_date"])
+        if filters.get("min_duration") is not None:
+            where_clauses.append("duration_seconds >= ?")
+            params.append(filters["min_duration"])
+        if filters.get("max_duration") is not None:
+            where_clauses.append("duration_seconds <= ?")
+            params.append(filters["max_duration"])
 
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
@@ -180,21 +194,30 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM session_logs WHERE session_id = ?", (session_id,))
         for i, log in enumerate(logs):
             tool_name = None
+            tool_call_id = None
+            related_tool_call_id = None
+            linked_session_id = None
             tool_args = None
             tool_output = None
             tool_status = "success"
+            metadata_json = None
             tc = log.get("toolCall")
             if tc and isinstance(tc, dict):
                 tool_name = tc.get("name")
+                tool_call_id = tc.get("id")
                 tool_args = tc.get("args")
                 tool_output = tc.get("output")
                 tool_status = tc.get("status", "success")
+            metadata = log.get("metadata")
+            if isinstance(metadata, dict) and metadata:
+                metadata_json = json.dumps(metadata)
 
             await self.db.execute(
                 """INSERT INTO session_logs
                     (session_id, log_index, timestamp, speaker, type, content,
-                     agent_name, tool_name, tool_args, tool_output, tool_status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     agent_name, tool_name, tool_call_id, related_tool_call_id,
+                     linked_session_id, tool_args, tool_output, tool_status, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id, i,
                     log.get("timestamp", ""),
@@ -202,7 +225,14 @@ class SqliteSessionRepository:
                     log.get("type", ""),
                     log.get("content", ""),
                     log.get("agentName"),
-                    tool_name, tool_args, tool_output, tool_status,
+                    tool_name,
+                    tool_call_id,
+                    log.get("relatedToolCallId"),
+                    log.get("linkedSessionId"),
+                    tool_args,
+                    tool_output,
+                    tool_status,
+                    metadata_json,
                 ),
             )
         await self.db.commit()
@@ -222,10 +252,12 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM session_file_updates WHERE session_id = ?", (session_id,))
         for u in updates:
             await self.db.execute(
-                """INSERT INTO session_file_updates (session_id, file_path, additions, deletions, agent_name)
-                   VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO session_file_updates (
+                    session_id, file_path, additions, deletions, agent_name, source_log_id, source_tool_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (session_id, u.get("filePath", ""), u.get("additions", 0),
-                 u.get("deletions", 0), u.get("agentName", "")),
+                 u.get("deletions", 0), u.get("agentName", ""),
+                 u.get("sourceLogId"), u.get("sourceToolName")),
             )
         await self.db.commit()
 
@@ -233,10 +265,12 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM session_artifacts WHERE session_id = ?", (session_id,))
         for a in artifacts:
             await self.db.execute(
-                """INSERT INTO session_artifacts (id, session_id, title, type, description, source)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO session_artifacts (
+                    id, session_id, title, type, description, source, url, source_log_id, source_tool_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (a.get("id", ""), session_id, a.get("title", ""),
-                 a.get("type", "document"), a.get("description", ""), a.get("source", "")),
+                 a.get("type", "document"), a.get("description", ""), a.get("source", ""),
+                 a.get("url"), a.get("sourceLogId"), a.get("sourceToolName")),
             )
         await self.db.commit()
 
