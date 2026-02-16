@@ -92,6 +92,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [features, setFeatures] = useState<Feature[]>([]);
+    const [pendingFeatureStatusById, setPendingFeatureStatusById] = useState<Record<string, string>>({});
     const [projects, setProjects] = useState<Project[]>([]);
     const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
@@ -106,6 +107,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return next;
         });
     }, []);
+
+    const applyPendingFeatureStatuses = useCallback((serverFeatures: Feature[]) => {
+        const pendingIds = Object.keys(pendingFeatureStatusById);
+        if (pendingIds.length === 0) return serverFeatures;
+        return serverFeatures.map(feature => {
+            const pendingStatus = pendingFeatureStatusById[feature.id];
+            if (!pendingStatus || pendingStatus === feature.status) return feature;
+            return { ...feature, status: pendingStatus };
+        });
+    }, [pendingFeatureStatusById]);
 
     const refreshSessions = useCallback(async (reset = true) => {
         try {
@@ -222,11 +233,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const refreshFeatures = useCallback(async () => {
         try {
             const data = await fetchJson<Feature[]>('/features');
-            setFeatures(data);
+            setFeatures(applyPendingFeatureStatuses(data));
         } catch (e) {
             console.error('Failed to fetch features:', e);
         }
-    }, []);
+    }, [applyPendingFeatureStatuses]);
 
     const refreshProjects = useCallback(async () => {
         try {
@@ -305,6 +316,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // ── Status update methods ──────────────────────────────────────
 
     const updateFeatureStatus = useCallback(async (featureId: string, status: string) => {
+        let previousStatus: string | null = null;
+        setPendingFeatureStatusById(prev => ({ ...prev, [featureId]: status }));
+        setFeatures(prev => prev.map(f => {
+            if (f.id !== featureId) return f;
+            previousStatus = f.status;
+            return { ...f, status };
+        }));
+
         try {
             const res = await fetch(`${API_BASE}/features/${featureId}/status`, {
                 method: 'PATCH',
@@ -315,8 +334,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 throw new Error(`Failed to update feature status: ${res.status} ${res.statusText}`);
             }
             const updated = await res.json() as Feature;
+            setPendingFeatureStatusById(prev => {
+                const { [featureId]: _ignore, ...rest } = prev;
+                return rest;
+            });
             upsertFeatureInState(updated);
         } catch (e) {
+            setPendingFeatureStatusById(prev => {
+                const { [featureId]: _ignore, ...rest } = prev;
+                return rest;
+            });
+            if (previousStatus !== null) {
+                setFeatures(prev => prev.map(f => (
+                    f.id === featureId ? { ...f, status: previousStatus as string } : f
+                )));
+            }
             console.error('Failed to update feature status:', e);
             throw e;
         }
