@@ -5,11 +5,91 @@ import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, 
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
+import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
+
+const MAIN_SESSION_AGENT = 'Main Session';
+
+const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
+    if (!raw || !raw.trim()) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+    } catch {
+        return null;
+    }
+};
+
+const takeString = (...values: unknown[]): string | null => {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+    return null;
+};
+
+const extractTaskSubagentName = (toolArgs: string | undefined): string | null => {
+    const args = parseToolArgs(toolArgs);
+    if (!args) {
+        return null;
+    }
+
+    const nestedConfig =
+        (typeof args.agent_config === 'object' && args.agent_config ? args.agent_config : null) ||
+        (typeof args.agentConfig === 'object' && args.agentConfig ? args.agentConfig : null);
+
+    return takeString(
+        args.subagent_type,
+        args.subagentType,
+        args.agent_name,
+        args.agentName,
+        nestedConfig && (nestedConfig as Record<string, unknown>).name,
+        nestedConfig && (nestedConfig as Record<string, unknown>).id,
+        nestedConfig && (nestedConfig as Record<string, unknown>).type,
+    );
+};
+
+const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+    return (
+        subagentNameBySessionId.get(thread.id) ||
+        (thread.agentId ? `agent-${thread.agentId}` : '') ||
+        thread.sessionType ||
+        'thread'
+    );
+};
+
+const makeArtifactGroupKey = (artifact: SessionArtifact): string => {
+    const type = (artifact.type || '').trim().toLowerCase();
+    const title = (artifact.title || '').trim().toLowerCase();
+    const source = (artifact.source || '').trim().toLowerCase();
+    const url = (artifact.url || '').trim().toLowerCase();
+    return `${type}::${title}::${source}::${url}`;
+};
+
+interface ArtifactGroup {
+    key: string;
+    type: string;
+    title: string;
+    source: string;
+    description?: string;
+    url?: string;
+    artifactIds: string[];
+    artifacts: SessionArtifact[];
+    sourceLogIds: string[];
+    sourceToolNames: string[];
+    relatedToolLogs: SessionLog[];
+    linkedThreads: AgentSession[];
+}
 
 // --- Sub-Components ---
 
 const LogItemBlurb: React.FC<{
     log: SessionLog;
+    formattedMessage?: TranscriptFormattedMessage;
     isSelected: boolean;
     onClick: () => void;
     fileCount?: number;
@@ -17,10 +97,71 @@ const LogItemBlurb: React.FC<{
     onShowFiles?: () => void;
     onShowArtifacts?: () => void;
     onOpenThread?: (threadId: string) => void;
-}> = ({ log, isSelected, onClick, fileCount = 0, artifactCount = 0, onShowFiles, onShowArtifacts, onOpenThread }) => {
+}> = ({ log, formattedMessage, isSelected, onClick, fileCount = 0, artifactCount = 0, onShowFiles, onShowArtifacts, onOpenThread }) => {
     const isAgent = log.speaker === 'agent';
     const isUser = log.speaker === 'user';
     const isSystem = log.speaker === 'system';
+
+    const renderMessagePreview = () => {
+        const parsed = formattedMessage || parseTranscriptMessage(log.content);
+
+        if (parsed.kind === 'claude-command') {
+            const commandLabel = parsed.command?.name || parsed.command?.message || 'Command';
+            return (
+                <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-emerald-300/90 font-semibold">
+                        <Terminal size={11} /> Command Invocation
+                    </div>
+                    <p className="font-mono text-xs line-clamp-1 break-all">{commandLabel}</p>
+                    {parsed.command?.args && (
+                        <p className="text-xs text-slate-400 whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
+                    )}
+                </div>
+            );
+        }
+
+        if (parsed.kind === 'claude-local-command-caveat') {
+            return (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-amber-300/90 font-semibold">Local Command Caveat</div>
+                    <p className="text-xs leading-relaxed line-clamp-3 whitespace-pre-wrap break-words">{parsed.text || 'Caveat metadata'}</p>
+                </div>
+            );
+        }
+
+        if (parsed.kind === 'claude-local-command-stdout') {
+            return (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-sky-300/90 font-semibold">Local Command Output</div>
+                    <p className="text-xs font-mono whitespace-pre-wrap line-clamp-2 break-words">
+                        {parsed.text && parsed.text.trim() ? parsed.text : '(empty stdout)'}
+                    </p>
+                </div>
+            );
+        }
+
+        if (parsed.kind === 'tagged') {
+            return (
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1">
+                        {parsed.tags.slice(0, 3).map(tag => (
+                            <span key={`${log.id}-${tag.tag}-${tag.start}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400">
+                                {getReadableTagName(tag.tag)}
+                            </span>
+                        ))}
+                        {parsed.tags.length > 3 && (
+                            <span className="text-[10px] text-slate-500">+{parsed.tags.length - 3} more</span>
+                        )}
+                    </div>
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap line-clamp-2 break-words">
+                        {parsed.text || parsed.summary}
+                    </p>
+                </div>
+            );
+        }
+
+        return <p className="line-clamp-3 leading-relaxed whitespace-pre-wrap break-words">{log.content}</p>;
+    };
 
     if (log.type === 'message') {
         return (
@@ -40,13 +181,13 @@ const LogItemBlurb: React.FC<{
                     {isUser ? <span className="text-xs font-bold">U</span> : isSystem ? <span className="text-xs font-bold">S</span> : <Bot size={16} />}
                 </div>
 
-                <div className={`flex flex-col max-w-[85%] ${isUser ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col min-w-0 flex-1 ${isUser ? 'items-end' : 'items-start'}`}>
                     {isAgent && log.agentName && (
                         <span className={`text-[10px] font-mono mb-1 px-1.5 py-0.5 rounded transition-colors ${isSelected ? 'text-indigo-300 bg-indigo-500/20' : 'text-indigo-400 bg-indigo-500/5'}`}>
                             {log.agentName}
                         </span>
                     )}
-                    <div className={`p-3 rounded-xl text-sm transition-all border ${isSelected
+                    <div className={`p-3 rounded-xl text-sm transition-all border max-w-full ${isSelected
                         ? 'bg-transparent border-transparent text-indigo-100'
                         : isUser
                             ? 'bg-slate-800 border-slate-700 text-slate-300'
@@ -54,7 +195,7 @@ const LogItemBlurb: React.FC<{
                                 ? 'bg-slate-900/60 border-slate-700 text-slate-300'
                             : 'bg-slate-900 border-slate-800 text-slate-300'
                         }`}>
-                        <p className="line-clamp-3 leading-relaxed">{log.content}</p>
+                        {renderMessagePreview()}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                         {fileCount > 0 && (
@@ -157,7 +298,12 @@ const LogItemBlurb: React.FC<{
     );
 };
 
-const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
+const DetailPane: React.FC<{
+    log: SessionLog;
+    formattedMessage?: TranscriptFormattedMessage;
+    commandArtifacts?: SessionArtifact[];
+    onOpenArtifacts?: () => void;
+}> = ({ log, formattedMessage, commandArtifacts = [], onOpenArtifacts }) => {
     const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
     const toggleSection = (id: string) => {
@@ -165,6 +311,123 @@ const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
         if (next.has(id)) next.delete(id);
         else next.add(id);
         setExpandedSections(next);
+    };
+
+    const parsedMessage = formattedMessage || parseTranscriptMessage(log.content);
+    const detailTitle = (() => {
+        if (log.type === 'subagent') return 'Subagent Thread';
+        if (log.type === 'tool') return 'Tool Execution';
+        if (log.type === 'subagent_start') return 'Subagent Start';
+        if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
+        return 'Log Details';
+    })();
+
+    const renderStructuredMessage = () => {
+        if (parsedMessage.kind === 'claude-command') {
+            const commandLabel = parsedMessage.command?.name || parsedMessage.command?.message || 'Unknown Command';
+            return (
+                <div className="bg-slate-900/30 border border-emerald-500/20 rounded-xl p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                        <div>
+                            <div className="text-[10px] text-emerald-300 uppercase tracking-widest font-bold mb-2">Command</div>
+                            <p className="font-mono text-sm text-emerald-200 break-all">{commandLabel}</p>
+                        </div>
+                        <span className="text-[10px] px-2 py-1 rounded border border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
+                            Claude Code
+                        </span>
+                    </div>
+
+                    {parsedMessage.command?.args !== undefined && (
+                        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3">
+                            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2">Command Args</div>
+                            <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words font-mono max-h-56 overflow-y-auto">
+                                {parsedMessage.command.args || '(no args)'}
+                            </pre>
+                        </div>
+                    )}
+
+                    {commandArtifacts.length > 0 && (
+                        <button
+                            onClick={onOpenArtifacts}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+                        >
+                            Open Command Artifact ({commandArtifacts.length})
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
+        if (parsedMessage.kind === 'claude-local-command-caveat') {
+            return (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">Local Command Caveat</div>
+                    <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        {parsedMessage.text || 'Caveat metadata'}
+                    </p>
+                </div>
+            );
+        }
+
+        if (parsedMessage.kind === 'claude-local-command-stdout') {
+            return (
+                <div className="bg-sky-500/5 border border-sky-500/20 rounded-xl p-5">
+                    <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">Local Command Output</div>
+                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-80 overflow-y-auto">
+                        {parsedMessage.text && parsedMessage.text.trim() ? parsedMessage.text : '(empty stdout)'}
+                    </pre>
+                </div>
+            );
+        }
+
+        if (parsedMessage.kind === 'tagged') {
+            return (
+                <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5 space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                        {parsedMessage.tags.map(tag => (
+                            <span
+                                key={`${tag.tag}-${tag.start}`}
+                                className="text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400"
+                            >
+                                {getReadableTagName(tag.tag)}
+                            </span>
+                        ))}
+                    </div>
+                    {parsedMessage.text && (
+                        <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed break-words">{parsedMessage.text}</p>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
+                <p className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">{log.content}</p>
+            </div>
+        );
+    };
+
+    const renderRawMessageSection = () => {
+        if (parsedMessage.kind === 'plain') {
+            return null;
+        }
+        const rawSectionId = `raw-${parsedMessage.kind}`;
+        return (
+            <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4">
+                <button
+                    onClick={() => toggleSection(rawSectionId)}
+                    className="w-full flex justify-between items-center text-[10px] text-slate-500 uppercase font-bold tracking-wider hover:text-slate-300 transition-colors"
+                >
+                    <span>{expandedSections.has(rawSectionId) ? 'Hide Raw' : 'View Raw...'}</span>
+                    {expandedSections.has(rawSectionId) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                {expandedSections.has(rawSectionId) && (
+                    <pre className="mt-3 text-xs font-mono text-slate-300 bg-slate-900/70 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-200">
+                        {parsedMessage.rawText}
+                    </pre>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -182,7 +445,7 @@ const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
                     </div>
                     <div>
                         <h4 className="text-sm font-bold text-slate-100 uppercase tracking-tight">
-                            {log.type === 'subagent' ? 'Subagent Thread' : log.type === 'tool' ? 'Tool Execution' : log.type === 'subagent_start' ? 'Subagent Start' : 'Log Details'}
+                            {detailTitle}
                         </h4>
                         <p className="text-[10px] text-slate-500 font-mono">{log.timestamp}</p>
                     </div>
@@ -277,12 +540,13 @@ const DetailPane: React.FC<{ log: SessionLog }> = ({ log }) => {
 
                 {/* FALLBACK FOR REGULAR/TYPED MESSAGES */}
                 {log.type !== 'tool' && log.type !== 'subagent' && log.type !== 'skill' && (
-                    <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
-                        <p className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">{log.content}</p>
+                    <>
+                        {renderStructuredMessage()}
+                        {renderRawMessageSection()}
                         {log.linkedSessionId && (
-                            <p className="mt-3 text-[11px] text-indigo-300 font-mono">Linked Thread: {log.linkedSessionId}</p>
+                            <p className="text-[11px] text-indigo-300 font-mono">Linked Thread: {log.linkedSessionId}</p>
                         )}
-                    </div>
+                    </>
                 )}
 
                 {/* SKILLS */}
@@ -311,9 +575,10 @@ const TranscriptView: React.FC<{
     setSelectedLogId: (id: string | null) => void;
     filterAgent?: string | null;
     threadSessions: AgentSession[];
+    subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
     onShowLinked: (tab: 'files' | 'artifacts', sourceLogId: string) => void;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, onOpenThread, onShowLinked }) => {
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked }) => {
 
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
@@ -331,20 +596,42 @@ const TranscriptView: React.FC<{
         return map;
     }, [session.updatedFiles]);
 
+    const formattedMessagesByLogId = useMemo(() => {
+        const map = new Map<string, TranscriptFormattedMessage>();
+        logs.forEach(log => {
+            if (log.type === 'message') {
+                map.set(log.id, parseTranscriptMessage(log.content));
+            }
+        });
+        return map;
+    }, [logs]);
+
     const artifactsByLogId = useMemo(() => {
-        const map = new Map<string, number>();
+        const map = new Map<string, SessionArtifact[]>();
         (session.linkedArtifacts || []).forEach(artifact => {
             if (!artifact.sourceLogId) return;
-            map.set(artifact.sourceLogId, (map.get(artifact.sourceLogId) || 0) + 1);
+            const existing = map.get(artifact.sourceLogId);
+            if (existing) {
+                existing.push(artifact);
+            } else {
+                map.set(artifact.sourceLogId, [artifact]);
+            }
         });
         return map;
     }, [session.linkedArtifacts]);
 
+    const selectedCommandArtifacts = useMemo(() => {
+        if (!selectedLog) {
+            return [];
+        }
+        return (artifactsByLogId.get(selectedLog.id) || []).filter(artifact => artifact.type === 'command');
+    }, [artifactsByLogId, selectedLog]);
+
     return (
-        <div className="flex-1 flex gap-6 min-h-0 min-w-full h-full">
+        <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
             {/* Pane 1: Chat Transcript (Left) */}
             <div
-                className={`flex flex-col bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden transition-all duration-500 ease-out min-w-[450px] ${selectedLogId ? 'basis-[70%]' : 'flex-1'
+                className={`flex flex-col bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden transition-all duration-500 ease-out ${selectedLogId ? 'basis-[30%] min-w-[320px] max-w-[520px]' : 'flex-1 min-w-[420px]'
                     }`}
             >
                 <div className="p-4 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between">
@@ -358,10 +645,11 @@ const TranscriptView: React.FC<{
                         <LogItemBlurb
                             key={log.id}
                             log={log}
+                            formattedMessage={formattedMessagesByLogId.get(log.id)}
                             isSelected={selectedLogId === log.id}
                             onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
                             fileCount={filesByLogId.get(log.id) || 0}
-                            artifactCount={artifactsByLogId.get(log.id) || 0}
+                            artifactCount={(artifactsByLogId.get(log.id) || []).length}
                             onShowFiles={() => onShowLinked('files', log.id)}
                             onShowArtifacts={() => onShowLinked('artifacts', log.id)}
                             onOpenThread={onOpenThread}
@@ -373,13 +661,20 @@ const TranscriptView: React.FC<{
 
             {/* Pane 2: Expanded Details (Middle) - Dynamic visibility */}
             {selectedLogId && (
-                <div className="basis-[30%] min-w-[320px] flex flex-col bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-4 duration-300">
-                    {selectedLog && <DetailPane log={selectedLog} />}
+                <div className="flex-1 min-w-[420px] flex flex-col bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-4 duration-300">
+                    {selectedLog && (
+                        <DetailPane
+                            log={selectedLog}
+                            formattedMessage={formattedMessagesByLogId.get(selectedLog.id)}
+                            commandArtifacts={selectedCommandArtifacts}
+                            onOpenArtifacts={() => onShowLinked('artifacts', selectedLog.id)}
+                        />
+                    )}
                 </div>
             )}
 
             {/* Pane 3: Metadata Details (Far Right) - Smaller fixed-ish width */}
-            <div className="w-[280px] min-w-[240px] max-w-[320px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
+            <div className="w-[260px] min-w-[220px] max-w-[300px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
                 {/* Performance Summary */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Forensics</h3>
@@ -459,7 +754,7 @@ const TranscriptView: React.FC<{
                             >
                                 <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
                                 <div className="text-[10px] text-slate-500 mt-1">
-                                    {(thread.agentId ? `agent-${thread.agentId}` : thread.sessionType) || 'thread'}
+                                    {getThreadDisplayName(thread, subagentNameBySessionId)}
                                 </div>
                             </button>
                         ))}
@@ -539,8 +834,267 @@ const FilesView: React.FC<{
     );
 };
 
-const ArtifactsView: React.FC<{ session: AgentSession; highlightedSourceLogId?: string | null }> = ({ session, highlightedSourceLogId }) => {
-    if (!session.linkedArtifacts || session.linkedArtifacts.length === 0) {
+const ArtifactDetailsModal: React.FC<{
+    group: ArtifactGroup;
+    onClose: () => void;
+    onOpenThread: (sessionId: string) => void;
+    subagentNameBySessionId: Map<string, string>;
+}> = ({ group, onClose, onOpenThread, subagentNameBySessionId }) => {
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                <div className="p-5 border-b border-slate-800 flex justify-between items-start bg-slate-950">
+                    <div>
+                        <h3 className="text-lg font-bold text-slate-100">{group.title}</h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                            {group.type} • {group.source} • {group.artifacts.length} merged artifacts
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-6 overflow-y-auto">
+                    <div className="bg-slate-950/70 rounded-lg border border-slate-800 p-4 text-sm text-slate-300">
+                        {group.description || 'No artifact description available.'}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Source Log IDs</h4>
+                            <div className="flex flex-wrap gap-2">
+                                {group.sourceLogIds.length === 0 && <span className="text-xs text-slate-500">None</span>}
+                                {group.sourceLogIds.map(sourceLogId => (
+                                    <span key={sourceLogId} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                        {sourceLogId}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Source Tools</h4>
+                            <div className="flex flex-wrap gap-2">
+                                {group.sourceToolNames.length === 0 && <span className="text-xs text-slate-500">None</span>}
+                                {group.sourceToolNames.map(sourceToolName => (
+                                    <span key={sourceToolName} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                        {sourceToolName}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Related Tool Calls</h4>
+                        <div className="space-y-2">
+                            {group.relatedToolLogs.length === 0 && (
+                                <div className="text-xs text-slate-500">No related tool calls found.</div>
+                            )}
+                            {group.relatedToolLogs.map(log => (
+                                <div key={log.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="text-sm font-mono text-slate-200">{log.toolCall?.name || 'tool'}</div>
+                                        <div className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${log.toolCall?.status === 'error' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                            {log.toolCall?.status || 'success'}
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        {log.id} • {log.timestamp}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Linked Sub-agent Threads</h4>
+                        <div className="space-y-2">
+                            {group.linkedThreads.length === 0 && (
+                                <div className="text-xs text-slate-500">No linked sub-agent threads found.</div>
+                            )}
+                            {group.linkedThreads.map(thread => (
+                                <div key={thread.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3 flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm text-indigo-300 font-mono">{thread.id}</div>
+                                        <div className="text-[10px] text-slate-500 mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
+                                    </div>
+                                    <button
+                                        onClick={() => onOpenThread(thread.id)}
+                                        className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20"
+                                    >
+                                        Open Sub-agent Transcript
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Merged Artifact IDs</h4>
+                        <div className="flex flex-wrap gap-2">
+                            {group.artifactIds.map(id => (
+                                <span key={id} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                    {id}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ArtifactsView: React.FC<{
+    session: AgentSession;
+    threadSessions: AgentSession[];
+    subagentNameBySessionId: Map<string, string>;
+    onOpenThread: (sessionId: string) => void;
+    highlightedSourceLogId?: string | null;
+}> = ({ session, threadSessions, subagentNameBySessionId, onOpenThread, highlightedSourceLogId }) => {
+    const [selectedGroup, setSelectedGroup] = useState<ArtifactGroup | null>(null);
+
+    const groupedArtifacts = useMemo(() => {
+        if (!session.linkedArtifacts || session.linkedArtifacts.length === 0) {
+            return [];
+        }
+
+        const logsById = new Map(session.logs.map(log => [log.id, log]));
+        const threadsById = new Map(threadSessions.map(thread => [thread.id, thread]));
+
+        type MutableArtifactGroup = ArtifactGroup & {
+            sourceLogIdSet: Set<string>;
+            sourceToolNameSet: Set<string>;
+            relatedToolLogIds: Set<string>;
+            linkedThreadIds: Set<string>;
+        };
+
+        const groups = new Map<string, MutableArtifactGroup>();
+
+        const ensureGroup = (artifact: SessionArtifact): MutableArtifactGroup => {
+            const key = makeArtifactGroupKey(artifact);
+            const existing = groups.get(key);
+            if (existing) {
+                return existing;
+            }
+            const created: MutableArtifactGroup = {
+                key,
+                type: artifact.type || 'document',
+                title: artifact.title,
+                source: artifact.source,
+                description: artifact.description,
+                url: artifact.url,
+                artifactIds: [],
+                artifacts: [],
+                sourceLogIds: [],
+                sourceToolNames: [],
+                relatedToolLogs: [],
+                linkedThreads: [],
+                sourceLogIdSet: new Set<string>(),
+                sourceToolNameSet: new Set<string>(),
+                relatedToolLogIds: new Set<string>(),
+                linkedThreadIds: new Set<string>(),
+            };
+            groups.set(key, created);
+            return created;
+        };
+
+        const attachFromLog = (group: MutableArtifactGroup, log: SessionLog | undefined) => {
+            if (!log) {
+                return;
+            }
+            if (log.type === 'tool' && !group.relatedToolLogIds.has(log.id)) {
+                group.relatedToolLogIds.add(log.id);
+                group.relatedToolLogs.push(log);
+            }
+            if (log.linkedSessionId && threadsById.has(log.linkedSessionId) && !group.linkedThreadIds.has(log.linkedSessionId)) {
+                group.linkedThreadIds.add(log.linkedSessionId);
+                group.linkedThreads.push(threadsById.get(log.linkedSessionId)!);
+            }
+        };
+
+        for (const artifact of session.linkedArtifacts) {
+            const group = ensureGroup(artifact);
+            group.artifacts.push(artifact);
+            if (!group.artifactIds.includes(artifact.id)) {
+                group.artifactIds.push(artifact.id);
+            }
+            if (artifact.description && !group.description) {
+                group.description = artifact.description;
+            }
+            if (artifact.url && !group.url) {
+                group.url = artifact.url;
+            }
+
+            if (artifact.sourceLogId) {
+                group.sourceLogIdSet.add(artifact.sourceLogId);
+            }
+            if (artifact.sourceToolName) {
+                group.sourceToolNameSet.add(artifact.sourceToolName);
+            }
+        }
+
+        for (const group of groups.values()) {
+            for (const sourceLogId of group.sourceLogIdSet) {
+                const sourceLog = logsById.get(sourceLogId);
+                attachFromLog(group, sourceLog);
+            }
+            if (group.type === 'agent') {
+                for (const log of session.logs) {
+                    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+                        continue;
+                    }
+                    const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
+                    const linkedThreadName = log.linkedSessionId ? subagentNameBySessionId.get(log.linkedSessionId) : null;
+                    if (taskSubagentName === group.title || linkedThreadName === group.title) {
+                        attachFromLog(group, log);
+                    }
+                }
+            }
+        }
+
+        const groupedArray = Array.from(groups.values());
+        const namedThreadIds = new Set<string>();
+        for (const group of groupedArray) {
+            if (group.type !== 'agent' || /^agent-/i.test(group.title)) {
+                continue;
+            }
+            for (const thread of group.linkedThreads) {
+                namedThreadIds.add(thread.id);
+            }
+        }
+
+        return groupedArray
+            .filter(group => {
+                if (group.type !== 'agent' || !/^agent-/i.test(group.title)) {
+                    return true;
+                }
+                return !group.linkedThreads.some(thread => namedThreadIds.has(thread.id));
+            })
+            .map(group => ({
+                key: group.key,
+                type: group.type,
+                title: group.title,
+                source: group.source,
+                description: group.description,
+                url: group.url,
+                artifactIds: group.artifactIds,
+                artifacts: group.artifacts,
+                sourceLogIds: Array.from(group.sourceLogIdSet),
+                sourceToolNames: Array.from(group.sourceToolNameSet),
+                relatedToolLogs: group.relatedToolLogs,
+                linkedThreads: group.linkedThreads,
+            }))
+            .sort((a, b) => {
+                if (b.artifacts.length !== a.artifacts.length) {
+                    return b.artifacts.length - a.artifacts.length;
+                }
+                return a.title.localeCompare(b.title);
+            });
+    }, [session.linkedArtifacts, session.logs, subagentNameBySessionId, threadSessions]);
+
+    if (groupedArtifacts.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <LinkIcon size={48} className="mb-4 opacity-20" />
@@ -550,35 +1104,62 @@ const ArtifactsView: React.FC<{ session: AgentSession; highlightedSourceLogId?: 
     }
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {session.linkedArtifacts.map(artifact => (
-                <div key={artifact.id} className={`bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && artifact.sourceLogId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}>
-                    <div className="flex justify-between items-start mb-4">
-                        <div className={`p-2 rounded-lg ${artifact.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                            artifact.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                                'bg-blue-500/10 text-blue-400'
-                            }`}>
-                            {artifact.type === 'memory' ? <HardDrive size={20} /> :
-                                artifact.type === 'request_log' ? <Scroll size={20} /> :
-                                    <Database size={20} />}
+        <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {groupedArtifacts.map(group => (
+                    <button
+                        key={group.key}
+                        onClick={() => setSelectedGroup(group)}
+                        className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+                    >
+                        <div className="flex justify-between items-start mb-4">
+                            <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+                                group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+                                    'bg-blue-500/10 text-blue-400'
+                                }`}>
+                                {group.type === 'memory' ? <HardDrive size={20} /> :
+                                    group.type === 'request_log' ? <Scroll size={20} /> :
+                                        <Database size={20} />}
+                            </div>
+                            <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
+                                {group.source}
+                            </span>
                         </div>
-                        <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                            {artifact.source}
-                        </span>
-                    </div>
 
-                    <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{artifact.title}</h3>
-                    <p className="text-sm text-slate-400 mb-4 line-clamp-3">{artifact.description}</p>
+                        <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
+                        <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
 
-                    <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                        <span className="text-xs font-mono text-slate-500">{artifact.id}</span>
-                        <button className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300">
-                            View Details <ChevronRight size={12} />
-                        </button>
-                    </div>
-                </div>
-            ))}
-        </div>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                {group.artifacts.length} merged
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                {group.relatedToolLogs.length} tool calls
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                {group.linkedThreads.length} sub-threads
+                            </span>
+                        </div>
+
+                        <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                            <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
+                            <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
+                                View Details <ChevronRight size={12} />
+                            </span>
+                        </div>
+                    </button>
+                ))}
+            </div>
+
+            {selectedGroup && (
+                <ArtifactDetailsModal
+                    group={selectedGroup}
+                    onClose={() => setSelectedGroup(null)}
+                    onOpenThread={onOpenThread}
+                    subagentNameBySessionId={subagentNameBySessionId}
+                />
+            )}
+        </>
     );
 };
 
@@ -925,21 +1506,28 @@ const AgentsView: React.FC<{
     session: AgentSession;
     onSelectAgent: (agentName: string) => void;
     threadSessions: AgentSession[];
+    subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
-}> = ({ session, onSelectAgent, threadSessions, onOpenThread }) => {
+}> = ({ session, onSelectAgent, threadSessions, subagentNameBySessionId, onOpenThread }) => {
     const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
-    const logAgents = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Main Session')));
-    const threadAgents = Array.from(new Set(threadSessions.map(t => t.agentId ? `agent-${t.agentId}` : 'Main Session')));
+    const logAgents = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || MAIN_SESSION_AGENT)));
+    const threadAgents = Array.from(new Set(threadSessions.map(t => getThreadDisplayName(t, subagentNameBySessionId))));
     const agents = Array.from(new Set([...logAgents, ...threadAgents]));
 
-    const agentThreads = (agent: string) => threadSessions.filter(t => (t.agentId ? `agent-${t.agentId}` : 'Main Session') === agent);
+    const agentThreads = (agent: string) => threadSessions.filter(t => getThreadDisplayName(t, subagentNameBySessionId) === agent);
 
     return (
         <div className="space-y-4">
             {agents.map(agent => {
                 const isOpen = expandedAgent === agent;
-                const agentLogs = session.logs.filter(l => l.agentName === agent || (agent === 'Main Session' && (!l.agentName || l.agentName === 'Main Agent') && l.speaker === 'agent'));
+                const agentLogs = session.logs.filter(l => (
+                    l.speaker === 'agent'
+                    && (
+                        l.agentName === agent
+                        || (agent === MAIN_SESSION_AGENT && (!l.agentName || l.agentName === 'Main Agent'))
+                    )
+                ));
                 const threads = agentThreads(agent);
 
                 return (
@@ -963,10 +1551,10 @@ const AgentsView: React.FC<{
                         {isOpen && (
                             <div className="p-4 border-t border-slate-800 space-y-3">
                                 <button
-                                    onClick={() => onSelectAgent(agent === 'Main Session' ? '' : agent)}
+                                    onClick={() => onSelectAgent(agent === MAIN_SESSION_AGENT ? '' : agent)}
                                     className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20"
                                 >
-                                    Filter Transcript
+                                    Open Sub-agent Transcript
                                 </button>
                                 <div className="space-y-2">
                                     {threads.length === 0 && (
@@ -979,7 +1567,7 @@ const AgentsView: React.FC<{
                                             className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
                                         >
                                             <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
-                                            <div className="text-[10px] text-slate-500 mt-1">{thread.sessionType || 'thread'}</div>
+                                            <div className="text-[10px] text-slate-500 mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
                                         </button>
                                     ))}
                                 </div>
@@ -1230,6 +1818,38 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         };
     }, [session.id, session.rootSessionId]);
 
+    const subagentNameBySessionId = useMemo(() => {
+        const names = new Map<string, string>();
+
+        for (const log of session.logs) {
+            if (log.type !== 'tool' || log.toolCall?.name !== 'Task' || !log.linkedSessionId) {
+                continue;
+            }
+            const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
+            if (taskSubagentName) {
+                names.set(log.linkedSessionId, taskSubagentName);
+            }
+        }
+
+        for (const log of session.logs) {
+            if (log.type !== 'subagent_start' || !log.linkedSessionId || names.has(log.linkedSessionId)) {
+                continue;
+            }
+            const metadataName = takeString(log.metadata?.subagentName, log.metadata?.subagentType);
+            if (metadataName) {
+                names.set(log.linkedSessionId, metadataName);
+            }
+        }
+
+        for (const thread of threadSessions) {
+            if (!names.has(thread.id) && thread.agentId) {
+                names.set(thread.id, `agent-${thread.agentId}`);
+            }
+        }
+
+        return names;
+    }, [session.logs, threadSessions]);
+
     const handleSelectAgent = (agent: string) => {
         setFilterAgent(agent || null); // Empty string resets filter
         setActiveTab('transcript');
@@ -1310,14 +1930,31 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         setSelectedLogId={setSelectedLogId}
                         filterAgent={filterAgent}
                         threadSessions={threadSessions}
+                        subagentNameBySessionId={subagentNameBySessionId}
                         onOpenThread={onOpenSession}
                         onShowLinked={handleShowLinked}
                     />
                 )}
                 {activeTab === 'files' && <FilesView session={session} onOpenDoc={setViewingDoc} highlightedSourceLogId={linkedSourceLogId} />}
-                {activeTab === 'artifacts' && <ArtifactsView session={session} highlightedSourceLogId={linkedSourceLogId} />}
+                {activeTab === 'artifacts' && (
+                    <ArtifactsView
+                        session={session}
+                        threadSessions={threadSessions}
+                        subagentNameBySessionId={subagentNameBySessionId}
+                        onOpenThread={onOpenSession}
+                        highlightedSourceLogId={linkedSourceLogId}
+                    />
+                )}
                 {activeTab === 'analytics' && <AnalyticsView session={session} goToTranscript={handleJumpToTranscript} />}
-                {activeTab === 'agents' && <AgentsView session={session} onSelectAgent={handleSelectAgent} threadSessions={threadSessions} onOpenThread={onOpenSession} />}
+                {activeTab === 'agents' && (
+                    <AgentsView
+                        session={session}
+                        onSelectAgent={handleSelectAgent}
+                        threadSessions={threadSessions}
+                        subagentNameBySessionId={subagentNameBySessionId}
+                        onOpenThread={onOpenSession}
+                    />
+                )}
                 {activeTab === 'impact' && <ImpactView session={session} />}
             </div>
 
@@ -1330,8 +1967,17 @@ export const SessionInspector: React.FC = () => {
     const { sessions, loadMoreSessions, hasMoreSessions, getSessionById, loading } = useData();
     const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
+    const [sessionBackStack, setSessionBackStack] = useState<AgentSession[]>([]);
 
-    const openSession = useCallback(async (sessionId: string, fallback?: AgentSession) => {
+    const openSession = useCallback(async (sessionId: string, fallback?: AgentSession, options?: { pushCurrent?: boolean }) => {
+        if (options?.pushCurrent && selectedSession) {
+            setSessionBackStack(prev => {
+                if (prev.length > 0 && prev[prev.length - 1].id === selectedSession.id) {
+                    return prev;
+                }
+                return [...prev, selectedSession];
+            });
+        }
         const full = await getSessionById(sessionId);
         if (full) {
             setSelectedSession(full);
@@ -1340,13 +1986,26 @@ export const SessionInspector: React.FC = () => {
         if (fallback) {
             setSelectedSession(fallback);
         }
-    }, [getSessionById]);
+    }, [getSessionById, selectedSession]);
+
+    const handleBackFromSession = useCallback(() => {
+        setSessionBackStack(prev => {
+            if (prev.length === 0) {
+                setSelectedSession(null);
+                return prev;
+            }
+            const parent = prev[prev.length - 1];
+            setSelectedSession(parent);
+            return prev.slice(0, -1);
+        });
+    }, []);
 
     // Deep-link: auto-select session from URL params
     useEffect(() => {
         const sessionParam = searchParams.get('session');
         if (sessionParam) {
             const exists = sessions.find(s => s.id === sessionParam);
+            setSessionBackStack([]);
             void openSession(sessionParam, exists);
             setSearchParams({}, { replace: true });
         }
@@ -1356,7 +2015,13 @@ export const SessionInspector: React.FC = () => {
     const pastSessions = sessions.filter(s => s.status !== 'active');
 
     if (selectedSession) {
-        return <SessionDetail session={selectedSession} onBack={() => setSelectedSession(null)} onOpenSession={(sessionId) => { void openSession(sessionId); }} />;
+        return (
+            <SessionDetail
+                session={selectedSession}
+                onBack={handleBackFromSession}
+                onOpenSession={(sessionId) => { void openSession(sessionId, undefined, { pushCurrent: true }); }}
+            />
+        );
     }
 
     return (
@@ -1375,7 +2040,14 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {activeSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => { void openSession(session.id, session); }} />
+                            <SessionSummaryCard
+                                key={session.id}
+                                session={session}
+                                onClick={() => {
+                                    setSessionBackStack([]);
+                                    void openSession(session.id, session);
+                                }}
+                            />
                         ))}
                         {activeSessions.length === 0 && (
                             <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
@@ -1393,7 +2065,14 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {pastSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => { void openSession(session.id, session); }} />
+                            <SessionSummaryCard
+                                key={session.id}
+                                session={session}
+                                onClick={() => {
+                                    setSessionBackStack([]);
+                                    void openSession(session.id, session);
+                                }}
+                            />
                         ))}
                     </div>
 
