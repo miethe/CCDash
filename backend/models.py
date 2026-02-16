@@ -128,6 +128,8 @@ class ProjectTask(BaseModel):
     sourceFile: str = ""       # relative path to the progress file this task was parsed from
     sessionId: str = ""        # linked session ID (from frontmatter)
     commitHash: str = ""       # linked git commit hash (from frontmatter)
+    featureId: Optional[str] = None
+    phaseId: Optional[str] = None
 
 
 # ── Analytics models ───────────────────────────────────────────────
@@ -181,6 +183,7 @@ class LinkedDocument(BaseModel):
 
 
 class FeaturePhase(BaseModel):
+    id: Optional[str] = None
     phase: str  # "1", "2", "all"
     title: str = ""
     status: str = "backlog"  # "completed" | "in-progress" | "backlog"

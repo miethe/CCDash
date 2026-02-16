@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter } from 'lucide-react';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 
@@ -998,6 +998,29 @@ const SessionFilterBar: React.FC = () => {
                     Clear
                 </button>
             )}
+
+            <div className="ml-auto pl-4 border-l border-slate-800">
+                <button
+                    onClick={async () => {
+                        try {
+                            const btn = document.getElementById('force-sync-btn');
+                            if (btn) btn.classList.add('animate-spin');
+                            await fetch('/api/cache/rescan', { method: 'POST' });
+                            // Wait a bit for background task to start/finish some work
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 2000);
+                        } catch (e) {
+                            console.error("Sync failed", e);
+                        }
+                    }}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
+                    title="Force full project re-scan"
+                >
+                    <RefreshCw size={14} id="force-sync-btn" />
+                    <span className="hidden sm:inline">Force Sync</span>
+                </button>
+            </div>
         </div>
     );
 };

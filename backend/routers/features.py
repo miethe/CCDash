@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
-from backend.models import Feature
+from backend.models import Feature, ProjectTask, FeaturePhase
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import get_feature_repository, get_task_repository
@@ -145,48 +145,43 @@ async def get_feature(feature_id: str):
     
     for p in phases_data:
         # Fetch tasks for this phase
-        tasks_data = await task_repo.list_by_feature(f["id"], p["id"]) # Wait, list_by_feature uses feature_id and phase_id
-        # But my repo impl for list_by_feature(feature_id, phase_id) expects phase_id column match.
-        # In my sync engine, I stored phase_id as "id:phase-X" or similar?
-        # Let's check sync engine:
-        # task_dict["phaseId"] = ... (Not explicitly set in sync engine!)
-        # Wait, sync engine calls `parse_progress_file`. Let's see if that sets phaseId.
-        # `ProjectTask` model has `phaseId` but `parse_progress_file` doesn't set it!
-        # It sets `projectLevel` like "Phase 1".
-        # I need to ensure tasks are linked to phases correctly in DB.
+        tasks_data = await task_repo.list_by_feature(f["id"], p["id"])
         
-        # In `backend/parsers/progress.py`:
-        # No, `phaseId` is missing in `ProjectTask` logic inside `parse_progress_file`.
-        # However, `SqliteTaskRepository` reads `phase_id` column.
+        p_tasks = []
+        for t in tasks_data:
+            import json as _json
+            t_data = _json.loads(t["data_json"]) if t.get("data_json") else {}
+            p_tasks.append(ProjectTask(
+                id=t["id"],
+                title=t["title"],
+                description=t["description"] or "",
+                status=t["status"],
+                owner=t["owner"] or "",
+                lastAgent=t["last_agent"] or "",
+                cost=t["cost"] or 0.0,
+                priority=t["priority"] or "medium",
+                projectType=t["project_type"] or "",
+                projectLevel=t["project_level"] or "",
+                tags=t_data.get("tags", []),
+                updatedAt=t["updated_at"] or "",
+                relatedFiles=t_data.get("relatedFiles", []),
+                sourceFile=t["source_file"] or "",
+                sessionId=t["session_id"] or "",
+                commitHash=t["commit_hash"] or "",
+                featureId=t["feature_id"],
+                phaseId=t["phase_id"]
+            ))
         
-        # FIX: The current sync logic might not link tasks to phases properly in DB if the parser doesn't provide it.
-        # But for list_features we can just return empty tasks for now, as the frontend often fetches tasks separately?
-        # Actually, the frontend expects `phases` to contain `tasks`.
-        
-        # Let's try to fetch tasks. If they aren't linked by phase_id, we might rely on the `projectLevel` string?
-        # Or, we can just return the phases without tasks attached (lite) if the frontend fetches tasks via /api/tasks?
-        # Looking at original code: `list_features` returned lite (no tasks), but `get_feature` returned full.
-        # For full, we need tasks.
-        
-        # Temporary workaround: Fetch all tasks for feature and manual filter?
-        # Only if efficient.
-        
-        # For this refactor, let's assume tasks are fetched separately or we improve sync later.
-        # I'll populate tasks list with *empty* for now to avoid blocking, 
-        # but optimally we should fix the task->phase linking in parser/sync.
-        
-        p_tasks = [] 
-        # ... (Linking logic would go here)
-        
-        phases.append({
-            "phase": p["phase"],
-            "title": p["title"],
-            "status": p["status"],
-            "progress": p["progress"],
-            "totalTasks": p["total_tasks"],
-            "completedTasks": p["completed_tasks"],
-            "tasks": p_tasks,
-        })
+        phases.append(FeaturePhase(
+            id=p["id"],
+            phase=p["phase"],
+            title=p["title"] or "",
+            status=p["status"],
+            progress=p["progress"] or 0,
+            totalTasks=p["total_tasks"] or 0,
+            completedTasks=p["completed_tasks"] or 0,
+            tasks=p_tasks,
+        ))
 
     return Feature(
         id=f["id"],

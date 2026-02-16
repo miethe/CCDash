@@ -354,8 +354,26 @@ class SyncEngine:
                 f_dict = feature.model_dump()
                 await self.feature_repo.upsert(f_dict, project_id)
 
-                # Upsert phases
-                phases = [p.model_dump() for p in feature.phases]
+                # Upsert phases and link tasks
+                phases = []
+                for idx, p in enumerate(feature.phases):
+                    p_dict = p.model_dump()
+                    
+                    # Generate deterministic phase_id (mirroring repo logic)
+                    phase_id = p_dict.get("id")
+                    if not phase_id:
+                        phase_id = f"{feature.id}:phase-{str(p_dict.get('phase', '0'))}-{idx}"
+                        p_dict["id"] = phase_id
+                    
+                    phases.append(p_dict)
+                    
+                    # Link tasks in this phase to feature and phase
+                    for task in p.tasks:
+                        task_dict = task.model_dump()
+                        task_dict["featureId"] = feature.id
+                        task_dict["phaseId"] = phase_id
+                        await self.task_repo.upsert(task_dict, project_id)
+
                 await self.feature_repo.upsert_phases(feature.id, phases)
 
                 # Auto-tag
@@ -429,6 +447,7 @@ class SyncEngine:
                         "origin": "auto",
                     })
                     stats["created"] += 1
+        return stats
 
 
     # ── Analytics Snapshot ──────────────────────────────────────────

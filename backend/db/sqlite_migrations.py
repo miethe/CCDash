@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS entity_links (
 CREATE INDEX IF NOT EXISTS idx_links_source ON entity_links(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_links_target ON entity_links(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_links_tree   ON entity_links(source_type, source_id, link_type, depth);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_links_upsert ON entity_links(source_type, source_id, target_type, target_id, link_type);
 CREATE INDEX IF NOT EXISTS idx_links_origin ON entity_links(origin) WHERE origin = 'manual';
 
 -- External links (URLs, PRs, issues)
