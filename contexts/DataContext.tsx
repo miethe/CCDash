@@ -6,6 +6,8 @@ import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Pro
 interface DataContextValue {
     // Data
     sessions: AgentSession[];
+    sessionTotal: number;
+    hasMoreSessions: boolean;
     documents: PlanDocument[];
     tasks: ProjectTask[];
     alerts: AlertConfig[];
@@ -22,7 +24,8 @@ interface DataContextValue {
 
     // Actions
     refreshAll: () => Promise<void>;
-    refreshSessions: () => Promise<void>;
+    refreshSessions: (reset?: boolean) => Promise<void>;
+    loadMoreSessions: () => Promise<void>;
     refreshDocuments: () => Promise<void>;
     refreshTasks: () => Promise<void>;
     refreshFeatures: () => Promise<void>;
@@ -37,6 +40,7 @@ interface DataContextValue {
     updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
     updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
     updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string) => Promise<void>;
+    getSessionById: (sessionId: string) => Promise<AgentSession | null>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -44,6 +48,13 @@ const DataContext = createContext<DataContextValue | null>(null);
 // ── API helpers ────────────────────────────────────────────────────
 
 const API_BASE = '/api';
+
+interface PaginatedResponse<T> {
+    items: T[];
+    total: number;
+    offset: number;
+    limit: number;
+}
 
 async function fetchJson<T>(path: string): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`);
@@ -56,9 +67,11 @@ async function fetchJson<T>(path: string): Promise<T> {
 // ── Provider ───────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const SESSIONS_PER_PAGE = 50;
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
+    const [sessionTotal, setSessionTotal] = useState(0);
     const [documents, setDocuments] = useState<PlanDocument[]>([]);
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
@@ -69,14 +82,51 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const refreshSessions = useCallback(async () => {
+    const refreshSessions = useCallback(async (reset = true) => {
         try {
-            const data = await fetchJson<AgentSession[]>('/sessions');
-            setSessions(data);
+            const offset = reset ? 0 : sessions.length;
+            // Catch case where we already have all sessions and it's not a reset (though caller should check)
+            if (!reset && sessions.length >= sessionTotal && sessionTotal > 0) return;
+
+            const params = new URLSearchParams({
+                offset: offset.toString(),
+                limit: SESSIONS_PER_PAGE.toString(),
+                sort_by: 'started_at',
+                sort_order: 'desc'
+            });
+
+            const data = await fetchJson<PaginatedResponse<AgentSession>>(`/sessions?${params}`);
+
+            if (reset) {
+                setSessions(data.items);
+            } else {
+                setSessions(prev => [...prev, ...data.items]);
+            }
+            setSessionTotal(data.total);
         } catch (e) {
             console.error('Failed to fetch sessions:', e);
         }
-    }, []);
+    }, [sessions.length, sessionTotal]);
+
+    const loadMoreSessions = useCallback(async () => {
+        if (sessions.length < sessionTotal) {
+            await refreshSessions(false);
+        }
+    }, [sessions.length, sessionTotal, refreshSessions]);
+
+    const getSessionById = useCallback(async (sessionId: string): Promise<AgentSession | null> => {
+        // First check if we already have it in state
+        const existing = sessions.find(s => s.id === sessionId);
+        if (existing) return existing;
+
+        // If not, fetch it
+        try {
+            return await fetchJson<AgentSession>(`/sessions/${sessionId}`);
+        } catch (e) {
+            console.error(`Failed to fetch session ${sessionId}:`, e);
+            return null;
+        }
+    }, [sessions]);
 
     const refreshDocuments = useCallback(async () => {
         try {
@@ -278,6 +328,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         <DataContext.Provider
             value={{
                 sessions,
+                sessionTotal,
+                hasMoreSessions: sessions.length < sessionTotal,
                 documents,
                 tasks,
                 alerts,
@@ -287,6 +339,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 error,
                 refreshAll,
                 refreshSessions,
+                loadMoreSessions,
                 refreshDocuments,
                 refreshTasks,
                 refreshFeatures,
@@ -299,6 +352,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 updateFeatureStatus,
                 updatePhaseStatus,
                 updateTaskStatus,
+                getSessionById,
             }}
         >
             {children}

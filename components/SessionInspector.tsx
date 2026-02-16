@@ -1019,35 +1019,39 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void }> = (
 };
 
 export const SessionInspector: React.FC = () => {
-    const { sessions } = useData();
+    const { sessions, loadMoreSessions, hasMoreSessions, getSessionById, loading } = useData();
     const [searchParams, setSearchParams] = useSearchParams();
-    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+    const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
 
     // Deep-link: auto-select session from URL params
     useEffect(() => {
         const sessionParam = searchParams.get('session');
-        if (sessionParam && sessions.length > 0) {
+        if (sessionParam) {
             const exists = sessions.find(s => s.id === sessionParam);
             if (exists) {
-                setSelectedSessionId(sessionParam);
+                setSelectedSession(exists);
+                setSearchParams({}, { replace: true });
+            } else {
+                // Fetch individually if not in current list
+                getSessionById(sessionParam).then(s => {
+                    if (s) {
+                        setSelectedSession(s);
+                        setSearchParams({}, { replace: true });
+                    }
+                });
             }
-            // Clear the param after consuming it
-            setSearchParams({}, { replace: true });
         }
-    }, [searchParams, sessions]);
+    }, [searchParams, sessions, getSessionById, setSearchParams]);
 
     const activeSessions = sessions.filter(s => s.status === 'active');
     const pastSessions = sessions.filter(s => s.status !== 'active');
 
-    if (selectedSessionId) {
-        const session = sessions.find(s => s.id === selectedSessionId);
-        if (session) {
-            return <SessionDetail session={session} onBack={() => setSelectedSessionId(null)} />;
-        }
+    if (selectedSession) {
+        return <SessionDetail session={selectedSession} onBack={() => setSelectedSession(null)} />;
     }
 
     return (
-        <div className="h-full flex flex-col gap-8 animate-in fade-in duration-500">
+        <div className="h-full flex flex-col gap-8 animate-in fade-in duration-500 overflow-y-auto pb-8">
             <div>
                 <h2 className="text-3xl font-bold text-slate-100 mb-2 font-mono tracking-tighter">Session Forensics</h2>
                 <p className="text-slate-400 max-w-2xl">Examine agent behavior, tool call chains, and multi-agent orchestration logs with millisecond-precision timestamps.</p>
@@ -1061,7 +1065,7 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {activeSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSessionId(session.id)} />
+                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSession(session)} />
                         ))}
                         {activeSessions.length === 0 && (
                             <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
@@ -1079,9 +1083,22 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {pastSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSessionId(session.id)} />
+                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSession(session)} />
                         ))}
                     </div>
+
+                    {hasMoreSessions && (
+                        <div className="pt-4 flex justify-center">
+                            <button
+                                onClick={() => loadMoreSessions()}
+                                disabled={loading}
+                                className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {loading && <Activity size={14} className="animate-spin" />}
+                                {loading ? 'Loading...' : 'Load More Sessions'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

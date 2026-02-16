@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from backend.models import (
     AgentSession, PlanDocument, ProjectTask,
     AnalyticsMetric, AlertConfig, Notification,
+    PaginatedResponse,
 )
 from backend.project_manager import project_manager
 from backend.db import connection
@@ -19,7 +20,7 @@ from backend.db.repositories.tasks import SqliteTaskRepository
 sessions_router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-@sessions_router.get("", response_model=list[AgentSession])
+@sessions_router.get("", response_model=PaginatedResponse[AgentSession])
 async def list_sessions(
     offset: int = 0,
     limit: int = 50,
@@ -29,7 +30,7 @@ async def list_sessions(
     """Return paginated sessions from DB."""
     project = project_manager.get_active_project()
     if not project:
-        return []
+        return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     db = await connection.get_connection()
     repo = SqliteSessionRepository(db)
@@ -38,25 +39,11 @@ async def list_sessions(
     sessions_data = await repo.list_paginated(
         offset, limit, project.id, sort_by, sort_order
     )
+    total_count = await repo.count(project.id)
     
-    # Need to hydrate detail fields? 
-    # For the list view, we often don't need full logs, tools, etc.
-    # But the frontend model AgentSession includes them.
-    # To keep list response fast, we might return them empty or minimal.
-    # The repository `list_paginated` only returns columns from `sessions` table.
-    
-    # Efficient approach: don't hydrate details for list view.
-    # The frontend usually fetches details ID-by-ID or we can create a AgentSessionSummary model.
-    # For now, satisfying the AgentSession model with empty lists is acceptable for list view performance.
-    
+    # Hydrate items (minimal for list view)
     results = []
     for s in sessions_data:
-        # Pydantic model expect camelCase for fields, but DB has snake_case
-        # We need to map them or use an alias generator or construct carefully.
-        # Actually our Pydantic models in models.py don't seem to use aliases for snake_case db columns...
-        # Wait, the models use camelCase (taskId, totalCost).
-        # We need to map DB columns to model fields.
-        
         results.append(AgentSession(
             id=s["id"],
             taskId=s["task_id"] or "",
@@ -72,13 +59,19 @@ async def list_sessions(
             gitCommitHash=s["git_commit_hash"],
             gitAuthor=s["git_author"],
             gitBranch=s["git_branch"],
-            updatedFiles=[], # omitted in list
-            linkedArtifacts=[], # omitted in list
-            toolsUsed=[], # omitted in list
-            impactHistory=[], # omitted in list
-            logs=[], # omitted in list
+            updatedFiles=[],
+            linkedArtifacts=[],
+            toolsUsed=[],
+            impactHistory=[],
+            logs=[],
         ))
-    return results
+        
+    return PaginatedResponse(
+        items=results,
+        total=total_count,
+        offset=offset,
+        limit=limit
+    )
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)

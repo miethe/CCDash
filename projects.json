@@ -10,7 +10,9 @@
       "agentPlatforms": [
         "Claude Code"
       ],
-      "planDocsPath": "project_plans"
+      "planDocsPath": "project_plans",
+      "sessionsPath": "",
+      "progressPath": "progress"
     },
     {
       "id": "test-project-1",
@@ -21,7 +23,9 @@
       "agentPlatforms": [
         "Claude Code"
       ],
-      "planDocsPath": "plans"
+      "planDocsPath": "plans",
+      "sessionsPath": "",
+      "progressPath": "progress"
     },
     {
       "id": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
@@ -32,7 +36,9 @@
       "agentPlatforms": [
         "Claude Code"
       ],
-      "planDocsPath": "docs/project_plans/"
+      "planDocsPath": "docs/project_plans/",
+      "sessionsPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+      "progressPath": ".claude/progress"
     }
   ]
 }

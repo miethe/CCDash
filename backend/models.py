@@ -1,9 +1,15 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Generic, TypeVar
 
+T = TypeVar("T")
 
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    offset: int
+    limit: int
 # ── Session-related models ──────────────────────────────────────────
 
 class ToolCallInfo(BaseModel):
