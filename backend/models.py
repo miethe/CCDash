@@ -70,6 +70,8 @@ class AgentSession(BaseModel):
     taskId: str = ""
     status: str = "completed"
     model: str = ""
+    sessionType: str = ""
+    parentSessionId: Optional[str] = None
     durationSeconds: int = 0
     tokensIn: int = 0
     tokensOut: int = 0
@@ -205,4 +207,3 @@ class Feature(BaseModel):
     linkedDocs: list[LinkedDocument] = Field(default_factory=list)
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
-

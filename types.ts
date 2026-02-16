@@ -175,6 +175,7 @@ export interface LinkedDocument {
 }
 
 export interface FeaturePhase {
+  id?: string;
   phase: string;
   title: string;
   status: string;

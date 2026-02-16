@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
@@ -1124,25 +1124,26 @@ export const SessionInspector: React.FC = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
 
+    const openSession = useCallback(async (sessionId: string, fallback?: AgentSession) => {
+        const full = await getSessionById(sessionId);
+        if (full) {
+            setSelectedSession(full);
+            return;
+        }
+        if (fallback) {
+            setSelectedSession(fallback);
+        }
+    }, [getSessionById]);
+
     // Deep-link: auto-select session from URL params
     useEffect(() => {
         const sessionParam = searchParams.get('session');
         if (sessionParam) {
             const exists = sessions.find(s => s.id === sessionParam);
-            if (exists) {
-                setSelectedSession(exists);
-                setSearchParams({}, { replace: true });
-            } else {
-                // Fetch individually if not in current list
-                getSessionById(sessionParam).then(s => {
-                    if (s) {
-                        setSelectedSession(s);
-                        setSearchParams({}, { replace: true });
-                    }
-                });
-            }
+            void openSession(sessionParam, exists);
+            setSearchParams({}, { replace: true });
         }
-    }, [searchParams, sessions, getSessionById, setSearchParams]);
+    }, [searchParams, sessions, setSearchParams, openSession]);
 
     const activeSessions = sessions.filter(s => s.status === 'active');
     const pastSessions = sessions.filter(s => s.status !== 'active');
@@ -1167,7 +1168,7 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {activeSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSession(session)} />
+                            <SessionSummaryCard key={session.id} session={session} onClick={() => { void openSession(session.id, session); }} />
                         ))}
                         {activeSessions.length === 0 && (
                             <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
@@ -1185,7 +1186,7 @@ export const SessionInspector: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                         {pastSessions.map(session => (
-                            <SessionSummaryCard key={session.id} session={session} onClick={() => setSelectedSession(session)} />
+                            <SessionSummaryCard key={session.id} session={session} onClick={() => { void openSession(session.id, session); }} />
                         ))}
                     </div>
 

@@ -153,7 +153,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // If not, fetch it
         try {
-            return await fetchJson<AgentSession>(`/sessions/${sessionId}`);
+            const fetched = await fetchJson<AgentSession>(`/sessions/${sessionId}`);
+            setSessions(prev => {
+                const idx = prev.findIndex(s => s.id === sessionId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                next[idx] = fetched;
+                return next;
+            });
+            return fetched;
         } catch (e) {
             console.error(`Failed to fetch session ${sessionId}:`, e);
             return null;

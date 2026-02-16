@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 from pathlib import Path
 from collections import Counter
 from datetime import datetime
@@ -13,11 +14,24 @@ from backend.models import (
 )
 
 
+def _normalize_session_id(raw_id: str) -> str:
+    """Normalize session IDs to a stable, URL-safe display format."""
+    cleaned = raw_id.strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("S-"):
+        return cleaned
+
+    if re.match(r"^[A-Za-z0-9._:-]+$", cleaned):
+        return f"S-{cleaned}"
+
+    digest = hashlib.sha1(cleaned.encode("utf-8")).hexdigest()[:20]
+    return f"S-{digest}"
+
+
 def _make_id(path: Path) -> str:
-    """Derive a short session ID from the filename (UUID)."""
-    stem = path.stem  # e.g. ff9e2c59-3b21-4291-b483-7f5f6303ecf5
-    short = stem[:8]
-    return f"S-{short}"
+    """Derive a collision-safe session ID from the source filename."""
+    return _normalize_session_id(path.stem) or f"S-{hashlib.sha1(path.stem.encode('utf-8')).hexdigest()[:20]}"
 
 
 def _parse_timestamp(ts: str | None) -> str:
@@ -72,6 +86,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
         return None
 
     session_id = _make_id(path)
+    session_type = "subagent" if path.parent.name == "subagents" else "session"
+    parent_session_id = ""
+    if session_type == "subagent":
+        parent_session_id = _normalize_session_id(path.parent.parent.name)
+    task_id = ""
     model = ""
     git_branch = ""
     git_author = ""
@@ -104,6 +123,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         # Extract session metadata
         if "sessionId" in entry and not git_branch:
             git_branch = entry.get("gitBranch", "")
+        if not parent_session_id and isinstance(entry.get("sessionId"), str):
+            maybe_parent = _normalize_session_id(entry.get("sessionId", ""))
+            if maybe_parent and maybe_parent != session_id:
+                parent_session_id = maybe_parent
+        if not task_id:
+            if isinstance(entry.get("taskId"), str):
+                task_id = entry.get("taskId", "")
+            elif isinstance(entry.get("task_id"), str):
+                task_id = entry.get("task_id", "")
 
         # Process messages
         if entry_type in ("user", "assistant"):
@@ -218,9 +246,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
     return AgentSession(
         id=session_id,
-        taskId="",
+        taskId=task_id,
         status="completed",
         model=model,
+        sessionType=session_type,
+        parentSessionId=parent_session_id or None,
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,

@@ -1,6 +1,8 @@
 """API routers for sessions, documents, tasks, and analytics."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.models import (
@@ -14,6 +16,15 @@ from backend.db.factory import (
     get_document_repository,
     get_task_repository,
 )
+
+
+def _safe_json(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
 
 # ── Sessions router ─────────────────────────────────────────────────
 
@@ -64,6 +75,8 @@ async def list_sessions(
             taskId=s["task_id"] or "",
             status=s["status"] or "completed",
             model=s["model"] or "",
+            sessionType=s["session_type"] or "",
+            parentSessionId=s["parent_session_id"],
             durationSeconds=s["duration_seconds"],
             tokensIn=s["tokens_in"],
             tokensOut=s["tokens_out"],
@@ -165,6 +178,8 @@ async def get_session(session_id: str):
         taskId=s["task_id"] or "",
         status=s["status"] or "completed",
         model=s["model"] or "",
+        sessionType=s["session_type"] or "",
+        parentSessionId=s["parent_session_id"],
         durationSeconds=s["duration_seconds"],
         tokensIn=s["tokens_in"],
         tokensOut=s["tokens_out"],
@@ -204,10 +219,8 @@ async def list_documents():
     docs = await repo.list_all(project.id)
     
     results = []
-    import json
     for d in docs:
-        fm_json = d["frontmatter_json"]
-        fm = json.loads(fm_json) if fm_json else {}
+        fm = _safe_json(d.get("frontmatter_json"))
         
         results.append(PlanDocument(
             id=d["id"],
@@ -232,9 +245,7 @@ async def get_document(doc_id: str):
     if not d:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
         
-    import json
-    fm_json = d["frontmatter_json"]
-    fm = json.loads(fm_json) if fm_json else {}
+    fm = _safe_json(d.get("frontmatter_json"))
     
     return PlanDocument(
         id=d["id"],
@@ -266,17 +277,11 @@ async def list_tasks():
     
     results = []
     for t in tasks:
-        # Re-construct from DB fields
-        # Note: tags and relatedFiles were stored in data_json or we need to extract them?
-        # Creating schema, we stored data_json.
-        import json
-        data = json.loads(t["data_json"]) if t.get("data_json") else {}
-        
-        # Merge DB fields with data_json for any missing fields if necessary
-        # The parser populated DB columns, so prefer those.
+        data = _safe_json(t.get("data_json"))
+        raw_task_id = data.get("rawTaskId") or t["id"]
         
         results.append(ProjectTask(
-            id=t["id"],
+            id=str(raw_task_id),
             title=t["title"],
             description=t["description"],
             status=t["status"],
@@ -294,7 +299,5 @@ async def list_tasks():
             commitHash=t["commit_hash"],
         ))
     return results
-
-
 
 

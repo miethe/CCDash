@@ -180,11 +180,11 @@ const FeatureModal = ({
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
 
-  const togglePhase = (phase: string) => {
+  const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
       const next = new Set(prev);
-      if (next.has(phase)) next.delete(phase);
-      else next.add(phase);
+      if (next.has(phaseKey)) next.delete(phaseKey);
+      else next.add(phaseKey);
       return next;
     });
   };
@@ -406,12 +406,13 @@ const FeatureModal = ({
               )}
               {phases.map(phase => {
                 const phaseStatus = getStatusStyle(phase.status);
-                const isExpanded = expandedPhases.has(phase.phase);
+                const phaseKey = phase.id || phase.phase;
+                const isExpanded = expandedPhases.has(phaseKey);
                 return (
-                  <div key={phase.phase} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+                  <div key={phaseKey} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
                     <div className="flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors">
                       <button
-                        onClick={() => togglePhase(phase.phase)}
+                        onClick={() => togglePhase(phaseKey)}
                         className="flex items-center gap-3 flex-1 min-w-0 text-left"
                       >
                         {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}

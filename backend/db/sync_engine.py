@@ -10,6 +10,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -41,6 +42,41 @@ def _file_hash(path: Path) -> str:
     except Exception:
         return ""
     return h.hexdigest()
+
+
+def _canonical_task_source(path: Path, progress_dir: Path) -> str:
+    """Store task source paths relative to project root for stable linking."""
+    try:
+        return str(path.relative_to(progress_dir.parent))
+    except ValueError:
+        return str(path)
+
+
+def _task_storage_id(task_id: str, source_file: str) -> str:
+    """Create a deterministic DB key for tasks.
+
+    Task IDs in progress files are often reused across features/phases
+    (for example, TASK-1.1), so a global PK on raw ID causes collisions.
+    """
+    raw = f"{source_file}::{task_id}".encode("utf-8")
+    digest = hashlib.sha1(raw).hexdigest()[:20]
+    return f"T-{digest}"
+
+
+def _prepare_task_for_storage(task_dict: dict) -> dict:
+    """Convert parser task shape into collision-safe DB row shape."""
+    raw_task_id = str(task_dict.get("rawTaskId") or task_dict.get("id") or "").strip()
+    source_file = str(task_dict.get("sourceFile") or "").strip()
+    if not raw_task_id:
+        return task_dict
+
+    if not source_file:
+        fallback_scope = f"{task_dict.get('featureId', '')}::{task_dict.get('phaseId', '')}"
+        source_file = fallback_scope if fallback_scope != "::" else "unknown"
+
+    task_dict["rawTaskId"] = raw_task_id
+    task_dict["id"] = _task_storage_id(raw_task_id, source_file)
+    return task_dict
 
 
 class SyncEngine:
@@ -169,7 +205,7 @@ class SyncEngine:
         if not sessions_dir.exists():
             return stats
 
-        for jsonl_file in sorted(sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        for jsonl_file in sorted(sessions_dir.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
             synced = await self._sync_single_session(project_id, jsonl_file, force)
             if synced:
                 stats["synced"] += 1
@@ -191,6 +227,10 @@ class SyncEngine:
         t0 = time.monotonic()
         session = parse_session_file(path)
         parse_ms = int((time.monotonic() - t0) * 1000)
+
+        # Always clear existing rows for this source file before re-inserting.
+        # This prevents stale duplicates when session ID derivation changes.
+        await self.session_repo.delete_by_source(file_path)
 
         if session:
             session_dict = session.model_dump()
@@ -305,6 +345,7 @@ class SyncEngine:
         self, project_id: str, path: Path, progress_dir: Path, force: bool = False,
     ) -> bool:
         file_path = str(path)
+        canonical_source = _canonical_task_source(path, progress_dir)
         mtime = path.stat().st_mtime
 
         if not force:
@@ -316,12 +357,15 @@ class SyncEngine:
         tasks = parse_progress_file(path, progress_dir)
         parse_ms = int((time.monotonic() - t0) * 1000)
 
-        # Delete old tasks from this source first
+        # Delete old tasks from this source first (legacy absolute + canonical relative)
         await self.task_repo.delete_by_source(file_path)
+        if canonical_source != file_path:
+            await self.task_repo.delete_by_source(canonical_source)
 
         for task in tasks:
             task_dict = task.model_dump()
-            task_dict["sourceFile"] = file_path
+            task_dict["sourceFile"] = canonical_source
+            task_dict = _prepare_task_for_storage(task_dict)
             await self.task_repo.upsert(task_dict, project_id)
 
             # Auto-tag
@@ -370,8 +414,11 @@ class SyncEngine:
                     # Link tasks in this phase to feature and phase
                     for task in p.tasks:
                         task_dict = task.model_dump()
+                        if not task_dict.get("sourceFile"):
+                            task_dict["sourceFile"] = f"progress/{feature.id}"
                         task_dict["featureId"] = feature.id
                         task_dict["phaseId"] = phase_id
+                        task_dict = _prepare_task_for_storage(task_dict)
                         await self.task_repo.upsert(task_dict, project_id)
 
                 await self.feature_repo.upsert_phases(feature.id, phases)

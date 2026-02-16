@@ -1,6 +1,9 @@
 """Features API router."""
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -43,6 +46,64 @@ class TaskSourceResponse(BaseModel):
     content: str
 
 
+def _safe_json(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _task_from_db_row(row: dict[str, Any]) -> ProjectTask:
+    data = _safe_json(row.get("data_json"))
+    raw_task_id = data.get("rawTaskId") or row["id"]
+    return ProjectTask(
+        id=str(raw_task_id),
+        title=row["title"],
+        description=row["description"] or "",
+        status=row["status"],
+        owner=row["owner"] or "",
+        lastAgent=row["last_agent"] or "",
+        cost=row["cost"] or 0.0,
+        priority=row["priority"] or "medium",
+        projectType=row["project_type"] or "",
+        projectLevel=row["project_level"] or "",
+        tags=data.get("tags", []),
+        updatedAt=row["updated_at"] or "",
+        relatedFiles=data.get("relatedFiles", []),
+        sourceFile=row["source_file"] or "",
+        sessionId=row["session_id"] or "",
+        commitHash=row["commit_hash"] or "",
+        featureId=row["feature_id"],
+        phaseId=row["phase_id"]
+    )
+
+
+def _task_from_feature_blob(task_data: dict[str, Any], feature_id: str, phase_id: str) -> ProjectTask:
+    raw_task_id = str(task_data.get("rawTaskId") or task_data.get("id") or "")
+    return ProjectTask(
+        id=raw_task_id,
+        title=str(task_data.get("title", "")),
+        description=str(task_data.get("description", "")),
+        status=str(task_data.get("status", "backlog")),
+        owner=str(task_data.get("owner", "")),
+        lastAgent=str(task_data.get("lastAgent", "")),
+        cost=float(task_data.get("cost", 0.0) or 0.0),
+        priority=str(task_data.get("priority", "medium")),
+        projectType=str(task_data.get("projectType", "")),
+        projectLevel=str(task_data.get("projectLevel", "")),
+        tags=[str(t) for t in (task_data.get("tags", []) or [])],
+        updatedAt=str(task_data.get("updatedAt", "")),
+        relatedFiles=[str(f) for f in (task_data.get("relatedFiles", []) or [])],
+        sourceFile=str(task_data.get("sourceFile", "")),
+        sessionId=str(task_data.get("sessionId", "")),
+        commitHash=str(task_data.get("commitHash", "")),
+        featureId=feature_id,
+        phaseId=phase_id,
+    )
+
+
 # ── GET endpoints ───────────────────────────────────────────────────
 
 @features_router.get("", response_model=list[Feature])
@@ -58,13 +119,13 @@ async def list_features():
     features_data = await repo.list_all(project.id)
     
     results = []
-    import json
     for f in features_data:
         # Phases
         phases_data = await repo.get_phases(f["id"])
         phases = []
         for p in phases_data:
             phases.append({
+                "id": p["id"],
                 "phase": p["phase"],
                 "title": p["title"],
                 "status": p["status"],
@@ -74,7 +135,7 @@ async def list_features():
                 "tasks": [], # stripped for list
             })
             
-        data = json.loads(f["data_json"]) if f.get("data_json") else {}
+        data = _safe_json(f.get("data_json"))
         
         results.append(Feature(
             id=f["id"],
@@ -134,44 +195,44 @@ async def get_feature(feature_id: str):
     if not f:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
         
-    import json
-    data = json.loads(f["data_json"]) if f.get("data_json") else {}
+    data = _safe_json(f.get("data_json"))
 
     # Phases with tasks
     phases_data = await repo.get_phases(f["id"])
     phases = []
     
     task_repo = get_task_repository(db)
+    all_tasks_data = await task_repo.list_by_feature(f["id"], None)
+    tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
+    for row in all_tasks_data:
+        phase_key = str(row.get("phase_id") or "")
+        tasks_by_phase.setdefault(phase_key, []).append(row)
     
+    blob_phase_tasks: dict[str, list[list[dict[str, Any]]]] = {}
+    for phase_blob in data.get("phases", []):
+        if not isinstance(phase_blob, dict):
+            continue
+        phase_key = str(phase_blob.get("phase", ""))
+        tasks_blob = phase_blob.get("tasks", [])
+        if isinstance(tasks_blob, list):
+            blob_phase_tasks.setdefault(phase_key, []).append(tasks_blob)
+
     for p in phases_data:
-        # Fetch tasks for this phase
-        tasks_data = await task_repo.list_by_feature(f["id"], p["id"])
-        
+        tasks_data = tasks_by_phase.get(str(p.get("id") or ""), [])
+
         p_tasks = []
-        for t in tasks_data:
-            import json as _json
-            t_data = _json.loads(t["data_json"]) if t.get("data_json") else {}
-            p_tasks.append(ProjectTask(
-                id=t["id"],
-                title=t["title"],
-                description=t["description"] or "",
-                status=t["status"],
-                owner=t["owner"] or "",
-                lastAgent=t["last_agent"] or "",
-                cost=t["cost"] or 0.0,
-                priority=t["priority"] or "medium",
-                projectType=t["project_type"] or "",
-                projectLevel=t["project_level"] or "",
-                tags=t_data.get("tags", []),
-                updatedAt=t["updated_at"] or "",
-                relatedFiles=t_data.get("relatedFiles", []),
-                sourceFile=t["source_file"] or "",
-                sessionId=t["session_id"] or "",
-                commitHash=t["commit_hash"] or "",
-                featureId=t["feature_id"],
-                phaseId=t["phase_id"]
-            ))
-        
+        if tasks_data:
+            p_tasks = [_task_from_db_row(t) for t in tasks_data]
+        else:
+            # Fallback for legacy rows where task PK collisions broke phase linkage.
+            phase_key = str(p.get("phase", ""))
+            candidates = blob_phase_tasks.get(phase_key, [])
+            if candidates:
+                raw_tasks = candidates.pop(0)
+                for raw_task in raw_tasks:
+                    if isinstance(raw_task, dict):
+                        p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
+
         phases.append(FeaturePhase(
             id=p["id"],
             phase=p["phase"],
