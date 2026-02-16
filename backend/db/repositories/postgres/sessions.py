@@ -21,17 +21,19 @@ class PostgresSessionRepository:
                 id, project_id, task_id, status, model,
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
-                git_commit_hash, git_author, git_branch,
+                git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 duration_seconds=EXCLUDED.duration_seconds,
                 tokens_in=EXCLUDED.tokens_in, tokens_out=EXCLUDED.tokens_out,
                 total_cost=EXCLUDED.total_cost,
                 quality_rating=EXCLUDED.quality_rating, friction_rating=EXCLUDED.friction_rating,
-                git_commit_hash=EXCLUDED.git_commit_hash, git_author=EXCLUDED.git_author,
+                git_commit_hash=EXCLUDED.git_commit_hash,
+                git_commit_hashes_json=EXCLUDED.git_commit_hashes_json,
+                git_author=EXCLUDED.git_author,
                 git_branch=EXCLUDED.git_branch,
                 session_type=EXCLUDED.session_type,
                 parent_session_id=EXCLUDED.parent_session_id,
@@ -53,6 +55,7 @@ class PostgresSessionRepository:
             session_data.get("qualityRating", 0),
             session_data.get("frictionRating", 0),
             session_data.get("gitCommitHash"),
+            json.dumps(session_data.get("gitCommitHashes", []) or []),
             session_data.get("gitAuthor"),
             session_data.get("gitBranch"),
             session_data.get("sessionType", ""),

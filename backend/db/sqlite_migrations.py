@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     quality_rating   INTEGER DEFAULT 0,
     friction_rating  INTEGER DEFAULT 0,
     git_commit_hash  TEXT,
+    git_commit_hashes_json TEXT DEFAULT '[]',
     git_author       TEXT,
     git_branch       TEXT,
     session_type     TEXT DEFAULT '',
@@ -371,6 +372,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     # Explicit table upgrades for existing DBs.
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "agent_id", "TEXT")
+    await _ensure_column(db, "sessions", "git_commit_hashes_json", "TEXT DEFAULT '[]'")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")

@@ -6,6 +6,7 @@ existing parsers, and upserts the results into the DB cache.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -169,7 +170,8 @@ class SyncEngine:
 
         changed_files: list of (change_type, path) where change_type is 'modified'|'added'|'deleted'
         """
-        stats = {"sessions": 0, "documents": 0, "tasks": 0}
+        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0}
+        should_resync_features = False
 
         for change_type, path in changed_files:
             if change_type == "deleted":
@@ -182,6 +184,8 @@ class SyncEngine:
                     await self.document_repo.delete_by_source(str(path))
                     await self.task_repo.delete_by_source(str(path))
                     stats["documents"] += 1
+                    if docs_dir in path.parents or progress_dir in path.parents:
+                        should_resync_features = True
                 continue
 
             # Modified or added
@@ -192,9 +196,15 @@ class SyncEngine:
                 if docs_dir in path.parents:
                     await self._sync_single_document(project_id, path, docs_dir)
                     stats["documents"] += 1
+                    should_resync_features = True
                 if progress_dir in path.parents:
                     await self._sync_single_progress(project_id, path, progress_dir)
                     stats["tasks"] += 1
+                    should_resync_features = True
+
+        if should_resync_features:
+            f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
+            stats["features"] = f_stats.get("synced", 0)
 
         return stats
 
@@ -442,14 +452,96 @@ class SyncEngine:
         """Auto-discover cross-references between entities."""
         stats = {"created": 0}
 
-        # Get all features from DB
+        def _normalize_ref_path(raw: str) -> str:
+            value = (raw or "").strip().strip("\"'`")
+            if not value:
+                return ""
+            while value.startswith("./"):
+                value = value[2:]
+            return value
+
+        def _path_matches(candidate: str, ref: str) -> bool:
+            candidate_norm = _normalize_ref_path(candidate).replace("\\", "/")
+            ref_norm = _normalize_ref_path(ref).replace("\\", "/")
+            if not candidate_norm or not ref_norm:
+                return False
+            if candidate_norm == ref_norm:
+                return True
+            if candidate_norm.endswith(f"/{ref_norm}"):
+                return True
+            if ref_norm.endswith(f"/{candidate_norm}"):
+                return True
+            return False
+
+        def _source_weight(tool_name: str) -> tuple[float, str]:
+            name = (tool_name or "").strip().lower()
+            if name in {"command"}:
+                return 0.96, "command_args_path"
+            if name in {"write", "writefile", "edit", "multiedit"}:
+                return 0.95, "file_write"
+            if name in {"bash", "exec"}:
+                return 0.84, "shell_reference"
+            if name in {"grep", "glob"}:
+                return 0.66, "search_reference"
+            if name in {"read", "readfile"}:
+                return 0.46, "file_read"
+            return 0.52, "file_reference"
+
+        def _confidence_from_signals(weights: list[float], has_command: bool, has_write: bool, has_task_link: bool) -> float:
+            if has_task_link:
+                return 1.0
+            if not weights:
+                return 0.0
+            score = max(weights)
+            if len(weights) >= 2:
+                score += 0.08
+            if has_write:
+                score += 0.08
+            if has_command:
+                score += 0.05
+            return round(min(1.0, score), 3)
+
         features = await self.feature_repo.list_all(project_id)
+        feature_ref_paths: dict[str, set[str]] = {}
+        feature_command_hints: dict[str, set[str]] = {}
+        task_bound_feature_sessions: set[tuple[str, str]] = set()
+
         for f in features:
             feature_id = f["id"]
+            await self.link_repo.delete_auto_links("feature", feature_id)
+            feature_ref_paths[feature_id] = set()
+            feature_command_hints[feature_id] = set()
+
+            try:
+                f_data = json.loads(f.get("data_json") or "{}")
+            except Exception:
+                f_data = {}
+
+            for doc in f_data.get("linkedDocs", []):
+                if not isinstance(doc, dict):
+                    continue
+                doc_path = _normalize_ref_path(str(doc.get("filePath") or ""))
+                if doc_path:
+                    feature_ref_paths[feature_id].add(doc_path)
+
+            # Command names associated with plan-heavy workflows.
+            feature_command_hints[feature_id].update({
+                "/dev:execute-phase",
+                "/dev:quick-feature",
+                "/plan:plan-feature",
+                "/dev:implement-story",
+                "/dev:complete-user-story",
+            })
 
             # Link feature → tasks
             tasks = await self.task_repo.list_by_feature(feature_id)
             for t in tasks:
+                await self.link_repo.delete_auto_links("task", t["id"])
+
+                source_file = _normalize_ref_path(str(t.get("source_file") or ""))
+                if source_file:
+                    feature_ref_paths[feature_id].add(source_file)
+
                 await self.link_repo.upsert({
                     "source_type": "feature",
                     "source_id": feature_id,
@@ -462,6 +554,25 @@ class SyncEngine:
 
                 # Link task → session if available
                 if t.get("session_id"):
+                    feature_session_metadata = {
+                        "linkStrategy": "task_frontmatter",
+                        "taskId": t.get("id"),
+                        "taskSource": t.get("source_file"),
+                        "commitHash": t.get("commit_hash") or "",
+                    }
+                    await self.link_repo.upsert({
+                        "source_type": "feature",
+                        "source_id": feature_id,
+                        "target_type": "session",
+                        "target_id": t["session_id"],
+                        "link_type": "related",
+                        "origin": "auto",
+                        "confidence": 1.0,
+                        "metadata_json": json.dumps(feature_session_metadata),
+                    })
+                    stats["created"] += 1
+                    task_bound_feature_sessions.add((feature_id, str(t["session_id"])))
+
                     await self.link_repo.upsert({
                         "source_type": "task",
                         "source_id": t["id"],
@@ -472,13 +583,99 @@ class SyncEngine:
                     })
                     stats["created"] += 1
 
+        # Build feature ↔ session links from session evidence.
+        total_sessions = await self.session_repo.count(project_id, {"include_subagents": True})
+        sessions_data: list[dict[str, Any]] = []
+        page_size = 250
+        for offset in range(0, total_sessions, page_size):
+            page = await self.session_repo.list_paginated(
+                offset,
+                page_size,
+                project_id,
+                "started_at",
+                "desc",
+                {"include_subagents": True},
+            )
+            sessions_data.extend(page)
+
+        for s in sessions_data:
+            session_id = s["id"]
+            file_updates = await self.session_repo.get_file_updates(session_id)
+            artifacts = await self.session_repo.get_artifacts(session_id)
+
+            command_names = {
+                str(a.get("title") or "").strip()
+                for a in artifacts
+                if str(a.get("type") or "").strip().lower() == "command" and str(a.get("title") or "").strip()
+            }
+
+            session_commit_hashes: set[str] = set()
+            if s.get("git_commit_hash"):
+                session_commit_hashes.add(str(s["git_commit_hash"]))
+            try:
+                parsed_hashes = json.loads(s.get("git_commit_hashes_json") or "[]")
+            except Exception:
+                parsed_hashes = []
+            if isinstance(parsed_hashes, list):
+                for h in parsed_hashes:
+                    if isinstance(h, str) and h.strip():
+                        session_commit_hashes.add(h.strip())
+
+            for feature_id, refs in feature_ref_paths.items():
+                signal_weights: list[float] = []
+                evidence: list[dict[str, Any]] = []
+                has_write = False
+
+                for update in file_updates:
+                    update_path = str(update.get("file_path") or "")
+                    if not update_path:
+                        continue
+                    if not any(_path_matches(update_path, ref_path) for ref_path in refs):
+                        continue
+
+                    weight, signal_type = _source_weight(str(update.get("source_tool_name") or ""))
+                    signal_weights.append(weight)
+                    if signal_type == "file_write":
+                        has_write = True
+                    evidence.append({
+                        "type": signal_type,
+                        "path": update_path,
+                        "sourceTool": update.get("source_tool_name"),
+                        "weight": weight,
+                    })
+
+                has_command_hint = bool(command_names.intersection(feature_command_hints.get(feature_id, set())))
+                if (feature_id, session_id) in task_bound_feature_sessions:
+                    continue
+                confidence = _confidence_from_signals(signal_weights, has_command_hint, has_write, False)
+                if confidence <= 0:
+                    continue
+
+                metadata = {
+                    "linkStrategy": "session_evidence",
+                    "signals": evidence[:25],
+                    "commands": sorted(command_names)[:15],
+                    "commitHashes": sorted(session_commit_hashes),
+                }
+                await self.link_repo.upsert({
+                    "source_type": "feature",
+                    "source_id": feature_id,
+                    "target_type": "session",
+                    "target_id": session_id,
+                    "link_type": "related",
+                    "origin": "auto",
+                    "confidence": confidence,
+                    "metadata_json": json.dumps(metadata),
+                })
+                stats["created"] += 1
+
         # Link documents → features via frontmatter linkedFeatures
         docs = await self.document_repo.list_all(project_id)
         for d in docs:
-            import json as _json
+            await self.link_repo.delete_auto_links("document", d["id"])
             fm = d.get("frontmatter_json", "{}")
             try:
-                fm_dict = _json.loads(fm) if isinstance(fm, str) else fm
+                fm_dict = json.loads(fm) if isinstance(fm, str) else fm
             except Exception:
                 fm_dict = {}
 

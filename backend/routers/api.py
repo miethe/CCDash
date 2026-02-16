@@ -16,6 +16,7 @@ from backend.db.factory import (
     get_document_repository,
     get_task_repository,
 )
+from backend.session_mappings import classify_bash_command, load_session_mappings
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -27,6 +28,37 @@ def _safe_json(raw: str | dict | None) -> dict:
         return json.loads(raw)
     except Exception:
         return {}
+
+
+def _safe_json_list(raw: str | list | None) -> list:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
+    raw = metadata.get("bashCommand")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if not tool_args:
+        return ""
+    try:
+        parsed = json.loads(tool_args)
+    except Exception:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    for key in ("command", "cmd", "script"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 # ── Sessions router ─────────────────────────────────────────────────
 
@@ -93,6 +125,7 @@ async def list_sessions(
             qualityRating=s["quality_rating"],
             frictionRating=s["friction_rating"],
             gitCommitHash=s["git_commit_hash"],
+            gitCommitHashes=[str(v) for v in _safe_json_list(s.get("git_commit_hashes_json"))],
             gitAuthor=s["git_author"],
             gitBranch=s["git_branch"],
             updatedFiles=[],
@@ -115,6 +148,8 @@ async def get_session(session_id: str):
     """Return a single session by ID with full details."""
     db = await connection.get_connection()
     repo = get_session_repository(db)
+    project = project_manager.get_active_project()
+    mappings = await load_session_mappings(db, project.id) if project else []
     
     s = await repo.get_by_id(session_id)
     if not s:
@@ -143,6 +178,18 @@ async def get_session(session_id: str):
                 "isError": (l["tool_status"] or "") == "error",
             }
         metadata = _safe_json(l.get("metadata_json"))
+        if tc and tc.get("name") == "Bash":
+            command_text = _extract_bash_command(metadata, l.get("tool_args"))
+            mapping = classify_bash_command(command_text, mappings)
+            if mapping:
+                metadata["originalToolName"] = "Bash"
+                metadata["toolCategory"] = mapping.get("category", "bash")
+                metadata["toolMappingId"] = mapping.get("id", "")
+                mapped_label = str(mapping.get("transcriptLabel") or mapping.get("label") or "Shell")
+                metadata["toolLabel"] = mapped_label
+                tc["name"] = mapped_label
+            elif isinstance(metadata.get("toolLabel"), str) and metadata["toolLabel"].strip():
+                tc["name"] = metadata["toolLabel"].strip()
             
         session_logs.append({
             "id": f"log-{l['log_index']}", # verify if we store the ID string or format it
@@ -209,6 +256,7 @@ async def get_session(session_id: str):
         qualityRating=s["quality_rating"],
         frictionRating=s["friction_rating"],
         gitCommitHash=s["git_commit_hash"],
+        gitCommitHashes=[str(v) for v in _safe_json_list(s.get("git_commit_hashes_json"))],
         gitAuthor=s["git_author"],
         gitBranch=s["git_branch"],
         updatedFiles=file_updates,

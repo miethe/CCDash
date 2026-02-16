@@ -92,6 +92,7 @@ class AgentSession(BaseModel):
     qualityRating: int = 0
     frictionRating: int = 0
     gitCommitHash: Optional[str] = None
+    gitCommitHashes: list[str] = Field(default_factory=list)
     gitAuthor: Optional[str] = None
     gitBranch: Optional[str] = None
     updatedFiles: list[SessionFileUpdate] = Field(default_factory=list)

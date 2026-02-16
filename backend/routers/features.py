@@ -2,15 +2,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.models import Feature, ProjectTask, FeaturePhase
 from backend.project_manager import project_manager
 from backend.db import connection
-from backend.db.factory import get_feature_repository, get_task_repository
+from backend.db.factory import (
+    get_entity_link_repository,
+    get_feature_repository,
+    get_session_repository,
+    get_task_repository,
+)
 
 # Still need parsers to resolve file paths for updates?
 # Write-through logic: Update frontmatter file -> FileWatcher syncs it back to DB
@@ -22,6 +28,7 @@ from backend.parsers.status_writer import update_frontmatter_field, update_task_
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
+logger = logging.getLogger("ccdash.features")
 
 # ── Request models ──────────────────────────────────────────────────
 
@@ -46,6 +53,21 @@ class TaskSourceResponse(BaseModel):
     content: str
 
 
+class FeatureSessionLink(BaseModel):
+    sessionId: str
+    confidence: float = 0.0
+    reasons: list[str] = []
+    commands: list[str] = []
+    commitHashes: list[str] = []
+    status: str = "completed"
+    model: str = ""
+    startedAt: str = ""
+    totalCost: float = 0.0
+    durationSeconds: int = 0
+    gitCommitHash: str | None = None
+    gitCommitHashes: list[str] = []
+
+
 def _safe_json(raw: str | None) -> dict:
     if not raw:
         return {}
@@ -53,6 +75,16 @@ def _safe_json(raw: str | None) -> dict:
         return json.loads(raw)
     except Exception:
         return {}
+
+
+def _safe_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _task_from_db_row(row: dict[str, Any]) -> ProjectTask:
@@ -259,53 +291,150 @@ async def get_feature(feature_id: str):
     )
 
 
+@features_router.get("/{feature_id}/linked-sessions", response_model=list[FeatureSessionLink])
+async def get_feature_linked_sessions(feature_id: str):
+    """Return linked sessions for a feature using confidence-scored entity links."""
+    db = await connection.get_connection()
+    feature_repo = get_feature_repository(db)
+    feature = await feature_repo.get_by_id(feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+
+    link_repo = get_entity_link_repository(db)
+    session_repo = get_session_repository(db)
+    links = await link_repo.get_links_for("feature", feature_id, "related")
+
+    items: list[FeatureSessionLink] = []
+    for link in links:
+        if link.get("source_type") != "feature" or link.get("source_id") != feature_id:
+            continue
+        if link.get("target_type") != "session":
+            continue
+
+        session_id = str(link.get("target_id") or "").strip()
+        if not session_id:
+            continue
+
+        session_row = await session_repo.get_by_id(session_id)
+        if not session_row:
+            continue
+
+        metadata = _safe_json(link.get("metadata_json"))
+        reasons: list[str] = []
+
+        strategy = str(metadata.get("linkStrategy") or "").strip()
+        if strategy:
+            reasons.append(strategy)
+        signals = metadata.get("signals", [])
+        if isinstance(signals, list):
+            for signal in signals[:8]:
+                if isinstance(signal, dict):
+                    signal_type = str(signal.get("type") or "").strip()
+                    if signal_type:
+                        reasons.append(signal_type)
+
+        commands = metadata.get("commands", [])
+        if not isinstance(commands, list):
+            commands = []
+        metadata_hashes = metadata.get("commitHashes", [])
+        if not isinstance(metadata_hashes, list):
+            metadata_hashes = []
+        row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
+        merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
+
+        items.append(
+            FeatureSessionLink(
+                sessionId=session_id,
+                confidence=float(link.get("confidence") or 0.0),
+                reasons=reasons,
+                commands=[str(v) for v in commands if isinstance(v, str)][:12],
+                commitHashes=merged_hashes,
+                status=str(session_row.get("status") or "completed"),
+                model=str(session_row.get("model") or ""),
+                startedAt=str(session_row.get("started_at") or ""),
+                totalCost=float(session_row.get("total_cost") or 0.0),
+                durationSeconds=int(session_row.get("duration_seconds") or 0),
+                gitCommitHash=session_row.get("git_commit_hash"),
+                gitCommitHashes=merged_hashes,
+            )
+        )
+
+    items.sort(key=lambda item: (item.confidence, item.startedAt), reverse=True)
+    return items
+
+
 # ── PATCH endpoints (Write-Through) ─────────────────────────────────
 
+async def _sync_changed_feature_files(
+    request: Request,
+    project_id: str,
+    file_paths: list,
+    sessions_dir,
+    docs_dir,
+    progress_dir,
+) -> None:
+    """Force-sync a changed docs/progress file for immediate feature consistency."""
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine is None:
+        logger.warning("Sync engine not available in app state; relying on file watcher")
+        return
+    changed_files = [("modified", path) for path in file_paths]
+    if not changed_files:
+        return
+    await sync_engine.sync_changed_files(project_id, changed_files, sessions_dir, docs_dir, progress_dir)
+
+
 @features_router.patch("/{feature_id}/status", response_model=Feature)
-async def update_feature_status(feature_id: str, req: StatusUpdateRequest, background_tasks: BackgroundTasks):
+async def update_feature_status(feature_id: str, req: StatusUpdateRequest, request: Request):
     """Update a feature's top-level status."""
-    _, docs_dir, progress_dir = project_manager.get_active_paths()
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=400, detail="No active project")
 
-    file_path = resolve_file_for_feature(feature_id, docs_dir, progress_dir)
-    if not file_path:
-        raise HTTPException(status_code=404, detail=f"No file found for feature '{feature_id}'")
+    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
 
-    # 1. Update Filesystem
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
-    update_frontmatter_field(file_path, "status", fm_status)
+    changed_files = []
 
-    # 2. Trigger explicit invalidation / sync (Write-Through)
-    # Although FileWatcher will pick it up, doing it explicitly is faster for response.
-    # However, for an async endpoint, we can't wait too long.
-    # We'll just return the *assumed* updated state, or wait for sync.
-    # Let's rely on background sync and return optimistic response?
-    # Or invalidate cache entry and return.
-    
-    # Better: explicitly re-sync THIS file immediately.
-    from backend.db.file_watcher import file_watcher
-    # Ensure we can access sync engine
-    # In a real app we'd dependency-inject explicitly.
-    # Here we assume we can fetch it or just rely on the file watcher background.
-    
-    # For robust "write-through", we should update the DB *now* so we can return the fresh object.
-    # But `sync_changed_files` is async.
-    
-    # Let's skip the immediate DB update in this iteration and trust the watcher 
-    # + return a fabricated "updated" object to the frontend if needed, 
-    # OR just re-fetch from DB (which might be stale for 100ms).
-    
-    # Given the requirement "Write-through", we should probably verify DB update.
-    # But to keep it simple: Update File -> Sleep 100ms? -> Fetch DB.
-    # Or just return the feature as we expect it to be.
-    
-    # Re-fetch from DB
+    top_level_file = resolve_file_for_feature(feature_id, docs_dir, progress_dir)
+    if top_level_file:
+        update_frontmatter_field(top_level_file, "status", fm_status)
+        changed_files.append(top_level_file)
+
+    # Keep derived feature status consistent by updating any phase progress files.
+    db = await connection.get_connection()
+    repo = get_feature_repository(db)
+    phases = await repo.get_phases(feature_id)
+    for phase in phases:
+        phase_num = str(phase.get("phase", ""))
+        phase_file = resolve_file_for_phase(feature_id, phase_num, progress_dir)
+        if phase_file:
+            update_frontmatter_field(phase_file, "status", fm_status)
+            if phase_file not in changed_files:
+                changed_files.append(phase_file)
+
+    if not changed_files:
+        raise HTTPException(status_code=404, detail=f"No source files found for feature '{feature_id}'")
+
+    await _sync_changed_feature_files(
+        request,
+        active_project.id,
+        changed_files,
+        sessions_dir,
+        docs_dir,
+        progress_dir,
+    )
     return await get_feature(feature_id)
 
 
 @features_router.patch("/{feature_id}/phases/{phase_id}/status", response_model=Feature)
-async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateRequest):
+async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateRequest, request: Request):
     """Update a specific phase's status."""
-    _, docs_dir, progress_dir = project_manager.get_active_paths()
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=400, detail="No active project")
+
+    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
 
     file_path = resolve_file_for_phase(feature_id, phase_id, progress_dir)
     if not file_path:
@@ -316,14 +445,25 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
 
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
     update_frontmatter_field(file_path, "status", fm_status)
-
+    await _sync_changed_feature_files(
+        request,
+        active_project.id,
+        [file_path],
+        sessions_dir,
+        docs_dir,
+        progress_dir,
+    )
     return await get_feature(feature_id)
 
 
 @features_router.patch("/{feature_id}/phases/{phase_id}/tasks/{task_id}/status", response_model=Feature)
-async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: StatusUpdateRequest):
+async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: StatusUpdateRequest, request: Request):
     """Update a single task's status."""
-    _, docs_dir, progress_dir = project_manager.get_active_paths()
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=400, detail="No active project")
+
+    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
 
     file_path = resolve_file_for_phase(feature_id, phase_id, progress_dir)
     if not file_path:
@@ -340,4 +480,12 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
             detail=f"Task '{task_id}' not found in progress file",
         )
 
+    await _sync_changed_feature_files(
+        request,
+        active_project.id,
+        [file_path],
+        sessions_dir,
+        docs_dir,
+        progress_dir,
+    )
     return await get_feature(feature_id)

@@ -109,6 +109,7 @@ export interface AgentSession {
   linkedArtifacts?: SessionArtifact[];
   // Git Integration
   gitCommitHash?: string;
+  gitCommitHashes?: string[];
   gitAuthor?: string;
   gitBranch?: string;
 }

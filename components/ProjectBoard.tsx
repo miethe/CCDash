@@ -3,13 +3,28 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, LinkedDocument, ProjectTask, AgentSession } from '../types';
+import { Feature, LinkedDocument, ProjectTask } from '../types';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
+
+interface FeatureSessionLink {
+  sessionId: string;
+  confidence: number;
+  reasons: string[];
+  commands: string[];
+  commitHashes: string[];
+  status: string;
+  model: string;
+  startedAt: string;
+  totalCost: number;
+  durationSeconds: number;
+  gitCommitHash?: string;
+  gitCommitHashes?: string[];
+}
 
 // ── Status helpers ─────────────────────────────────────────────────
 
@@ -167,18 +182,54 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
 const FeatureModal = ({
   feature,
   onClose,
-  onFeatureUpdated,
 }: {
   feature: Feature;
   onClose: () => void;
-  onFeatureUpdated?: (updated: Feature) => void;
 }) => {
   const navigate = useNavigate();
-  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, sessions } = useData();
+  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus } = useData();
   const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
+  const [fullFeature, setFullFeature] = useState<Feature | null>(null);
+  const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
+
+  const refreshFeatureDetail = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/features/${feature.id}`);
+      if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
+      setFullFeature(await res.json());
+    } catch {
+      // Keep existing detail snapshot on transient failures.
+    }
+  }, [feature.id]);
+
+  const refreshLinkedSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/features/${feature.id}/linked-sessions`);
+      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
+      const data = await res.json();
+      setLinkedSessionLinks(Array.isArray(data) ? data : []);
+    } catch {
+      setLinkedSessionLinks([]);
+    }
+  }, [feature.id]);
+
+  useEffect(() => {
+    setFullFeature(null);
+    setLinkedSessionLinks([]);
+    refreshFeatureDetail();
+    refreshLinkedSessions();
+  }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshFeatureDetail();
+      refreshLinkedSessions();
+    }, 5_000);
+    return () => clearInterval(interval);
+  }, [refreshFeatureDetail, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
@@ -189,25 +240,17 @@ const FeatureModal = ({
     });
   };
 
-  const statusStyle = getStatusStyle(feature.status);
-  const pct = feature.totalTasks > 0 ? Math.round((feature.completedTasks / feature.totalTasks) * 100) : 0;
-
-  // Fetch full detail (with tasks) on open
-  const [fullFeature, setFullFeature] = useState<Feature | null>(null);
-  useEffect(() => {
-    fetch(`/api/features/${feature.id}`)
-      .then(r => r.json())
-      .then(setFullFeature)
-      .catch(() => setFullFeature(null));
-  }, [feature.id]);
-
-  const phases = fullFeature?.phases || feature.phases;
-  const linkedDocs = fullFeature?.linkedDocs || feature.linkedDocs;
+  const activeFeature = fullFeature || feature;
+  const statusStyle = getStatusStyle(activeFeature.status);
+  const pct = activeFeature.totalTasks > 0 ? Math.round((activeFeature.completedTasks / activeFeature.totalTasks) * 100) : 0;
+  const phases = activeFeature.phases || [];
+  const linkedDocs = activeFeature.linkedDocs || [];
 
   const handleFeatureStatusChange = async (newStatus: string) => {
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
+      await refreshFeatureDetail();
     } finally {
       setUpdatingStatus(false);
     }
@@ -217,9 +260,7 @@ const FeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
-      // Refresh the detail
-      const res = await fetch(`/api/features/${feature.id}`);
-      setFullFeature(await res.json());
+      await refreshFeatureDetail();
     } finally {
       setUpdatingStatus(false);
     }
@@ -229,8 +270,7 @@ const FeatureModal = ({
     setUpdatingStatus(true);
     try {
       await updateTaskStatus(feature.id, phaseId, taskId, newStatus);
-      const res = await fetch(`/api/features/${feature.id}`);
-      setFullFeature(await res.json());
+      await refreshFeatureDetail();
     } finally {
       setUpdatingStatus(false);
     }
@@ -243,17 +283,7 @@ const FeatureModal = ({
     navigate(`/plans?doc=${encodeURIComponent(docId)}`);
   };
 
-  // Compute linked sessions from task sessionIds
-  const linkedSessionIds = useMemo(() => {
-    const ids = new Set<string>();
-    phases.forEach(p => p.tasks.forEach(t => { if (t.sessionId) ids.add(t.sessionId); }));
-    return ids;
-  }, [phases]);
-
-  const linkedSessions = useMemo(() =>
-    sessions.filter(s => linkedSessionIds.has(s.id)),
-    [sessions, linkedSessionIds]
-  );
+  const linkedSessions = linkedSessionLinks;
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
@@ -272,22 +302,22 @@ const FeatureModal = ({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-2">
                 <span className="font-mono text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 truncate max-w-[200px]">{feature.id}</span>
-                <StatusDropdown status={feature.status} onStatusChange={handleFeatureStatusChange} />
+                <StatusDropdown status={activeFeature.status} onStatusChange={handleFeatureStatusChange} />
                 {updatingStatus && <RefreshCw size={14} className="text-indigo-400 animate-spin" />}
-                {feature.category && (
+                {activeFeature.category && (
                   <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                    {feature.category}
+                    {activeFeature.category}
                   </span>
                 )}
               </div>
-              <h2 className="text-xl font-bold text-slate-100 truncate">{feature.name}</h2>
+              <h2 className="text-xl font-bold text-slate-100 truncate">{activeFeature.name}</h2>
               <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
                 <span>{pct}% complete</span>
-                <span>{feature.completedTasks}/{feature.totalTasks} tasks</span>
-                {feature.updatedAt && feature.updatedAt !== 'None' && (
+                <span>{activeFeature.completedTasks}/{activeFeature.totalTasks} tasks</span>
+                {activeFeature.updatedAt && activeFeature.updatedAt !== 'None' && (
                   <span className="flex items-center gap-1">
                     <Calendar size={12} />
-                    {feature.updatedAt}
+                    {activeFeature.updatedAt}
                   </span>
                 )}
               </div>
@@ -297,7 +327,7 @@ const FeatureModal = ({
             </button>
           </div>
           <div className="mt-3">
-            <ProgressBar completed={feature.completedTasks} total={feature.totalTasks} />
+            <ProgressBar completed={activeFeature.completedTasks} total={activeFeature.totalTasks} />
           </div>
         </div>
 
@@ -328,11 +358,11 @@ const FeatureModal = ({
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Total Tasks</div>
-                  <div className="text-slate-100 font-bold text-2xl">{feature.totalTasks}</div>
+                  <div className="text-slate-100 font-bold text-2xl">{activeFeature.totalTasks}</div>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Completed</div>
-                  <div className="text-emerald-400 font-bold text-2xl">{feature.completedTasks}</div>
+                  <div className="text-emerald-400 font-bold text-2xl">{activeFeature.completedTasks}</div>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Phases</div>
@@ -366,11 +396,11 @@ const FeatureModal = ({
               )}
 
               {/* Related Features */}
-              {feature.relatedFeatures.length > 0 && (
+              {activeFeature.relatedFeatures.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Related Features</h3>
                   <div className="flex flex-wrap gap-2">
-                    {feature.relatedFeatures.map(rel => (
+                    {activeFeature.relatedFeatures.map(rel => (
                       <span key={rel} className="text-xs bg-slate-800 text-indigo-400 px-2 py-1 rounded border border-slate-700">
                         {rel}
                       </span>
@@ -380,11 +410,11 @@ const FeatureModal = ({
               )}
 
               {/* Tags */}
-              {feature.tags.length > 0 && (
+              {activeFeature.tags.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Tags</h3>
                   <div className="flex flex-wrap gap-2">
-                    {feature.tags.map(tag => (
+                    {activeFeature.tags.map(tag => (
                       <span key={tag} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-1 rounded-full border border-slate-700 flex items-center gap-1">
                         <Tag size={10} />{tag}
                       </span>
@@ -546,17 +576,18 @@ const FeatureModal = ({
                 <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
                   <Terminal size={32} className="mx-auto mb-3 opacity-50" />
                   <p>No sessions linked to this feature.</p>
-                  <p className="text-xs mt-1 text-slate-600">Sessions are linked when tasks have session IDs in their progress files.</p>
+                  <p className="text-xs mt-1 text-slate-600">No high-confidence session evidence found yet.</p>
                 </div>
               )}
               {linkedSessions.map(session => {
                 // Find which phases/tasks link to this session
                 const relatedTasks = phases.flatMap(p =>
-                  p.tasks.filter(t => t.sessionId === session.id).map(t => ({ phase: p, task: t }))
+                  p.tasks.filter(t => t.sessionId === session.sessionId).map(t => ({ phase: p, task: t }))
                 );
+                const primaryCommit = session.gitCommitHash || session.gitCommitHashes?.[0] || session.commitHashes?.[0];
 
                 return (
-                  <div key={session.id} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
+                  <div key={session.sessionId} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-lg ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
@@ -564,10 +595,10 @@ const FeatureModal = ({
                         </div>
                         <div>
                           <button
-                            onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.id)}`); }}
+                            onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`); }}
                             className="font-mono text-sm font-bold text-slate-200 hover:text-indigo-400 transition-colors"
                           >
-                            {session.id}
+                            {session.sessionId}
                           </button>
                           <div className="flex items-center gap-3 mt-0.5">
                             <span className="text-[10px] text-slate-500 flex items-center gap-1">
@@ -575,6 +606,9 @@ const FeatureModal = ({
                               {new Date(session.startedAt).toLocaleDateString()}
                             </span>
                             <span className="text-[10px] text-slate-500 font-mono">{session.model}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+                              {Math.round(session.confidence * 100)}% confidence
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -587,14 +621,29 @@ const FeatureModal = ({
                           <div className="text-[9px] text-slate-600 uppercase">Duration</div>
                           <div className="text-xs font-mono text-slate-400">{Math.round(session.durationSeconds / 60)}m</div>
                         </div>
-                        {session.gitCommitHash && (
+                        {primaryCommit && (
                           <span className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
                             <GitCommit size={10} />
-                            {session.gitCommitHash.slice(0, 7)}
+                            {primaryCommit.slice(0, 7)}
                           </span>
                         )}
                       </div>
                     </div>
+
+                    {(session.reasons.length > 0 || session.commands.length > 0) && (
+                      <div className="mb-3 text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
+                        {session.reasons.slice(0, 3).map(reason => (
+                          <span key={`${session.sessionId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
+                            {reason}
+                          </span>
+                        ))}
+                        {session.commands.slice(0, 2).map(command => (
+                          <span key={`${session.sessionId}-${command}`} className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono">
+                            {command}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Related tasks */}
                     {relatedTasks.length > 0 && (
@@ -635,10 +684,16 @@ const FeatureCard = ({
   feature,
   onClick,
   onStatusChange,
+  onDragStart,
+  onDragEnd,
+  isDragging,
 }: {
   feature: Feature;
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
+  onDragStart: (featureId: string) => void;
+  onDragEnd: () => void;
+  isDragging: boolean;
 }) => {
   const statusStyle = getStatusStyle(feature.status);
   const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
@@ -646,8 +701,15 @@ const FeatureCard = ({
 
   return (
     <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', feature.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart(feature.id);
+      }}
+      onDragEnd={onDragEnd}
       onClick={onClick}
-      className="bg-slate-900 border border-slate-800 p-4 rounded-lg shadow-sm hover:border-indigo-500/50 transition-all group cursor-pointer hover:shadow-lg hover:-translate-y-0.5"
+      className={`bg-slate-900 border border-slate-800 p-4 rounded-lg shadow-sm hover:border-indigo-500/50 transition-all group cursor-pointer hover:shadow-lg hover:-translate-y-0.5 ${isDragging ? 'opacity-60 ring-1 ring-indigo-500/40' : ''}`}
     >
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
@@ -760,12 +822,26 @@ const StatusColumn = ({
   features,
   onFeatureClick,
   onStatusChange,
+  onCardDragStart,
+  onCardDragEnd,
+  onCardDrop,
+  onColumnDragOver,
+  onColumnDragLeave,
+  isDropTarget,
+  draggedFeatureId,
 }: {
   title: string;
   status: string;
   features: Feature[];
   onFeatureClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
+  onCardDragStart: (featureId: string) => void;
+  onCardDragEnd: () => void;
+  onCardDrop: (featureId: string, newStatus: string) => void;
+  onColumnDragOver: (status: string) => void;
+  onColumnDragLeave: (status: string) => void;
+  isDropTarget: boolean;
+  draggedFeatureId: string | null;
 }) => {
   const style = getStatusStyle(status);
 
@@ -779,13 +855,29 @@ const StatusColumn = ({
         <span className="text-slate-600 text-xs font-mono bg-slate-900 px-2 py-1 rounded">{features.length}</span>
       </div>
 
-      <div className="flex flex-col gap-3 min-h-[200px] rounded-lg bg-slate-900/30 p-2 border border-slate-800/30 overflow-y-auto max-h-[calc(100vh-280px)]">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          onColumnDragOver(status);
+        }}
+        onDragEnter={() => onColumnDragOver(status)}
+        onDragLeave={() => onColumnDragLeave(status)}
+        onDrop={(e) => {
+          e.preventDefault();
+          onCardDrop(e.dataTransfer.getData('text/plain'), status);
+        }}
+        className={`flex flex-col gap-3 min-h-[200px] rounded-lg bg-slate-900/30 p-2 border overflow-y-auto max-h-[calc(100vh-280px)] transition-colors ${isDropTarget ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-slate-800/30'}`}
+      >
         {features.map(f => (
           <FeatureCard
             key={f.id}
             feature={f}
             onClick={() => onFeatureClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
+            onDragStart={onCardDragStart}
+            onDragEnd={onCardDragEnd}
+            isDragging={draggedFeatureId === f.id}
           />
         ))}
         {features.length === 0 && (
@@ -805,6 +897,8 @@ export const ProjectBoard: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
+  const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
 
   // Auto-select feature from URL search params
   useEffect(() => {
@@ -864,9 +958,36 @@ export const ProjectBoard: React.FC = () => {
     });
   }, [apiFeatures, searchQuery, statusFilter, categoryFilter, sortBy]);
 
-  const handleStatusChange = async (featureId: string, newStatus: string) => {
+  const handleStatusChange = useCallback(async (featureId: string, newStatus: string) => {
+    const feature = apiFeatures.find(f => f.id === featureId);
+    if (!feature || feature.status === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
-  };
+  }, [apiFeatures, updateFeatureStatus]);
+
+  const handleCardDragStart = useCallback((featureId: string) => {
+    setDraggedFeatureId(featureId);
+  }, []);
+
+  const handleCardDragEnd = useCallback(() => {
+    setDraggedFeatureId(null);
+    setDragOverStatus(null);
+  }, []);
+
+  const handleColumnDragOver = useCallback((status: string) => {
+    if (!draggedFeatureId) return;
+    setDragOverStatus(status);
+  }, [draggedFeatureId]);
+
+  const handleColumnDragLeave = useCallback((status: string) => {
+    setDragOverStatus(prev => (prev === status ? null : prev));
+  }, []);
+
+  const handleCardDrop = useCallback(async (featureId: string, newStatus: string) => {
+    setDragOverStatus(null);
+    setDraggedFeatureId(null);
+    if (!featureId) return;
+    await handleStatusChange(featureId, newStatus);
+  }, [handleStatusChange]);
 
   // Keep selected feature in sync with API data
   useEffect(() => {
@@ -995,6 +1116,13 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => f.status === 'backlog')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
+              onCardDragStart={handleCardDragStart}
+              onCardDragEnd={handleCardDragEnd}
+              onCardDrop={handleCardDrop}
+              onColumnDragOver={handleColumnDragOver}
+              onColumnDragLeave={handleColumnDragLeave}
+              isDropTarget={dragOverStatus === 'backlog'}
+              draggedFeatureId={draggedFeatureId}
             />
             <StatusColumn
               title="In Progress"
@@ -1002,6 +1130,13 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => f.status === 'in-progress')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
+              onCardDragStart={handleCardDragStart}
+              onCardDragEnd={handleCardDragEnd}
+              onCardDrop={handleCardDrop}
+              onColumnDragOver={handleColumnDragOver}
+              onColumnDragLeave={handleColumnDragLeave}
+              isDropTarget={dragOverStatus === 'in-progress'}
+              draggedFeatureId={draggedFeatureId}
             />
             <StatusColumn
               title="Review"
@@ -1009,6 +1144,13 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => f.status === 'review')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
+              onCardDragStart={handleCardDragStart}
+              onCardDragEnd={handleCardDragEnd}
+              onCardDrop={handleCardDrop}
+              onColumnDragOver={handleColumnDragOver}
+              onColumnDragLeave={handleColumnDragLeave}
+              isDropTarget={dragOverStatus === 'review'}
+              draggedFeatureId={draggedFeatureId}
             />
             <StatusColumn
               title="Done"
@@ -1016,6 +1158,13 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => f.status === 'done')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
+              onCardDragStart={handleCardDragStart}
+              onCardDragEnd={handleCardDragEnd}
+              onCardDrop={handleCardDrop}
+              onColumnDragOver={handleColumnDragOver}
+              onColumnDragLeave={handleColumnDragLeave}
+              isDropTarget={dragOverStatus === 'done'}
+              draggedFeatureId={draggedFeatureId}
             />
           </div>
         ) : (

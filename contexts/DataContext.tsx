@@ -80,6 +80,7 @@ async function fetchJson<T>(path: string): Promise<T> {
 // ── Provider ───────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const FEATURE_POLL_INTERVAL_MS = 5_000; // 5 seconds
 const SESSIONS_PER_PAGE = 50;
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -95,6 +96,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    const upsertFeatureInState = useCallback((updatedFeature: Feature) => {
+        setFeatures(prev => {
+            const idx = prev.findIndex(f => f.id === updatedFeature.id);
+            if (idx === -1) return [updatedFeature, ...prev];
+            const next = [...prev];
+            next[idx] = updatedFeature;
+            return next;
+        });
+    }, []);
 
     const refreshSessions = useCallback(async (reset = true) => {
         try {
@@ -295,45 +306,57 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const updateFeatureStatus = useCallback(async (featureId: string, status: string) => {
         try {
-            await fetch(`${API_BASE}/features/${featureId}/status`, {
+            const res = await fetch(`${API_BASE}/features/${featureId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status }),
             });
-            await refreshFeatures();
+            if (!res.ok) {
+                throw new Error(`Failed to update feature status: ${res.status} ${res.statusText}`);
+            }
+            const updated = await res.json() as Feature;
+            upsertFeatureInState(updated);
         } catch (e) {
             console.error('Failed to update feature status:', e);
             throw e;
         }
-    }, [refreshFeatures]);
+    }, [upsertFeatureInState]);
 
     const updatePhaseStatus = useCallback(async (featureId: string, phaseId: string, status: string) => {
         try {
-            await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/status`, {
+            const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status }),
             });
-            await refreshFeatures();
+            if (!res.ok) {
+                throw new Error(`Failed to update phase status: ${res.status} ${res.statusText}`);
+            }
+            const updated = await res.json() as Feature;
+            upsertFeatureInState(updated);
         } catch (e) {
             console.error('Failed to update phase status:', e);
             throw e;
         }
-    }, [refreshFeatures]);
+    }, [upsertFeatureInState]);
 
     const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: string) => {
         try {
-            await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
+            const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status }),
             });
-            await refreshFeatures();
+            if (!res.ok) {
+                throw new Error(`Failed to update task status: ${res.status} ${res.statusText}`);
+            }
+            const updated = await res.json() as Feature;
+            upsertFeatureInState(updated);
         } catch (e) {
             console.error('Failed to update task status:', e);
             throw e;
         }
-    }, [refreshFeatures]);
+    }, [upsertFeatureInState]);
 
     const refreshAll = useCallback(async () => {
         setLoading(true);
@@ -367,6 +390,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }, POLL_INTERVAL_MS);
         return () => clearInterval(interval);
     }, [refreshAll]);
+
+    // Faster feature polling to keep Kanban and Feature modal responsive to background updates.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            refreshFeatures();
+        }, FEATURE_POLL_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, [refreshFeatures]);
 
     return (
         <DataContext.Provider

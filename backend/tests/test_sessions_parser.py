@@ -183,6 +183,77 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("skill", artifact_types)
         self.assertIn("manifest", artifact_types)
 
+    def test_command_args_paths_are_tracked_as_files(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "user",
+                        "content": (
+                            "<command-name>/dev:execute-phase</command-name>\n"
+                            "<command-args>1 docs/project_plans/implementation_plans/features/example-v1.md</command-args>"
+                        ),
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        file_paths = [f.filePath for f in session.updatedFiles]
+        self.assertIn("docs/project_plans/implementation_plans/features/example-v1.md", file_paths)
+
+    def test_bash_git_output_extracts_commit_hashes(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_git_1",
+                                "name": "Bash",
+                                "input": {"command": "git commit -m \"feat: add tests\""},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:01Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_git_1",
+                                "is_error": False,
+                                "content": "[feat/example a1b2c3d4] feat: add tests\\n 1 file changed",
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertIn("a1b2c3d4", session.gitCommitHashes)
+        self.assertEqual(session.gitCommitHash, "a1b2c3d4")
+
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Bash"]
+        self.assertEqual(len(tool_logs), 1)
+        self.assertEqual(tool_logs[0].metadata.get("toolCategory"), "git")
+
 
 if __name__ == "__main__":
     unittest.main()

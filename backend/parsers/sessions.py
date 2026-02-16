@@ -21,6 +21,9 @@ from backend.models import (
 
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
+_COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
+_COMMIT_BRACKET_PATTERN = re.compile(r"\[[^\]\n]*\s([0-9a-f]{7,40})\]", re.IGNORECASE)
+_COMMIT_PATTERN = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 
 # Tools that commonly include paths in args/results.
 _FILE_TOOL_NAMES = {
@@ -46,6 +49,13 @@ _MANIFEST_BASENAMES = {
     "pyproject.toml",
     "README.md",
 }
+
+_BASH_CATEGORY_RULES: list[tuple[str, str, tuple[str, ...]]] = [
+    ("git", "Git", ("git ",)),
+    ("test", "Tests", ("pytest", "pnpm test", "npm test", "vitest", "jest", "go test", "cargo test")),
+    ("lint", "Lint", ("eslint", "pnpm lint", "npm run lint", "flake8", "ruff", "mypy", "black ")),
+    ("deploy", "Deploy", ("deploy", "release", "publish", "vercel", "netlify", "kubectl", "docker push")),
+]
 
 
 def _normalize_session_id(raw_id: str) -> str:
@@ -186,6 +196,34 @@ def _hash_artifact_id(session_id: str, kind: str, title: str, source_log_id: str
     return f"{session_id}-art-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]}"
 
 
+def _classify_bash_command(command: str) -> tuple[str, str]:
+    lowered = command.lower()
+    for category, label, terms in _BASH_CATEGORY_RULES:
+        if any(term in lowered for term in terms):
+            return category, label
+    return "bash", "Shell"
+
+
+def _extract_commit_hashes(text: str) -> list[str]:
+    commits: set[str] = set()
+    if not text:
+        return []
+
+    for match in _COMMIT_BRACKET_PATTERN.finditer(text):
+        commits.add(match.group(1))
+
+    for line in text.splitlines():
+        ll = line.lower()
+        if not any(token in ll for token in ("git ", "commit ", "cherry-pick", "revert", "rebase", "checkout", "merge", "reset", "amend", "log")):
+            continue
+        for match in _COMMIT_PATTERN.finditer(line):
+            candidate = match.group(0)
+            if any(ch in candidate.lower() for ch in "abcdef"):
+                commits.add(candidate)
+
+    return sorted(commits)
+
+
 def parse_session_file(path: Path) -> AgentSession | None:
     """Parse a single JSONL session log into an AgentSession."""
     try:
@@ -227,6 +265,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     git_branch = ""
     git_author = ""
     git_commit = ""
+    git_commits: set[str] = set()
     tokens_in = 0
     tokens_out = 0
     first_ts = ""
@@ -310,16 +349,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
         )
 
     def add_command_artifacts_from_text(text: str, source_log_id: str) -> None:
-        for match in _COMMAND_NAME_PATTERN.finditer(text):
-            command_name = match.group(1).strip()
-            if not command_name:
-                continue
+        command_names = [m.group(1).strip() for m in _COMMAND_NAME_PATTERN.finditer(text) if m.group(1).strip()]
+        command_args = [m.group(1).strip() for m in _COMMAND_ARGS_PATTERN.finditer(text)]
+
+        for idx, command_name in enumerate(command_names):
+            args_text = command_args[idx] if idx < len(command_args) else ""
+            metadata = {"origin": "command-tag"}
+            if args_text:
+                metadata["args"] = args_text[:4000]
+
             append_log(
                 timestamp=current_ts,
                 speaker="user",
                 type="command",
                 content=command_name,
-                metadata={"origin": "command-tag"},
+                metadata=metadata,
             )
             add_artifact(
                 kind="command",
@@ -329,6 +373,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_log_id=source_log_id,
                 source_tool_name=None,
             )
+            if args_text:
+                track_files_from_payload(args_text, source_log_id, "Command", None)
 
     for entry in entries:
         entry_type = entry.get("type", "")
@@ -340,10 +386,18 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
         if entry_type == "file-history-snapshot":
             git_branch = entry.get("gitBranch", git_branch)
+            if isinstance(entry.get("gitAuthor"), str) and not git_author:
+                git_author = entry.get("gitAuthor", "")
+            if isinstance(entry.get("gitCommit"), str) and not git_commit:
+                git_commit = entry.get("gitCommit", "")
             continue
 
         if isinstance(entry.get("gitBranch"), str) and not git_branch:
             git_branch = entry.get("gitBranch", "")
+        if isinstance(entry.get("gitAuthor"), str) and not git_author:
+            git_author = entry.get("gitAuthor", "")
+        if isinstance(entry.get("gitCommit"), str) and not git_commit:
+            git_commit = entry.get("gitCommit", "")
 
         entry_session_id = entry.get("sessionId")
         if isinstance(entry_session_id, str):
@@ -525,6 +579,19 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 tool_total[tool_name] += 1
                 tool_success[tool_name] += 1
 
+                if tool_name == "Bash" and isinstance(tool_input, dict):
+                    command_text = ""
+                    for key in ("command", "cmd", "script"):
+                        raw = tool_input.get(key)
+                        if isinstance(raw, str) and raw.strip():
+                            command_text = raw.strip()
+                            break
+                    if command_text:
+                        category, label = _classify_bash_command(command_text)
+                        tool_log.metadata["bashCommand"] = command_text[:4000]
+                        tool_log.metadata["toolCategory"] = category
+                        tool_log.metadata["toolLabel"] = label
+
                 if tool_name in _FILE_TOOL_NAMES:
                     track_files_from_payload(tool_input, tool_log.id, tool_name, agent_name)
 
@@ -570,6 +637,28 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     tool_name = related_log.toolCall.name if related_log.toolCall else None
                     if tool_name in _FILE_TOOL_NAMES:
                         track_files_from_payload(output_text, related_log.id, tool_name, related_log.agentName)
+                    if tool_name == "Bash":
+                        command_text = ""
+                        if isinstance(related_log.metadata, dict):
+                            raw = related_log.metadata.get("bashCommand")
+                            if isinstance(raw, str):
+                                command_text = raw
+                        commit_candidates = _extract_commit_hashes(f"{command_text}\n{output_text}")
+                        if commit_candidates:
+                            existing = related_log.metadata.get("commitHashes")
+                            existing_set = set(existing) if isinstance(existing, list) else set()
+                            merged = sorted(existing_set.union(commit_candidates))
+                            related_log.metadata["commitHashes"] = merged
+                            for commit_hash in merged:
+                                git_commits.add(commit_hash)
+                                add_artifact(
+                                    kind="git_commit",
+                                    title=commit_hash,
+                                    description="Git commit hash observed in Bash output",
+                                    source="tool",
+                                    source_log_id=related_log.id,
+                                    source_tool_name=tool_name,
+                                )
                 else:
                     append_log(
                         timestamp=current_ts,
@@ -610,6 +699,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
         tools_used.append(ToolUsage(name=name, count=count, successRate=round(rate, 2)))
 
     cost = _estimate_cost(tokens_in, tokens_out, model)
+    if git_commit:
+        git_commits.add(git_commit)
+    sorted_commits = sorted(git_commits)
+    primary_commit = git_commit or (sorted_commits[0] if sorted_commits else None)
 
     return AgentSession(
         id=session_id,
@@ -627,7 +720,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         startedAt=first_ts,
         gitBranch=git_branch or None,
         gitAuthor=git_author or None,
-        gitCommitHash=git_commit or None,
+        gitCommitHash=primary_commit,
+        gitCommitHashes=sorted_commits,
         updatedFiles=list(file_changes.values()),
         linkedArtifacts=list(artifacts.values()),
         toolsUsed=tools_used,

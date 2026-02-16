@@ -20,17 +20,19 @@ class SqliteSessionRepository:
                 id, project_id, task_id, status, model,
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
-                git_commit_hash, git_author, git_branch,
+                git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 duration_seconds=excluded.duration_seconds,
                 tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out,
                 total_cost=excluded.total_cost,
                 quality_rating=excluded.quality_rating, friction_rating=excluded.friction_rating,
-                git_commit_hash=excluded.git_commit_hash, git_author=excluded.git_author,
+                git_commit_hash=excluded.git_commit_hash,
+                git_commit_hashes_json=excluded.git_commit_hashes_json,
+                git_author=excluded.git_author,
                 git_branch=excluded.git_branch,
                 session_type=excluded.session_type,
                 parent_session_id=excluded.parent_session_id,
@@ -51,6 +53,7 @@ class SqliteSessionRepository:
                 session_data.get("qualityRating", 0),
                 session_data.get("frictionRating", 0),
                 session_data.get("gitCommitHash"),
+                json.dumps(session_data.get("gitCommitHashes", []) or []),
                 session_data.get("gitAuthor"),
                 session_data.get("gitBranch"),
                 session_data.get("sessionType", ""),
