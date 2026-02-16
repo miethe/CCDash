@@ -122,10 +122,15 @@ export interface PlanDocument {
 }
 
 export interface AnalyticsMetric {
-  date: string;
-  cost: number;
-  featuresShipped: number;
-  avgQuality: number;
+  name: string;
+  value: number;
+  unit: string;
+}
+
+export interface AnalyticsTrendPoint {
+  captured_at: string;
+  value: number;
+  metadata?: any;
 }
 
 // Alert System

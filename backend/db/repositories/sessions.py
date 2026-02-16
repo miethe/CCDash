@@ -195,10 +195,50 @@ class SqliteSessionRepository:
 
     async def get_artifacts(self, session_id: str) -> list[dict]:
         async with self.db.execute(
-            "SELECT * FROM session_artifacts WHERE session_id = ?",
-            (session_id,),
+            "SELECT * FROM session_artifacts WHERE session_id = ?", (session_id,)
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+    async def get_project_stats(self, project_id: str) -> dict:
+        """Get aggregated session statistics for a project."""
+        query = """
+            SELECT
+                COUNT(*) as count,
+                SUM(total_cost) as cost,
+                SUM(tokens_in + tokens_out) as tokens,
+                AVG(duration_seconds) as duration
+            FROM sessions
+            WHERE project_id = ?
+        """
+        async with self.db.execute(query, (project_id,)) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "count": row[0] or 0,
+                    "cost": row[1] or 0.0,
+                    "tokens": row[2] or 0,
+                    "duration": row[3] or 0.0,
+                }
+            return {"count": 0, "cost": 0.0, "tokens": 0, "duration": 0.0}
+
+    async def get_tool_stats(self, project_id: str) -> dict:
+        """Get aggregated tool usage statistics for a project."""
+        query = """
+            SELECT
+                SUM(call_count),
+                AVG(CAST(success_count AS REAL) / NULLIF(call_count, 0) * 100)
+            FROM session_tool_usage stu
+            JOIN sessions s ON s.id = stu.session_id
+            WHERE s.project_id = ?
+        """
+        async with self.db.execute(query, (project_id,)) as cur:
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "calls": row[0] or 0,
+                    "success_rate": row[1] if row[1] is not None else 0.0,
+                }
+            return {"calls": 0, "success_rate": 0.0}
 
     def _row_to_dict(self, row) -> dict:
         return dict(row)

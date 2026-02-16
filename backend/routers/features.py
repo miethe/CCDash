@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from backend.models import Feature
 from backend.project_manager import project_manager
 from backend.db import connection
-from backend.db.repositories.features import SqliteFeatureRepository
+from backend.db.factory import get_feature_repository, get_task_repository
 
 # Still need parsers to resolve file paths for updates?
 # Write-through logic: Update frontmatter file -> FileWatcher syncs it back to DB
@@ -53,7 +53,7 @@ async def list_features():
         return []
 
     db = await connection.get_connection()
-    repo = SqliteFeatureRepository(db)
+    repo = get_feature_repository(db)
     
     features_data = await repo.list_all(project.id)
     
@@ -128,7 +128,7 @@ async def get_task_source(file: str):
 async def get_feature(feature_id: str):
     """Return full feature detail from DB."""
     db = await connection.get_connection()
-    repo = SqliteFeatureRepository(db)
+    repo = get_feature_repository(db)
     
     f = await repo.get_by_id(feature_id)
     if not f:
@@ -141,8 +141,7 @@ async def get_feature(feature_id: str):
     phases_data = await repo.get_phases(f["id"])
     phases = []
     
-    from backend.db.repositories.tasks import SqliteTaskRepository
-    task_repo = SqliteTaskRepository(db)
+    task_repo = get_task_repository(db)
     
     for p in phases_data:
         # Fetch tasks for this phase

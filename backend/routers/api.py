@@ -5,15 +5,15 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.models import (
     AgentSession, PlanDocument, ProjectTask,
-    AnalyticsMetric, AlertConfig, Notification,
     PaginatedResponse,
 )
 from backend.project_manager import project_manager
 from backend.db import connection
-from backend.db.repositories.sessions import SqliteSessionRepository
-from backend.db.repositories.documents import SqliteDocumentRepository
-from backend.db.repositories.tasks import SqliteTaskRepository
-# We can add AnalyticsRepository usage later
+from backend.db.factory import (
+    get_session_repository,
+    get_document_repository,
+    get_task_repository,
+)
 
 # ── Sessions router ─────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ async def list_sessions(
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     db = await connection.get_connection()
-    repo = SqliteSessionRepository(db)
+    repo = get_session_repository(db)
     
     # DB returns dicts, Pydantic will validate them
     sessions_data = await repo.list_paginated(
@@ -78,7 +78,7 @@ async def list_sessions(
 async def get_session(session_id: str):
     """Return a single session by ID with full details."""
     db = await connection.get_connection()
-    repo = SqliteSessionRepository(db)
+    repo = get_session_repository(db)
     
     s = await repo.get_by_id(session_id)
     if not s:
@@ -185,7 +185,7 @@ async def list_documents():
         return []
 
     db = await connection.get_connection()
-    repo = SqliteDocumentRepository(db)
+    repo = get_document_repository(db)
     docs = await repo.list_all(project.id)
     
     results = []
@@ -211,7 +211,7 @@ async def list_documents():
 async def get_document(doc_id: str):
     """Return a single document with full content."""
     db = await connection.get_connection()
-    repo = SqliteDocumentRepository(db)
+    repo = get_document_repository(db)
     
     d = await repo.get_by_id(doc_id)
     if not d:
@@ -246,7 +246,7 @@ async def list_tasks():
         return []
 
     db = await connection.get_connection()
-    repo = SqliteTaskRepository(db)
+    repo = get_task_repository(db)
     tasks = await repo.list_all(project.id)
     
     results = []
@@ -281,100 +281,5 @@ async def list_tasks():
     return results
 
 
-# ── Analytics router ────────────────────────────────────────────────
 
-analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
-
-
-@analytics_router.get("/metrics", response_model=list[AnalyticsMetric])
-async def get_metrics():
-    """Derive analytics metrics from DB queries (faster than full scan)."""
-    project = project_manager.get_active_project()
-    if not project:
-        return []
-
-    db = await connection.get_connection()
-    # Direct queries for aggregation
-    
-    async with db.execute(
-        "SELECT SUM(total_cost), SUM(tokens_in + tokens_out), COUNT(*) FROM sessions WHERE project_id = ?",
-        (project.id,)
-    ) as cur:
-        row = await cur.fetchone()
-        total_cost = row[0] or 0.0
-        total_tokens = row[1] or 0
-        total_sessions = row[2] or 0
-        
-    async with db.execute(
-        "SELECT COUNT(*), SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) FROM tasks WHERE project_id = ?",
-        (project.id,)
-    ) as cur:
-        row = await cur.fetchone()
-        total_tasks = row[0] or 0
-        done_tasks = row[1] or 0
-        
-    completion_pct = (done_tasks / total_tasks * 100) if total_tasks > 0 else 0
-
-    return [
-        AnalyticsMetric(name="Total Cost", value=round(total_cost, 4), unit="$"),
-        AnalyticsMetric(name="Total Tokens", value=total_tokens, unit="tokens"),
-        AnalyticsMetric(name="Sessions", value=total_sessions, unit="count"),
-        AnalyticsMetric(name="Tasks Done", value=done_tasks, unit="count"),
-        AnalyticsMetric(name="Total Tasks", value=total_tasks, unit="count"),
-        AnalyticsMetric(name="Completion", value=round(completion_pct, 1), unit="%"),
-    ]
-
-
-@analytics_router.get("/alerts", response_model=list[AlertConfig])
-async def get_alerts():
-    """Return alert configurations from DB."""
-    # We implemented SqliteAlertConfigRepository in links.py... wait, yes.
-    # But for now, let's just query the table directly or use the repo.
-    from backend.db.repositories.links import SqliteAlertConfigRepository
-    db = await connection.get_connection()
-    repo = SqliteAlertConfigRepository(db)
-    
-    configs = await repo.list_all()
-    results = []
-    for c in configs:
-        results.append(AlertConfig(
-            id=c["id"],
-            name=c["name"],
-            metric=c["metric"],
-            operator=c["operator"],
-            threshold=c["threshold"],
-            isActive=bool(c["is_active"]),
-            scope=c["scope"],
-        ))
-    return results
-
-
-@analytics_router.get("/notifications", response_model=list[Notification])
-async def get_notifications():
-    """Generate notifications from recent session data (DB)."""
-    # This logic was mostly stubbed/dynamic. Keeping it dynamic but sourced from DB.
-    project = project_manager.get_active_project()
-    if not project:
-        return []
-
-    db = await connection.get_connection()
-    # Get 5 recent sessions
-    async with db.execute(
-        "SELECT id, model, total_cost, duration_seconds, started_at FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 5",
-        (project.id,)
-    ) as cur:
-        sessions = await cur.fetchall()
-        
-    notifications: list[Notification] = []
-    for i, s in enumerate(sessions):
-        notifications.append(Notification(
-            id=f"notif-{s['id']}",
-            alertId="alert-cost",
-            message=f"Session {s['id']}: Model={s['model']}, "
-                    f"Cost=${s['total_cost']:.4f}, Duration={s['duration_seconds']}s",
-            timestamp=s["started_at"],
-            isRead=i > 0,
-        ))
-
-    return notifications
 

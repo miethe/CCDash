@@ -99,3 +99,18 @@ class SqliteFeatureRepository:
     async def delete(self, feature_id: str) -> None:
         await self.db.execute("DELETE FROM features WHERE id = ?", (feature_id,))
         await self.db.commit()
+
+    async def get_project_stats(self, project_id: str) -> dict:
+        """Get aggregated feature statistics."""
+        query = """
+            SELECT AVG(
+                CASE WHEN total_tasks > 0
+                     THEN CAST(completed_tasks AS REAL) / total_tasks * 100
+                     ELSE 0
+                END
+            ) FROM features WHERE project_id = ?
+        """
+        async with self.db.execute(query, (project_id,)) as cur:
+            row = await cur.fetchone()
+            avg_progress = row[0] if row and row[0] is not None else 0.0
+        return {"avg_progress": avg_progress}

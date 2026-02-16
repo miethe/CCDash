@@ -19,14 +19,15 @@ from backend.parsers.documents import parse_document_file, scan_documents
 from backend.parsers.progress import parse_progress_file, scan_progress
 from backend.parsers.features import scan_features
 
-from backend.db.repositories.sessions import SqliteSessionRepository
-from backend.db.repositories.documents import SqliteDocumentRepository
-from backend.db.repositories.tasks import SqliteTaskRepository
-from backend.db.repositories.features import SqliteFeatureRepository
-from backend.db.repositories.links import (
-    SqliteEntityLinkRepository,
-    SqliteSyncStateRepository,
-    SqliteTagRepository,
+from backend.db.factory import (
+    get_session_repository,
+    get_document_repository,
+    get_task_repository,
+    get_analytics_repository,
+    get_entity_link_repository,
+    get_sync_state_repository,
+    get_tag_repository,
+    get_feature_repository, # Added in factory
 )
 
 logger = logging.getLogger("ccdash.sync")
@@ -46,18 +47,19 @@ class SyncEngine:
     """Incremental mtime-based file → DB synchronization.
 
     Uses existing parsers to read files, then upserts parsed data
-    into the SQLite cache via repositories.
+    into the SQLite/Postgres cache via repositories.
     """
 
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(self, db: Any): # db is Union[aiosqlite.Connection, asyncpg.Pool]
         self.db = db
-        self.session_repo = SqliteSessionRepository(db)
-        self.document_repo = SqliteDocumentRepository(db)
-        self.task_repo = SqliteTaskRepository(db)
-        self.feature_repo = SqliteFeatureRepository(db)
-        self.link_repo = SqliteEntityLinkRepository(db)
-        self.sync_repo = SqliteSyncStateRepository(db)
-        self.tag_repo = SqliteTagRepository(db)
+        self.session_repo = get_session_repository(db)
+        self.document_repo = get_document_repository(db)
+        self.task_repo = get_task_repository(db)
+        self.feature_repo = get_feature_repository(db)
+        self.link_repo = get_entity_link_repository(db)
+        self.sync_repo = get_sync_state_repository(db)
+        self.tag_repo = get_tag_repository(db)
+        self.analytics_repo = get_analytics_repository(db)
 
     async def sync_project(
         self,
@@ -106,6 +108,9 @@ class SyncEngine:
         # Phase 5: Auto-discover cross-references
         l_stats = await self._rebuild_entity_links(project.id)
         stats["links_created"] = l_stats["created"]
+
+        # Phase 6: Analytics Snapshot
+        await self._capture_analytics(project.id)
 
         elapsed = int((time.monotonic() - t0) * 1000)
         stats["duration_ms"] = elapsed
@@ -421,4 +426,79 @@ class SyncEngine:
                     })
                     stats["created"] += 1
 
-        return stats
+
+    # ── Analytics Snapshot ──────────────────────────────────────────
+
+    async def _capture_analytics(self, project_id: str) -> None:
+        """Capture a point-in-time snapshot of project metrics."""
+        now = datetime.now(timezone.utc).isoformat()
+
+        # 1. Session Metrics
+        s_stats = await self.session_repo.get_project_stats(project_id)
+        
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "session_count",
+            "value": s_stats.get("count", 0),
+            "captured_at": now,
+        })
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "session_cost",
+            "value": s_stats.get("cost", 0.0),
+            "captured_at": now,
+        })
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "session_tokens",
+            "value": s_stats.get("tokens", 0),
+            "captured_at": now,
+        })
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "session_duration",
+            "value": s_stats.get("duration", 0.0),
+            "captured_at": now,
+        })
+
+        # 2. Task Metrics
+        t_stats = await self.task_repo.get_project_stats(project_id)
+
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "task_velocity",  # Total completed tasks for now
+            "value": t_stats.get("completed", 0),
+            "captured_at": now,
+        })
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "task_completion_pct",
+            "value": t_stats.get("completion_pct", 0.0),
+            "captured_at": now,
+        })
+
+        # 3. Feature Progress
+        f_stats = await self.feature_repo.get_project_stats(project_id)
+        
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "feature_progress",
+            "value": f_stats.get("avg_progress", 0.0),
+            "captured_at": now,
+        })
+
+        # 4. Tool Usage
+        tool_stats = await self.session_repo.get_tool_stats(project_id)
+        
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "tool_call_count",
+            "value": tool_stats.get("calls", 0),
+            "captured_at": now,
+        })
+        await self.analytics_repo.insert_entry({
+            "project_id": project_id,
+            "metric_type": "tool_success_rate",
+            "value": tool_stats.get("success_rate", 0.0),
+            "captured_at": now,
+        })

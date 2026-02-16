@@ -33,3 +33,9 @@ ENV/
 env/
 
 examples/*
+# Database
+*.db
+*.db-shm
+*.db-wal
+data/
+

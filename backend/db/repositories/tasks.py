@@ -103,3 +103,26 @@ class SqliteTaskRepository:
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM tasks WHERE source_file = ?", (source_file,))
         await self.db.commit()
+
+    async def get_project_stats(self, project_id: str) -> dict:
+        """Get aggregated task statistics."""
+        # Completed count
+        async with self.db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND status = 'completed'",
+            (project_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            completed = row[0] if row else 0
+
+        # Completion percentage
+        query = """
+            SELECT
+                CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100
+            FROM tasks
+            WHERE project_id = ?
+        """
+        async with self.db.execute(query, (project_id,)) as cur:
+            row = await cur.fetchone()
+            pct = row[0] if row and row[0] is not None else 0.0
+            
+        return {"completed": completed, "completion_pct": pct}

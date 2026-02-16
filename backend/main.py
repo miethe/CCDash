@@ -15,8 +15,8 @@ from backend.routers.api import (
     sessions_router,
     documents_router,
     tasks_router,
-    analytics_router,
 )
+from backend.routers.analytics import analytics_router
 from backend.routers.projects import projects_router
 from backend.routers.features import features_router
 from backend.routers.cache import cache_router
