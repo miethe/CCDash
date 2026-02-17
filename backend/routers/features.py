@@ -55,6 +55,9 @@ class TaskSourceResponse(BaseModel):
 
 class FeatureSessionLink(BaseModel):
     sessionId: str
+    title: str = ""
+    titleSource: str = ""
+    titleConfidence: float = 0.0
     confidence: float = 0.0
     reasons: list[str] = Field(default_factory=list)
     commands: list[str] = Field(default_factory=list)
@@ -388,6 +391,9 @@ async def get_feature_linked_sessions(feature_id: str):
         items.append(
             FeatureSessionLink(
                 sessionId=session_id,
+                title=str(metadata.get("title") or ""),
+                titleSource=str(metadata.get("titleSource") or ""),
+                titleConfidence=float(metadata.get("titleConfidence") or 0.0),
                 confidence=confidence,
                 reasons=reasons,
                 commands=[str(v) for v in commands if isinstance(v, str)][:12],

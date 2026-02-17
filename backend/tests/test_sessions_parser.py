@@ -300,6 +300,127 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(len(tool_logs), 1)
         self.assertEqual(tool_logs[0].metadata.get("toolCategory"), "git")
 
+    def test_execute_phase_range_command_metadata_is_parsed(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T11:00:00Z",
+                    "message": {
+                        "role": "user",
+                        "content": (
+                            "<command-name>/dev:execute-phase</command-name>\n"
+                            "<command-args>1 & 2 docs/project_plans/implementation_plans/features/example-v1.md</command-args>"
+                        ),
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        command_logs = [l for l in session.logs if l.type == "command"]
+        self.assertEqual(len(command_logs), 1)
+        parsed = command_logs[0].metadata.get("parsedCommand", {})
+        self.assertEqual(parsed.get("phaseToken"), "1 & 2")
+        self.assertEqual(parsed.get("phases"), ["1", "2"])
+        self.assertEqual(parsed.get("featureSlug"), "example-v1")
+        self.assertEqual(parsed.get("featureSlugCanonical"), "example")
+
+    def test_summary_pr_link_custom_title_and_queue_operation_ingested(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "custom-title",
+                    "timestamp": "2026-02-16T12:00:00Z",
+                    "title": "Implement cache fixes",
+                },
+                {
+                    "type": "summary",
+                    "timestamp": "2026-02-16T12:00:01Z",
+                    "summary": "Implemented command parser updates",
+                },
+                {
+                    "type": "pr-link",
+                    "timestamp": "2026-02-16T12:00:02Z",
+                    "prNumber": 42,
+                    "prUrl": "https://github.com/acme/repo/pull/42",
+                    "prRepository": "acme/repo",
+                },
+                {
+                    "type": "queue-operation",
+                    "timestamp": "2026-02-16T12:00:03Z",
+                    "content": "<task-id>TASK-1.2</task-id><status>done</status><summary>Phase complete</summary>",
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("custom_title", artifact_types)
+        self.assertIn("summary", artifact_types)
+        self.assertIn("pr_link", artifact_types)
+        self.assertIn("task_notification", artifact_types)
+
+        system_event_types = {
+            str(log.metadata.get("eventType"))
+            for log in session.logs
+            if log.type == "system" and isinstance(log.metadata, dict)
+        }
+        self.assertIn("custom-title", system_event_types)
+        self.assertIn("summary", system_event_types)
+        self.assertIn("pr-link", system_event_types)
+        self.assertIn("queue-operation", system_event_types)
+
+    def test_bash_progress_is_linked_to_bash_tool_call(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T13:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_bash_progress",
+                                "name": "Bash",
+                                "input": {"command": "git commit -m \"feat: parser\""},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "progress",
+                    "timestamp": "2026-02-16T13:00:01Z",
+                    "parentToolUseID": "toolu_bash_progress",
+                    "data": {
+                        "type": "bash_progress",
+                        "command": "git commit -m \"feat: parser\"",
+                        "output": "[feature/main abc1234] feat: parser\n1 file changed",
+                        "elapsedTimeSeconds": 1.2,
+                        "totalLines": 2,
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertIn("abc1234", session.gitCommitHashes)
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Bash"]
+        self.assertEqual(len(tool_logs), 1)
+        self.assertTrue(tool_logs[0].metadata.get("bashProgressLinked"))
+        self.assertEqual(tool_logs[0].metadata.get("bashElapsedSeconds"), 1.2)
+        self.assertEqual(tool_logs[0].metadata.get("bashTotalLines"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

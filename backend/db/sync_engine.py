@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -452,17 +453,110 @@ class SyncEngine:
         """Auto-discover cross-references between entities."""
         stats = {"created": 0}
 
+        path_pattern = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
+        req_id_pattern = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
+        version_suffix_pattern = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
+        noisy_path_pattern = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
+
         def _normalize_ref_path(raw: str) -> str:
-            value = (raw or "").strip().strip("\"'`")
+            value = (raw or "").strip().strip("\"'`<>[](),;")
             if not value:
                 return ""
             while value.startswith("./"):
                 value = value[2:]
+            if value.startswith("../"):
+                return ""
+            value = value.replace("\\", "/")
+            if noisy_path_pattern.search(value):
+                return ""
             return value
 
+        def _canonical_slug(slug: str) -> str:
+            normalized = slug.strip().lower()
+            if not normalized:
+                return ""
+            return version_suffix_pattern.sub("", normalized)
+
+        def _slug_from_path(path_value: str) -> str:
+            normalized = _normalize_ref_path(path_value)
+            if not normalized:
+                return ""
+            return Path(normalized).stem.lower()
+
+        def _extract_paths_from_text(text: str) -> list[str]:
+            if not text:
+                return []
+            values: list[str] = []
+            for raw in path_pattern.findall(text):
+                normalized = _normalize_ref_path(raw)
+                if normalized:
+                    values.append(normalized)
+            return values
+
+        def _extract_phase_token(args_text: str) -> tuple[str, list[str]]:
+            normalized = " ".join((args_text or "").strip().split())
+            if not normalized:
+                return "", []
+
+            if normalized.lower().startswith("all"):
+                return "all", ["all"]
+
+            range_match = re.match(r"^(\d+)\s*-\s*(\d+)\b", normalized)
+            if range_match:
+                start, end = int(range_match.group(1)), int(range_match.group(2))
+                if start <= end:
+                    phases = [str(v) for v in range(start, end + 1)]
+                else:
+                    phases = [str(start), str(end)]
+                return f"{start}-{end}", phases
+
+            amp_match = re.match(r"^(\d+(?:\s*&\s*\d+)+)\b", normalized)
+            if amp_match:
+                phases = [part.strip() for part in amp_match.group(1).split("&") if part.strip()]
+                return " & ".join(phases), phases
+
+            single_match = re.match(r"^(\d+)\b", normalized)
+            if single_match:
+                token = single_match.group(1)
+                return token, [token]
+
+            return "", []
+
+        def _parse_command_context(command_name: str, args_text: str) -> dict[str, Any]:
+            context: dict[str, Any] = {}
+            command = (command_name or "").strip()
+            args = (args_text or "").strip()
+            if not command:
+                return context
+
+            if args:
+                req_match = req_id_pattern.search(args)
+                if req_match:
+                    context["requestId"] = req_match.group(0).upper()
+                paths = _extract_paths_from_text(args)
+                if paths:
+                    context["paths"] = paths[:8]
+                    primary_path = paths[0]
+                    impl_paths = [p for p in paths if "implementation_plans/" in p and p.lower().endswith(".md")]
+                    if impl_paths:
+                        primary_path = impl_paths[0]
+                    context["featurePath"] = primary_path
+                    feature_slug = _slug_from_path(primary_path)
+                    if feature_slug:
+                        context["featureSlug"] = feature_slug
+                        context["featureSlugCanonical"] = _canonical_slug(feature_slug)
+
+            if "dev:execute-phase" in command.lower():
+                phase_token, phases = _extract_phase_token(args)
+                if phase_token:
+                    context["phaseToken"] = phase_token
+                if phases:
+                    context["phases"] = phases
+            return context
+
         def _path_matches(candidate: str, ref: str) -> bool:
-            candidate_norm = _normalize_ref_path(candidate).replace("\\", "/")
-            ref_norm = _normalize_ref_path(ref).replace("\\", "/")
+            candidate_norm = _normalize_ref_path(candidate)
+            ref_norm = _normalize_ref_path(ref)
             if not candidate_norm or not ref_norm:
                 return False
             if candidate_norm == ref_norm:
@@ -487,22 +581,91 @@ class SyncEngine:
                 return 0.46, "file_read"
             return 0.52, "file_reference"
 
-        def _confidence_from_signals(weights: list[float], has_command: bool, has_write: bool, has_task_link: bool) -> float:
-            if has_task_link:
-                return 1.0
+        def _confidence_from_signals(
+            weights: list[float],
+            has_command_path: bool,
+            has_command_hint: bool,
+            has_write: bool,
+        ) -> float:
             if not weights:
                 return 0.0
-            score = max(weights)
-            if len(weights) >= 2:
-                score += 0.08
-            if has_write:
-                score += 0.08
-            if has_command:
+            peak = max(weights)
+            score = 0.35
+            if has_command_path and has_write:
+                score = 0.90
+            elif has_command_path:
+                score = 0.75
+            elif has_write and peak >= 0.84:
+                score = 0.75
+            elif has_write:
+                score = 0.62
+            elif peak >= 0.84:
+                score = 0.55
+
+            if len(weights) >= 3:
                 score += 0.05
-            return round(min(1.0, score), 3)
+            elif len(weights) >= 2:
+                score += 0.03
+
+            if has_command_hint:
+                score += 0.03
+            if has_write:
+                score += 0.02
+            return round(min(0.95, score), 3)
+
+        def _derive_session_title(
+            feature_id: str,
+            custom_title: str,
+            latest_summary: str,
+            command_events: list[dict[str, Any]],
+            command_names: set[str],
+            file_updates: list[dict[str, Any]],
+        ) -> tuple[str, str, float]:
+            if custom_title:
+                return custom_title[:160], "custom-title", 1.0
+            if latest_summary:
+                return latest_summary[:160], "summary", 0.92
+
+            preferred: dict[str, Any] | None = command_events[0] if command_events else None
+            if preferred:
+                command_name = str(preferred.get("name") or "")
+                parsed = preferred.get("parsed") if isinstance(preferred.get("parsed"), dict) else {}
+
+                if "dev:execute-phase" in command_name.lower():
+                    phase = str(parsed.get("phaseToken") or "unknown")
+                    slug = str(parsed.get("featureSlug") or feature_id)
+                    confidence = 0.90 if parsed.get("featurePath") else 0.75
+                    return f"Execute Phase {phase} - {slug}", "command-template", confidence
+
+                if "dev:quick-feature" in command_name.lower():
+                    quick_slug = ""
+                    for update in file_updates:
+                        update_path = str(update.get("file_path") or "")
+                        if "/quick-features/" in update_path and update_path.lower().endswith(".md"):
+                            quick_slug = Path(update_path).stem
+                            break
+                    if not quick_slug:
+                        quick_slug = str(parsed.get("featureSlug") or parsed.get("requestId") or feature_id)
+                    confidence = 0.85 if quick_slug else 0.65
+                    return f"Quick Feature - {quick_slug or feature_id}", "command-template", confidence
+
+                if "plan:plan-feature" in command_name.lower():
+                    basis = str(parsed.get("featureSlug") or parsed.get("requestId") or feature_id)
+                    confidence = 0.88 if parsed.get("featurePath") or parsed.get("requestId") else 0.65
+                    return f"Plan Feature - {basis}", "command-template", confidence
+
+                if "fix:debug" in command_name.lower():
+                    basis = str(parsed.get("featureSlug") or feature_id)
+                    return f"Debug - {basis}", "command-template", 0.62
+
+            if command_names:
+                primary = sorted(command_names)[0]
+                return f"{primary} - {feature_id}", "command-fallback", 0.55
+            return f"Session - {feature_id}", "feature-fallback", 0.35
 
         features = await self.feature_repo.list_all(project_id)
         feature_ref_paths: dict[str, set[str]] = {}
+        feature_slug_aliases: dict[str, set[str]] = {}
         feature_command_hints: dict[str, set[str]] = {}
         task_bound_feature_sessions: set[tuple[str, str]] = set()
 
@@ -510,6 +673,7 @@ class SyncEngine:
             feature_id = f["id"]
             await self.link_repo.delete_auto_links("feature", feature_id)
             feature_ref_paths[feature_id] = set()
+            feature_slug_aliases[feature_id] = {feature_id.lower(), _canonical_slug(feature_id)}
             feature_command_hints[feature_id] = set()
 
             try:
@@ -523,6 +687,10 @@ class SyncEngine:
                 doc_path = _normalize_ref_path(str(doc.get("filePath") or ""))
                 if doc_path:
                     feature_ref_paths[feature_id].add(doc_path)
+                    doc_slug = _slug_from_path(doc_path)
+                    if doc_slug:
+                        feature_slug_aliases[feature_id].add(doc_slug)
+                        feature_slug_aliases[feature_id].add(_canonical_slug(doc_slug))
 
             # Command names associated with plan-heavy workflows.
             feature_command_hints[feature_id].update({
@@ -541,6 +709,10 @@ class SyncEngine:
                 source_file = _normalize_ref_path(str(t.get("source_file") or ""))
                 if source_file:
                     feature_ref_paths[feature_id].add(source_file)
+                    source_slug = _slug_from_path(source_file)
+                    if source_slug:
+                        feature_slug_aliases[feature_id].add(source_slug)
+                        feature_slug_aliases[feature_id].add(_canonical_slug(source_slug))
 
                 await self.link_repo.upsert({
                     "source_type": "feature",
@@ -602,12 +774,74 @@ class SyncEngine:
             session_id = s["id"]
             file_updates = await self.session_repo.get_file_updates(session_id)
             artifacts = await self.session_repo.get_artifacts(session_id)
+            logs = await self.session_repo.get_logs(session_id)
+
+            command_events: list[dict[str, Any]] = []
+            latest_summary = ""
+            custom_title = ""
+            queue_events: list[dict[str, str]] = []
+            pr_links: list[dict[str, str]] = []
+
+            for log in logs:
+                log_type = str(log.get("type") or "")
+                metadata_raw = log.get("metadata_json")
+                try:
+                    metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) and metadata_raw else {}
+                except Exception:
+                    metadata = {}
+
+                if log_type == "command":
+                    command_name = str(log.get("content") or "").strip()
+                    args_text = str(metadata.get("args") or "")
+                    parsed = metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {}
+                    if not parsed and args_text:
+                        parsed = _parse_command_context(command_name, args_text)
+                    command_events.append({
+                        "name": command_name,
+                        "args": args_text,
+                        "parsed": parsed if isinstance(parsed, dict) else {},
+                    })
+                    continue
+
+                if log_type != "system":
+                    continue
+
+                event_type = str(metadata.get("eventType") or "").strip().lower()
+                if event_type == "summary":
+                    text = str(log.get("content") or "").strip()
+                    if text:
+                        latest_summary = text
+                elif event_type == "custom-title":
+                    text = str(log.get("content") or "").strip()
+                    if text:
+                        custom_title = text
+                elif event_type == "queue-operation":
+                    queue_event = {
+                        "taskId": str(metadata.get("task-id") or ""),
+                        "status": str(metadata.get("status") or ""),
+                        "summary": str(metadata.get("summary") or log.get("content") or ""),
+                    }
+                    if queue_event["taskId"] or queue_event["summary"]:
+                        queue_events.append(queue_event)
+                elif event_type == "pr-link":
+                    pr_link = {
+                        "prNumber": str(metadata.get("prNumber") or ""),
+                        "prUrl": str(metadata.get("prUrl") or ""),
+                        "prRepository": str(metadata.get("prRepository") or ""),
+                    }
+                    if pr_link["prUrl"] or pr_link["prNumber"]:
+                        pr_links.append(pr_link)
 
             command_names = {
                 str(a.get("title") or "").strip()
                 for a in artifacts
                 if str(a.get("type") or "").strip().lower() == "command" and str(a.get("title") or "").strip()
             }
+            command_names.update(
+                event.get("name", "").strip()
+                for event in command_events
+                if isinstance(event.get("name"), str) and event.get("name", "").strip()
+            )
 
             session_commit_hashes: set[str] = set()
             if s.get("git_commit_hash"):
@@ -621,10 +855,13 @@ class SyncEngine:
                     if isinstance(h, str) and h.strip():
                         session_commit_hashes.add(h.strip())
 
+            candidates: list[dict[str, Any]] = []
             for feature_id, refs in feature_ref_paths.items():
                 signal_weights: list[float] = []
                 evidence: list[dict[str, Any]] = []
                 has_write = False
+                has_command_path = False
+                has_read_reference = False
 
                 for update in file_updates:
                     update_path = str(update.get("file_path") or "")
@@ -637,6 +874,8 @@ class SyncEngine:
                     signal_weights.append(weight)
                     if signal_type == "file_write":
                         has_write = True
+                    if signal_type == "file_read":
+                        has_read_reference = True
                     evidence.append({
                         "type": signal_type,
                         "path": update_path,
@@ -644,18 +883,99 @@ class SyncEngine:
                         "weight": weight,
                     })
 
-                has_command_hint = bool(command_names.intersection(feature_command_hints.get(feature_id, set())))
                 if (feature_id, session_id) in task_bound_feature_sessions:
                     continue
-                confidence = _confidence_from_signals(signal_weights, has_command_hint, has_write, False)
-                if confidence <= 0:
+
+                feature_aliases = feature_slug_aliases.get(feature_id, set())
+                for command_event in command_events:
+                    command_name = str(command_event.get("name") or "").strip()
+                    parsed = command_event.get("parsed") if isinstance(command_event.get("parsed"), dict) else {}
+                    command_slug = str(parsed.get("featureSlug") or "").lower()
+                    command_slug_canonical = _canonical_slug(str(parsed.get("featureSlugCanonical") or command_slug))
+                    command_paths = parsed.get("paths", [])
+                    if not isinstance(command_paths, list):
+                        command_paths = []
+
+                    matched = False
+                    if command_slug and (command_slug in feature_aliases or command_slug_canonical in feature_aliases):
+                        matched = True
+                    else:
+                        for command_path in command_paths:
+                            if not isinstance(command_path, str):
+                                continue
+                            if any(_path_matches(command_path, ref_path) for ref_path in refs):
+                                matched = True
+                                break
+                            path_slug = _slug_from_path(command_path)
+                            if path_slug and (_canonical_slug(path_slug) in feature_aliases or path_slug in feature_aliases):
+                                matched = True
+                                break
+
+                    if matched:
+                        has_command_path = True
+                        signal_weights.append(0.96)
+                        signal = {
+                            "type": "command_args_path",
+                            "path": str(parsed.get("featurePath") or (command_paths[0] if command_paths else "")),
+                            "command": command_name,
+                            "weight": 0.96,
+                        }
+                        phase_token = parsed.get("phaseToken")
+                        if isinstance(phase_token, str) and phase_token:
+                            signal["phaseToken"] = phase_token
+                        evidence.append(signal)
+
+                has_command_hint = bool(command_names.intersection(feature_command_hints.get(feature_id, set())))
+                base_confidence = _confidence_from_signals(signal_weights, has_command_path, has_command_hint, has_write)
+                if base_confidence <= 0:
                     continue
 
+                raw_signal_weight = round(sum(signal_weights), 3)
+                candidates.append({
+                    "featureId": feature_id,
+                    "baseConfidence": base_confidence,
+                    "rawSignalWeight": raw_signal_weight,
+                    "evidence": evidence,
+                    "hasWrite": has_write,
+                    "hasCommandPath": has_command_path,
+                    "hasReadOnlySignals": has_read_reference and not has_write and not has_command_path,
+                })
+
+            total_signal_weight = sum(candidate["rawSignalWeight"] for candidate in candidates)
+            for candidate in candidates:
+                feature_id = candidate["featureId"]
+                share = (
+                    candidate["rawSignalWeight"] / total_signal_weight
+                    if total_signal_weight > 0
+                    else 0.0
+                )
+                confidence = float(candidate["baseConfidence"])
+                if share < 0.50:
+                    confidence -= 0.20
+                elif share < 0.70:
+                    confidence -= 0.10
+                if candidate["hasReadOnlySignals"]:
+                    confidence -= 0.08
+                confidence = round(max(0.35, min(0.95, confidence)), 3)
+                title, title_source, title_confidence = _derive_session_title(
+                    feature_id,
+                    custom_title,
+                    latest_summary,
+                    command_events,
+                    command_names,
+                    file_updates,
+                )
                 metadata = {
                     "linkStrategy": "session_evidence",
-                    "signals": evidence[:25],
+                    "signals": candidate["evidence"][:25],
                     "commands": sorted(command_names)[:15],
                     "commitHashes": sorted(session_commit_hashes),
+                    "ambiguityShare": round(share, 3),
+                    "title": title,
+                    "titleSource": title_source,
+                    "titleConfidence": round(title_confidence, 3),
+                    "prLinks": pr_links[:10],
+                    "queueEvents": queue_events[:10],
                 }
                 await self.link_repo.upsert({
                     "source_type": "feature",

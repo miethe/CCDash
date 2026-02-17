@@ -24,6 +24,9 @@ _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name
 _COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
 _COMMIT_BRACKET_PATTERN = re.compile(r"\[[^\]\n]*\s([0-9a-f]{7,40})\]", re.IGNORECASE)
 _COMMIT_PATTERN = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
+_REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
+_VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
+_PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 
 # Tools we treat as concrete file actions for session file tracking.
 _FILE_ACTION_BY_TOOL: dict[str, str] = {
@@ -172,6 +175,102 @@ def _extract_paths_from_payload(payload: Any) -> list[str]:
     return paths
 
 
+def _canonical_feature_slug(raw_slug: str) -> str:
+    slug = raw_slug.strip().lower()
+    if not slug:
+        return ""
+    return _VERSION_SUFFIX_PATTERN.sub("", slug)
+
+
+def _feature_slug_from_path(raw_path: str) -> str:
+    value = _normalize_path(raw_path)
+    if not value:
+        return ""
+    return Path(value).stem.strip().lower()
+
+
+def _is_noisy_feature_ref(path_value: str) -> bool:
+    if not path_value:
+        return True
+    return bool(_PLACEHOLDER_PATH_PATTERN.search(path_value))
+
+
+def _extract_phase_token(args_text: str) -> tuple[str, list[str]]:
+    normalized = " ".join(args_text.strip().split())
+    if not normalized:
+        return "", []
+
+    if normalized.lower().startswith("all"):
+        return "all", ["all"]
+
+    range_match = re.match(r"^(\d+)\s*-\s*(\d+)\b", normalized)
+    if range_match:
+        start, end = int(range_match.group(1)), int(range_match.group(2))
+        if start <= end:
+            values = [str(v) for v in range(start, end + 1)]
+        else:
+            values = [str(start), str(end)]
+        return f"{start}-{end}", values
+
+    amp_match = re.match(r"^(\d+(?:\s*&\s*\d+)+)\b", normalized)
+    if amp_match:
+        values = [part.strip() for part in amp_match.group(1).split("&") if part.strip()]
+        return " & ".join(values), values
+
+    single_match = re.match(r"^(\d+)\b", normalized)
+    if single_match:
+        token = single_match.group(1)
+        return token, [token]
+
+    return "", []
+
+
+def _pick_primary_feature_path(paths: list[str]) -> str:
+    if not paths:
+        return ""
+    impl_candidates = [p for p in paths if "implementation_plans/" in p and p.lower().endswith(".md")]
+    if impl_candidates:
+        return impl_candidates[0]
+    md_candidates = [p for p in paths if p.lower().endswith(".md")]
+    if md_candidates:
+        return md_candidates[0]
+    return paths[0]
+
+
+def _parse_command_context(command_name: str, args_text: str) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    command = command_name.strip()
+    args = args_text.strip()
+    if not command:
+        return parsed
+
+    if args:
+        req_match = _REQ_ID_PATTERN.search(args)
+        if req_match:
+            parsed["requestId"] = req_match.group(0).upper()
+
+        paths = [p for p in _extract_paths_from_text(args) if p and not _is_noisy_feature_ref(p)]
+        if paths:
+            parsed["paths"] = paths[:8]
+            primary_path = _pick_primary_feature_path(paths)
+            if primary_path:
+                parsed["featurePath"] = primary_path
+                slug = _feature_slug_from_path(primary_path)
+                if slug:
+                    parsed["featureSlug"] = slug
+                    parsed["featureSlugCanonical"] = _canonical_feature_slug(slug)
+
+    lowered_command = command.lower()
+    if "dev:execute-phase" in lowered_command:
+        phase_token, phase_values = _extract_phase_token(args)
+        if phase_token:
+            parsed["phaseToken"] = phase_token
+        if phase_values:
+            parsed["phases"] = phase_values
+
+    return parsed
+
+
 def _tool_result_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -224,6 +323,28 @@ def _extract_commit_hashes(text: str) -> list[str]:
                 commits.add(candidate)
 
     return sorted(commits)
+
+
+def _classify_bash_result(output_text: str, is_error: bool) -> str:
+    if is_error:
+        return "error"
+    lowered = output_text.lower()
+    if any(marker in lowered for marker in ("error", "failed", "traceback", "exception", "fatal:")):
+        return "error"
+    if any(marker in lowered for marker in ("passed", "success", "completed", "ok")):
+        return "success"
+    return "unknown"
+
+
+def _parse_task_notification(raw_text: str) -> dict[str, str]:
+    details: dict[str, str] = {}
+    if not raw_text:
+        return details
+    for key in ("task-id", "status", "summary"):
+        match = re.search(rf"<{key}>\s*([\s\S]*?)\s*</{key}>", raw_text, re.IGNORECASE)
+        if match and match.group(1).strip():
+            details[key] = match.group(1).strip()
+    return details
 
 
 def _classify_file_type(path: str) -> str:
@@ -422,8 +543,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
             metadata = {"origin": "command-tag"}
             if args_text:
                 metadata["args"] = args_text[:4000]
+            parsed = _parse_command_context(command_name, args_text)
+            if parsed:
+                metadata["parsedCommand"] = parsed
 
-            append_log(
+            command_log_idx = append_log(
                 timestamp=current_ts,
                 speaker="user",
                 type="command",
@@ -438,6 +562,48 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_log_id=source_log_id,
                 source_tool_name=None,
             )
+
+            command_log_id = logs[command_log_idx].id
+            if parsed.get("featurePath"):
+                feature_path = str(parsed.get("featurePath"))
+                add_artifact(
+                    kind="command_path",
+                    title=feature_path,
+                    description=f"Path referenced by {command_name}",
+                    source="command-tag",
+                    source_log_id=command_log_id,
+                    source_tool_name=None,
+                )
+            if parsed.get("featureSlug"):
+                feature_slug = str(parsed.get("featureSlug"))
+                add_artifact(
+                    kind="feature_slug",
+                    title=feature_slug,
+                    description=f"Feature slug inferred from {command_name}",
+                    source="command-tag",
+                    source_log_id=command_log_id,
+                    source_tool_name=None,
+                )
+            if parsed.get("phaseToken"):
+                phase_token = str(parsed.get("phaseToken"))
+                add_artifact(
+                    kind="command_phase",
+                    title=phase_token,
+                    description=f"Phase token parsed from {command_name}",
+                    source="command-tag",
+                    source_log_id=command_log_id,
+                    source_tool_name=None,
+                )
+            if parsed.get("requestId"):
+                request_id = str(parsed.get("requestId"))
+                add_artifact(
+                    kind="request",
+                    title=request_id,
+                    description=f"Request ID referenced by {command_name}",
+                    source="command-tag",
+                    source_log_id=command_log_id,
+                    source_tool_name=None,
+                )
 
     for entry in entries:
         entry_type = entry.get("type", "")
@@ -517,6 +683,70 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             source_tool_name="Task",
                         )
 
+            elif isinstance(data, dict) and data.get("type") == "bash_progress":
+                parent_tool_call_id = entry.get("parentToolUseID")
+                output_text = _tool_result_to_text(
+                    data.get("output")
+                    or data.get("stdout")
+                    or data.get("content")
+                    or data.get("message")
+                    or ""
+                )
+                command_text = ""
+                for key in ("command", "cmd", "script"):
+                    raw_command = data.get(key)
+                    if isinstance(raw_command, str) and raw_command.strip():
+                        command_text = raw_command.strip()
+                        break
+
+                related_idx = tool_logs_by_id.get(parent_tool_call_id) if isinstance(parent_tool_call_id, str) else None
+                if related_idx is not None:
+                    related_log = logs[related_idx]
+                    if command_text:
+                        related_log.metadata["bashCommand"] = command_text[:4000]
+                    bash_command = str(related_log.metadata.get("bashCommand") or command_text)
+                    if bash_command:
+                        category, label = _classify_bash_command(bash_command)
+                        related_log.metadata["toolCategory"] = category
+                        related_log.metadata["toolLabel"] = label
+                    elapsed = data.get("elapsedTimeSeconds")
+                    if isinstance(elapsed, (int, float)):
+                        related_log.metadata["bashElapsedSeconds"] = round(float(elapsed), 3)
+                    total_lines = data.get("totalLines")
+                    if isinstance(total_lines, int):
+                        related_log.metadata["bashTotalLines"] = total_lines
+                    elif output_text:
+                        related_log.metadata["bashTotalLines"] = len(output_text.splitlines())
+                    related_log.metadata["bashProgressLinked"] = True
+
+                    if output_text:
+                        if related_log.toolCall:
+                            existing_output = related_log.toolCall.output or ""
+                            if not existing_output:
+                                related_log.toolCall.output = output_text[:20000]
+                            elif output_text not in existing_output:
+                                merged_output = f"{existing_output}\n{output_text}".strip()
+                                related_log.toolCall.output = merged_output[:20000]
+                        result_state = _classify_bash_result(output_text, False)
+                        related_log.metadata["bashResult"] = result_state
+
+                        commit_candidates = _extract_commit_hashes(f"{bash_command}\n{output_text}")
+                        if commit_candidates:
+                            existing = related_log.metadata.get("commitHashes")
+                            existing_set = set(existing) if isinstance(existing, list) else set()
+                            merged = sorted(existing_set.union(commit_candidates))
+                            related_log.metadata["commitHashes"] = merged
+                            for commit_hash in merged:
+                                git_commits.add(commit_hash)
+                                add_artifact(
+                                    kind="git_commit",
+                                    title=commit_hash,
+                                    description="Git commit hash observed in Bash progress output",
+                                    source="progress",
+                                    source_log_id=related_log.id,
+                                    source_tool_name="Bash",
+                                )
+
             elif isinstance(data, dict) and data.get("type") == "hook_progress":
                 msg = data.get("command") or data.get("hookName") or data.get("hookEvent") or "Hook progress"
                 append_log(
@@ -530,6 +760,108 @@ def parse_session_file(path: Path) -> AgentSession | None:
             label = data.get("message") if isinstance(data, dict) else "Progress event"
             if isinstance(label, str) and label:
                 impacts.append(ImpactPoint(timestamp=current_ts, label=label[:200], type="info"))
+            continue
+
+        if entry_type == "summary":
+            summary_text = str(entry.get("summary") or entry.get("content") or entry.get("message") or "").strip()
+            if summary_text:
+                idx = append_log(
+                    timestamp=current_ts,
+                    speaker="system",
+                    type="system",
+                    content=summary_text[:8000],
+                    metadata={"eventType": "summary"},
+                )
+                add_artifact(
+                    kind="summary",
+                    title=summary_text[:120],
+                    description="Session summary entry",
+                    source="summary",
+                    source_log_id=logs[idx].id,
+                    source_tool_name=None,
+                )
+            continue
+
+        if entry_type == "custom-title":
+            title_text = str(entry.get("title") or entry.get("content") or entry.get("message") or "").strip()
+            if title_text:
+                idx = append_log(
+                    timestamp=current_ts,
+                    speaker="system",
+                    type="system",
+                    content=title_text[:8000],
+                    metadata={"eventType": "custom-title"},
+                )
+                add_artifact(
+                    kind="custom_title",
+                    title=title_text,
+                    description="Custom title assigned to session",
+                    source="custom-title",
+                    source_log_id=logs[idx].id,
+                    source_tool_name=None,
+                )
+            continue
+
+        if entry_type == "pr-link":
+            pr_number = entry.get("prNumber") or entry.get("pr_number")
+            pr_url = entry.get("prUrl") or entry.get("pr_url") or entry.get("url")
+            pr_repo = entry.get("prRepository") or entry.get("repository")
+            if isinstance(entry.get("data"), dict):
+                data = entry.get("data", {})
+                pr_number = pr_number or data.get("prNumber") or data.get("pr_number")
+                pr_url = pr_url or data.get("prUrl") or data.get("pr_url") or data.get("url")
+                pr_repo = pr_repo or data.get("prRepository") or data.get("repository")
+
+            title = f"PR #{pr_number}" if pr_number else "PR Link"
+            if isinstance(pr_repo, str) and pr_repo.strip():
+                title = f"{title} ({pr_repo.strip()})"
+
+            idx = append_log(
+                timestamp=current_ts,
+                speaker="system",
+                type="system",
+                content=title,
+                metadata={
+                    "eventType": "pr-link",
+                    "prNumber": pr_number,
+                    "prUrl": pr_url,
+                    "prRepository": pr_repo,
+                },
+            )
+            add_artifact(
+                kind="pr_link",
+                title=title,
+                description="Pull request linked from session metadata",
+                source="pr-link",
+                source_log_id=logs[idx].id,
+                source_tool_name=None,
+                url=pr_url if isinstance(pr_url, str) and pr_url.strip() else None,
+            )
+            continue
+
+        if entry_type == "queue-operation":
+            raw_content = entry.get("content") or entry.get("message") or ""
+            if isinstance(entry.get("data"), dict):
+                raw_content = raw_content or json.dumps(entry["data"], ensure_ascii=True)
+            details = _parse_task_notification(str(raw_content))
+            summary = details.get("summary") or str(raw_content)[:240]
+            idx = append_log(
+                timestamp=current_ts,
+                speaker="system",
+                type="system",
+                content=summary,
+                metadata={"eventType": "queue-operation", **details},
+            )
+            if details:
+                title = details.get("task-id", "Task Notification")
+                add_artifact(
+                    kind="task_notification",
+                    title=title,
+                    description=summary,
+                    source="queue-operation",
+                    source_log_id=logs[idx].id,
+                    source_tool_name=None,
+                )
             continue
 
         if entry_type not in ("user", "assistant"):
@@ -718,6 +1050,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             raw = related_log.metadata.get("bashCommand")
                             if isinstance(raw, str):
                                 command_text = raw
+                        related_log.metadata["bashResult"] = _classify_bash_result(output_text, is_error)
                         commit_candidates = _extract_commit_hashes(f"{command_text}\n{output_text}")
                         if commit_candidates:
                             existing = related_log.metadata.get("commitHashes")

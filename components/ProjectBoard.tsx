@@ -13,6 +13,9 @@ import {
 
 interface FeatureSessionLink {
   sessionId: string;
+  title?: string;
+  titleSource?: string;
+  titleConfidence?: number;
   confidence: number;
   reasons: string[];
   commands: string[];
@@ -367,6 +370,7 @@ const FeatureModal = ({
     const threadLabel = isSubthreadSession(session) ? 'Sub-thread' : 'Main Thread';
     const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
     const workflow = (session.workflowType || '').trim() || 'Related';
+    const displayTitle = (session.title || '').trim() || session.sessionId;
 
     return (
       <div key={session.sessionId} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
@@ -376,9 +380,12 @@ const FeatureModal = ({
               <Terminal size={16} />
             </div>
             <div>
+              <div className="text-sm font-semibold text-slate-200 truncate max-w-[420px]">
+                {displayTitle}
+              </div>
               <button
                 onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`); }}
-                className="font-mono text-sm font-bold text-slate-200 hover:text-indigo-400 transition-colors"
+                className="font-mono text-[11px] text-slate-400 hover:text-indigo-400 transition-colors"
               >
                 {session.sessionId}
               </button>
