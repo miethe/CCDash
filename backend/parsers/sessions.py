@@ -25,19 +25,16 @@ _COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-arg
 _COMMIT_BRACKET_PATTERN = re.compile(r"\[[^\]\n]*\s([0-9a-f]{7,40})\]", re.IGNORECASE)
 _COMMIT_PATTERN = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 
-# Tools that commonly include paths in args/results.
-_FILE_TOOL_NAMES = {
-    "Read",
-    "Write",
-    "Edit",
-    "MultiEdit",
-    "Glob",
-    "Grep",
-    "Bash",
-    "Task",
-    "ReadFile",
-    "WriteFile",
-    "Exec",
+# Tools we treat as concrete file actions for session file tracking.
+_FILE_ACTION_BY_TOOL: dict[str, str] = {
+    "Read": "read",
+    "ReadFile": "read",
+    "Write": "update",
+    "WriteFile": "update",
+    "Edit": "update",
+    "MultiEdit": "update",
+    "Delete": "delete",
+    "DeleteFile": "delete",
 }
 
 # Basenames we treat as structured artifacts/manifests.
@@ -56,6 +53,23 @@ _BASH_CATEGORY_RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("lint", "Lint", ("eslint", "pnpm lint", "npm run lint", "flake8", "ruff", "mypy", "black ")),
     ("deploy", "Deploy", ("deploy", "release", "publish", "vercel", "netlify", "kubectl", "docker push")),
 ]
+
+_FILE_PATH_KEYS = {
+    "file_path",
+    "path",
+    "paths",
+    "target_file",
+    "source_file",
+    "old_file",
+    "new_file",
+}
+
+_CREATE_RESULT_MARKERS = (
+    "created",
+    "new file",
+    "file did not exist",
+    "wrote new",
+)
 
 
 def _normalize_session_id(raw_id: str) -> str:
@@ -138,7 +152,6 @@ def _extract_paths_from_payload(payload: Any) -> list[str]:
         norm = _normalize_path(payload)
         if norm and _looks_like_file_path(norm):
             paths.append(norm)
-        paths.extend(_extract_paths_from_text(payload))
         return paths
 
     if isinstance(payload, list):
@@ -148,18 +161,7 @@ def _extract_paths_from_payload(payload: Any) -> list[str]:
 
     if isinstance(payload, dict):
         for key, value in payload.items():
-            if key in {
-                "file_path",
-                "path",
-                "paths",
-                "target_file",
-                "source_file",
-                "old_file",
-                "new_file",
-                "cwd",
-                "workdir",
-                "command",
-            }:
+            if key in _FILE_PATH_KEYS:
                 paths.extend(_extract_paths_from_payload(value))
             elif isinstance(value, (dict, list)):
                 paths.extend(_extract_paths_from_payload(value))
@@ -224,6 +226,51 @@ def _extract_commit_hashes(text: str) -> list[str]:
     return sorted(commits)
 
 
+def _classify_file_type(path: str) -> str:
+    lowered = path.lower()
+    basename = lowered.rsplit("/", 1)[-1]
+
+    if (
+        lowered.endswith(".md")
+        or lowered.endswith(".txt")
+        or lowered.endswith(".rst")
+        or basename in {"readme", "readme.md"}
+    ):
+        if any(token in lowered for token in ("docs/project_plans", "implementation_plan", "prd", "spec", "roadmap", "plan")):
+            return "Plan"
+        return "Document"
+
+    if any(token in lowered for token in ("/components/", "/frontend/", "/src/")) and lowered.endswith((".tsx", ".jsx", ".css", ".scss", ".html")):
+        return "Frontend code"
+
+    if any(token in lowered for token in ("/backend/", "/server/", "/api/")) and lowered.endswith((".py", ".go", ".rb", ".java", ".cs", ".rs", ".php")):
+        return "Backend code"
+
+    if lowered.endswith((".tsx", ".jsx", ".css", ".scss", ".html")):
+        return "Frontend code"
+
+    if lowered.endswith((".py", ".go", ".rb", ".java", ".cs", ".rs", ".php")):
+        return "Backend code"
+
+    if lowered.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".test.py", ".spec.py")) or "/tests/" in lowered:
+        return "Test code"
+
+    if lowered.endswith((".json", ".yaml", ".yml", ".toml", ".ini", ".lock")) or basename in {"dockerfile", ".env", ".env.example"}:
+        return "Config"
+
+    if lowered.endswith((".csv", ".jsonl", ".parquet", ".sqlite", ".db")):
+        return "Data"
+
+    return "Other"
+
+
+def _result_indicates_create(output_text: str) -> bool:
+    if not output_text:
+        return False
+    lowered = output_text.lower()
+    return any(marker in lowered for marker in _CREATE_RESULT_MARKERS)
+
+
 def parse_session_file(path: Path) -> AgentSession | None:
     """Parse a single JSONL session log into an AgentSession."""
     try:
@@ -277,7 +324,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_total: Counter[str] = Counter()
     impacts: list[ImpactPoint] = []
 
-    file_changes: dict[str, SessionFileUpdate] = {}
+    file_changes: list[SessionFileUpdate] = []
     artifacts: dict[str, SessionArtifact] = {}
 
     tool_logs_by_id: dict[str, int] = {}
@@ -293,20 +340,31 @@ def parse_session_file(path: Path) -> AgentSession | None:
         log_idx += 1
         return len(logs) - 1
 
-    def track_file(path_value: str, log_id: str, tool_name: str | None, current_agent: str | None) -> None:
+    def track_file(
+        path_value: str,
+        log_id: str,
+        tool_name: str | None,
+        current_agent: str | None,
+        action: str,
+        action_timestamp: str,
+    ) -> None:
         norm = _normalize_path(path_value)
         if not norm or not _looks_like_file_path(norm):
             return
-        if norm in file_changes:
-            return
-        file_changes[norm] = SessionFileUpdate(
+        file_changes.append(SessionFileUpdate(
             filePath=norm,
             additions=0,
             deletions=0,
+            commits=[],
             agentName=current_agent or "",
+            action=action,
+            fileType=_classify_file_type(norm),
+            timestamp=action_timestamp,
             sourceLogId=log_id,
             sourceToolName=tool_name,
-        )
+            threadSessionId=session_id,
+            rootSessionId=root_session_id,
+        ))
 
         basename = norm.rsplit("/", 1)[-1]
         if basename in _MANIFEST_BASENAMES:
@@ -319,9 +377,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_tool_name=tool_name,
             )
 
-    def track_files_from_payload(payload: Any, log_id: str, tool_name: str | None, current_agent: str | None) -> None:
+    def track_files_from_payload(
+        payload: Any,
+        log_id: str,
+        tool_name: str | None,
+        current_agent: str | None,
+        action: str,
+        action_timestamp: str,
+    ) -> None:
         for p in _extract_paths_from_payload(payload):
-            track_file(p, log_id, tool_name, current_agent)
+            track_file(p, log_id, tool_name, current_agent, action, action_timestamp)
 
     def add_artifact(
         kind: str,
@@ -373,8 +438,6 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_log_id=source_log_id,
                 source_tool_name=None,
             )
-            if args_text:
-                track_files_from_payload(args_text, source_log_id, "Command", None)
 
     for entry in entries:
         entry_type = entry.get("type", "")
@@ -592,8 +655,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_log.metadata["toolCategory"] = category
                         tool_log.metadata["toolLabel"] = label
 
-                if tool_name in _FILE_TOOL_NAMES:
-                    track_files_from_payload(tool_input, tool_log.id, tool_name, agent_name)
+                file_action = _FILE_ACTION_BY_TOOL.get(tool_name)
+                if file_action:
+                    track_files_from_payload(
+                        tool_input,
+                        tool_log.id,
+                        tool_name,
+                        agent_name,
+                        file_action,
+                        current_ts,
+                    )
 
                 if tool_name == "Skill" and isinstance(tool_input, dict):
                     skill_name = tool_input.get("skill")
@@ -635,8 +706,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_success[related_log.toolCall.name] -= 1
 
                     tool_name = related_log.toolCall.name if related_log.toolCall else None
-                    if tool_name in _FILE_TOOL_NAMES:
-                        track_files_from_payload(output_text, related_log.id, tool_name, related_log.agentName)
+                    if tool_name in _FILE_ACTION_BY_TOOL and is_error:
+                        file_changes = [f for f in file_changes if f.sourceLogId != related_log.id]
+                    elif tool_name in {"Write", "WriteFile"} and _result_indicates_create(output_text):
+                        for file_update in file_changes:
+                            if file_update.sourceLogId == related_log.id and file_update.action == "update":
+                                file_update.action = "create"
                     if tool_name == "Bash":
                         command_text = ""
                         if isinstance(related_log.metadata, dict):
@@ -722,7 +797,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         gitAuthor=git_author or None,
         gitCommitHash=primary_commit,
         gitCommitHashes=sorted_commits,
-        updatedFiles=list(file_changes.values()),
+        updatedFiles=file_changes,
         linkedArtifacts=list(artifacts.values()),
         toolsUsed=tools_used,
         impactHistory=impacts,

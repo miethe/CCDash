@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -150,9 +150,14 @@ CREATE TABLE IF NOT EXISTS session_file_updates (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     file_path    TEXT NOT NULL,
+    action       TEXT DEFAULT 'update',
+    file_type    TEXT DEFAULT 'Other',
+    action_timestamp TEXT DEFAULT '',
     additions    INTEGER DEFAULT 0,
     deletions    INTEGER DEFAULT 0,
     agent_name   TEXT DEFAULT '',
+    thread_session_id TEXT DEFAULT '',
+    root_session_id TEXT DEFAULT '',
     source_log_id TEXT,
     source_tool_name TEXT
 );
@@ -382,6 +387,11 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
 
     await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
     await _ensure_column(db, "session_file_updates", "source_tool_name", "TEXT")
+    await _ensure_column(db, "session_file_updates", "action", "TEXT DEFAULT 'update'")
+    await _ensure_column(db, "session_file_updates", "file_type", "TEXT DEFAULT 'Other'")
+    await _ensure_column(db, "session_file_updates", "action_timestamp", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_file_updates", "thread_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_file_updates", "root_session_id", "TEXT DEFAULT ''")
 
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")

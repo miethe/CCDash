@@ -48,8 +48,13 @@ class SessionFileUpdate(BaseModel):
     deletions: int = 0
     commits: list[str] = Field(default_factory=list)
     agentName: str = ""
+    action: str = "update"
+    fileType: str = "Other"
+    timestamp: str = ""
     sourceLogId: Optional[str] = None
     sourceToolName: Optional[str] = None
+    threadSessionId: Optional[str] = None
+    rootSessionId: Optional[str] = None
 
 
 class SessionArtifact(BaseModel):

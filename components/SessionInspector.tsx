@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { AgentSession, SessionLog, LogType, SessionFileUpdate, SessionArtifact, PlanDocument } from '../types';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
@@ -23,6 +23,95 @@ const collectSessionCommitHashes = (session: AgentSession): string[] => {
         }
     });
     return Array.from(new Set(commits));
+};
+
+const normalizePath = (path: string): string => path.replace(/\\/g, '/').replace(/^\.\/+/, '').trim();
+
+const fileNameFromPath = (path: string): string => {
+    const normalized = normalizePath(path);
+    const parts = normalized.split('/');
+    return parts[parts.length - 1] || normalized;
+};
+
+const resolveLocalPath = (filePath: string, projectRoot?: string | null): string => {
+    const normalizedFilePath = normalizePath(filePath);
+    if (normalizedFilePath.startsWith('/')) return normalizedFilePath;
+    if (!projectRoot) return normalizedFilePath;
+    return `${projectRoot.replace(/\/+$/, '')}/${normalizedFilePath}`;
+};
+
+const toEpoch = (timestamp?: string): number => {
+    if (!timestamp) return 0;
+    const ms = Date.parse(timestamp);
+    return Number.isFinite(ms) ? ms : 0;
+};
+
+const parseLogIndex = (logId?: string): number => {
+    if (!logId) return -1;
+    const match = /^log-(\d+)$/.exec(logId.trim());
+    return match ? Number.parseInt(match[1], 10) : -1;
+};
+
+type CommitEvent = {
+    hash: string;
+    logIndex: number;
+    timestampMs: number;
+};
+
+const collectCommitEvents = (session: AgentSession): CommitEvent[] => {
+    const events: CommitEvent[] = [];
+    const seen = new Set<string>();
+
+    session.logs.forEach(log => {
+        const hashesRaw = log.metadata?.commitHashes;
+        if (!Array.isArray(hashesRaw)) return;
+        const logIndex = parseLogIndex(log.id);
+        const timestampMs = toEpoch(log.timestamp);
+        hashesRaw.forEach(hash => {
+            if (typeof hash !== 'string' || !hash.trim()) return;
+            const cleanHash = hash.trim();
+            const key = `${cleanHash}::${logIndex}::${timestampMs}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            events.push({ hash: cleanHash, logIndex, timestampMs });
+        });
+    });
+
+    events.sort((a, b) => {
+        if (a.logIndex !== b.logIndex) return a.logIndex - b.logIndex;
+        return a.timestampMs - b.timestampMs;
+    });
+    return events;
+};
+
+const toGitHubBlobUrl = (repoUrl: string, commitHash: string, filePath: string, projectRoot?: string | null): string | null => {
+    const trimmedRepo = repoUrl.trim();
+    if (!trimmedRepo || !commitHash.trim()) return null;
+    let base = trimmedRepo.replace(/\.git$/i, '').replace(/\/+$/, '');
+    if (!/^https?:\/\/github\.com\/[^/]+\/[^/]+$/i.test(base)) return null;
+
+    const normalizedFilePath = normalizePath(filePath);
+    const relativePath = projectRoot && normalizedFilePath.startsWith(normalizePath(projectRoot) + '/')
+        ? normalizedFilePath.slice(normalizePath(projectRoot).length + 1)
+        : normalizedFilePath;
+    const encodedSegments = relativePath.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    if (!encodedSegments) return null;
+    base = base.replace(/^http:\/\//i, 'https://');
+    return `${base}/blob/${encodeURIComponent(commitHash.trim())}/${encodedSegments}`;
+};
+
+const normalizeFileAction = (action: string | undefined, sourceToolName?: string): 'read' | 'create' | 'update' | 'delete' | 'other' => {
+    const normalized = (action || '').trim().toLowerCase();
+    if (normalized === 'read') return 'read';
+    if (normalized === 'create') return 'create';
+    if (normalized === 'update' || normalized === 'write') return 'update';
+    if (normalized === 'delete' || normalized === 'remove') return 'delete';
+
+    const tool = (sourceToolName || '').trim().toLowerCase();
+    if (tool === 'read' || tool === 'readfile') return 'read';
+    if (tool === 'write' || tool === 'writefile' || tool === 'edit' || tool === 'multiedit') return 'update';
+    if (tool === 'delete' || tool === 'deletefile') return 'delete';
+    return 'other';
 };
 
 const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
@@ -805,68 +894,286 @@ const TranscriptView: React.FC<{
 
 const FilesView: React.FC<{
     session: AgentSession;
+    threadSessions: AgentSession[];
+    threadSessionDetails: Record<string, AgentSession>;
+    subagentNameBySessionId: Map<string, string>;
     onOpenDoc: (doc: PlanDocument) => void;
     highlightedSourceLogId?: string | null;
-}> = ({ session, onOpenDoc, highlightedSourceLogId }) => {
-    const { documents } = useData();
-    if (!session.updatedFiles || session.updatedFiles.length === 0) {
+}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, highlightedSourceLogId }) => {
+    const { documents, activeProject } = useData();
+    const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
+        fileName: 220,
+        filePath: 380,
+        action: 90,
+        fileType: 130,
+        commits: 150,
+        agent: 140,
+        thread: 140,
+        timestamp: 170,
+        stats: 90,
+        open: 120,
+    });
+
+    const columns = useMemo(
+        () => ([
+            { id: 'fileName', label: 'File Name', min: 150 },
+            { id: 'filePath', label: 'File Path', min: 240 },
+            { id: 'action', label: 'Action', min: 80 },
+            { id: 'fileType', label: 'Type', min: 100 },
+            { id: 'commits', label: 'Commits', min: 130 },
+            { id: 'agent', label: 'Agent', min: 120 },
+            { id: 'thread', label: 'Thread', min: 120 },
+            { id: 'timestamp', label: 'Timestamp', min: 150 },
+            { id: 'stats', label: 'Stats', min: 80 },
+            { id: 'open', label: 'Open', min: 100 },
+        ]),
+        [],
+    );
+
+    const startResize = useCallback((columnId: string, minWidth: number, startX: number) => {
+        const initial = columnWidths[columnId] || minWidth;
+        const onMove = (event: MouseEvent) => {
+            const delta = event.clientX - startX;
+            const next = Math.max(minWidth, initial + delta);
+            setColumnWidths(prev => ({ ...prev, [columnId]: next }));
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [columnWidths]);
+
+    const sessionsForFiles = useMemo(() => {
+        const byId = new Map<string, AgentSession>();
+        byId.set(session.id, session);
+        threadSessions.forEach(thread => {
+            const detail = threadSessionDetails[thread.id] || (thread.id === session.id ? session : null);
+            if (detail) byId.set(thread.id, detail);
+        });
+        return Array.from(byId.values());
+    }, [session, threadSessionDetails, threadSessions]);
+
+    const resolveDocument = useCallback((path: string): PlanDocument | null => {
+        const normalized = normalizePath(path);
+        for (const doc of documents) {
+            const docPath = normalizePath(doc.filePath);
+            if (normalized === docPath || normalized.endsWith(`/${docPath}`) || docPath.endsWith(`/${normalized}`)) {
+                return doc;
+            }
+        }
+        return null;
+    }, [documents]);
+
+    const fileRows = useMemo(() => {
+        type FileRow = {
+            key: string;
+            fileName: string;
+            filePath: string;
+            action: 'read' | 'create' | 'update' | 'delete' | 'other';
+            fileType: string;
+            commitLabel: string;
+            commitHash: string;
+            agentName: string;
+            threadName: string;
+            timestamp: string;
+            additions: number;
+            deletions: number;
+            sourceLogId?: string;
+            doc: PlanDocument | null;
+            localPath: string;
+            githubUrl: string | null;
+        };
+
+        const rows: FileRow[] = [];
+        for (const thread of sessionsForFiles) {
+            const commitEvents = collectCommitEvents(thread);
+            const threadName = getThreadDisplayName(thread, subagentNameBySessionId);
+            (thread.updatedFiles || []).forEach((file, idx) => {
+                const action = normalizeFileAction(file.action, file.sourceToolName);
+                if (action === 'other') return;
+                const filePath = normalizePath(file.filePath);
+                if (!filePath) return;
+
+                let commitLabel = '—';
+                let commitHash = '';
+                if (action !== 'read') {
+                    const fileLogIndex = parseLogIndex(file.sourceLogId);
+                    const fileTs = toEpoch(file.timestamp);
+                    let nearestAfter: CommitEvent | null = null;
+                    let nearestBefore: CommitEvent | null = null;
+                    for (const event of commitEvents) {
+                        const compareByIndex = fileLogIndex >= 0 && event.logIndex >= 0;
+                        const isAfter = compareByIndex ? event.logIndex >= fileLogIndex : event.timestampMs >= fileTs;
+                        const isBefore = compareByIndex ? event.logIndex <= fileLogIndex : event.timestampMs <= fileTs;
+                        if (isAfter && !nearestAfter) nearestAfter = event;
+                        if (isBefore) nearestBefore = event;
+                    }
+                    if (nearestAfter) {
+                        commitHash = nearestAfter.hash;
+                        commitLabel = `Before ${toShortCommitHash(nearestAfter.hash)}`;
+                    } else if (nearestBefore) {
+                        commitHash = nearestBefore.hash;
+                        commitLabel = `After ${toShortCommitHash(nearestBefore.hash)}`;
+                    } else if (thread.gitCommitHash) {
+                        commitHash = thread.gitCommitHash;
+                        commitLabel = `Linked ${toShortCommitHash(thread.gitCommitHash)}`;
+                    }
+                }
+
+                const doc = resolveDocument(filePath);
+                const localPath = resolveLocalPath(filePath, activeProject?.path);
+                const githubUrl = commitHash
+                    ? toGitHubBlobUrl(activeProject?.repoUrl || '', commitHash, filePath, activeProject?.path)
+                    : null;
+
+                rows.push({
+                    key: `${thread.id}::${file.sourceLogId || idx}::${filePath}::${action}`,
+                    fileName: fileNameFromPath(filePath),
+                    filePath,
+                    action,
+                    fileType: file.fileType || 'Other',
+                    commitLabel,
+                    commitHash,
+                    agentName: file.agentName || (thread.id === session.id ? MAIN_SESSION_AGENT : threadName),
+                    threadName,
+                    timestamp: file.timestamp || '',
+                    additions: file.additions || 0,
+                    deletions: file.deletions || 0,
+                    sourceLogId: file.sourceLogId,
+                    doc,
+                    localPath,
+                    githubUrl,
+                });
+            });
+        }
+        return rows.sort((a, b) => {
+            const ta = toEpoch(a.timestamp);
+            const tb = toEpoch(b.timestamp);
+            if (ta !== tb) return tb - ta;
+            return a.filePath.localeCompare(b.filePath);
+        });
+    }, [activeProject?.path, activeProject?.repoUrl, resolveDocument, session.id, sessionsForFiles, subagentNameBySessionId]);
+
+    const gridTemplateColumns = useMemo(
+        () => columns.map(col => `${columnWidths[col.id] || col.min}px`).join(' '),
+        [columnWidths, columns],
+    );
+
+    if (fileRows.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <FileText size={48} className="mb-4 opacity-20" />
-                <p>No file updates recorded for this session.</p>
+                <p>No tracked file actions found for this thread family.</p>
             </div>
         );
     }
 
-    const handleFileClick = (file: SessionFileUpdate) => {
-        const doc = documents.find(d => d.filePath === file.filePath);
-        if (doc) {
-            onOpenDoc(doc);
-        } else {
-            console.log(`Opening external file: ${file.filePath}`);
-            alert(`Opening ${file.filePath} in local IDE...`);
+    const openDocOrLocal = (row: { doc: PlanDocument | null; fileType: string; localPath: string }) => {
+        const isDocumentType = row.fileType === 'Document' || row.fileType === 'Plan';
+        if (isDocumentType && row.doc) {
+            onOpenDoc(row.doc);
+            return;
         }
+        window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
+    };
+
+    const openLocal = (localPath: string) => {
+        window.location.href = `vscode://file/${encodeURI(localPath)}`;
+    };
+
+    const actionBadgeClass = (action: string): string => {
+        if (action === 'read') return 'bg-blue-500/10 text-blue-300 border-blue-500/30';
+        if (action === 'create') return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
+        if (action === 'update') return 'bg-amber-500/10 text-amber-300 border-amber-500/30';
+        if (action === 'delete') return 'bg-rose-500/10 text-rose-300 border-rose-500/30';
+        return 'bg-slate-700/40 text-slate-300 border-slate-600/60';
+    };
+
+    const formatAction = (action: string): string => {
+        if (!action) return 'Unknown';
+        return action.charAt(0).toUpperCase() + action.slice(1);
     };
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-            <div className="grid grid-cols-12 gap-4 p-4 border-b border-slate-800 bg-slate-950/50 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <div className="col-span-4">File Path</div>
-                <div className="col-span-2">Stats</div>
-                <div className="col-span-3">Commits</div>
-                <div className="col-span-2">Agent</div>
-                <div className="col-span-1 text-right">Action</div>
-            </div>
-            <div className="divide-y divide-slate-800">
-                {session.updatedFiles.map((file, idx) => (
-                    <div key={idx} className={`grid grid-cols-12 gap-4 p-4 hover:bg-slate-800/30 transition-colors items-center group ${highlightedSourceLogId && file.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-y border-indigo-500/30' : ''}`}>
-                        <div className="col-span-4 flex items-center gap-3">
-                            <FileText size={16} className="text-indigo-400" />
-                            <span className="text-sm font-mono text-slate-300 truncate" title={file.filePath}>{file.filePath}</span>
-                        </div>
-                        <div className="col-span-2 flex items-center gap-3 text-xs font-mono">
-                            <span className="text-emerald-400">+{file.additions}</span>
-                            <span className="text-rose-400">-{file.deletions}</span>
-                        </div>
-                        <div className="col-span-3 flex flex-wrap gap-1">
-                            {file.commits.map(commit => (
-                                <span key={commit} className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
-                                    <GitCommit size={10} /> {commit}
-                                </span>
-                            ))}
-                        </div>
-                        <div className="col-span-2 text-sm text-slate-400">{file.agentName}</div>
-                        <div className="col-span-1 text-right">
-                            <button
-                                onClick={() => handleFileClick(file)}
-                                className="p-1.5 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-400 rounded transition-colors"
-                                title={documents.find(d => d.filePath === file.filePath) ? "View Document" : "Open in IDE"}
-                            >
-                                {documents.find(d => d.filePath === file.filePath) ? <Maximize2 size={16} /> : <ExternalLink size={16} />}
-                            </button>
-                        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
+            <div className="overflow-auto">
+                <div className="min-w-max">
+                    <div className="grid gap-0 px-2 py-2 border-b border-slate-800 bg-slate-950/70 text-[10px] font-semibold text-slate-500 uppercase tracking-wider" style={{ gridTemplateColumns }}>
+                        {columns.map((col, idx) => (
+                            <div key={col.id} className="relative pr-3 select-none">
+                                <span>{col.label}</span>
+                                {idx < columns.length - 1 && (
+                                    <button
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            startResize(col.id, col.min, e.clientX);
+                                        }}
+                                        className="absolute top-0 right-0 h-full w-2 cursor-col-resize text-slate-700 hover:text-indigo-400"
+                                        title={`Resize ${col.label}`}
+                                        aria-label={`Resize ${col.label}`}
+                                    >
+                                        |
+                                    </button>
+                                )}
+                            </div>
+                        ))}
                     </div>
-                ))}
+                    <div className="divide-y divide-slate-800/80">
+                        {fileRows.map(row => (
+                            <div key={row.key} className={`grid gap-0 px-2 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800/30 transition-colors items-center ${highlightedSourceLogId && row.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-y border-indigo-500/30' : ''}`} style={{ gridTemplateColumns }}>
+                                <div className="truncate font-medium text-slate-200" title={row.fileName}>{row.fileName}</div>
+                                <div className="truncate font-mono text-slate-400" title={row.filePath}>{row.filePath}</div>
+                                <div>
+                                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] ${actionBadgeClass(row.action)}`}>
+                                        {formatAction(row.action)}
+                                    </span>
+                                </div>
+                                <div className="truncate text-slate-400" title={row.fileType}>{row.fileType}</div>
+                                <div className="truncate font-mono text-[10px] text-slate-400" title={row.commitHash || row.commitLabel}>{row.commitLabel}</div>
+                                <div className="truncate text-slate-400" title={row.agentName}>{row.agentName}</div>
+                                <div className="truncate text-slate-500" title={row.threadName}>{row.threadName}</div>
+                                <div className="truncate text-[10px] text-slate-500" title={row.timestamp}>{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</div>
+                                <div className="font-mono text-[10px]">
+                                    {row.action === 'read'
+                                        ? <span className="text-slate-600">—</span>
+                                        : <span className="flex items-center gap-1"><span className="text-emerald-400">+{row.additions}</span><span className="text-rose-400">-{row.deletions}</span></span>}
+                                </div>
+                                <div className="flex items-center gap-1 justify-end">
+                                    <button
+                                        onClick={() => openDocOrLocal(row)}
+                                        className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
+                                        title={(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc ? 'Open document modal' : 'Open in local codebase'}
+                                    >
+                                        {(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc ? <Maximize2 size={14} /> : <ExternalLink size={14} />}
+                                    </button>
+                                    {(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc && (
+                                        <button
+                                            onClick={() => openLocal(row.localPath)}
+                                            className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
+                                            title="Open in local codebase"
+                                        >
+                                            <Code size={14} />
+                                        </button>
+                                    )}
+                                    {row.githubUrl && (
+                                        <a
+                                            href={row.githubUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
+                                            title="Open this file at commit in GitHub"
+                                        >
+                                            <GitCommit size={14} />
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -1820,11 +2127,13 @@ const SessionFilterBar: React.FC = () => {
 };
 
 const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpenSession: (sessionId: string) => void }> = ({ session, onBack, onOpenSession }) => {
+    const { getSessionById } = useData();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
+    const [threadSessionDetails, setThreadSessionDetails] = useState<Record<string, AgentSession>>({ [session.id]: session });
     const [linkedSourceLogId, setLinkedSourceLogId] = useState<string | null>(null);
 
     useEffect(() => {
@@ -1855,6 +2164,41 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
             cancelled = true;
         };
     }, [session.id, session.rootSessionId]);
+
+    useEffect(() => {
+        setThreadSessionDetails(prev => ({ ...prev, [session.id]: session }));
+    }, [session]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const uniqueIds = Array.from(new Set([session.id, ...threadSessions.map(thread => thread.id)]));
+        if (uniqueIds.length === 0) return;
+
+        const loadThreadDetails = async () => {
+            const detailEntries = await Promise.all(
+                uniqueIds.map(async (threadId) => {
+                    if (threadId === session.id) {
+                        return [threadId, session] as const;
+                    }
+                    const detailed = await getSessionById(threadId);
+                    return [threadId, detailed] as const;
+                })
+            );
+            if (cancelled) return;
+            setThreadSessionDetails(prev => {
+                const next = { ...prev };
+                detailEntries.forEach(([threadId, detailed]) => {
+                    if (detailed) next[threadId] = detailed;
+                });
+                return next;
+            });
+        };
+
+        void loadThreadDetails();
+        return () => {
+            cancelled = true;
+        };
+    }, [getSessionById, session, threadSessions]);
 
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
@@ -1973,7 +2317,16 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         onShowLinked={handleShowLinked}
                     />
                 )}
-                {activeTab === 'files' && <FilesView session={session} onOpenDoc={setViewingDoc} highlightedSourceLogId={linkedSourceLogId} />}
+                {activeTab === 'files' && (
+                    <FilesView
+                        session={session}
+                        threadSessions={threadSessions}
+                        threadSessionDetails={threadSessionDetails}
+                        subagentNameBySessionId={subagentNameBySessionId}
+                        onOpenDoc={setViewingDoc}
+                        highlightedSourceLogId={linkedSourceLogId}
+                    />
+                )}
                 {activeTab === 'artifacts' && (
                     <ArtifactsView
                         session={session}

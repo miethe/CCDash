@@ -218,11 +218,16 @@ async def get_session(session_id: str):
     for f in files:
         file_updates.append({
             "filePath": f["file_path"],
+            "action": f.get("action") or "update",
+            "fileType": f.get("file_type") or "Other",
+            "timestamp": f.get("action_timestamp") or "",
             "additions": f["additions"],
             "deletions": f["deletions"],
             "agentName": f["agent_name"],
             "sourceLogId": f.get("source_log_id"),
             "sourceToolName": f.get("source_tool_name"),
+            "threadSessionId": f.get("thread_session_id"),
+            "rootSessionId": f.get("root_session_id"),
         })
         
     # Artifacts

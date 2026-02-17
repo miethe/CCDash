@@ -183,7 +183,7 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("skill", artifact_types)
         self.assertIn("manifest", artifact_types)
 
-    def test_command_args_paths_are_tracked_as_files(self) -> None:
+    def test_command_args_paths_are_not_tracked_as_file_actions(self) -> None:
         path = self._write_jsonl(
             [
                 {
@@ -205,7 +205,53 @@ class SessionParserTests(unittest.TestCase):
         assert session is not None
 
         file_paths = [f.filePath for f in session.updatedFiles]
-        self.assertIn("docs/project_plans/implementation_plans/features/example-v1.md", file_paths)
+        self.assertEqual(file_paths, [])
+
+    def test_file_actions_include_read_update_and_delete_with_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_read_1",
+                                "name": "Read",
+                                "input": {"file_path": "docs/project_plans/README.md"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_edit_1",
+                                "name": "Edit",
+                                "input": {"file_path": "backend/main.py", "old_string": "a", "new_string": "b"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_delete_1",
+                                "name": "DeleteFile",
+                                "input": {"path": "components/obsolete.tsx"},
+                            },
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        by_path = {f.filePath: f for f in session.updatedFiles}
+        self.assertEqual(by_path["docs/project_plans/README.md"].action, "read")
+        self.assertEqual(by_path["docs/project_plans/README.md"].fileType, "Plan")
+        self.assertEqual(by_path["backend/main.py"].action, "update")
+        self.assertEqual(by_path["backend/main.py"].fileType, "Backend code")
+        self.assertEqual(by_path["components/obsolete.tsx"].action, "delete")
+        self.assertEqual(by_path["components/obsolete.tsx"].fileType, "Frontend code")
+        self.assertEqual(by_path["backend/main.py"].timestamp, "2026-02-16T10:00:00Z")
 
     def test_bash_git_output_extracts_commit_hashes(self) -> None:
         path = self._write_jsonl(

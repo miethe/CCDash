@@ -71,9 +71,13 @@ export interface SessionFileUpdate {
   additions: number;
   deletions: number;
   agentName: string;
+  action: 'read' | 'create' | 'update' | 'delete' | string;
+  fileType: string;
   timestamp: string;
   sourceLogId?: string;
   sourceToolName?: string;
+  threadSessionId?: string;
+  rootSessionId?: string;
 }
 
 export interface SessionArtifact {

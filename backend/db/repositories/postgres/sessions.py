@@ -260,15 +260,26 @@ class PostgresSessionRepository:
             records = []
             for u in updates:
                 records.append((
-                    session_id, u.get("filePath", ""), u.get("additions", 0),
-                    u.get("deletions", 0), u.get("agentName", ""),
-                    u.get("sourceLogId"), u.get("sourceToolName"),
+                    session_id,
+                    u.get("filePath", ""),
+                    u.get("action", "update"),
+                    u.get("fileType", "Other"),
+                    u.get("timestamp", ""),
+                    u.get("additions", 0),
+                    u.get("deletions", 0),
+                    u.get("agentName", ""),
+                    u.get("threadSessionId", ""),
+                    u.get("rootSessionId", ""),
+                    u.get("sourceLogId"),
+                    u.get("sourceToolName"),
                 ))
             
             await self.db.executemany(
                 """INSERT INTO session_file_updates (
-                    session_id, file_path, additions, deletions, agent_name, source_log_id, source_tool_name
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                    session_id, file_path, action, file_type, action_timestamp,
+                    additions, deletions, agent_name, thread_session_id, root_session_id,
+                    source_log_id, source_tool_name
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)""",
                 records
             )
 
