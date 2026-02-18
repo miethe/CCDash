@@ -25,10 +25,22 @@ from backend.parsers.features import (
     resolve_file_for_phase,
 )
 from backend.parsers.status_writer import update_frontmatter_field, update_task_in_frontmatter
+from backend.session_mappings import classify_session_key_metadata, load_session_mappings
+from backend.model_identity import derive_model_identity
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
 logger = logging.getLogger("ccdash.features")
+
+_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
+_KEY_WORKFLOW_COMMAND_MARKERS = (
+    "/dev:execute-phase",
+    "/dev:quick-feature",
+    "/plan:plan-feature",
+    "/dev:implement-story",
+    "/dev:complete-user-story",
+    "/fix:debug",
+)
 
 # ── Request models ──────────────────────────────────────────────────
 
@@ -64,6 +76,10 @@ class FeatureSessionLink(BaseModel):
     commitHashes: list[str] = Field(default_factory=list)
     status: str = "completed"
     model: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
     startedAt: str = ""
     totalCost: float = 0.0
     durationSeconds: int = 0
@@ -77,6 +93,7 @@ class FeatureSessionLink(BaseModel):
     isPrimaryLink: bool = False
     linkStrategy: str = ""
     workflowType: str = ""
+    sessionMetadata: dict[str, Any] | None = None
 
 
 def _safe_json(raw: str | None) -> dict:
@@ -98,14 +115,97 @@ def _safe_json_list(raw: str | None) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
-def _is_primary_session_link(strategy: str, confidence: float, signal_types: set[str]) -> bool:
+def _is_primary_session_link(
+    strategy: str,
+    confidence: float,
+    signal_types: set[str],
+    commands: list[str],
+) -> bool:
     if strategy == "task_frontmatter":
         return True
     if confidence >= 0.9:
         return True
     if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
         return True
+    if confidence >= 0.55 and any(
+        marker in command.lower()
+        for command in commands
+        for marker in ("/dev:execute-phase", "/dev:quick-feature", "/plan:plan-feature")
+    ):
+        return True
     return False
+
+
+def _command_token(command_name: str) -> str:
+    normalized = " ".join((command_name or "").strip().split()).lower()
+    if not normalized:
+        return ""
+    return normalized.split()[0]
+
+
+def _normalize_link_commands(commands: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for raw in commands:
+        command = " ".join((raw or "").strip().split())
+        if not command:
+            continue
+        token = _command_token(command)
+        if token in _NON_CONSEQUENTIAL_COMMAND_PREFIXES:
+            continue
+        lowered = command.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(command)
+    deduped.sort(
+        key=lambda command: (
+            next((idx for idx, marker in enumerate(_KEY_WORKFLOW_COMMAND_MARKERS) if marker in command.lower()), len(_KEY_WORKFLOW_COMMAND_MARKERS)),
+            command.lower(),
+        )
+    )
+    return deduped
+
+
+def _normalize_link_title(title: str, commands: list[str], feature_id: str) -> str:
+    normalized = " ".join((title or "").strip().split())
+    if not normalized:
+        return ""
+    if _command_token(normalized) in _NON_CONSEQUENTIAL_COMMAND_PREFIXES:
+        if commands:
+            return f"{commands[0]} - {feature_id}"
+        return ""
+    return normalized
+
+
+def _phase_label(phase_token: str) -> str:
+    token = (phase_token or "").strip()
+    if not token:
+        return ""
+    if token.lower() == "all":
+        return "All Phases"
+    if token.replace(" ", "").replace("&", "").replace("-", "").isdigit():
+        return f"Phase {token}"
+    return f"Phase {token}"
+
+
+def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
+    summary_text = (summary or "").strip()
+    if summary_text:
+        return summary_text
+
+    metadata = session_metadata if isinstance(session_metadata, dict) else {}
+    session_type = str(metadata.get("sessionTypeLabel") or "").strip()
+    phases = metadata.get("relatedPhases")
+    if not isinstance(phases, list):
+        phases = []
+    phase_values = [str(v).strip() for v in phases if str(v).strip()]
+    if session_type and phase_values:
+        phase_text = ", ".join(_phase_label(value) for value in phase_values)
+        return f"{session_type} - {phase_text}"
+    if session_type:
+        return session_type
+    return session_id
 
 
 def _classify_session_workflow(strategy: str, commands: list[str], signal_types: set[str], session_type: str) -> str:
@@ -331,6 +431,8 @@ async def get_feature(feature_id: str):
 async def get_feature_linked_sessions(feature_id: str):
     """Return linked sessions for a feature using confidence-scored entity links."""
     db = await connection.get_connection()
+    active_project = project_manager.get_active_project()
+    mappings = await load_session_mappings(db, active_project.id) if active_project else []
     feature_repo = get_feature_repository(db)
     feature = await feature_repo.get_by_id(feature_id)
     if not feature:
@@ -354,6 +456,7 @@ async def get_feature_linked_sessions(feature_id: str):
         session_row = await session_repo.get_by_id(session_id)
         if not session_row:
             continue
+        logs = await session_repo.get_logs(session_id)
 
         metadata = _safe_json(link.get("metadata_json"))
         reasons: list[str] = []
@@ -374,32 +477,60 @@ async def get_feature_linked_sessions(feature_id: str):
         commands = metadata.get("commands", [])
         if not isinstance(commands, list):
             commands = []
+        normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
         metadata_hashes = metadata.get("commitHashes", [])
         if not isinstance(metadata_hashes, list):
             metadata_hashes = []
         row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
         merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
         confidence = float(link.get("confidence") or 0.0)
+        model_identity = derive_model_identity(session_row.get("model"))
         session_type = str(session_row.get("session_type") or "")
         parent_session_id = session_row.get("parent_session_id")
         root_session_id = str(session_row.get("root_session_id") or session_id)
         is_subthread = bool(parent_session_id) or session_type == "subagent"
-        is_primary_link = _is_primary_session_link(strategy, confidence, signal_types)
-        workflow_type = _classify_session_workflow(strategy, [str(v) for v in commands if isinstance(v, str)], signal_types, session_type)
+        is_primary_link = _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
+        workflow_type = _classify_session_workflow(strategy, normalized_commands, signal_types, session_type)
+        command_events: list[dict[str, Any]] = []
+        latest_summary = ""
+        for log in logs:
+            raw_metadata = log.get("metadata_json")
+            parsed_metadata: dict[str, Any] = {}
+            if isinstance(raw_metadata, str) and raw_metadata:
+                parsed_metadata = _safe_json(raw_metadata)
+            elif isinstance(raw_metadata, dict):
+                parsed_metadata = raw_metadata
+            if str(log.get("type") or "") == "system" and str(parsed_metadata.get("eventType") or "").strip().lower() == "summary":
+                summary_text = str(log.get("content") or "").strip()
+                if summary_text:
+                    latest_summary = summary_text
+            if str(log.get("type") or "") != "command":
+                continue
+            command_events.append({
+                "name": str(log.get("content") or "").strip(),
+                "args": str(parsed_metadata.get("args") or ""),
+                "parsedCommand": parsed_metadata.get("parsedCommand") if isinstance(parsed_metadata.get("parsedCommand"), dict) else {},
+            })
+        session_metadata = classify_session_key_metadata(command_events, mappings)
+        session_title = _derive_session_title(session_metadata, latest_summary, session_id)
         reasons = list(dict.fromkeys(reasons))
 
         items.append(
             FeatureSessionLink(
                 sessionId=session_id,
-                title=str(metadata.get("title") or ""),
+                title=session_title,
                 titleSource=str(metadata.get("titleSource") or ""),
                 titleConfidence=float(metadata.get("titleConfidence") or 0.0),
                 confidence=confidence,
                 reasons=reasons,
-                commands=[str(v) for v in commands if isinstance(v, str)][:12],
+                commands=normalized_commands[:12],
                 commitHashes=merged_hashes,
                 status=str(session_row.get("status") or "completed"),
                 model=str(session_row.get("model") or ""),
+                modelDisplayName=model_identity["modelDisplayName"],
+                modelProvider=model_identity["modelProvider"],
+                modelFamily=model_identity["modelFamily"],
+                modelVersion=model_identity["modelVersion"],
                 startedAt=str(session_row.get("started_at") or ""),
                 totalCost=float(session_row.get("total_cost") or 0.0),
                 durationSeconds=int(session_row.get("duration_seconds") or 0),
@@ -413,6 +544,7 @@ async def get_feature_linked_sessions(feature_id: str):
                 isPrimaryLink=is_primary_link,
                 linkStrategy=strategy,
                 workflowType=workflow_type,
+                sessionMetadata=session_metadata,
             )
         )
 

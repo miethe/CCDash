@@ -4,6 +4,9 @@ import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Pro
 export interface SessionFilters {
     status?: string;
     model?: string;
+    model_provider?: string;
+    model_family?: string;
+    model_version?: string;
     include_subagents?: boolean;
     root_session_id?: string;
     start_date?: string;
@@ -136,6 +139,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (sessionFilters.status) params.append('status', sessionFilters.status);
             if (sessionFilters.model) params.append('model', sessionFilters.model);
+            if (sessionFilters.model_provider) params.append('model_provider', sessionFilters.model_provider);
+            if (sessionFilters.model_family) params.append('model_family', sessionFilters.model_family);
+            if (sessionFilters.model_version) params.append('model_version', sessionFilters.model_version);
             if (sessionFilters.include_subagents) params.append('include_subagents', 'true');
             if (sessionFilters.root_session_id) params.append('root_session_id', sessionFilters.root_session_id);
             if (sessionFilters.start_date) params.append('start_date', sessionFilters.start_date);

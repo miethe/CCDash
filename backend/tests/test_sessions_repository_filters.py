@@ -53,13 +53,39 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             },
             "project-1",
         )
+        await self.repo.upsert(
+            {
+                **base,
+                "id": "S-opus-45",
+                "model": "claude-opus-4-5-20251101",
+                "sessionType": "session",
+                "parentSessionId": None,
+                "rootSessionId": "S-opus-45",
+                "agentId": None,
+            },
+            "project-1",
+        )
+        await self.repo.upsert(
+            {
+                **base,
+                "id": "S-opus-41",
+                "model": "claude-opus-4-1-20251001",
+                "sessionType": "session",
+                "parentSessionId": None,
+                "rootSessionId": "S-opus-41",
+                "agentId": None,
+            },
+            "project-1",
+        )
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
 
     async def test_default_excludes_subagents(self) -> None:
         rows = await self.repo.list_paginated(0, 50, "project-1", "started_at", "desc", {})
-        self.assertEqual([r["id"] for r in rows], ["S-main"])
+        row_ids = {r["id"] for r in rows}
+        self.assertNotIn("S-agent-a1", row_ids)
+        self.assertEqual(row_ids, {"S-main", "S-opus-45", "S-opus-41"})
 
     async def test_include_subagents_true_returns_both(self) -> None:
         rows = await self.repo.list_paginated(
@@ -70,7 +96,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "desc",
             {"include_subagents": True},
         )
-        self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1"})
+        self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1", "S-opus-45", "S-opus-41"})
 
     async def test_root_session_filter_with_subagents(self) -> None:
         rows = await self.repo.list_paginated(
@@ -88,6 +114,21 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             {"include_subagents": True, "root_session_id": "S-main"},
         )
         self.assertEqual(count, 2)
+
+    async def test_model_identity_filters_match_provider_family_and_version(self) -> None:
+        rows = await self.repo.list_paginated(
+            0,
+            50,
+            "project-1",
+            "started_at",
+            "desc",
+            {
+                "model_provider": "Claude",
+                "model_family": "Opus",
+                "model_version": "Opus 4.5",
+            },
+        )
+        self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
 
 
 if __name__ == "__main__":

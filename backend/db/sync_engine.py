@@ -35,6 +35,18 @@ from backend.db.factory import (
 
 logger = logging.getLogger("ccdash.sync")
 
+_COMMAND_NAME_TAG_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
+_COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
+_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
+_KEY_WORKFLOW_COMMANDS = (
+    "/dev:execute-phase",
+    "/dev:quick-feature",
+    "/plan:plan-feature",
+    "/dev:implement-story",
+    "/dev:complete-user-story",
+    "/fix:debug",
+)
+
 
 def _file_hash(path: Path) -> str:
     """Compute a fast hash of file content for change detection."""
@@ -79,6 +91,96 @@ def _prepare_task_for_storage(task_dict: dict) -> dict:
     task_dict["rawTaskId"] = raw_task_id
     task_dict["id"] = _task_storage_id(raw_task_id, source_file)
     return task_dict
+
+
+def _normalize_command_label(command_name: str) -> str:
+    return " ".join((command_name or "").strip().split())
+
+
+def _command_token(command_name: str) -> str:
+    normalized = _normalize_command_label(command_name).lower()
+    if not normalized:
+        return ""
+    return normalized.split()[0]
+
+
+def _is_non_consequential_command(command_name: str) -> bool:
+    return _command_token(command_name) in _NON_CONSEQUENTIAL_COMMAND_PREFIXES
+
+
+def _command_priority_rank(command_name: str) -> int:
+    lowered = _normalize_command_label(command_name).lower()
+    if not lowered:
+        return len(_KEY_WORKFLOW_COMMANDS) + 1
+    for idx, marker in enumerate(_KEY_WORKFLOW_COMMANDS):
+        if marker in lowered:
+            return idx
+    return len(_KEY_WORKFLOW_COMMANDS)
+
+
+def _select_linking_commands(command_names: set[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in command_names:
+        normalized = _normalize_command_label(raw)
+        if not normalized or _is_non_consequential_command(normalized):
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(normalized)
+    unique.sort(key=lambda value: (_command_priority_rank(value), value.lower()))
+    return unique
+
+
+def _select_preferred_command_event(command_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    meaningful = [
+        event
+        for event in command_events
+        if isinstance(event, dict) and not _is_non_consequential_command(str(event.get("name") or ""))
+    ]
+    if not meaningful:
+        return None
+
+    for marker in _KEY_WORKFLOW_COMMANDS:
+        for event in meaningful:
+            command_name = _normalize_command_label(str(event.get("name") or ""))
+            if marker in command_name.lower():
+                return event
+    return meaningful[0]
+
+
+def _extract_tagged_commands_from_message(content: str) -> list[tuple[str, str]]:
+    if not content:
+        return []
+    command_names = [
+        _normalize_command_label(match.group(1))
+        for match in _COMMAND_NAME_TAG_PATTERN.finditer(content)
+        if _normalize_command_label(match.group(1))
+    ]
+    if not command_names:
+        return []
+
+    command_args = [match.group(1).strip() for match in _COMMAND_ARGS_TAG_PATTERN.finditer(content)]
+    pairs: list[tuple[str, str]] = []
+    for idx, command_name in enumerate(command_names):
+        args_text = command_args[idx] if idx < len(command_args) else ""
+        pairs.append((command_name, args_text))
+    return pairs
+
+
+def _pop_matching_tagged_command(
+    tagged_commands: list[dict[str, Any]],
+    command_name: str,
+) -> dict[str, Any] | None:
+    token = _command_token(command_name)
+    if not token:
+        return None
+    for idx, tagged in enumerate(tagged_commands):
+        if _command_token(str(tagged.get("name") or "")) == token:
+            return tagged_commands.pop(idx)
+    return None
 
 
 class SyncEngine:
@@ -626,7 +728,7 @@ class SyncEngine:
             if latest_summary:
                 return latest_summary[:160], "summary", 0.92
 
-            preferred: dict[str, Any] | None = command_events[0] if command_events else None
+            preferred = _select_preferred_command_event(command_events)
             if preferred:
                 command_name = str(preferred.get("name") or "")
                 parsed = preferred.get("parsed") if isinstance(preferred.get("parsed"), dict) else {}
@@ -658,8 +760,9 @@ class SyncEngine:
                     basis = str(parsed.get("featureSlug") or feature_id)
                     return f"Debug - {basis}", "command-template", 0.62
 
-            if command_names:
-                primary = sorted(command_names)[0]
+            ordered_commands = _select_linking_commands(command_names)
+            if ordered_commands:
+                primary = ordered_commands[0]
                 return f"{primary} - {feature_id}", "command-fallback", 0.55
             return f"Session - {feature_id}", "feature-fallback", 0.35
 
@@ -693,13 +796,7 @@ class SyncEngine:
                         feature_slug_aliases[feature_id].add(_canonical_slug(doc_slug))
 
             # Command names associated with plan-heavy workflows.
-            feature_command_hints[feature_id].update({
-                "/dev:execute-phase",
-                "/dev:quick-feature",
-                "/plan:plan-feature",
-                "/dev:implement-story",
-                "/dev:complete-user-story",
-            })
+            feature_command_hints[feature_id].update(_KEY_WORKFLOW_COMMANDS)
 
             # Link feature → tasks
             tasks = await self.task_repo.list_by_feature(feature_id)
@@ -777,6 +874,7 @@ class SyncEngine:
             logs = await self.session_repo.get_logs(session_id)
 
             command_events: list[dict[str, Any]] = []
+            tagged_commands: list[dict[str, Any]] = []
             latest_summary = ""
             custom_title = ""
             queue_events: list[dict[str, str]] = []
@@ -790,10 +888,29 @@ class SyncEngine:
                 except Exception:
                     metadata = {}
 
+                if log_type == "message":
+                    content_text = str(log.get("content") or "")
+                    for command_name, args_text in _extract_tagged_commands_from_message(content_text):
+                        tagged_commands.append({
+                            "name": command_name,
+                            "args": args_text,
+                            "parsed": _parse_command_context(command_name, args_text) if args_text else {},
+                        })
+                    continue
+
                 if log_type == "command":
-                    command_name = str(log.get("content") or "").strip()
+                    command_name = _normalize_command_label(str(log.get("content") or ""))
                     args_text = str(metadata.get("args") or "")
                     parsed = metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {}
+
+                    if not args_text or not parsed:
+                        tagged = _pop_matching_tagged_command(tagged_commands, command_name)
+                        if tagged:
+                            if not args_text:
+                                args_text = str(tagged.get("args") or "")
+                            if not parsed and isinstance(tagged.get("parsed"), dict):
+                                parsed = tagged.get("parsed")
+
                     if not parsed and args_text:
                         parsed = _parse_command_context(command_name, args_text)
                     command_events.append({
@@ -832,16 +949,29 @@ class SyncEngine:
                     if pr_link["prUrl"] or pr_link["prNumber"]:
                         pr_links.append(pr_link)
 
-            command_names = {
+            for tagged in tagged_commands:
+                command_name = _normalize_command_label(str(tagged.get("name") or ""))
+                if not command_name:
+                    continue
+                command_events.append({
+                    "name": command_name,
+                    "args": str(tagged.get("args") or ""),
+                    "parsed": tagged.get("parsed") if isinstance(tagged.get("parsed"), dict) else {},
+                })
+
+            command_name_candidates = {
                 str(a.get("title") or "").strip()
                 for a in artifacts
                 if str(a.get("type") or "").strip().lower() == "command" and str(a.get("title") or "").strip()
             }
-            command_names.update(
+            command_name_candidates.update(
                 event.get("name", "").strip()
                 for event in command_events
                 if isinstance(event.get("name"), str) and event.get("name", "").strip()
             )
+            ordered_commands = _select_linking_commands(command_name_candidates)
+            command_names = set(ordered_commands)
+            command_names_lower = {name.lower() for name in command_names}
 
             session_commit_hashes: set[str] = set()
             if s.get("git_commit_hash"):
@@ -889,6 +1019,8 @@ class SyncEngine:
                 feature_aliases = feature_slug_aliases.get(feature_id, set())
                 for command_event in command_events:
                     command_name = str(command_event.get("name") or "").strip()
+                    if _is_non_consequential_command(command_name):
+                        continue
                     parsed = command_event.get("parsed") if isinstance(command_event.get("parsed"), dict) else {}
                     command_slug = str(parsed.get("featureSlug") or "").lower()
                     command_slug_canonical = _canonical_slug(str(parsed.get("featureSlugCanonical") or command_slug))
@@ -925,7 +1057,8 @@ class SyncEngine:
                             signal["phaseToken"] = phase_token
                         evidence.append(signal)
 
-                has_command_hint = bool(command_names.intersection(feature_command_hints.get(feature_id, set())))
+                feature_hints = {hint.lower() for hint in feature_command_hints.get(feature_id, set())}
+                has_command_hint = bool(command_names_lower.intersection(feature_hints))
                 base_confidence = _confidence_from_signals(signal_weights, has_command_path, has_command_hint, has_write)
                 if base_confidence <= 0:
                     continue
@@ -968,7 +1101,7 @@ class SyncEngine:
                 metadata = {
                     "linkStrategy": "session_evidence",
                     "signals": candidate["evidence"][:25],
-                    "commands": sorted(command_names)[:15],
+                    "commands": ordered_commands[:15],
                     "commitHashes": sorted(session_commit_hashes),
                     "ambiguityShare": round(share, 3),
                     "title": title,

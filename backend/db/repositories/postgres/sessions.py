@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+from backend.model_identity import model_filter_tokens
 
 class PostgresSessionRepository:
     """PostgreSQL-backed session storage."""
@@ -102,6 +103,27 @@ class PostgresSessionRepository:
             where_parts.append(f"model ILIKE ${idx}")
             params.append(f"%{filters['model']}%")
             idx += 1
+        if filters.get("model_provider"):
+            tokens = model_filter_tokens(str(filters["model_provider"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
+        if filters.get("model_family"):
+            tokens = model_filter_tokens(str(filters["model_family"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
+        if filters.get("model_version"):
+            tokens = model_filter_tokens(str(filters["model_version"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -154,6 +176,27 @@ class PostgresSessionRepository:
             where_parts.append(f"model ILIKE ${idx}")
             params.append(f"%{filters['model']}%")
             idx += 1
+        if filters.get("model_provider"):
+            tokens = model_filter_tokens(str(filters["model_provider"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
+        if filters.get("model_family"):
+            tokens = model_filter_tokens(str(filters["model_family"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
+        if filters.get("model_version"):
+            tokens = model_filter_tokens(str(filters["model_version"]))
+            if tokens:
+                for token in tokens:
+                    where_parts.append(f"model ILIKE ${idx}")
+                    params.append(f"%{token}%")
+                    idx += 1
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):

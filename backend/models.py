@@ -80,11 +80,31 @@ class ImpactPoint(BaseModel):
     type: str = "info"  # "info" | "warning" | "error" | "success"
 
 
+class SessionMetadataField(BaseModel):
+    id: str
+    label: str
+    value: str
+
+
+class SessionMetadata(BaseModel):
+    sessionTypeId: str = ""
+    sessionTypeLabel: str = ""
+    mappingId: str = ""
+    relatedCommand: str = ""
+    relatedPhases: list[str] = Field(default_factory=list)
+    fields: list[SessionMetadataField] = Field(default_factory=list)
+
+
 class AgentSession(BaseModel):
     id: str
+    title: str = ""
     taskId: str = ""
     status: str = "completed"
     model: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
     sessionType: str = ""
     parentSessionId: Optional[str] = None
     rootSessionId: str = ""
@@ -105,6 +125,7 @@ class AgentSession(BaseModel):
     toolsUsed: list[ToolUsage] = Field(default_factory=list)
     impactHistory: list[ImpactPoint] = Field(default_factory=list)
     logs: list[SessionLog] = Field(default_factory=list)
+    sessionMetadata: Optional[SessionMetadata] = None
 
 
 # ── Document-related models ────────────────────────────────────────

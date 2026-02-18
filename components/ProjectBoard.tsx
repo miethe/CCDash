@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { Feature, LinkedDocument, ProjectTask } from '../types';
+import { SessionCard, deriveSessionCardTitle } from './SessionCard';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
@@ -22,6 +23,10 @@ interface FeatureSessionLink {
   commitHashes: string[];
   status: string;
   model: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
   startedAt: string;
   totalCost: number;
   durationSeconds: number;
@@ -35,6 +40,18 @@ interface FeatureSessionLink {
   isPrimaryLink?: boolean;
   linkStrategy?: string;
   workflowType?: string;
+  sessionMetadata?: {
+    sessionTypeId: string;
+    sessionTypeLabel: string;
+    mappingId: string;
+    relatedCommand: string;
+    relatedPhases: string[];
+    fields: Array<{
+      id: string;
+      label: string;
+      value: string;
+    }>;
+  } | null;
 }
 
 const SHORT_COMMIT_LENGTH = 7;
@@ -363,6 +380,10 @@ const FeatureModal = ({
   ];
 
   const renderSessionCard = (session: FeatureSessionLink) => {
+    const openSession = () => {
+      onClose();
+      navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`);
+    };
     const relatedTasks = phases.flatMap(p =>
       p.tasks.filter(t => t.sessionId === session.sessionId).map(t => ({ phase: p, task: t }))
     );
@@ -370,37 +391,25 @@ const FeatureModal = ({
     const threadLabel = isSubthreadSession(session) ? 'Sub-thread' : 'Main Thread';
     const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
     const workflow = (session.workflowType || '').trim() || 'Related';
-    const displayTitle = (session.title || '').trim() || session.sessionId;
+    const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
 
     return (
-      <div key={session.sessionId} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 transition-colors">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
-              <Terminal size={16} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-200 truncate max-w-[420px]">
-                {displayTitle}
-              </div>
-              <button
-                onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`); }}
-                className="font-mono text-[11px] text-slate-400 hover:text-indigo-400 transition-colors"
-              >
-                {session.sessionId}
-              </button>
-              <div className="flex flex-wrap items-center gap-2 mt-1">
-                <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                  <Calendar size={10} />
-                  {new Date(session.startedAt).toLocaleDateString()}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">{session.model}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
-                  {Math.round(session.confidence * 100)}% confidence
-                </span>
-              </div>
-            </div>
-          </div>
+      <SessionCard
+        key={session.sessionId}
+        sessionId={session.sessionId}
+        title={displayTitle}
+        status={session.status}
+        startedAt={session.startedAt}
+        model={{ raw: session.model, displayName: session.modelDisplayName }}
+        metadata={session.sessionMetadata || null}
+        onClick={openSession}
+        className="rounded-lg"
+        infoBadges={(
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+            {Math.round(session.confidence * 100)}% confidence
+          </span>
+        )}
+        headerRight={(
           <div className="flex items-center gap-4 text-right">
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
@@ -420,8 +429,8 @@ const FeatureModal = ({
               </span>
             )}
           </div>
-        </div>
-
+        )}
+      >
         <div className="mb-3 text-[10px] flex flex-wrap items-center gap-2">
           <span className={`px-1.5 py-0.5 rounded border ${linkRole === 'Primary' ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800/60'}`}>
             {linkRole}
@@ -472,7 +481,7 @@ const FeatureModal = ({
             </div>
           </div>
         )}
-      </div>
+      </SessionCard>
     );
   };
 

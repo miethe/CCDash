@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
+import { SessionCard, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -189,6 +190,37 @@ interface ArtifactGroup {
     relatedToolLogs: SessionLog[];
     linkedThreads: AgentSession[];
 }
+
+interface SessionFeatureLink {
+    featureId: string;
+    featureName: string;
+    featureStatus: string;
+    featureCategory: string;
+    featureUpdatedAt: string;
+    totalTasks: number;
+    completedTasks: number;
+    confidence: number;
+    isPrimaryLink: boolean;
+    linkStrategy: string;
+    reasons: string[];
+    signals: Array<Record<string, unknown>>;
+    commands: string[];
+    commitHashes: string[];
+    ambiguityShare: number;
+}
+
+const formatSessionReason = (reason: string): string => {
+    const normalized = (reason || '').trim();
+    if (!normalized) return 'related';
+    if (normalized === 'task_frontmatter') return 'task linkage';
+    if (normalized === 'session_evidence') return 'session evidence';
+    if (normalized === 'command_args_path') return 'command path';
+    if (normalized === 'file_write') return 'file write';
+    if (normalized === 'shell_reference') return 'shell reference';
+    if (normalized === 'search_reference') return 'search reference';
+    if (normalized === 'file_read') return 'file read';
+    return normalized.replace(/_/g, ' ');
+};
 
 // --- Sub-Components ---
 
@@ -683,7 +715,9 @@ const TranscriptView: React.FC<{
     subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
     onShowLinked: (tab: 'files' | 'artifacts', sourceLogId: string) => void;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked }) => {
+    primaryFeatureLink?: SessionFeatureLink | null;
+    onOpenFeature?: (featureId: string) => void;
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature }) => {
 
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
@@ -783,6 +817,63 @@ const TranscriptView: React.FC<{
 
             {/* Pane 3: Metadata Details (Far Right) - Smaller fixed-ish width */}
             <div className="w-[260px] min-w-[220px] max-w-[300px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
+                {/* Key Metadata */}
+                {(primaryFeatureLink || session.sessionMetadata) && (
+                    <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 shadow-sm space-y-3">
+                        <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-widest">Key Metadata</h3>
+
+                        {session.sessionMetadata && (
+                            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+                                <div className="text-[10px] text-emerald-200/80 uppercase tracking-wide">Session Type</div>
+                                <div className="text-sm font-semibold text-emerald-100">
+                                    {session.sessionMetadata.sessionTypeLabel || 'Unclassified'}
+                                </div>
+                                <div className="space-y-1.5">
+                                    {session.sessionMetadata.fields.map(field => (
+                                        <div key={`${session.sessionMetadata?.mappingId}-${field.id}`} className="text-xs">
+                                            <div className="text-[10px] text-emerald-200/70 uppercase tracking-wide">{field.label}</div>
+                                            <div className="text-slate-200 font-mono text-[11px] break-words">{field.value}</div>
+                                        </div>
+                                    ))}
+                                    {primaryFeatureLink && (
+                                        <div className="text-xs">
+                                            <div className="text-[10px] text-emerald-200/70 uppercase tracking-wide">Linked Feature</div>
+                                            <button
+                                                onClick={() => onOpenFeature?.(primaryFeatureLink.featureId)}
+                                                className="text-indigo-300 hover:text-indigo-200 font-semibold truncate max-w-full text-left"
+                                            >
+                                                {primaryFeatureLink.featureName || primaryFeatureLink.featureId}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {primaryFeatureLink && (
+                            <button
+                                onClick={() => onOpenFeature?.(primaryFeatureLink.featureId)}
+                                className="w-full text-left rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 hover:bg-emerald-500/15 transition-colors"
+                            >
+                                <div className="text-[10px] text-emerald-200/80 uppercase tracking-wide">Primary Feature Link</div>
+                                <div className="text-sm font-semibold text-emerald-100 truncate mt-1">
+                                    {primaryFeatureLink.featureName || primaryFeatureLink.featureId}
+                                </div>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <span className="text-[10px] font-mono text-emerald-200 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                                        {Math.round(primaryFeatureLink.confidence * 100)}% confidence
+                                    </span>
+                                    {primaryFeatureLink.linkStrategy && (
+                                        <span className="text-[10px] text-emerald-100/80 border border-emerald-500/20 px-1.5 py-0.5 rounded">
+                                            {formatSessionReason(primaryFeatureLink.linkStrategy)}
+                                        </span>
+                                    )}
+                                </div>
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {/* Performance Summary */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Forensics</h3>
@@ -797,7 +888,12 @@ const TranscriptView: React.FC<{
                         </div>
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-xs text-slate-400"><Code size={14} /> Base Model</div>
-                            <span className="text-[10px] font-mono text-indigo-400 truncate max-w-[120px]" title={session.model}>{session.model.split('-').slice(0, 2).join(' ')}</span>
+                            <span
+                                className="text-[10px] font-mono text-indigo-400 truncate max-w-[140px]"
+                                title={session.model}
+                            >
+                                {formatModelDisplayName(session.model, session.modelDisplayName)}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -888,6 +984,123 @@ const TranscriptView: React.FC<{
                     </div>
                 </div>
             </div>
+        </div>
+    );
+};
+
+const SessionFeaturesView: React.FC<{
+    linkedFeatures: SessionFeatureLink[];
+    onOpenFeature: (featureId: string) => void;
+}> = ({ linkedFeatures, onOpenFeature }) => {
+    const grouped = useMemo(() => {
+        const primary = linkedFeatures.filter(feature => feature.isPrimaryLink);
+        const related = linkedFeatures.filter(feature => !feature.isPrimaryLink);
+        return { primary, related };
+    }, [linkedFeatures]);
+
+    const renderFeatureCard = (feature: SessionFeatureLink) => {
+        const pct = feature.totalTasks > 0
+            ? Math.round((feature.completedTasks / feature.totalTasks) * 100)
+            : 0;
+        return (
+            <div key={feature.featureId} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-100 truncate">
+                            {feature.featureName || feature.featureId}
+                        </div>
+                        <button
+                            onClick={() => onOpenFeature(feature.featureId)}
+                            className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
+                        >
+                            {feature.featureId}
+                        </button>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                        {Math.round(feature.confidence * 100)}% confidence
+                    </span>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2 text-[10px]">
+                    <span className={`px-1.5 py-0.5 rounded border ${feature.isPrimaryLink ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800/60'}`}>
+                        {feature.isPrimaryLink ? 'Primary' : 'Related'}
+                    </span>
+                    {feature.featureStatus && (
+                        <span className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 bg-slate-800/60 capitalize">
+                            {feature.featureStatus}
+                        </span>
+                    )}
+                    {feature.featureCategory && (
+                        <span className="px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10 capitalize">
+                            {feature.featureCategory}
+                        </span>
+                    )}
+                    {feature.linkStrategy && (
+                        <span className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 bg-slate-800/60">
+                            {formatSessionReason(feature.linkStrategy)}
+                        </span>
+                    )}
+                </div>
+
+                {feature.reasons.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+                        {feature.reasons.slice(0, 5).map(reason => (
+                            <span key={`${feature.featureId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
+                                {formatSessionReason(reason)}
+                            </span>
+                        ))}
+                    </div>
+                )}
+
+                <div className="mt-3">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                        <span>Feature Progress</span>
+                        <span className="font-mono">{feature.completedTasks}/{feature.totalTasks}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                            className="h-full rounded-full bg-indigo-500"
+                            style={{ width: `${pct}%` }}
+                        />
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    if (linkedFeatures.length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <Box size={42} className="mb-3 opacity-30" />
+                <p className="text-sm">No linked features found for this session.</p>
+                <p className="text-xs mt-1 text-slate-600">No high-confidence feature evidence has been detected yet.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-full overflow-y-auto pr-1 space-y-5">
+            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
+                    <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
+                </div>
+                <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+            </div>
+
+            {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
+            {grouped.primary.length === 0 && (
+                <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                    No primary links yet. Related feature matches are shown below.
+                </div>
+            )}
+
+            {grouped.related.length > 0 && (
+                <div className="space-y-3 pt-2">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
+                    {grouped.related.map(renderFeatureCard)}
+                </div>
+            )}
         </div>
     );
 };
@@ -2064,6 +2277,36 @@ const SessionFilterBar: React.FC = () => {
                 />
             </div>
 
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <input
+                    type="text"
+                    placeholder="Provider (e.g. Claude)"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
+                    value={localFilters.model_provider || ''}
+                    onChange={e => handleChange('model_provider', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <input
+                    type="text"
+                    placeholder="Family (e.g. Opus)"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-32"
+                    value={localFilters.model_family || ''}
+                    onChange={e => handleChange('model_family', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <input
+                    type="text"
+                    placeholder="Version (e.g. Opus 4.5)"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
+                    value={localFilters.model_version || ''}
+                    onChange={e => handleChange('model_version', e.target.value)}
+                />
+            </div>
+
             <label className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
                 <input
                     type="checkbox"
@@ -2091,7 +2334,7 @@ const SessionFilterBar: React.FC = () => {
                 />
             </div>
 
-            {(localFilters.status || localFilters.model || localFilters.start_date || localFilters.end_date || localFilters.include_subagents) && (
+            {(localFilters.status || localFilters.model || localFilters.model_provider || localFilters.model_family || localFilters.model_version || localFilters.start_date || localFilters.end_date || localFilters.include_subagents) && (
                 <button
                     onClick={() => setLocalFilters({ include_subagents: false })}
                     className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
@@ -2128,13 +2371,15 @@ const SessionFilterBar: React.FC = () => {
 
 const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpenSession: (sessionId: string) => void }> = ({ session, onBack, onOpenSession }) => {
     const { getSessionById } = useData();
+    const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts'>('transcript');
+    const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
     const [threadSessionDetails, setThreadSessionDetails] = useState<Record<string, AgentSession>>({ [session.id]: session });
     const [linkedSourceLogId, setLinkedSourceLogId] = useState<string | null>(null);
+    const [linkedFeatureLinks, setLinkedFeatureLinks] = useState<SessionFeatureLink[]>([]);
 
     useEffect(() => {
         let cancelled = false;
@@ -2200,6 +2445,28 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         };
     }, [getSessionById, session, threadSessions]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`);
+                if (!res.ok) throw new Error(`Failed to load linked features (${res.status})`);
+                const data = await res.json();
+                if (!cancelled) {
+                    setLinkedFeatureLinks(Array.isArray(data) ? data : []);
+                }
+            } catch {
+                if (!cancelled) {
+                    setLinkedFeatureLinks([]);
+                }
+            }
+        };
+        void load();
+        return () => {
+            cancelled = true;
+        };
+    }, [session.id]);
+
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
 
@@ -2248,6 +2515,20 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         setActiveTab(tab);
     };
 
+    const primaryFeatureLink = useMemo(
+        () => linkedFeatureLinks.find(link => link.isPrimaryLink) || null,
+        [linkedFeatureLinks]
+    );
+    const sessionDisplayTitle = useMemo(
+        () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
+        [session.id, session.title, session.sessionMetadata]
+    );
+
+    const handleOpenFeature = useCallback((featureId: string) => {
+        if (!featureId) return;
+        navigate(`/board?feature=${encodeURIComponent(featureId)}`);
+    }, [navigate]);
+
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
             {/* Header */}
@@ -2258,10 +2539,9 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                     </button>
                     <div>
                         <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                            {session.id}
-                            <span className="text-slate-700 font-mono text-xs">/</span>
-                            <span className="text-slate-500 font-mono text-xs tracking-wider">{session.taskId}</span>
+                            {sessionDisplayTitle}
                         </h2>
+                        <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5">{session.id}</div>
                         <div className="flex items-center gap-3 mt-0.5">
                             <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
                             <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
@@ -2275,6 +2555,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                 <div className="flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
                     {[
                         { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+                        { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
                         { id: 'files', icon: FileText, label: 'Files' },
                         { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
                         { id: 'impact', icon: TrendingUp, label: 'App Impact' },
@@ -2315,6 +2596,14 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenThread={onOpenSession}
                         onShowLinked={handleShowLinked}
+                        primaryFeatureLink={primaryFeatureLink}
+                        onOpenFeature={handleOpenFeature}
+                    />
+                )}
+                {activeTab === 'features' && (
+                    <SessionFeaturesView
+                        linkedFeatures={linkedFeatureLinks}
+                        onOpenFeature={handleOpenFeature}
                     />
                 )}
                 {activeTab === 'files' && (
@@ -2485,59 +2774,52 @@ export const SessionInspector: React.FC = () => {
     );
 };
 
-const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void }> = ({ session, onClick }) => (
-    <div
-        onClick={onClick}
-        className="group bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 transition-all cursor-pointer relative overflow-hidden"
-    >
-        {session.status === 'active' && (
-            <div className="absolute top-0 right-0 p-3">
-                <span className="flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void }> = ({ session, onClick }) => {
+    const displayTitle = deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null);
+    const agentNames = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3);
+    return (
+        <SessionCard
+            sessionId={session.id}
+            title={displayTitle}
+            status={session.status}
+            startedAt={session.startedAt}
+            model={{ raw: session.model, displayName: session.modelDisplayName }}
+            metadata={session.sessionMetadata || null}
+            onClick={onClick}
+            className="group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden"
+            headerRight={(
+                <div className="text-right">
+                    <div className="text-emerald-400 font-mono font-bold text-sm">${session.totalCost.toFixed(2)}</div>
+                </div>
+            )}
+            infoBadges={(
+                <span className="text-[10px] text-slate-500 font-mono">
+                    {session.logs.length} logs
                 </span>
-            </div>
-        )}
-
-        <div className="flex justify-between items-start mb-5">
-            <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
-                    {session.status === 'active' ? <PlayCircle size={22} /> : <Archive size={22} />}
+            )}
+        >
+            {session.status === 'active' && (
+                <div className="absolute top-0 right-0 p-3">
+                    <span className="flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                    </span>
                 </div>
-                <div>
-                    <h3 className="font-mono text-sm font-bold text-slate-200 group-hover:text-indigo-400 transition-colors tracking-tight">{session.id}</h3>
-                    <p className="text-[10px] text-slate-600 font-mono tracking-wider">{session.taskId}</p>
+            )}
+            <div className="pt-3 border-t border-slate-800/60 flex items-center justify-between">
+                <div className="flex -space-x-2">
+                    {agentNames.map((agent, i) => (
+                        <div key={i} className="w-7 h-7 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center text-[10px] text-indigo-400 font-bold group-hover:border-slate-700 transition-colors" title={agent}>
+                            {agent[0]}
+                        </div>
+                    ))}
+                </div>
+                <div className="flex gap-1.5">
+                    {[...Array(5)].map((_, i) => (
+                        <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < (session.qualityRating || 0) ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-slate-800'}`} />
+                    ))}
                 </div>
             </div>
-            <div className="text-right">
-                <div className="text-emerald-400 font-mono font-bold text-sm">${session.totalCost.toFixed(2)}</div>
-            </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="space-y-1">
-                <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Model</div>
-                <div className="text-xs text-slate-300 font-mono truncate">{session.model.split('-').slice(0, 2).join(' ')}</div>
-            </div>
-            <div className="space-y-1 text-right">
-                <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Logs</div>
-                <div className="text-xs text-slate-300 font-mono">{session.logs.length} pts</div>
-            </div>
-        </div>
-
-        <div className="pt-4 border-t border-slate-800/60 flex items-center justify-between">
-            <div className="flex -space-x-2">
-                {Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3).map((agent, i) => (
-                    <div key={i} className="w-7 h-7 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center text-[10px] text-indigo-400 font-bold group-hover:border-slate-700 transition-colors" title={agent}>
-                        {agent[0]}
-                    </div>
-                ))}
-            </div>
-            <div className="flex gap-1.5">
-                {[...Array(5)].map((_, i) => (
-                    <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < (session.qualityRating || 0) ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-slate-800'}`} />
-                ))}
-            </div>
-        </div>
-    </div>
-);
+        </SessionCard>
+    );
+};

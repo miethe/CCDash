@@ -65,6 +65,21 @@ export interface SessionImpactPoint {
   testFailCount: number;
 }
 
+export interface SessionMetadataField {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface SessionMetadata {
+  sessionTypeId: string;
+  sessionTypeLabel: string;
+  mappingId: string;
+  relatedCommand: string;
+  relatedPhases: string[];
+  fields: SessionMetadataField[];
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
@@ -94,9 +109,14 @@ export interface SessionArtifact {
 
 export interface AgentSession {
   id: string;
+  title?: string;
   taskId: string;
   status: 'active' | 'completed';
   model: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
   durationSeconds: number;
   rootSessionId?: string;
   agentId?: string;
@@ -111,6 +131,7 @@ export interface AgentSession {
   impactHistory?: SessionImpactPoint[];
   updatedFiles?: SessionFileUpdate[];
   linkedArtifacts?: SessionArtifact[];
+  sessionMetadata?: SessionMetadata | null;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];

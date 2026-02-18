@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.db import connection
 from backend.project_manager import project_manager
@@ -15,10 +15,14 @@ session_mappings_router = APIRouter(prefix="/api/session-mappings", tags=["sessi
 
 class SessionMappingRule(BaseModel):
     id: str
+    mappingType: str = "bash"
     label: str
     category: str = "bash"
     pattern: str
     transcriptLabel: str
+    sessionTypeLabel: str = ""
+    matchScope: str = "command"
+    fieldMappings: list[dict[str, Any]] = Field(default_factory=list)
     enabled: bool = True
     priority: int = 10
 

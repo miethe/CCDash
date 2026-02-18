@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 
 import aiosqlite
+from backend.model_identity import model_filter_tokens
 
 
 class SqliteSessionRepository:
@@ -108,6 +109,24 @@ class SqliteSessionRepository:
         if filters.get("model"):
             where_clauses.append("model LIKE ?")
             params.append(f"%{filters['model']}%")
+        if filters.get("model_provider"):
+            tokens = model_filter_tokens(str(filters["model_provider"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
+        if filters.get("model_family"):
+            tokens = model_filter_tokens(str(filters["model_family"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
+        if filters.get("model_version"):
+            tokens = model_filter_tokens(str(filters["model_version"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -160,6 +179,24 @@ class SqliteSessionRepository:
         if filters.get("model"):
             where_clauses.append("model LIKE ?")
             params.append(f"%{filters['model']}%")
+        if filters.get("model_provider"):
+            tokens = model_filter_tokens(str(filters["model_provider"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
+        if filters.get("model_family"):
+            tokens = model_filter_tokens(str(filters["model_family"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
+        if filters.get("model_version"):
+            tokens = model_filter_tokens(str(filters["model_version"]))
+            if tokens:
+                for token in tokens:
+                    where_clauses.append("model LIKE ?")
+                    params.append(f"%{token}%")
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
