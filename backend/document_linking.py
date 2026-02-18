@@ -14,6 +14,8 @@ from typing import Any
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _NOISY_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _GENERIC_PHASE_PROGRESS_PATTERN = re.compile(r"^phase-[a-z0-9._&-]+-progress$", re.IGNORECASE)
+_FEATURE_TOKEN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,}$", re.IGNORECASE)
+_PATH_WITH_EXT_PATTERN = re.compile(r"^[A-Za-z0-9._~:/@+\-\\]+$")
 
 _GENERIC_ALIAS_TOKENS = {
     "docs",
@@ -49,6 +51,32 @@ _RELATED_KEYS = (
 )
 _PRD_KEYS = ("prd", "prd_reference", "prdreference", "prd_ref", "prdref")
 _SESSION_KEYS = ("session", "session_id", "sessionid", "sessions", "linked_sessions", "linkedsessions")
+_DOC_TYPE_DIR_TOKENS = {
+    "implementation_plans",
+    "prds",
+    "reports",
+    "specs",
+    "design-specs",
+    "design",
+    "spikes",
+    "bugs",
+    "enhancements",
+    "refactors",
+    "remediations",
+}
+_FEATURE_TYPE_DIR_TOKENS = {
+    "feature",
+    "features",
+    "enhancement",
+    "enhancements",
+    "refactor",
+    "refactors",
+    "remediation",
+    "remediations",
+    "bug",
+    "bugs",
+    "quick-features",
+}
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -114,12 +142,89 @@ def is_generic_alias_token(token: str) -> bool:
     return False
 
 
+def is_feature_like_token(token: str) -> bool:
+    value = (token or "").strip().lower()
+    if not value:
+        return False
+    if is_generic_alias_token(value):
+        return False
+    if not _FEATURE_TOKEN_PATTERN.match(value):
+        return False
+    # Feature IDs are typically kebab/snake tokens, often versioned.
+    if "-" not in value and "_" not in value and not re.search(r"v\d", value):
+        return False
+    return True
+
+
 def _is_path_like(value: str) -> bool:
     candidate = (value or "").strip()
     if not candidate:
         return False
     lowered = candidate.lower()
-    return "/" in candidate or lowered.endswith(".md")
+    if lowered.endswith(".md"):
+        return True
+    if "/" not in candidate and "\\" not in candidate:
+        return False
+    if any(ch.isspace() for ch in candidate):
+        return False
+    if _NOISY_PATH_PATTERN.search(candidate):
+        return False
+    if not _PATH_WITH_EXT_PATTERN.match(candidate):
+        return False
+    normalized = candidate.replace("\\", "/")
+    if normalized.endswith("/"):
+        return False
+    tail = normalized.rsplit("/", 1)[-1]
+    has_extension = "." in tail and not tail.startswith(".")
+    has_doc_marker = any(
+        marker in lowered
+        for marker in (
+            "project_plans/",
+            "implementation_plans/",
+            "prds/",
+            "reports/",
+            "specs/",
+            ".claude/progress/",
+            "/progress/",
+            "progress/",
+        )
+    )
+    return has_extension or has_doc_marker
+
+
+def feature_slug_from_path(path_value: str) -> str:
+    normalized = normalize_ref_path(path_value)
+    if not normalized:
+        return ""
+    path = Path(normalized)
+    parts = [part for part in path.parts if part]
+    lowered = [part.lower() for part in parts]
+
+    for idx, part in enumerate(lowered):
+        if part == "progress" and idx + 1 < len(parts):
+            candidate = parts[idx + 1].lower()
+            if is_feature_like_token(candidate):
+                return candidate
+
+    for idx, part in enumerate(lowered):
+        if part not in _DOC_TYPE_DIR_TOKENS:
+            continue
+        if idx + 2 >= len(parts):
+            continue
+        feature_type = lowered[idx + 1]
+        if feature_type not in _FEATURE_TYPE_DIR_TOKENS:
+            continue
+        target = parts[idx + 2]
+        candidate = Path(target).stem.lower() if target.lower().endswith(".md") else target.lower()
+        if is_feature_like_token(candidate):
+            return candidate
+
+    stem = path.stem.lower()
+    if is_feature_like_token(stem):
+        return stem
+    if (is_generic_phase_progress_slug(stem) or stem.startswith("phase-")) and is_feature_like_token(path.parent.name.lower()):
+        return path.parent.name.lower()
+    return ""
 
 
 def split_path_and_slug_refs(values: list[str]) -> tuple[list[str], list[str]]:
@@ -169,11 +274,20 @@ def alias_tokens_from_path(path_value: str) -> set[str]:
     if not normalized:
         return set()
     path = Path(normalized)
-    raw_tokens = {
-        path.stem.lower(),
-        path.parent.name.lower(),
-        path.parent.parent.name.lower() if path.parent != path else "",
-    }
+    raw_tokens: set[str] = set()
+    feature_slug = feature_slug_from_path(normalized)
+    if feature_slug:
+        raw_tokens.add(feature_slug)
+
+    stem = path.stem.lower()
+    parent = path.parent.name.lower()
+    if is_feature_like_token(stem):
+        raw_tokens.add(stem)
+    if (is_generic_phase_progress_slug(stem) or stem.startswith("phase-")) and is_feature_like_token(parent):
+        raw_tokens.add(parent)
+    elif is_feature_like_token(parent):
+        raw_tokens.add(parent)
+
     aliases: set[str] = set()
     for token in raw_tokens:
         value = (token or "").strip().lower()
@@ -253,8 +367,13 @@ def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[s
     session_values = _unique(session_values)
     refs_raw = _unique(refs_raw + prd_values)
     path_refs, slug_refs = split_path_and_slug_refs(refs_raw)
-
-    feature_refs = _unique([*slug_refs, *[canonical_slug(v) for v in slug_refs if canonical_slug(v)]])
+    path_feature_refs = [feature_slug_from_path(path_ref) for path_ref in path_refs]
+    slug_feature_refs = [slug for slug in slug_refs if is_feature_like_token(slug)]
+    feature_refs = _unique([
+        *path_feature_refs,
+        *slug_feature_refs,
+        *[canonical_slug(v) for v in [*path_feature_refs, *slug_feature_refs] if canonical_slug(v)],
+    ])
     prd_primary = prd_values[0] if prd_values else ""
     return {
         "relatedRefs": refs_raw,

@@ -3,8 +3,9 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, LinkedDocument, ProjectTask } from '../types';
+import { Feature, LinkedDocument, PlanDocument, ProjectTask } from '../types';
 import { SessionCard, deriveSessionCardTitle } from './SessionCard';
+import { DocumentModal } from './DocumentModal';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
@@ -46,6 +47,7 @@ interface FeatureSessionLink {
     mappingId: string;
     relatedCommand: string;
     relatedPhases: string[];
+    relatedFilePath?: string;
     fields: Array<{
       id: string;
       label: string;
@@ -57,6 +59,7 @@ interface FeatureSessionLink {
 const SHORT_COMMIT_LENGTH = 7;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
+const normalizePath = (value: string): string => (value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
 
 const formatSessionReason = (reason: string): string => {
   const normalized = (reason || '').trim();
@@ -245,11 +248,12 @@ const FeatureModal = ({
   onClose: () => void;
 }) => {
   const navigate = useNavigate();
-  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus } = useData();
+  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
   const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
   const [showPrimarySubthreads, setShowPrimarySubthreads] = useState(false);
@@ -283,6 +287,7 @@ const FeatureModal = ({
     setShowPrimarySubthreads(false);
     setShowSecondarySessions(false);
     setShowSecondarySubthreads(false);
+    setViewingDoc(null);
     refreshFeatureDetail();
     refreshLinkedSessions();
   }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
@@ -341,10 +346,30 @@ const FeatureModal = ({
   };
 
   const handleDocClick = (doc: LinkedDocument) => {
-    // Navigate to Documents tab and pre-select this doc
-    const docId = `DOC-${doc.filePath.replace(/\//g, '-').replace('.md', '')}`;
-    onClose();
-    navigate(`/plans?doc=${encodeURIComponent(docId)}`);
+    const docPath = normalizePath(doc.filePath);
+    const matchedDoc = documents.find(candidate => (
+      candidate.id === doc.id
+      || normalizePath(candidate.filePath) === docPath
+    ));
+    if (matchedDoc) {
+      setViewingDoc(matchedDoc);
+      return;
+    }
+    setViewingDoc({
+      id: doc.id,
+      title: doc.title,
+      filePath: doc.filePath,
+      status: 'active',
+      lastModified: '',
+      author: '',
+      docType: doc.docType,
+      category: doc.category || '',
+      pathSegments: [],
+      featureCandidates: [],
+      frontmatter: {
+        tags: [],
+      },
+    });
   };
 
   const linkedSessions = useMemo(() => {
@@ -845,6 +870,15 @@ const FeatureModal = ({
 
         {/* Task Source Dialog */}
         {viewingTask && <TaskSourceDialog task={viewingTask} onClose={() => setViewingTask(null)} />}
+        {viewingDoc && (
+          <DocumentModal
+            doc={viewingDoc}
+            onClose={() => setViewingDoc(null)}
+            onBack={() => setViewingDoc(null)}
+            backLabel="Back to feature"
+            zIndexClassName="z-[60]"
+          />
+        )}
       </div>
     </div>
   );

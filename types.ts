@@ -77,6 +77,7 @@ export interface SessionMetadata {
   mappingId: string;
   relatedCommand: string;
   relatedPhases: string[];
+  relatedFilePath?: string;
   fields: SessionMetadataField[];
 }
 

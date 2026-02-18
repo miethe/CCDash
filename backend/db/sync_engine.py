@@ -28,8 +28,10 @@ from backend.document_linking import (
     classify_doc_category,
     classify_doc_type,
     extract_frontmatter_references,
+    feature_slug_from_path,
     is_generic_alias_token,
     is_generic_phase_progress_slug,
+    is_feature_like_token,
     normalize_ref_path,
     slug_from_path,
 )
@@ -52,6 +54,7 @@ _COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command
 _NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
 _KEY_WORKFLOW_COMMANDS = (
     "/dev:execute-phase",
+    "/recovering-sessions",
     "/dev:quick-feature",
     "/plan:plan-feature",
     "/dev:implement-story",
@@ -642,7 +645,7 @@ class SyncEngine:
                     if impl_paths:
                         primary_path = impl_paths[0]
                     context["featurePath"] = primary_path
-                    feature_slug = _slug_from_path(primary_path)
+                    feature_slug = feature_slug_from_path(primary_path) or _slug_from_path(primary_path)
                     if feature_slug and not is_generic_alias_token(feature_slug):
                         context["featureSlug"] = feature_slug
                         context["featureSlugCanonical"] = _canonical_slug(feature_slug)
@@ -720,8 +723,23 @@ class SyncEngine:
             latest_summary: str,
             command_events: list[dict[str, Any]],
             command_names: set[str],
+            candidate_evidence: list[dict[str, Any]],
             file_updates: list[dict[str, Any]],
         ) -> tuple[str, str, float]:
+            def _feature_slug_from_paths(paths: list[str]) -> str:
+                for raw_path in paths:
+                    path_slug = feature_slug_from_path(raw_path)
+                    if path_slug:
+                        return path_slug
+                return ""
+
+            evidence_paths = [
+                str(signal.get("path") or "")
+                for signal in candidate_evidence
+                if isinstance(signal, dict)
+            ]
+            evidence_feature_slug = _feature_slug_from_paths(evidence_paths)
+
             if custom_title:
                 return custom_title[:160], "custom-title", 1.0
             if latest_summary:
@@ -731,12 +749,27 @@ class SyncEngine:
             if preferred:
                 command_name = str(preferred.get("name") or "")
                 parsed = preferred.get("parsed") if isinstance(preferred.get("parsed"), dict) else {}
+                parsed_feature_slug = str(parsed.get("featureSlug") or "").strip().lower()
+                parsed_feature_path = str(parsed.get("featurePath") or "")
+                parsed_path_feature_slug = feature_slug_from_path(parsed_feature_path)
+                resolved_slug = (
+                    evidence_feature_slug
+                    or parsed_path_feature_slug
+                    or parsed_feature_slug
+                    or feature_slug_from_path(str(parsed.get("requestId") or ""))
+                )
 
                 if "dev:execute-phase" in command_name.lower():
                     phase = str(parsed.get("phaseToken") or "unknown")
-                    slug = str(parsed.get("featureSlug") or feature_id)
+                    slug = resolved_slug or feature_id
                     confidence = 0.90 if parsed.get("featurePath") else 0.75
                     return f"Execute Phase {phase} - {slug}", "command-template", confidence
+
+                if "recovering-sessions" in command_name.lower():
+                    basis = resolved_slug
+                    if basis:
+                        return f"Recover Session - {basis}", "command-template", 0.78
+                    return "Recover Session", "command-template", 0.62
 
                 if "dev:quick-feature" in command_name.lower():
                     quick_slug = ""
@@ -746,24 +779,32 @@ class SyncEngine:
                             quick_slug = Path(update_path).stem
                             break
                     if not quick_slug:
-                        quick_slug = str(parsed.get("featureSlug") or parsed.get("requestId") or feature_id)
+                        quick_slug = resolved_slug or str(parsed.get("requestId") or "")
                     confidence = 0.85 if quick_slug else 0.65
-                    return f"Quick Feature - {quick_slug or feature_id}", "command-template", confidence
+                    if quick_slug:
+                        return f"Quick Feature - {quick_slug}", "command-template", confidence
+                    return "Quick Feature", "command-template", confidence
 
                 if "plan:plan-feature" in command_name.lower():
-                    basis = str(parsed.get("featureSlug") or parsed.get("requestId") or feature_id)
+                    basis = resolved_slug or str(parsed.get("requestId") or "")
                     confidence = 0.88 if parsed.get("featurePath") or parsed.get("requestId") else 0.65
-                    return f"Plan Feature - {basis}", "command-template", confidence
+                    if basis:
+                        return f"Plan Feature - {basis}", "command-template", confidence
+                    return "Plan Feature", "command-template", confidence
 
                 if "fix:debug" in command_name.lower():
-                    basis = str(parsed.get("featureSlug") or feature_id)
-                    return f"Debug - {basis}", "command-template", 0.62
+                    basis = resolved_slug
+                    if basis:
+                        return f"Debug - {basis}", "command-template", 0.62
+                    return "Debug", "command-template", 0.55
 
             ordered_commands = _select_linking_commands(command_names)
             if ordered_commands:
                 primary = ordered_commands[0]
-                return f"{primary} - {feature_id}", "command-fallback", 0.55
-            return f"Session - {feature_id}", "feature-fallback", 0.35
+                if evidence_feature_slug:
+                    return f"{primary} - {evidence_feature_slug}", "command-fallback", 0.55
+                return primary, "command-fallback", 0.5
+            return "Session", "feature-fallback", 0.35
 
         def _extract_frontmatter(text: str) -> dict[str, Any]:
             match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
@@ -859,9 +900,15 @@ class SyncEngine:
                 continue
             feature_ids_by_base.setdefault(_canonical_slug(feat_id), set()).add(feat_id)
 
+        def _feature_slug_matches_feature(feature_id: str, candidate_slug: str) -> bool:
+            token = (candidate_slug or "").strip().lower()
+            if not token:
+                return False
+            feature_token = feature_id.lower()
+            return token == feature_token or _canonical_slug(token) == _canonical_slug(feature_token)
+
         feature_ref_paths: dict[str, set[str]] = {}
         feature_slug_aliases: dict[str, set[str]] = {}
-        feature_command_hints: dict[str, set[str]] = {}
         task_bound_feature_sessions: set[tuple[str, str]] = set()
 
         for f in features:
@@ -869,7 +916,6 @@ class SyncEngine:
             await self.link_repo.delete_auto_links("feature", feature_id)
             feature_ref_paths[feature_id] = set()
             feature_slug_aliases[feature_id] = {feature_id.lower(), _canonical_slug(feature_id)}
-            feature_command_hints[feature_id] = set()
 
             try:
                 f_data = json.loads(f.get("data_json") or "{}")
@@ -881,11 +927,13 @@ class SyncEngine:
                     continue
                 doc_path = _normalize_ref_path(str(doc.get("filePath") or ""))
                 if doc_path:
-                    feature_ref_paths[feature_id].add(doc_path)
-                    feature_slug_aliases[feature_id].update(alias_tokens_from_path(doc_path))
+                    doc_feature_slug = feature_slug_from_path(doc_path)
+                    if not doc_feature_slug or _feature_slug_matches_feature(feature_id, doc_feature_slug):
+                        feature_ref_paths[feature_id].add(doc_path)
+                        feature_slug_aliases[feature_id].update(alias_tokens_from_path(doc_path))
 
                 doc_slug = str(doc.get("slug") or "").strip().lower()
-                if doc_slug and not is_generic_alias_token(doc_slug):
+                if doc_slug and is_feature_like_token(doc_slug) and _feature_slug_matches_feature(feature_id, doc_slug):
                     feature_slug_aliases[feature_id].add(doc_slug)
                     feature_slug_aliases[feature_id].add(_canonical_slug(doc_slug))
 
@@ -900,11 +948,13 @@ class SyncEngine:
                         if "/" in related_value or related_value.lower().endswith(".md"):
                             related_path = _normalize_ref_path(related_value)
                             if related_path:
-                                feature_ref_paths[feature_id].add(related_path)
-                                feature_slug_aliases[feature_id].update(alias_tokens_from_path(related_path))
+                                related_feature_slug = feature_slug_from_path(related_path)
+                                if related_feature_slug and _feature_slug_matches_feature(feature_id, related_feature_slug):
+                                    feature_ref_paths[feature_id].add(related_path)
+                                    feature_slug_aliases[feature_id].update(alias_tokens_from_path(related_path))
                         else:
                             token = related_value.lower()
-                            if token and not is_generic_alias_token(token):
+                            if token and is_feature_like_token(token) and _feature_slug_matches_feature(feature_id, token):
                                 feature_slug_aliases[feature_id].add(token)
                                 feature_slug_aliases[feature_id].add(_canonical_slug(token))
 
@@ -913,16 +963,15 @@ class SyncEngine:
                     if "/" in prd_ref or prd_ref.lower().endswith(".md"):
                         prd_path = _normalize_ref_path(prd_ref)
                         if prd_path:
-                            feature_ref_paths[feature_id].add(prd_path)
-                            feature_slug_aliases[feature_id].update(alias_tokens_from_path(prd_path))
+                            prd_feature_slug = feature_slug_from_path(prd_path)
+                            if prd_feature_slug and _feature_slug_matches_feature(feature_id, prd_feature_slug):
+                                feature_ref_paths[feature_id].add(prd_path)
+                                feature_slug_aliases[feature_id].update(alias_tokens_from_path(prd_path))
                     else:
                         token = prd_ref.lower()
-                        if token and not is_generic_alias_token(token):
+                        if token and is_feature_like_token(token) and _feature_slug_matches_feature(feature_id, token):
                             feature_slug_aliases[feature_id].add(token)
                             feature_slug_aliases[feature_id].add(_canonical_slug(token))
-
-            # Command names associated with plan-heavy workflows.
-            feature_command_hints[feature_id].update(_KEY_WORKFLOW_COMMANDS)
 
             # Link feature → tasks
             tasks = await self.task_repo.list_by_feature(feature_id)
@@ -1094,7 +1143,6 @@ class SyncEngine:
             )
             ordered_commands = _select_linking_commands(command_name_candidates)
             command_names = set(ordered_commands)
-            command_names_lower = {name.lower() for name in command_names}
 
             session_commit_hashes: set[str] = set()
             if s.get("git_commit_hash"):
@@ -1110,6 +1158,7 @@ class SyncEngine:
 
             candidates: list[dict[str, Any]] = []
             for feature_id, refs in feature_ref_paths.items():
+                feature_aliases = {alias for alias in feature_slug_aliases.get(feature_id, set()) if alias}
                 signal_weights: list[float] = []
                 evidence: list[dict[str, Any]] = []
                 has_write = False
@@ -1121,6 +1170,15 @@ class SyncEngine:
                     if not update_path:
                         continue
                     if not any(_path_matches(update_path, ref_path) for ref_path in refs):
+                        continue
+                    update_feature_slug = feature_slug_from_path(update_path)
+                    if (
+                        update_feature_slug
+                        and not (
+                            update_feature_slug in feature_aliases
+                            or _canonical_slug(update_feature_slug) in feature_aliases
+                        )
+                    ):
                         continue
 
                     weight, signal_type = _source_weight(str(update.get("source_tool_name") or ""))
@@ -1139,7 +1197,6 @@ class SyncEngine:
                 if (feature_id, session_id) in task_bound_feature_sessions:
                     continue
 
-                feature_aliases = {alias for alias in feature_slug_aliases.get(feature_id, set()) if alias}
                 for command_event in command_events:
                     command_name = str(command_event.get("name") or "").strip()
                     if _is_non_consequential_command(command_name):
@@ -1165,6 +1222,15 @@ class SyncEngine:
                             normalized_command_path = _normalize_ref_path(command_path)
                             if not normalized_command_path:
                                 continue
+                            command_path_feature_slug = feature_slug_from_path(normalized_command_path)
+                            if (
+                                command_path_feature_slug
+                                and not (
+                                    command_path_feature_slug in feature_aliases
+                                    or _canonical_slug(command_path_feature_slug) in feature_aliases
+                                )
+                            ):
+                                continue
                             if any(_path_matches(normalized_command_path, ref_path) for ref_path in refs):
                                 matched = True
                                 break
@@ -1183,21 +1249,27 @@ class SyncEngine:
 
                     if matched:
                         has_command_path = True
-                        signal_weights.append(0.96)
+                        signal_weight = 0.96
+                        lowered_command = command_name.lower()
+                        if "dev:quick-feature" in lowered_command:
+                            quick_feature_slug = feature_slug_from_path(str(parsed.get("featurePath") or ""))
+                            signal_weight = 0.9 if (quick_feature_slug and _feature_slug_matches_feature(feature_id, quick_feature_slug)) else 0.7
+                        elif "recovering-sessions" in lowered_command:
+                            recover_feature_slug = feature_slug_from_path(str(parsed.get("featurePath") or ""))
+                            signal_weight = 0.9 if (recover_feature_slug and _feature_slug_matches_feature(feature_id, recover_feature_slug)) else 0.72
+                        signal_weights.append(signal_weight)
                         signal = {
                             "type": "command_args_path",
                             "path": str(parsed.get("featurePath") or (command_paths[0] if command_paths else "")),
                             "command": command_name,
-                            "weight": 0.96,
+                            "weight": signal_weight,
                         }
                         phase_token = parsed.get("phaseToken")
                         if isinstance(phase_token, str) and phase_token:
                             signal["phaseToken"] = phase_token
                         evidence.append(signal)
 
-                feature_hints = {hint.lower() for hint in feature_command_hints.get(feature_id, set())}
-                has_command_hint = bool(command_names_lower.intersection(feature_hints))
-                base_confidence = _confidence_from_signals(signal_weights, has_command_path, has_command_hint, has_write)
+                base_confidence = _confidence_from_signals(signal_weights, has_command_path, False, has_write)
                 if base_confidence <= 0:
                     continue
 
@@ -1234,6 +1306,7 @@ class SyncEngine:
                     latest_summary,
                     command_events,
                     command_names,
+                    candidate["evidence"],
                     file_updates,
                 )
                 metadata = {
@@ -1294,6 +1367,11 @@ class SyncEngine:
                 if not normalized:
                     continue
                 candidate_slug = Path(normalized).stem.lower() if ("/" in normalized or normalized.endswith(".md")) else normalized
+                inferred_slug = feature_slug_from_path(normalized)
+                if inferred_slug:
+                    candidate_slug = inferred_slug
+                if not is_feature_like_token(candidate_slug):
+                    continue
                 if candidate_slug in feature_ids:
                     resolved_feature_ids.add(candidate_slug)
                 base = _canonical_slug(candidate_slug)

@@ -23,7 +23,9 @@ from backend.document_linking import (
     classify_doc_category,
     classify_doc_type,
     extract_frontmatter_references,
+    feature_slug_from_path,
     is_generic_alias_token,
+    is_feature_like_token,
     normalize_ref_path,
 )
 
@@ -543,38 +545,40 @@ def _scan_auxiliary_docs(docs_dir: Path, progress_dir: Path, project_root: Path)
 
 
 def _feature_aliases(feature: Feature) -> set[str]:
-    aliases: set[str] = {feature.id.lower(), _base_slug(feature.id)}
+    feature_base = _base_slug(feature.id)
+    aliases: set[str] = {feature.id.lower(), feature_base}
     for doc in feature.linkedDocs:
         slug = (doc.slug or Path(doc.filePath).stem).strip().lower()
-        if slug and not is_generic_alias_token(slug):
+        if slug and not is_generic_alias_token(slug) and _base_slug(slug) == feature_base:
             aliases.add(slug)
             aliases.add(_base_slug(slug))
-        for ref in doc.relatedRefs:
-            stem = Path(ref).stem.lower() if "/" in ref or ref.lower().endswith(".md") else ref.lower()
-            stem = stem.strip()
-            if stem and not is_generic_alias_token(stem):
-                aliases.add(stem)
-                aliases.add(_base_slug(stem))
-        prd_ref = (doc.prdRef or "").strip().lower()
-        if prd_ref:
-            stem = Path(prd_ref).stem.lower() if "/" in prd_ref or prd_ref.endswith(".md") else prd_ref
-            if stem and not is_generic_alias_token(stem):
-                aliases.add(stem)
-                aliases.add(_base_slug(stem))
+        path_feature_slug = feature_slug_from_path(doc.filePath)
+        if path_feature_slug and _base_slug(path_feature_slug) == feature_base:
+            aliases.add(path_feature_slug)
+            aliases.add(_base_slug(path_feature_slug))
     return {alias for alias in aliases if alias}
 
 
 def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool:
-    doc_aliases = {str(v).lower() for v in doc.get("aliases", set()) if str(v).strip()}
-    if doc_aliases.intersection(feature_aliases):
+    feature_bases = {_base_slug(alias) for alias in feature_aliases if alias}
+
+    def _matches_feature(candidate: str) -> bool:
+        value = (candidate or "").strip().lower()
+        if not value:
+            return False
+        return value in feature_aliases or _base_slug(value) in feature_bases
+
+    doc_path = str(doc.get("filePath") or "")
+    path_feature_slug = feature_slug_from_path(doc_path)
+    if path_feature_slug and _matches_feature(path_feature_slug):
         return True
     feature_refs = {str(v).lower() for v in doc.get("featureRefs", []) if str(v).strip()}
-    if feature_refs.intersection(feature_aliases):
+    if any(_matches_feature(feature_ref) for feature_ref in feature_refs):
         return True
     prd_ref = str(doc.get("prdRef") or "").strip().lower()
     if prd_ref:
-        prd_slug = Path(prd_ref).stem.lower() if "/" in prd_ref or prd_ref.endswith(".md") else prd_ref
-        if prd_slug in feature_aliases or _base_slug(prd_slug) in feature_aliases:
+        prd_slug = feature_slug_from_path(prd_ref) if ("/" in prd_ref or prd_ref.endswith(".md")) else prd_ref
+        if _matches_feature(prd_slug):
             return True
     return False
 
@@ -819,7 +823,6 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 prdRef=str(doc.get("prdRef") or ""),
             ))
             existing_paths.add(file_path)
-            aliases.update(alias_tokens_from_path(file_path))
 
     # Step 5: Link related features (same base slug, different versions)
     feature_list = list(features.values())

@@ -4,6 +4,7 @@ from backend.document_linking import (
     alias_tokens_from_path,
     classify_doc_type,
     extract_frontmatter_references,
+    feature_slug_from_path,
     is_generic_phase_progress_slug,
 )
 
@@ -35,6 +36,30 @@ class DocumentLinkingTests(unittest.TestCase):
         assert isinstance(feature_refs, list)
         self.assertIn("collection-data-consistency-v1", feature_refs)
         self.assertIn("collection-data-consistency", feature_refs)
+
+    def test_extract_frontmatter_references_ignores_free_text_with_slash(self) -> None:
+        refs = extract_frontmatter_references(
+            {
+                "notes": "Completed validation/persistence flows and paths/types handling",
+                "related": ["progress/collection-data-consistency/phase-1-progress.md"],
+            }
+        )
+
+        feature_refs = refs.get("featureRefs", [])
+        assert isinstance(feature_refs, list)
+        self.assertIn("collection-data-consistency", feature_refs)
+        self.assertNotIn("persistence flows", feature_refs)
+        self.assertNotIn("types handling", feature_refs)
+
+    def test_feature_slug_from_path_supports_nested_feature_phase_docs(self) -> None:
+        feature_slug = feature_slug_from_path(
+            "docs/project_plans/implementation_plans/features/marketplace-source-detection-improvements-v1/phase-1-backend.md"
+        )
+        self.assertEqual(feature_slug, "marketplace-source-detection-improvements-v1")
+
+    def test_feature_slug_from_path_supports_progress_layout(self) -> None:
+        feature_slug = feature_slug_from_path("progress/marketplace-source-detection-improvements/phase-3-progress.md")
+        self.assertEqual(feature_slug, "marketplace-source-detection-improvements")
 
     def test_classify_doc_type_detects_progress(self) -> None:
         self.assertEqual(classify_doc_type("progress/collection-data-consistency/phase-1-progress.md"), "progress")

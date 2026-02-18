@@ -92,6 +92,7 @@ class SessionMetadata(BaseModel):
     mappingId: str = ""
     relatedCommand: str = ""
     relatedPhases: list[str] = Field(default_factory=list)
+    relatedFilePath: str = ""
     fields: list[SessionMetadataField] = Field(default_factory=list)
 
 

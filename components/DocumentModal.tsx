@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PlanDocument, Feature } from '../types';
-import { FileText, X, Tag, User, Calendar, GitCommit, GitBranch, GitPullRequest, ListTodo, Terminal, Maximize2, ExternalLink, ArrowRight } from 'lucide-react';
+import { FileText, X, Tag, User, Calendar, GitCommit, GitBranch, GitPullRequest, ListTodo, Terminal, ArrowRight, ArrowLeft } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
@@ -34,21 +34,92 @@ ${JSON.stringify(doc.frontmatter, null, 2)}
   `;
 };
 
-export const DocumentModal = ({ doc: initialDoc, onClose }: { doc: PlanDocument; onClose: () => void }) => {
+interface DocumentModalProps {
+   doc: PlanDocument;
+   onClose: () => void;
+   onBack?: () => void;
+   backLabel?: string;
+   zIndexClassName?: string;
+}
+
+const normalizeDocument = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanDocument => ({
+   id: String(raw.id || fallback.id || ''),
+   title: String(raw.title || fallback.title || ''),
+   filePath: String(raw.filePath || fallback.filePath || ''),
+   status: (raw.status as PlanDocument['status']) || fallback.status || 'active',
+   lastModified: String(raw.lastModified || fallback.lastModified || ''),
+   author: String(raw.author || fallback.author || ''),
+   content: typeof raw.content === 'string' ? raw.content : fallback.content,
+   docType: raw.docType || fallback.docType,
+   category: raw.category || fallback.category,
+   pathSegments: Array.isArray(raw.pathSegments) ? raw.pathSegments : (fallback.pathSegments || []),
+   featureCandidates: Array.isArray(raw.featureCandidates) ? raw.featureCandidates : (fallback.featureCandidates || []),
+   frontmatter: {
+      tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
+      linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
+      linkedSessions: Array.isArray(raw.frontmatter?.linkedSessions) ? raw.frontmatter.linkedSessions : (fallback.frontmatter?.linkedSessions || []),
+      relatedFiles: Array.isArray(raw.frontmatter?.relatedFiles) ? raw.frontmatter.relatedFiles : (fallback.frontmatter?.relatedFiles || []),
+      version: raw.frontmatter?.version ?? fallback.frontmatter?.version,
+      commits: Array.isArray(raw.frontmatter?.commits) ? raw.frontmatter.commits : (fallback.frontmatter?.commits || []),
+      prs: Array.isArray(raw.frontmatter?.prs) ? raw.frontmatter.prs : (fallback.frontmatter?.prs || []),
+      relatedRefs: Array.isArray(raw.frontmatter?.relatedRefs) ? raw.frontmatter.relatedRefs : (fallback.frontmatter?.relatedRefs || []),
+      pathRefs: Array.isArray(raw.frontmatter?.pathRefs) ? raw.frontmatter.pathRefs : (fallback.frontmatter?.pathRefs || []),
+      slugRefs: Array.isArray(raw.frontmatter?.slugRefs) ? raw.frontmatter.slugRefs : (fallback.frontmatter?.slugRefs || []),
+      prd: raw.frontmatter?.prd ?? fallback.frontmatter?.prd,
+      prdRefs: Array.isArray(raw.frontmatter?.prdRefs) ? raw.frontmatter.prdRefs : (fallback.frontmatter?.prdRefs || []),
+      fieldKeys: Array.isArray(raw.frontmatter?.fieldKeys) ? raw.frontmatter.fieldKeys : (fallback.frontmatter?.fieldKeys || []),
+      raw: raw.frontmatter?.raw ?? fallback.frontmatter?.raw,
+   },
+});
+
+export const DocumentModal = ({
+   doc: initialDoc,
+   onClose,
+   onBack,
+   backLabel = 'Back',
+   zIndexClassName = 'z-50',
+}: DocumentModalProps) => {
    const navigate = useNavigate();
    const { tasks, sessions, features } = useData();
    const [activeTab, setActiveTab] = useState<'overview' | 'content' | 'linked_files' | 'linked_entities'>('overview');
-   const [fullDoc, setFullDoc] = useState<PlanDocument>(initialDoc);
+   const [fullDoc, setFullDoc] = useState<PlanDocument>(() => normalizeDocument(initialDoc, initialDoc));
 
    // Fetch full content on mount
    React.useEffect(() => {
-      fetch(`/api/documents/${initialDoc.id}`)
-         .then(res => res.json())
-         .then(data => setFullDoc(data))
-         .catch(err => console.error("Failed to fetch full document:", err));
+      let cancelled = false;
+      const docId = (initialDoc.id || '').trim();
+      if (!docId) {
+         setFullDoc(normalizeDocument(initialDoc, initialDoc));
+         return () => {
+            cancelled = true;
+         };
+      }
+
+      fetch(`/api/documents/${encodeURIComponent(docId)}`)
+         .then(res => {
+            if (!res.ok) throw new Error(`Failed to fetch document (${res.status})`);
+            return res.json();
+         })
+         .then(data => {
+            if (cancelled) return;
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+               throw new Error('Unexpected document payload shape');
+            }
+            setFullDoc(normalizeDocument(data as Partial<PlanDocument>, initialDoc));
+         })
+         .catch(err => {
+            if (!cancelled) {
+               setFullDoc(normalizeDocument(initialDoc, initialDoc));
+            }
+            console.error("Failed to fetch full document:", err);
+         });
+
+      return () => {
+         cancelled = true;
+      };
    }, [initialDoc.id]);
 
-   const doc = fullDoc || initialDoc;
+   const doc = normalizeDocument(fullDoc || initialDoc, initialDoc);
 
    // Resolve linked features from frontmatter IDs
    const linkedFeatureObjs = React.useMemo(() => {
@@ -62,12 +133,23 @@ export const DocumentModal = ({ doc: initialDoc, onClose }: { doc: PlanDocument;
    const linkedSessions = sessions.filter(s => doc.frontmatter.linkedSessions?.includes(s.id));
 
    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200`} onClick={onClose}>
          <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
 
             {/* Header */}
             <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-900">
-               <div>
+               <div className="flex items-start gap-3 min-w-0">
+                  {onBack && (
+                     <button
+                        onClick={onBack}
+                        className="mt-0.5 p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                        title={backLabel}
+                        aria-label={backLabel}
+                     >
+                        <ArrowLeft size={16} />
+                     </button>
+                  )}
+                  <div className="min-w-0">
                   <div className="flex items-center gap-3 mb-2">
                      <span className="font-mono text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{doc.id}</span>
                      <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${doc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' :
@@ -81,6 +163,7 @@ export const DocumentModal = ({ doc: initialDoc, onClose }: { doc: PlanDocument;
                      <FileText className="text-slate-400" /> {doc.title}
                   </h2>
                   <p className="text-slate-400 font-mono text-xs mt-1">{doc.filePath}</p>
+                  </div>
                </div>
                <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
                   <X size={24} />

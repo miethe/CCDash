@@ -85,6 +85,7 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "related-phases", "label": "Related Phase(s)", "source": "phases", "enabled": True, "joinWith": ", "},
+            {"id": "feature-path", "label": "Feature Path", "source": "featurePath", "enabled": True},
         ],
         "priority": 220,
         "enabled": True,
@@ -445,6 +446,7 @@ def classify_key_command(
         "mappingId": str(mapping.get("id") or ""),
         "relatedCommand": command_text,
         "relatedPhases": [str(v) for v in related_phases if str(v).strip()],
+        "relatedFilePath": str(context.get("featurePath") or "").strip(),
         "fields": fields,
     }
 
