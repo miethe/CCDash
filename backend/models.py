@@ -1,7 +1,7 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Optional, Generic, TypeVar
+from typing import Any, Optional, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -137,6 +137,13 @@ class DocumentFrontmatter(BaseModel):
     version: Optional[str] = None
     commits: list[str] = Field(default_factory=list)
     prs: list[str] = Field(default_factory=list)
+    relatedRefs: list[str] = Field(default_factory=list)
+    pathRefs: list[str] = Field(default_factory=list)
+    slugRefs: list[str] = Field(default_factory=list)
+    prd: str = ""
+    prdRefs: list[str] = Field(default_factory=list)
+    fieldKeys: list[str] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlanDocument(BaseModel):
@@ -146,6 +153,10 @@ class PlanDocument(BaseModel):
     status: str = "active"
     lastModified: str = ""
     author: str = ""
+    docType: str = ""
+    category: str = ""
+    pathSegments: list[str] = Field(default_factory=list)
+    featureCandidates: list[str] = Field(default_factory=list)
     frontmatter: DocumentFrontmatter = Field(default_factory=DocumentFrontmatter)
     content: Optional[str] = None  # markdown body, loaded on demand
 
@@ -220,7 +231,13 @@ class LinkedDocument(BaseModel):
     id: str
     title: str
     filePath: str
-    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "spec"
+    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "progress" | "spec"
+    category: str = ""
+    slug: str = ""
+    canonicalSlug: str = ""
+    frontmatterKeys: list[str] = Field(default_factory=list)
+    relatedRefs: list[str] = Field(default_factory=list)
+    prdRef: str = ""
 
 
 class FeaturePhase(BaseModel):

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -16,6 +16,15 @@ from backend.models import (
     FeaturePhase,
     LinkedDocument,
     ProjectTask,
+)
+from backend.document_linking import (
+    alias_tokens_from_path,
+    canonical_slug,
+    classify_doc_category,
+    classify_doc_type,
+    extract_frontmatter_references,
+    is_generic_alias_token,
+    normalize_ref_path,
 )
 
 logger = logging.getLogger("ccdash")
@@ -84,12 +93,36 @@ def _slug_from_path(path: Path) -> str:
 
 def _base_slug(slug: str) -> str:
     """Strip trailing version markers (-v1, -v1.5, -v2) for related-feature matching."""
-    return re.sub(r"-v\d+(\.\d+)?$", "", slug)
+    return canonical_slug(slug)
+
+
+def _project_relative(path: Path, project_root: Path) -> str:
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str, Any]) -> dict[str, Any]:
+    project_rel = _project_relative(path, project_root)
+    refs = extract_frontmatter_references(frontmatter)
+    slug = _slug_from_path(path)
+    return {
+        "file_path": project_rel,
+        "slug": slug,
+        "canonical_slug": _base_slug(slug),
+        "doc_type": classify_doc_type(project_rel, frontmatter),
+        "category": classify_doc_category(project_rel, frontmatter),
+        "frontmatter_keys": sorted(str(key) for key in frontmatter.keys()),
+        "related_refs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
+        "feature_refs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
+        "prd_ref": str(refs.get("prd") or ""),
+    }
 
 
 # ── Phase 1: Scan Implementation Plans ──────────────────────────────
 
-def _scan_impl_plans(docs_dir: Path) -> dict[str, dict]:
+def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
     """Scan implementation_plans/ and return a dict keyed by slug."""
     impl_dir = docs_dir / "implementation_plans"
     plans: dict[str, dict] = {}
@@ -121,12 +154,12 @@ def _scan_impl_plans(docs_dir: Path) -> dict[str, dict]:
         if isinstance(tags, str):
             tags = [tags]
         updated = str(fm.get("updated", fm.get("created", "")))
-        rel_path = str(path.relative_to(docs_dir))
+        doc_meta = _extract_doc_metadata(path, project_root, fm)
+        rel_path = doc_meta["file_path"]
 
         # Determine if this is a phase sub-plan (inside a sub-dir of an impl plan)
         # Phase sub-plans are files like impl_plans/harden-polish/discovery-import-fixes-v1/phase-1-bug-fixes.md
         parent_dir_name = path.parent.name
-        grandparent = path.parent.parent.name if path.parent.parent != impl_dir else ""
 
         # If the file is inside a feature-named subdirectory, it's a phase sub-plan
         is_phase_subplan = (
@@ -146,17 +179,23 @@ def _scan_impl_plans(docs_dir: Path) -> dict[str, dict]:
                     "path": rel_path,
                     "title": title,
                     "slug": slug,
+                    "category": doc_meta["category"],
+                    "frontmatter_keys": doc_meta["frontmatter_keys"],
+                    "related_refs": doc_meta["related_refs"],
+                    "prd_ref": doc_meta["prd_ref"],
                 })
             continue
 
         plans[slug] = {
             "title": title,
             "status": status,
-            "category": category,
-            "prd_ref": prd_ref,
+            "category": category or doc_meta["category"],
+            "prd_ref": prd_ref or doc_meta["prd_ref"],
             "tags": tags if isinstance(tags, list) else [],
             "updated": updated,
             "rel_path": rel_path,
+            "frontmatter_keys": doc_meta["frontmatter_keys"],
+            "related_refs": doc_meta["related_refs"],
             "phase_docs": [],
         }
 
@@ -165,7 +204,7 @@ def _scan_impl_plans(docs_dir: Path) -> dict[str, dict]:
 
 # ── Phase 2: Scan PRDs ──────────────────────────────────────────────
 
-def _scan_prds(docs_dir: Path) -> dict[str, dict]:
+def _scan_prds(docs_dir: Path, project_root: Path) -> dict[str, dict]:
     """Scan PRDs/ and return a dict keyed by slug."""
     prd_dir = docs_dir / "PRDs"
     prds: dict[str, dict] = {}
@@ -188,16 +227,14 @@ def _scan_prds(docs_dir: Path) -> dict[str, dict]:
         slug = _slug_from_path(path)
         title = fm.get("title", path.stem.replace("-", " ").replace("_", " ").title())
         status = str(fm.get("status", "draft"))
-        related = fm.get("related", [])
-        if isinstance(related, str):
-            related = [related]
-        if not isinstance(related, list):
-            related = []
+        refs = extract_frontmatter_references(fm)
+        related = [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)]
         tags = fm.get("tags", [])
         if isinstance(tags, str):
             tags = [tags]
         updated = str(fm.get("updated", fm.get("created", "")))
-        rel_path = str(path.relative_to(docs_dir))
+        doc_meta = _extract_doc_metadata(path, project_root, fm)
+        rel_path = doc_meta["file_path"]
 
         prds[slug] = {
             "title": title,
@@ -206,6 +243,9 @@ def _scan_prds(docs_dir: Path) -> dict[str, dict]:
             "tags": tags if isinstance(tags, list) else [],
             "updated": updated,
             "rel_path": rel_path,
+            "frontmatter_keys": doc_meta["frontmatter_keys"],
+            "related_refs": doc_meta["related_refs"],
+            "prd_ref": doc_meta["prd_ref"],
         }
 
     return prds
@@ -266,7 +306,7 @@ def _parse_progress_tasks(tasks_raw: list, source_file: str = "") -> list[Projec
     return tasks
 
 
-def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
+def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dict]:
     """Scan progress/ subdirectories and return dict keyed by slug."""
     progress_data: dict[str, dict] = {}
     if not progress_dir.exists():
@@ -280,6 +320,7 @@ def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
         phases: list[FeaturePhase] = []
         overall_status = "backlog"
         latest_updated = ""
+        progress_docs: list[dict[str, Any]] = []
 
         # Find all markdown files in this progress dir
         for md_file in sorted(subdir.glob("*.md")):
@@ -313,15 +354,23 @@ def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
             if updated and updated > latest_updated:
                 latest_updated = updated
 
+            doc_meta = _extract_doc_metadata(md_file, project_root, fm)
+            progress_docs.append({
+                "path": doc_meta["file_path"],
+                "title": str(fm.get("title", md_file.stem.replace("-", " ").title())),
+                "slug": doc_meta["slug"],
+                "category": doc_meta["category"],
+                "frontmatter_keys": doc_meta["frontmatter_keys"],
+                "related_refs": doc_meta["related_refs"],
+                "prd_ref": doc_meta["prd_ref"],
+            })
+
             # Parse tasks
             tasks_raw = fm.get("tasks", [])
             if not isinstance(tasks_raw, list):
                 tasks_raw = []
-            # Pass relative path so tasks know their source file
-            try:
-                source_rel = str(md_file.relative_to(progress_dir.parent))
-            except ValueError:
-                source_rel = str(md_file)
+            # Pass project-relative path so tasks and links align with command args.
+            source_rel = _project_relative(md_file, project_root)
             tasks = _parse_progress_tasks(tasks_raw, source_file=source_rel)
 
             # If total/completed not provided, derive from tasks
@@ -361,6 +410,7 @@ def _scan_progress_dirs(progress_dir: Path) -> dict[str, dict]:
             "status": overall_status,
             "updated": latest_updated,
             "prd_slug": "",  # will be set from first progress file's prd field
+            "docs": progress_docs,
         }
 
         # Extract prd slug from the first file that has one
@@ -438,15 +488,108 @@ def _max_status(*statuses: str) -> str:
 
 # ── Merge into Features ─────────────────────────────────────────────
 
+def _linked_doc_id_from_path(file_path: str) -> str:
+    normalized = normalize_ref_path(file_path)
+    token = (normalized or file_path).replace("/", "-").replace("\\", "-").replace(".md", "")
+    return f"DOC-{token}"
+
+
+def _scan_auxiliary_docs(docs_dir: Path, progress_dir: Path, project_root: Path) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    roots = [docs_dir, progress_dir]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.md")):
+            if path.name.startswith(".") or path.name == "README.md":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            fm = _extract_frontmatter(text)
+            metadata = _extract_doc_metadata(path, project_root, fm)
+            file_path = str(metadata["file_path"])
+            if not file_path or file_path in seen_paths:
+                continue
+            seen_paths.add(file_path)
+
+            title = str(fm.get("title", path.stem.replace("-", " ").replace("_", " ").title()))
+            slug = str(metadata["slug"] or "")
+            canonical = str(metadata["canonical_slug"] or "")
+            feature_refs = [str(v) for v in metadata.get("feature_refs", []) if isinstance(v, str)]
+            aliases = set(alias_tokens_from_path(file_path))
+            aliases.update(feature_refs)
+            if slug and not is_generic_alias_token(slug):
+                aliases.add(slug)
+            if canonical and not is_generic_alias_token(canonical):
+                aliases.add(canonical)
+            docs.append({
+                "id": _linked_doc_id_from_path(file_path),
+                "title": title,
+                "filePath": file_path,
+                "docType": str(metadata["doc_type"]),
+                "category": str(metadata["category"]),
+                "slug": slug,
+                "canonicalSlug": canonical,
+                "frontmatterKeys": metadata["frontmatter_keys"],
+                "relatedRefs": metadata["related_refs"],
+                "prdRef": str(metadata["prd_ref"] or ""),
+                "featureRefs": feature_refs,
+                "aliases": aliases,
+            })
+    return docs
+
+
+def _feature_aliases(feature: Feature) -> set[str]:
+    aliases: set[str] = {feature.id.lower(), _base_slug(feature.id)}
+    for doc in feature.linkedDocs:
+        slug = (doc.slug or Path(doc.filePath).stem).strip().lower()
+        if slug and not is_generic_alias_token(slug):
+            aliases.add(slug)
+            aliases.add(_base_slug(slug))
+        for ref in doc.relatedRefs:
+            stem = Path(ref).stem.lower() if "/" in ref or ref.lower().endswith(".md") else ref.lower()
+            stem = stem.strip()
+            if stem and not is_generic_alias_token(stem):
+                aliases.add(stem)
+                aliases.add(_base_slug(stem))
+        prd_ref = (doc.prdRef or "").strip().lower()
+        if prd_ref:
+            stem = Path(prd_ref).stem.lower() if "/" in prd_ref or prd_ref.endswith(".md") else prd_ref
+            if stem and not is_generic_alias_token(stem):
+                aliases.add(stem)
+                aliases.add(_base_slug(stem))
+    return {alias for alias in aliases if alias}
+
+
+def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool:
+    doc_aliases = {str(v).lower() for v in doc.get("aliases", set()) if str(v).strip()}
+    if doc_aliases.intersection(feature_aliases):
+        return True
+    feature_refs = {str(v).lower() for v in doc.get("featureRefs", []) if str(v).strip()}
+    if feature_refs.intersection(feature_aliases):
+        return True
+    prd_ref = str(doc.get("prdRef") or "").strip().lower()
+    if prd_ref:
+        prd_slug = Path(prd_ref).stem.lower() if "/" in prd_ref or prd_ref.endswith(".md") else prd_ref
+        if prd_slug in feature_aliases or _base_slug(prd_slug) in feature_aliases:
+            return True
+    return False
+
+
 def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
     """
     Discover features by cross-referencing impl plans, PRDs, and progress dirs.
 
     Priority: impl plans seed features, enriched with PRD + progress data.
     """
-    impl_plans = _scan_impl_plans(docs_dir)
-    prds = _scan_prds(docs_dir)
-    progress_data = _scan_progress_dirs(progress_dir)
+    project_root = progress_dir.parent
+    impl_plans = _scan_impl_plans(docs_dir, project_root)
+    prds = _scan_prds(docs_dir, project_root)
+    progress_data = _scan_progress_dirs(progress_dir, project_root)
+    auxiliary_docs = _scan_auxiliary_docs(docs_dir, progress_dir, project_root)
 
     features: dict[str, Feature] = {}
 
@@ -458,6 +601,12 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 title=plan["title"],
                 filePath=plan["rel_path"],
                 docType="implementation_plan",
+                category=plan.get("category", ""),
+                slug=slug,
+                canonicalSlug=_base_slug(slug),
+                frontmatterKeys=plan.get("frontmatter_keys", []),
+                relatedRefs=plan.get("related_refs", []),
+                prdRef=plan.get("prd_ref", ""),
             )
         ]
 
@@ -468,6 +617,12 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 title=pd["title"],
                 filePath=pd["path"],
                 docType="phase_plan",
+                category=pd.get("category", ""),
+                slug=pd["slug"],
+                canonicalSlug=_base_slug(pd["slug"]),
+                frontmatterKeys=pd.get("frontmatter_keys", []),
+                relatedRefs=pd.get("related_refs", []),
+                prdRef=pd.get("prd_ref", ""),
             ))
 
         features[slug] = Feature(
@@ -513,6 +668,12 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 title=prd["title"],
                 filePath=prd["rel_path"],
                 docType="prd",
+                category="PRDs",
+                slug=prd_slug,
+                canonicalSlug=_base_slug(prd_slug),
+                frontmatterKeys=prd.get("frontmatter_keys", []),
+                relatedRefs=prd.get("related_refs", []),
+                prdRef=prd.get("prd_ref", ""),
             ))
             # Merge tags
             for tag in prd.get("tags", []):
@@ -531,6 +692,12 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                     title=prd["title"],
                     filePath=prd["rel_path"],
                     docType="prd",
+                    category="PRDs",
+                    slug=prd_slug,
+                    canonicalSlug=_base_slug(prd_slug),
+                    frontmatterKeys=prd.get("frontmatter_keys", []),
+                    relatedRefs=prd.get("related_refs", []),
+                    prdRef=prd.get("prd_ref", ""),
                 )],
             )
 
@@ -545,8 +712,14 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
         # Try the prd_slug from progress file metadata
         if not matched_feature_id and prog.get("prd_slug"):
             prd_sl = prog["prd_slug"]
+            prd_sl_base = _base_slug(prd_sl)
             if prd_sl in features:
                 matched_feature_id = prd_sl
+            else:
+                for feat_slug in features:
+                    if _base_slug(feat_slug) == prd_sl_base:
+                        matched_feature_id = feat_slug
+                        break
 
         # Try base slug matching
         if not matched_feature_id:
@@ -570,11 +743,48 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
             # Update timestamp if progress has a newer one
             if prog["updated"] and prog["updated"] > feat.updatedAt:
                 feat.updatedAt = prog["updated"]
+            existing_paths = {doc.filePath for doc in feat.linkedDocs}
+            for progress_doc in prog.get("docs", []):
+                file_path = str(progress_doc.get("path") or "")
+                if not file_path or file_path in existing_paths:
+                    continue
+                doc_slug = str(progress_doc.get("slug") or Path(file_path).stem).lower()
+                feat.linkedDocs.append(LinkedDocument(
+                    id=f"PROGRESS-{doc_slug}",
+                    title=str(progress_doc.get("title") or doc_slug),
+                    filePath=file_path,
+                    docType="progress",
+                    category=str(progress_doc.get("category") or ""),
+                    slug=doc_slug,
+                    canonicalSlug=_base_slug(doc_slug),
+                    frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
+                    relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
+                    prdRef=str(progress_doc.get("prd_ref") or ""),
+                ))
+                existing_paths.add(file_path)
         else:
             # Progress dir with no matching plan or PRD → create feature
             # Use slug as name, cleaned up
             name = prog_slug.replace("-", " ").replace("_", " ").title()
             phases = prog["phases"]
+            linked_docs: list[LinkedDocument] = []
+            for progress_doc in prog.get("docs", []):
+                file_path = str(progress_doc.get("path") or "")
+                if not file_path:
+                    continue
+                doc_slug = str(progress_doc.get("slug") or Path(file_path).stem).lower()
+                linked_docs.append(LinkedDocument(
+                    id=f"PROGRESS-{doc_slug}",
+                    title=str(progress_doc.get("title") or doc_slug),
+                    filePath=file_path,
+                    docType="progress",
+                    category=str(progress_doc.get("category") or ""),
+                    slug=doc_slug,
+                    canonicalSlug=_base_slug(doc_slug),
+                    frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
+                    relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
+                    prdRef=str(progress_doc.get("prd_ref") or ""),
+                ))
             features[prog_slug] = Feature(
                 id=prog_slug,
                 name=name,
@@ -583,9 +793,35 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 completedTasks=sum(p.completedTasks for p in phases),
                 phases=phases,
                 updatedAt=prog.get("updated", ""),
+                linkedDocs=linked_docs,
             )
 
-    # Step 4: Link related features (same base slug, different versions)
+    # Step 4: Augment features with auxiliary docs (reports/specs/additional plans/PRD versions).
+    for feat in features.values():
+        aliases = _feature_aliases(feat)
+        existing_paths = {doc.filePath for doc in feat.linkedDocs}
+        for doc in auxiliary_docs:
+            file_path = str(doc.get("filePath") or "")
+            if not file_path or file_path in existing_paths:
+                continue
+            if not _doc_matches_feature(doc, aliases):
+                continue
+            feat.linkedDocs.append(LinkedDocument(
+                id=str(doc.get("id") or _linked_doc_id_from_path(file_path)),
+                title=str(doc.get("title") or file_path),
+                filePath=file_path,
+                docType=str(doc.get("docType") or "document"),
+                category=str(doc.get("category") or ""),
+                slug=str(doc.get("slug") or Path(file_path).stem.lower()),
+                canonicalSlug=str(doc.get("canonicalSlug") or _base_slug(Path(file_path).stem.lower())),
+                frontmatterKeys=[str(v) for v in doc.get("frontmatterKeys", []) if isinstance(v, str)],
+                relatedRefs=[str(v) for v in doc.get("relatedRefs", []) if isinstance(v, str)],
+                prdRef=str(doc.get("prdRef") or ""),
+            ))
+            existing_paths.add(file_path)
+            aliases.update(alias_tokens_from_path(file_path))
+
+    # Step 5: Link related features (same base slug, different versions)
     feature_list = list(features.values())
     base_groups: dict[str, list[str]] = {}
     for feat in feature_list:

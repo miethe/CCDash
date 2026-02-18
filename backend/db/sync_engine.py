@@ -15,12 +15,24 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+import yaml
 
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file, scan_documents
 from backend.parsers.progress import parse_progress_file, scan_progress
 from backend.parsers.features import scan_features
+from backend.document_linking import (
+    alias_tokens_from_path,
+    canonical_slug,
+    classify_doc_category,
+    classify_doc_type,
+    extract_frontmatter_references,
+    is_generic_alias_token,
+    is_generic_phase_progress_slug,
+    normalize_ref_path,
+    slug_from_path,
+)
 
 from backend.db.factory import (
     get_session_repository,
@@ -246,7 +258,7 @@ class SyncEngine:
         stats["features_synced"] = f_stats["synced"]
 
         # Phase 5: Auto-discover cross-references
-        l_stats = await self._rebuild_entity_links(project.id)
+        l_stats = await self._rebuild_entity_links(project.id, docs_dir, progress_dir)
         stats["links_created"] = l_stats["created"]
 
         # Phase 6: Analytics Snapshot
@@ -551,39 +563,26 @@ class SyncEngine:
 
     # ── Entity Link Discovery ───────────────────────────────────────
 
-    async def _rebuild_entity_links(self, project_id: str) -> dict:
+    async def _rebuild_entity_links(
+        self,
+        project_id: str,
+        docs_dir: Path | None = None,
+        progress_dir: Path | None = None,
+    ) -> dict:
         """Auto-discover cross-references between entities."""
         stats = {"created": 0}
 
         path_pattern = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
         req_id_pattern = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
-        version_suffix_pattern = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
-        noisy_path_pattern = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 
         def _normalize_ref_path(raw: str) -> str:
-            value = (raw or "").strip().strip("\"'`<>[](),;")
-            if not value:
-                return ""
-            while value.startswith("./"):
-                value = value[2:]
-            if value.startswith("../"):
-                return ""
-            value = value.replace("\\", "/")
-            if noisy_path_pattern.search(value):
-                return ""
-            return value
+            return normalize_ref_path(raw)
 
         def _canonical_slug(slug: str) -> str:
-            normalized = slug.strip().lower()
-            if not normalized:
-                return ""
-            return version_suffix_pattern.sub("", normalized)
+            return canonical_slug(slug)
 
         def _slug_from_path(path_value: str) -> str:
-            normalized = _normalize_ref_path(path_value)
-            if not normalized:
-                return ""
-            return Path(normalized).stem.lower()
+            return slug_from_path(path_value)
 
         def _extract_paths_from_text(text: str) -> list[str]:
             if not text:
@@ -644,7 +643,7 @@ class SyncEngine:
                         primary_path = impl_paths[0]
                     context["featurePath"] = primary_path
                     feature_slug = _slug_from_path(primary_path)
-                    if feature_slug:
+                    if feature_slug and not is_generic_alias_token(feature_slug):
                         context["featureSlug"] = feature_slug
                         context["featureSlugCanonical"] = _canonical_slug(feature_slug)
 
@@ -766,7 +765,100 @@ class SyncEngine:
                 return f"{primary} - {feature_id}", "command-fallback", 0.55
             return f"Session - {feature_id}", "feature-fallback", 0.35
 
+        def _extract_frontmatter(text: str) -> dict[str, Any]:
+            match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+            if not match:
+                return {}
+            try:
+                parsed = yaml.safe_load(match.group(1)) or {}
+            except Exception:
+                parsed = {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        async def _store_document_catalog_index() -> None:
+            if not docs_dir or not progress_dir:
+                return
+            project_root = progress_dir.parent
+            field_counts: dict[str, int] = {}
+            type_counts: dict[str, int] = {}
+            entries: list[dict[str, Any]] = []
+            total = 0
+
+            for root in (docs_dir, progress_dir):
+                if not root.exists():
+                    continue
+                for path in sorted(root.rglob("*.md")):
+                    if path.name.startswith("."):
+                        continue
+                    try:
+                        text = path.read_text(encoding="utf-8")
+                    except Exception:
+                        continue
+                    fm = _extract_frontmatter(text)
+                    refs = extract_frontmatter_references(fm)
+                    rel_path = str(path.relative_to(project_root)) if project_root in path.parents else str(path)
+                    doc_type = classify_doc_type(rel_path, fm if isinstance(fm, dict) else {})
+                    type_counts[doc_type] = type_counts.get(doc_type, 0) + 1
+                    total += 1
+                    for key in fm.keys():
+                        key_text = str(key)
+                        field_counts[key_text] = field_counts.get(key_text, 0) + 1
+
+                    entries.append({
+                        "path": rel_path,
+                        "docType": doc_type,
+                        "slug": slug_from_path(rel_path),
+                        "category": classify_doc_category(rel_path, fm if isinstance(fm, dict) else {}),
+                        "frontmatterKeys": sorted(str(key) for key in fm.keys()),
+                        "featureRefs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
+                        "relatedRefs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
+                        "prd": str(refs.get("prd") or ""),
+                    })
+
+            payload = {
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
+                "documentsIndexed": total,
+                "documentsByType": dict(sorted(type_counts.items())),
+                "frontmatterFieldCounts": dict(sorted(field_counts.items(), key=lambda item: item[0])),
+                "entries": entries[:600],
+            }
+            payload_json = json.dumps(payload)
+
+            if isinstance(self.db, aiosqlite.Connection):
+                await self.db.execute(
+                    """
+                    INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                    VALUES (?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    ("project", project_id, "document_catalog", payload_json),
+                )
+                await self.db.commit()
+            else:
+                await self.db.execute(
+                    """
+                    INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW()::text)
+                    ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                        value = EXCLUDED.value,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    "project",
+                    project_id,
+                    "document_catalog",
+                    payload_json,
+                )
+
         features = await self.feature_repo.list_all(project_id)
+        feature_ids = {str(row.get("id") or "") for row in features}
+        feature_ids_by_base: dict[str, set[str]] = {}
+        for feat_id in feature_ids:
+            if not feat_id:
+                continue
+            feature_ids_by_base.setdefault(_canonical_slug(feat_id), set()).add(feat_id)
+
         feature_ref_paths: dict[str, set[str]] = {}
         feature_slug_aliases: dict[str, set[str]] = {}
         feature_command_hints: dict[str, set[str]] = {}
@@ -790,10 +882,44 @@ class SyncEngine:
                 doc_path = _normalize_ref_path(str(doc.get("filePath") or ""))
                 if doc_path:
                     feature_ref_paths[feature_id].add(doc_path)
-                    doc_slug = _slug_from_path(doc_path)
-                    if doc_slug:
-                        feature_slug_aliases[feature_id].add(doc_slug)
-                        feature_slug_aliases[feature_id].add(_canonical_slug(doc_slug))
+                    feature_slug_aliases[feature_id].update(alias_tokens_from_path(doc_path))
+
+                doc_slug = str(doc.get("slug") or "").strip().lower()
+                if doc_slug and not is_generic_alias_token(doc_slug):
+                    feature_slug_aliases[feature_id].add(doc_slug)
+                    feature_slug_aliases[feature_id].add(_canonical_slug(doc_slug))
+
+                related_refs = doc.get("relatedRefs", [])
+                if isinstance(related_refs, list):
+                    for related_ref in related_refs:
+                        if not isinstance(related_ref, str):
+                            continue
+                        related_value = related_ref.strip()
+                        if not related_value:
+                            continue
+                        if "/" in related_value or related_value.lower().endswith(".md"):
+                            related_path = _normalize_ref_path(related_value)
+                            if related_path:
+                                feature_ref_paths[feature_id].add(related_path)
+                                feature_slug_aliases[feature_id].update(alias_tokens_from_path(related_path))
+                        else:
+                            token = related_value.lower()
+                            if token and not is_generic_alias_token(token):
+                                feature_slug_aliases[feature_id].add(token)
+                                feature_slug_aliases[feature_id].add(_canonical_slug(token))
+
+                prd_ref = str(doc.get("prdRef") or "").strip()
+                if prd_ref:
+                    if "/" in prd_ref or prd_ref.lower().endswith(".md"):
+                        prd_path = _normalize_ref_path(prd_ref)
+                        if prd_path:
+                            feature_ref_paths[feature_id].add(prd_path)
+                            feature_slug_aliases[feature_id].update(alias_tokens_from_path(prd_path))
+                    else:
+                        token = prd_ref.lower()
+                        if token and not is_generic_alias_token(token):
+                            feature_slug_aliases[feature_id].add(token)
+                            feature_slug_aliases[feature_id].add(_canonical_slug(token))
 
             # Command names associated with plan-heavy workflows.
             feature_command_hints[feature_id].update(_KEY_WORKFLOW_COMMANDS)
@@ -806,10 +932,7 @@ class SyncEngine:
                 source_file = _normalize_ref_path(str(t.get("source_file") or ""))
                 if source_file:
                     feature_ref_paths[feature_id].add(source_file)
-                    source_slug = _slug_from_path(source_file)
-                    if source_slug:
-                        feature_slug_aliases[feature_id].add(source_slug)
-                        feature_slug_aliases[feature_id].add(_canonical_slug(source_slug))
+                    feature_slug_aliases[feature_id].update(alias_tokens_from_path(source_file))
 
                 await self.link_repo.upsert({
                     "source_type": "feature",
@@ -1016,7 +1139,7 @@ class SyncEngine:
                 if (feature_id, session_id) in task_bound_feature_sessions:
                     continue
 
-                feature_aliases = feature_slug_aliases.get(feature_id, set())
+                feature_aliases = {alias for alias in feature_slug_aliases.get(feature_id, set()) if alias}
                 for command_event in command_events:
                     command_name = str(command_event.get("name") or "").strip()
                     if _is_non_consequential_command(command_name):
@@ -1029,17 +1152,32 @@ class SyncEngine:
                         command_paths = []
 
                     matched = False
-                    if command_slug and (command_slug in feature_aliases or command_slug_canonical in feature_aliases):
+                    if (
+                        command_slug
+                        and not is_generic_alias_token(command_slug)
+                        and (command_slug in feature_aliases or command_slug_canonical in feature_aliases)
+                    ):
                         matched = True
                     else:
                         for command_path in command_paths:
                             if not isinstance(command_path, str):
                                 continue
-                            if any(_path_matches(command_path, ref_path) for ref_path in refs):
+                            normalized_command_path = _normalize_ref_path(command_path)
+                            if not normalized_command_path:
+                                continue
+                            if any(_path_matches(normalized_command_path, ref_path) for ref_path in refs):
                                 matched = True
                                 break
-                            path_slug = _slug_from_path(command_path)
-                            if path_slug and (_canonical_slug(path_slug) in feature_aliases or path_slug in feature_aliases):
+                            path_aliases = alias_tokens_from_path(normalized_command_path)
+                            if path_aliases.intersection(feature_aliases):
+                                matched = True
+                                break
+                            path_slug = _slug_from_path(normalized_command_path)
+                            if (
+                                path_slug
+                                and not is_generic_phase_progress_slug(path_slug)
+                                and (_canonical_slug(path_slug) in feature_aliases or path_slug in feature_aliases)
+                            ):
                                 matched = True
                                 break
 
@@ -1132,18 +1270,47 @@ class SyncEngine:
             except Exception:
                 fm_dict = {}
 
-            linked_features = fm_dict.get("linkedFeatures", [])
-            for feat_ref in linked_features:
-                if feat_ref:
-                    await self.link_repo.upsert({
-                        "source_type": "document",
-                        "source_id": d["id"],
-                        "target_type": "feature",
-                        "target_id": str(feat_ref),
-                        "link_type": "related",
-                        "origin": "auto",
-                    })
-                    stats["created"] += 1
+            refs = extract_frontmatter_references(fm_dict if isinstance(fm_dict, dict) else {})
+            linked_features = fm_dict.get("linkedFeatures", []) if isinstance(fm_dict, dict) else []
+            if isinstance(linked_features, str):
+                linked_features = [linked_features]
+            if not isinstance(linked_features, list):
+                linked_features = []
+
+            feature_refs: set[str] = set()
+            for raw in linked_features:
+                if isinstance(raw, str) and raw.strip():
+                    feature_refs.add(raw.strip())
+            for raw in refs.get("featureRefs", []):
+                if isinstance(raw, str) and raw.strip():
+                    feature_refs.add(raw.strip())
+            prd_ref = refs.get("prd")
+            if isinstance(prd_ref, str) and prd_ref.strip():
+                feature_refs.add(prd_ref.strip())
+
+            resolved_feature_ids: set[str] = set()
+            for raw_ref in feature_refs:
+                normalized = raw_ref.strip().lower()
+                if not normalized:
+                    continue
+                candidate_slug = Path(normalized).stem.lower() if ("/" in normalized or normalized.endswith(".md")) else normalized
+                if candidate_slug in feature_ids:
+                    resolved_feature_ids.add(candidate_slug)
+                base = _canonical_slug(candidate_slug)
+                for resolved in feature_ids_by_base.get(base, set()):
+                    resolved_feature_ids.add(resolved)
+
+            for feat_ref in sorted(resolved_feature_ids):
+                await self.link_repo.upsert({
+                    "source_type": "document",
+                    "source_id": d["id"],
+                    "target_type": "feature",
+                    "target_id": str(feat_ref),
+                    "link_type": "related",
+                    "origin": "auto",
+                })
+                stats["created"] += 1
+        await _store_document_catalog_index()
         return stats
 
 

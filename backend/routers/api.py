@@ -91,12 +91,6 @@ def _is_primary_session_link(
         return True
     if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
         return True
-    if confidence >= 0.55 and any(
-        marker in command.lower()
-        for command in commands
-        for marker in ("/dev:execute-phase", "/dev:quick-feature", "/plan:plan-feature")
-    ):
-        return True
     return False
 
 
@@ -562,6 +556,10 @@ async def list_documents():
             status=d["status"],
             lastModified=d["last_modified"] or "",
             author=d["author"] or "",
+            docType=d.get("doc_type") or "",
+            category=d.get("category") or "",
+            pathSegments=fm.get("pathSegments", []) if isinstance(fm.get("pathSegments"), list) else [],
+            featureCandidates=fm.get("linkedFeatures", []) if isinstance(fm.get("linkedFeatures"), list) else [],
             frontmatter=fm,
             content=None, # Strip content
         ))
@@ -587,6 +585,10 @@ async def get_document(doc_id: str):
         status=d["status"],
         lastModified=d["last_modified"] or "",
         author=d["author"] or "",
+        docType=d.get("doc_type") or "",
+        category=d.get("category") or "",
+        pathSegments=fm.get("pathSegments", []) if isinstance(fm.get("pathSegments"), list) else [],
+        featureCandidates=fm.get("linkedFeatures", []) if isinstance(fm.get("linkedFeatures"), list) else [],
         frontmatter=fm,
         content=d["content"],
     )

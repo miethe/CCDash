@@ -127,12 +127,6 @@ def _is_primary_session_link(
         return True
     if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
         return True
-    if confidence >= 0.55 and any(
-        marker in command.lower()
-        for command in commands
-        for marker in ("/dev:execute-phase", "/dev:quick-feature", "/plan:plan-feature")
-    ):
-        return True
     return False
 
 

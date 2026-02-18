@@ -155,7 +155,18 @@ export interface PlanDocument {
     version?: string;
     commits?: string[];
     prs?: string[];
+    relatedRefs?: string[];
+    pathRefs?: string[];
+    slugRefs?: string[];
+    prd?: string;
+    prdRefs?: string[];
+    fieldKeys?: string[];
+    raw?: Record<string, any>;
   };
+  docType?: string;
+  category?: string;
+  pathSegments?: string[];
+  featureCandidates?: string[];
 }
 
 export interface AnalyticsMetric {
@@ -208,7 +219,13 @@ export interface LinkedDocument {
   id: string;
   title: string;
   filePath: string;
-  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'spec';
+  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'progress' | 'spec' | string;
+  category?: string;
+  slug?: string;
+  canonicalSlug?: string;
+  frontmatterKeys?: string[];
+  relatedRefs?: string[];
+  prdRef?: string;
 }
 
 export interface FeaturePhase {

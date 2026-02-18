@@ -2,11 +2,19 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from backend.models import PlanDocument, DocumentFrontmatter
+from backend.document_linking import (
+    alias_tokens_from_path,
+    classify_doc_category,
+    classify_doc_type,
+    extract_frontmatter_references,
+)
 
 
 def _extract_frontmatter(text: str) -> tuple[dict, str]:
@@ -27,6 +35,44 @@ def _make_doc_id(path: Path, base_dir: Path) -> str:
     rel = path.relative_to(base_dir)
     slug = str(rel).replace("/", "-").replace("\\", "-").replace(".md", "")
     return f"DOC-{slug}"
+
+
+def _to_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        items: list[str] = []
+        for entry in value:
+            if isinstance(entry, str):
+                text = entry.strip()
+                if text:
+                    items.append(text)
+            elif isinstance(entry, dict):
+                for key in ("id", "path", "value", "url"):
+                    raw = entry.get(key)
+                    if isinstance(raw, str) and raw.strip():
+                        items.append(raw.strip())
+                        break
+        return items
+    return []
+
+
+def _first_string(value: Any) -> str:
+    values = _to_string_list(value)
+    return values[0] if values else ""
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return str(value)
 
 
 def parse_document_file(path: Path, base_dir: Path) -> PlanDocument | None:
@@ -56,14 +102,35 @@ def parse_document_file(path: Path, base_dir: Path) -> PlanDocument | None:
     author = audience[0] if isinstance(audience, list) and audience else fm.get("author", "")
 
     # Related links → linkedFeatures
-    related = fm.get("related", [])
-    if isinstance(related, str):
-        related = [related]
-    if not isinstance(related, list):
-        related = []
+    refs = extract_frontmatter_references(fm)
+    related_refs = [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)]
+    linked_feature_refs = [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)]
+    linked_session_refs = [str(v) for v in refs.get("sessionRefs", []) if isinstance(v, str)]
+    prd_refs = [str(v) for v in refs.get("prdRefs", []) if isinstance(v, str)]
+    prd_primary = str(refs.get("prd") or "")
 
-    category = fm.get("category", "")
+    commits = _to_string_list(
+        fm.get("commits")
+        or fm.get("commit")
+        or fm.get("git_commits")
+        or fm.get("git_commits_hashes")
+    )
+    prs = _to_string_list(
+        fm.get("prs")
+        or fm.get("pr")
+        or fm.get("pull_requests")
+        or fm.get("pullRequests")
+    )
+    version = _first_string(fm.get("version"))
+
     rel_path = str(path.relative_to(base_dir))
+    doc_type = classify_doc_type(rel_path, fm)
+    category = classify_doc_category(rel_path, fm)
+    path_segments = list(Path(rel_path).parts)
+    feature_candidates = sorted(
+        set(linked_feature_refs).union(alias_tokens_from_path(rel_path))
+    )
+    frontmatter_keys = sorted(str(key) for key in fm.keys())
 
     return PlanDocument(
         id=_make_doc_id(path, base_dir),
@@ -72,9 +139,24 @@ def parse_document_file(path: Path, base_dir: Path) -> PlanDocument | None:
         status=str(status),
         lastModified=last_modified,
         author=str(author),
+        docType=doc_type,
+        category=str(category),
+        pathSegments=path_segments,
+        featureCandidates=feature_candidates,
         frontmatter=DocumentFrontmatter(
             tags=tags,
-            linkedFeatures=[str(r) for r in related],
+            linkedFeatures=linked_feature_refs,
+            linkedSessions=linked_session_refs,
+            version=version or None,
+            commits=commits,
+            prs=prs,
+            relatedRefs=related_refs,
+            pathRefs=[str(v) for v in refs.get("pathRefs", []) if isinstance(v, str)],
+            slugRefs=[str(v) for v in refs.get("slugRefs", []) if isinstance(v, str)],
+            prd=prd_primary,
+            prdRefs=prd_refs,
+            fieldKeys=frontmatter_keys,
+            raw=_json_safe({str(k): v for k, v in fm.items()}),
         ),
         content=body[:5000] if body else None,  # store a preview
     )

@@ -117,6 +117,7 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
     case 'prd': return <ClipboardList size={12} className="text-purple-400" />;
     case 'implementation_plan': return <Layers size={12} className="text-blue-400" />;
     case 'phase_plan': return <FileText size={12} className="text-amber-400" />;
+    case 'progress': return <Terminal size={12} className="text-cyan-400" />;
     case 'report': return <BarChart3 size={12} className="text-emerald-400" />;
     default: return <FileText size={12} className="text-slate-400" />;
   }
@@ -127,6 +128,7 @@ const DocTypeBadge = ({ docType }: { docType: string }) => {
     prd: 'PRD',
     implementation_plan: 'Plan',
     phase_plan: 'Phase',
+    progress: 'Progress',
     report: 'Report',
     spec: 'Spec',
   };
