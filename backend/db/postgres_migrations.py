@@ -1,0 +1,411 @@
+"""PostgreSQL database schema creation and versioning."""
+from __future__ import annotations
+
+import logging
+import asyncpg
+
+logger = logging.getLogger("ccdash.db.postgres")
+
+SCHEMA_VERSION = 4
+
+_TABLES = """
+-- ── Schema version tracking ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS schema_version (
+    version   INTEGER NOT NULL,
+    applied   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ── 1. Sync State (Incremental Change Detection) ──────────────────
+CREATE TABLE IF NOT EXISTS sync_state (
+    file_path    TEXT PRIMARY KEY,
+    file_hash    TEXT NOT NULL,
+    file_mtime   DOUBLE PRECISION NOT NULL,
+    entity_type  TEXT NOT NULL,
+    project_id   TEXT NOT NULL,
+    last_synced  TEXT NOT NULL,
+    parse_ms     INTEGER DEFAULT 0
+);
+
+-- ── 2. Universal Entity Cross-Linking ──────────────────────────────
+CREATE TABLE IF NOT EXISTS entity_links (
+    id            SERIAL PRIMARY KEY,
+    source_type   TEXT NOT NULL,
+    source_id     TEXT NOT NULL,
+    target_type   TEXT NOT NULL,
+    target_id     TEXT NOT NULL,
+    link_type     TEXT DEFAULT 'related',
+    origin        TEXT DEFAULT 'auto',
+    confidence    DOUBLE PRECISION DEFAULT 1.0,
+    depth         INTEGER DEFAULT 0,
+    sort_order    INTEGER DEFAULT 0,
+    metadata_json TEXT,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_links_source ON entity_links(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_links_target ON entity_links(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_links_tree   ON entity_links(source_type, source_id, link_type, depth);
+CREATE INDEX IF NOT EXISTS idx_links_origin ON entity_links(origin) WHERE origin = 'manual';
+
+-- External links (URLs, PRs, issues)
+CREATE TABLE IF NOT EXISTS external_links (
+    id            SERIAL PRIMARY KEY,
+    entity_type   TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    url           TEXT NOT NULL,
+    link_label    TEXT DEFAULT '',
+    link_category TEXT DEFAULT 'other',
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ext_links ON external_links(entity_type, entity_id);
+
+-- ── 3. Tags System ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tags (
+    id    SERIAL PRIMARY KEY,
+    name  TEXT NOT NULL UNIQUE,
+    color TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS entity_tags (
+    entity_type TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    tag_id      INTEGER NOT NULL REFERENCES tags(id),
+    PRIMARY KEY (entity_type, entity_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_tags_tag ON entity_tags(tag_id);
+
+-- ── 4. Sessions ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sessions (
+    id               TEXT PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    task_id          TEXT DEFAULT '',
+    status           TEXT DEFAULT 'completed',
+    model            TEXT DEFAULT '',
+    duration_seconds INTEGER DEFAULT 0,
+    tokens_in        INTEGER DEFAULT 0,
+    tokens_out       INTEGER DEFAULT 0,
+    total_cost       DOUBLE PRECISION DEFAULT 0.0,
+    quality_rating   INTEGER DEFAULT 0,
+    friction_rating  INTEGER DEFAULT 0,
+    git_commit_hash  TEXT,
+    git_commit_hashes_json TEXT DEFAULT '[]',
+    git_author       TEXT,
+    git_branch       TEXT,
+    session_type     TEXT DEFAULT '',
+    parent_session_id TEXT,
+    root_session_id  TEXT DEFAULT '',
+    agent_id         TEXT,
+    started_at       TEXT DEFAULT '',
+    ended_at         TEXT DEFAULT '',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    source_file      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
+
+-- Normalized log entries
+CREATE TABLE IF NOT EXISTS session_logs (
+    id             SERIAL PRIMARY KEY,
+    session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    log_index      INTEGER NOT NULL,
+    timestamp      TEXT NOT NULL,
+    speaker        TEXT NOT NULL,
+    type           TEXT NOT NULL,
+    content        TEXT DEFAULT '',
+    agent_name     TEXT,
+    tool_name      TEXT,
+    tool_call_id   TEXT,
+    related_tool_call_id TEXT,
+    linked_session_id TEXT,
+    tool_args      TEXT,
+    tool_output    TEXT,
+    tool_status    TEXT DEFAULT 'success',
+    metadata_json  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
+CREATE INDEX IF NOT EXISTS idx_logs_tool    ON session_logs(tool_name) WHERE tool_name IS NOT NULL;
+
+-- Tool usage summary per session
+CREATE TABLE IF NOT EXISTS session_tool_usage (
+    session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_name     TEXT NOT NULL,
+    call_count    INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    total_ms      INTEGER DEFAULT 0,
+    PRIMARY KEY (session_id, tool_name)
+);
+
+-- File changes per session
+CREATE TABLE IF NOT EXISTS session_file_updates (
+    id           SERIAL PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    file_path    TEXT NOT NULL,
+    action       TEXT DEFAULT 'update',
+    file_type    TEXT DEFAULT 'Other',
+    action_timestamp TEXT DEFAULT '',
+    additions    INTEGER DEFAULT 0,
+    deletions    INTEGER DEFAULT 0,
+    agent_name   TEXT DEFAULT '',
+    thread_session_id TEXT DEFAULT '',
+    root_session_id TEXT DEFAULT '',
+    source_log_id TEXT,
+    source_tool_name TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_updates_session ON session_file_updates(session_id);
+CREATE INDEX IF NOT EXISTS idx_file_updates_path   ON session_file_updates(file_path);
+
+-- Session artifacts
+CREATE TABLE IF NOT EXISTS session_artifacts (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    type         TEXT DEFAULT 'document',
+    description  TEXT DEFAULT '',
+    source       TEXT DEFAULT '',
+    url          TEXT,
+    source_log_id TEXT,
+    source_tool_name TEXT
+);
+
+-- ── 5. Documents ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS documents (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    file_path      TEXT NOT NULL,
+    status         TEXT DEFAULT 'active',
+    author         TEXT DEFAULT '',
+    content        TEXT,
+    doc_type       TEXT DEFAULT '',
+    category       TEXT DEFAULT '',
+    parent_doc_id  TEXT,
+    created_at     TEXT DEFAULT '',
+    updated_at     TEXT DEFAULT '',
+    last_modified  TEXT DEFAULT '',
+    frontmatter_json TEXT NOT NULL,
+    source_file    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_docs_project ON documents(project_id);
+CREATE INDEX IF NOT EXISTS idx_docs_type    ON documents(doc_type);
+
+-- ── 6. Tasks ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tasks (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    description    TEXT DEFAULT '',
+    status         TEXT DEFAULT 'backlog',
+    priority       TEXT DEFAULT 'medium',
+    owner          TEXT DEFAULT '',
+    last_agent     TEXT DEFAULT '',
+    cost           DOUBLE PRECISION DEFAULT 0.0,
+    task_type      TEXT DEFAULT '',
+    project_type   TEXT DEFAULT '',
+    project_level  TEXT DEFAULT '',
+    parent_task_id TEXT,
+    feature_id     TEXT,
+    phase_id       TEXT,
+    session_id     TEXT DEFAULT '',
+    commit_hash    TEXT DEFAULT '',
+    created_at     TEXT DEFAULT '',
+    updated_at     TEXT DEFAULT '',
+    completed_at   TEXT DEFAULT '',
+    source_file    TEXT NOT NULL,
+    data_json      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_feature ON tasks(feature_id, phase_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status  ON tasks(project_id, status);
+
+-- ── 7. Features ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS features (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    status          TEXT DEFAULT 'backlog',
+    category        TEXT DEFAULT '',
+    total_tasks     INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0,
+    parent_feature_id TEXT,
+    created_at      TEXT DEFAULT '',
+    updated_at      TEXT DEFAULT '',
+    completed_at    TEXT DEFAULT '',
+    data_json       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
+
+CREATE TABLE IF NOT EXISTS feature_phases (
+    id              TEXT PRIMARY KEY,
+    feature_id      TEXT NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+    phase           TEXT NOT NULL,
+    title           TEXT DEFAULT '',
+    status          TEXT DEFAULT 'backlog',
+    progress        INTEGER DEFAULT 0,
+    total_tasks     INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_phases_feature ON feature_phases(feature_id);
+
+-- ── 8. Analytics ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS metric_types (
+    id            TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    unit          TEXT DEFAULT '',
+    value_type    TEXT DEFAULT 'gauge',
+    aggregation   TEXT DEFAULT 'sum',
+    description   TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS analytics_entries (
+    id            SERIAL PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    metric_type   TEXT NOT NULL REFERENCES metric_types(id),
+    value         DOUBLE PRECISION NOT NULL,
+    captured_at   TEXT NOT NULL,
+    period        TEXT DEFAULT 'point',
+    metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_lookup
+    ON analytics_entries(project_id, metric_type, captured_at);
+CREATE INDEX IF NOT EXISTS idx_analytics_period
+    ON analytics_entries(project_id, period, captured_at);
+
+CREATE TABLE IF NOT EXISTS analytics_entity_links (
+    analytics_id  INTEGER NOT NULL REFERENCES analytics_entries(id) ON DELETE CASCADE,
+    entity_type   TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    PRIMARY KEY (analytics_id, entity_type, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_entity
+    ON analytics_entity_links(entity_type, entity_id);
+
+-- ── 9. App Metadata + Alert Configs ────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_metadata (
+    entity_type  TEXT NOT NULL,
+    entity_id    TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (entity_type, entity_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS alert_configs (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT,
+    name       TEXT NOT NULL,
+    metric     TEXT NOT NULL,
+    operator   TEXT NOT NULL,
+    threshold  DOUBLE PRECISION NOT NULL,
+    is_active  INTEGER DEFAULT 1,
+    scope      TEXT DEFAULT 'session'
+);
+"""
+
+_SEED_METRIC_TYPES = """
+INSERT INTO metric_types (id, display_name, unit, value_type, aggregation, description) VALUES
+    ('session_cost',        'Session Cost',      '$',       'gauge',   'sum',   'Total cost per session'),
+    ('session_tokens',      'Tokens Used',       'tokens',  'counter', 'sum',   'Total tokens consumed'),
+    ('session_duration',    'Session Duration',   'seconds', 'gauge',   'avg',   'Average session duration'),
+    ('session_count',       'Sessions',          'count',   'counter', 'count', 'Number of sessions'),
+    ('task_velocity',       'Tasks Completed',   'count',   'counter', 'count', 'Tasks completed per period'),
+    ('task_completion_pct', 'Completion %',      '%',       'gauge',   'avg',   'Task completion percentage'),
+    ('feature_progress',    'Feature Progress',  '%',       'gauge',   'avg',   'Feature progress percentage'),
+    ('tool_call_count',     'Tool Calls',        'count',   'counter', 'sum',   'Total tool invocations'),
+    ('tool_success_rate',   'Tool Success Rate', '%',       'gauge',   'avg',   'Tool call success rate'),
+    ('file_churn',          'Files Modified',    'count',   'counter', 'sum',   'Files changed per period')
+ON CONFLICT (id) DO NOTHING;
+"""
+
+_SEED_ALERT_CONFIGS = """
+INSERT INTO alert_configs (id, project_id, name, metric, operator, threshold, is_active, scope) VALUES
+    ('alert-cost',     NULL, 'Cost Threshold', 'cost_threshold', '>', 5.0,  1, 'session'),
+    ('alert-duration', NULL, 'Long Session',   'total_tokens',   '>', 600,  1, 'session'),
+    ('alert-friction', NULL, 'High Friction',  'avg_quality',    '<', 3,    0, 'weekly')
+ON CONFLICT (id) DO NOTHING;
+"""
+
+
+async def _column_exists(db: asyncpg.Connection, table: str, column: str) -> bool:
+    row = await db.fetchrow(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = $1 AND column_name = $2
+        LIMIT 1
+        """,
+        table,
+        column,
+    )
+    return row is not None
+
+
+async def _ensure_column(db: asyncpg.Connection, table: str, column: str, definition: str) -> None:
+    if await _column_exists(db, table, column):
+        return
+    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+async def run_migrations(db: asyncpg.Connection) -> None:
+    """Create all tables and seed data. Idempotent."""
+    # Check current schema version
+    try:
+        row = await db.fetchrow("SELECT MAX(version) FROM schema_version")
+        current_version = row[0] if row and row[0] else 0
+    except Exception:
+        # Table doesn't exist
+        current_version = 0
+
+    if current_version >= SCHEMA_VERSION:
+        logger.info(f"Schema is up to date (version {current_version})")
+        return
+
+    logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
+
+    # Execute all CREATE TABLE statements (split by semicolon if needed, but asyncpg execute() handles multiple statements?)
+    # asyncpg execute() supports multiple statements.
+    await db.execute(_TABLES)
+
+    # Explicit table upgrades for existing DBs.
+    await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "agent_id", "TEXT")
+    await _ensure_column(db, "sessions", "git_commit_hashes_json", "TEXT DEFAULT '[]'")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
+
+    await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
+    await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
+    await _ensure_column(db, "session_logs", "linked_session_id", "TEXT")
+    await _ensure_column(db, "session_logs", "metadata_json", "TEXT")
+
+    await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
+    await _ensure_column(db, "session_file_updates", "source_tool_name", "TEXT")
+    await _ensure_column(db, "session_file_updates", "action", "TEXT DEFAULT 'update'")
+    await _ensure_column(db, "session_file_updates", "file_type", "TEXT DEFAULT 'Other'")
+    await _ensure_column(db, "session_file_updates", "action_timestamp", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_file_updates", "thread_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_file_updates", "root_session_id", "TEXT DEFAULT ''")
+
+    await _ensure_column(db, "session_artifacts", "url", "TEXT")
+    await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
+    await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+
+    # Seed metric types
+    await db.execute(_SEED_METRIC_TYPES)
+
+    # Seed default alert configs
+    await db.execute(_SEED_ALERT_CONFIGS)
+
+    # Record schema version
+    await db.execute(
+        "INSERT INTO schema_version (version) VALUES ($1)",
+        SCHEMA_VERSION,
+    )
+    logger.info(f"Migrations complete — schema version {SCHEMA_VERSION}")

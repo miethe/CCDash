@@ -16,6 +16,9 @@ export interface ProjectTask {
   tags: string[];
   updatedAt: string;
   relatedFiles?: string[];
+  sourceFile?: string;
+  sessionId?: string;
+  commitHash?: string;
 }
 
 export interface ToolUsage {
@@ -25,7 +28,7 @@ export interface ToolUsage {
   category: 'search' | 'edit' | 'test' | 'system';
 }
 
-export type LogType = 'message' | 'tool' | 'subagent' | 'skill';
+export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
 
 export interface SessionLog {
   id: string;
@@ -34,11 +37,16 @@ export interface SessionLog {
   type: LogType;
   agentName?: string;
   content: string;
+  linkedSessionId?: string;
+  relatedToolCallId?: string;
+  metadata?: Record<string, any>;
   toolCall?: {
+    id?: string;
     name: string;
     args: string;
     status: 'success' | 'error';
     output?: string;
+    isError?: boolean;
   };
   subagentThread?: SessionLog[]; // For subagent conversation recursion
   skillDetails?: {
@@ -57,31 +65,61 @@ export interface SessionImpactPoint {
   testFailCount: number;
 }
 
+export interface SessionMetadataField {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface SessionMetadata {
+  sessionTypeId: string;
+  sessionTypeLabel: string;
+  mappingId: string;
+  relatedCommand: string;
+  relatedPhases: string[];
+  fields: SessionMetadataField[];
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
   additions: number;
   deletions: number;
   agentName: string;
+  action: 'read' | 'create' | 'update' | 'delete' | string;
+  fileType: string;
   timestamp: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
+  threadSessionId?: string;
+  rootSessionId?: string;
 }
 
 export interface SessionArtifact {
   id: string;
-  type: 'memory' | 'request_log' | 'knowledge_base' | 'external_link';
+  type: 'memory' | 'request_log' | 'knowledge_base' | 'external_link' | 'command' | 'skill' | 'agent' | 'manifest' | string;
   title: string;
   source: string; // e.g., "SkillMeat", "MeatyCapture"
   description?: string;
   url?: string;
   preview?: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
 }
 
 export interface AgentSession {
   id: string;
+  title?: string;
   taskId: string;
   status: 'active' | 'completed';
   model: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
   durationSeconds: number;
+  rootSessionId?: string;
+  agentId?: string;
   tokensIn: number;
   tokensOut: number;
   totalCost: number;
@@ -93,8 +131,10 @@ export interface AgentSession {
   impactHistory?: SessionImpactPoint[];
   updatedFiles?: SessionFileUpdate[];
   linkedArtifacts?: SessionArtifact[];
+  sessionMetadata?: SessionMetadata | null;
   // Git Integration
   gitCommitHash?: string;
+  gitCommitHashes?: string[];
   gitAuthor?: string;
   gitBranch?: string;
 }
@@ -119,10 +159,15 @@ export interface PlanDocument {
 }
 
 export interface AnalyticsMetric {
-  date: string;
-  cost: number;
-  featuresShipped: number;
-  avgQuality: number;
+  name: string;
+  value: number;
+  unit: string;
+}
+
+export interface AnalyticsTrendPoint {
+  captured_at: string;
+  value: number;
+  metadata?: any;
 }
 
 // Alert System
@@ -155,4 +200,45 @@ export interface Project {
   repoUrl: string;
   agentPlatforms: string[];
   planDocsPath: string;
+  sessionsPath: string;
+  progressPath: string;
+}
+
+export interface LinkedDocument {
+  id: string;
+  title: string;
+  filePath: string;
+  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'spec';
+}
+
+export interface FeaturePhase {
+  id?: string;
+  phase: string;
+  title: string;
+  status: string;
+  progress: number;
+  totalTasks: number;
+  completedTasks: number;
+  tasks: ProjectTask[];
+}
+
+export interface Feature {
+  id: string;
+  name: string;
+  status: string;
+  totalTasks: number;
+  completedTasks: number;
+  category: string;
+  tags: string[];
+  updatedAt: string;
+  linkedDocs: LinkedDocument[];
+  phases: FeaturePhase[];
+  relatedFeatures: string[];
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
 }

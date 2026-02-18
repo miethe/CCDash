@@ -60,6 +60,12 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
         return []
 
     fm = _extract_frontmatter(text)
+
+    # Compute relative source file path
+    try:
+        source_file = str(path.relative_to(base_dir.parent))
+    except ValueError:
+        source_file = str(path)
     if not fm:
         return []
 
@@ -132,6 +138,10 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
         if not isinstance(deps, list):
             deps = []
 
+        # Session and commit linking
+        session_id = str(task_raw.get("session_id", task_raw.get("sessionId", ""))) if task_raw.get("session_id") or task_raw.get("sessionId") else ""
+        commit_hash = str(task_raw.get("git_commit", task_raw.get("commitHash", ""))) if task_raw.get("git_commit") or task_raw.get("commitHash") else ""
+
         tasks.append(ProjectTask(
             id=task_id,
             title=title,
@@ -146,6 +156,9 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
             tags=base_tags + [str(d) for d in deps[:3]],
             updatedAt=str(updated) if updated else "",
             relatedFiles=files_modified[:10],
+            sourceFile=source_file,
+            sessionId=session_id,
+            commitHash=commit_hash,
         ))
 
     return tasks

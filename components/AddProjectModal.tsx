@@ -17,6 +17,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [agentPlatforms, setAgentPlatforms] = useState<string[]>(['Claude Code']);
     const [planDocsPath, setPlanDocsPath] = useState('docs/project_plans/');
+    const [sessionsPath, setSessionsPath] = useState('');
+    const [progressPath, setProgressPath] = useState('progress');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +37,9 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                 description,
                 repoUrl,
                 agentPlatforms,
-                planDocsPath
+                planDocsPath,
+                sessionsPath,
+                progressPath,
             };
             await addProject(newProject);
             onClose();
@@ -45,6 +49,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
             setDescription('');
             setRepoUrl('');
             setPlanDocsPath('docs/project_plans/');
+            setSessionsPath('');
+            setProgressPath('progress');
         } catch (e: any) {
             setError(e.message || 'Failed to add project');
         } finally {
@@ -53,8 +59,8 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-700">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-700" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold text-gray-100">Add New Project</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white">
@@ -120,6 +126,30 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                             onChange={e => setPlanDocsPath(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
                             placeholder="docs/project_plans/"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Relative to project root</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Sessions Path</label>
+                        <input
+                            type="text"
+                            value={sessionsPath}
+                            onChange={e => setSessionsPath(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
+                            placeholder="~/.claude/projects/<hash>/"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Absolute path to Claude session JSONL files</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Progress Path</label>
+                        <input
+                            type="text"
+                            value={progressPath}
+                            onChange={e => setProgressPath(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500"
+                            placeholder="progress"
                         />
                         <p className="text-xs text-gray-500 mt-1">Relative to project root</p>
                     </div>

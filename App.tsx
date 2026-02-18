@@ -7,6 +7,8 @@ import { ProjectBoard } from './components/ProjectBoard';
 import { SessionInspector } from './components/SessionInspector';
 import { Settings } from './components/Settings';
 import { PlanCatalog } from './components/PlanCatalog';
+import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
+import { SessionMappings } from './components/SessionMappings';
 
 const App: React.FC = () => {
   return (
@@ -18,6 +20,8 @@ const App: React.FC = () => {
             <Route path="/board" element={<ProjectBoard />} />
             <Route path="/plans" element={<PlanCatalog />} />
             <Route path="/sessions" element={<SessionInspector />} />
+            <Route path="/analytics" element={<AnalyticsDashboard />} />
+            <Route path="/session-mappings" element={<SessionMappings />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

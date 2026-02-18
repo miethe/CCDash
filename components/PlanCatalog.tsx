@@ -1,9 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { PlanDocument } from '../types';
 import { FileText, Folder, LayoutGrid, List, Search, Filter, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
@@ -63,9 +66,23 @@ const FolderTreeItem = ({
 
 export const PlanCatalog: React.FC = () => {
     const { documents } = useData();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [viewMode, setViewMode] = useState<ViewMode>('card');
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+
+    // Auto-select document from URL search params (e.g. /plans?doc=DOC-xxx)
+    useEffect(() => {
+        const docParam = searchParams.get('doc');
+        if (docParam && documents.length > 0) {
+            const doc = documents.find(d => d.id === docParam);
+            if (doc) {
+                setSelectedDoc(doc);
+                // Clear the param so it doesn't re-trigger
+                setSearchParams({}, { replace: true });
+            }
+        }
+    }, [searchParams, documents, setSearchParams]);
 
     // State for Folder View
     const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
@@ -166,7 +183,7 @@ export const PlanCatalog: React.FC = () => {
                                         <FileText size={24} />
                                     </div>
                                     <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' :
-                                            doc.status === 'draft' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-slate-700 text-slate-400'
+                                        doc.status === 'draft' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-slate-700 text-slate-400'
                                         }`}>{doc.status}</span>
                                 </div>
                                 <h3 className="font-bold text-slate-200 mb-1 group-hover:text-indigo-400 transition-colors">{doc.title}</h3>
@@ -246,10 +263,10 @@ export const PlanCatalog: React.FC = () => {
                                         </button>
                                     </div>
                                     <div className="flex-1 overflow-y-auto p-6">
-                                        <div className="prose prose-invert prose-sm max-w-none">
-                                            <pre className="bg-transparent p-0 m-0 font-mono text-xs text-slate-400 whitespace-pre-wrap">
+                                        <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400 [&_table]:border-collapse [&_th]:bg-slate-800 [&_th]:text-slate-300 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2 [&_td]:border-t [&_td]:border-slate-800">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                                 {getFileContent(activeDoc)}
-                                            </pre>
+                                            </ReactMarkdown>
                                         </div>
                                     </div>
                                 </>

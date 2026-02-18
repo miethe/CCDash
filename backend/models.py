@@ -1,16 +1,24 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Generic, TypeVar
 
+T = TypeVar("T")
 
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    offset: int
+    limit: int
 # ── Session-related models ──────────────────────────────────────────
 
 class ToolCallInfo(BaseModel):
+    id: Optional[str] = None
     name: str = ""
     args: str = ""
     output: Optional[str] = None
     status: str = "success"
+    isError: bool = False
 
 
 class SkillDetails(BaseModel):
@@ -22,10 +30,13 @@ class SkillDetails(BaseModel):
 class SessionLog(BaseModel):
     id: str
     timestamp: str
-    speaker: str  # "user" | "agent"
-    type: str  # "message" | "tool" | "subagent" | "skill"
+    speaker: str  # "user" | "agent" | "system"
+    type: str  # "message" | "tool" | "skill" | "thought" | "system" | "command" | "subagent_start"
     content: str = ""
     agentName: Optional[str] = None
+    linkedSessionId: Optional[str] = None
+    relatedToolCallId: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
     toolCall: Optional[ToolCallInfo] = None
     skillDetails: Optional[SkillDetails] = None
     subagentThread: Optional[list[SessionLog]] = None
@@ -37,6 +48,13 @@ class SessionFileUpdate(BaseModel):
     deletions: int = 0
     commits: list[str] = Field(default_factory=list)
     agentName: str = ""
+    action: str = "update"
+    fileType: str = "Other"
+    timestamp: str = ""
+    sourceLogId: Optional[str] = None
+    sourceToolName: Optional[str] = None
+    threadSessionId: Optional[str] = None
+    rootSessionId: Optional[str] = None
 
 
 class SessionArtifact(BaseModel):
@@ -45,6 +63,9 @@ class SessionArtifact(BaseModel):
     type: str = "document"
     description: str = ""
     source: str = ""
+    url: Optional[str] = None
+    sourceLogId: Optional[str] = None
+    sourceToolName: Optional[str] = None
 
 
 class ToolUsage(BaseModel):
@@ -59,11 +80,35 @@ class ImpactPoint(BaseModel):
     type: str = "info"  # "info" | "warning" | "error" | "success"
 
 
+class SessionMetadataField(BaseModel):
+    id: str
+    label: str
+    value: str
+
+
+class SessionMetadata(BaseModel):
+    sessionTypeId: str = ""
+    sessionTypeLabel: str = ""
+    mappingId: str = ""
+    relatedCommand: str = ""
+    relatedPhases: list[str] = Field(default_factory=list)
+    fields: list[SessionMetadataField] = Field(default_factory=list)
+
+
 class AgentSession(BaseModel):
     id: str
+    title: str = ""
     taskId: str = ""
     status: str = "completed"
     model: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
+    sessionType: str = ""
+    parentSessionId: Optional[str] = None
+    rootSessionId: str = ""
+    agentId: Optional[str] = None
     durationSeconds: int = 0
     tokensIn: int = 0
     tokensOut: int = 0
@@ -72,6 +117,7 @@ class AgentSession(BaseModel):
     qualityRating: int = 0
     frictionRating: int = 0
     gitCommitHash: Optional[str] = None
+    gitCommitHashes: list[str] = Field(default_factory=list)
     gitAuthor: Optional[str] = None
     gitBranch: Optional[str] = None
     updatedFiles: list[SessionFileUpdate] = Field(default_factory=list)
@@ -79,6 +125,7 @@ class AgentSession(BaseModel):
     toolsUsed: list[ToolUsage] = Field(default_factory=list)
     impactHistory: list[ImpactPoint] = Field(default_factory=list)
     logs: list[SessionLog] = Field(default_factory=list)
+    sessionMetadata: Optional[SessionMetadata] = None
 
 
 # ── Document-related models ────────────────────────────────────────
@@ -119,6 +166,11 @@ class ProjectTask(BaseModel):
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""
     relatedFiles: list[str] = Field(default_factory=list)
+    sourceFile: str = ""       # relative path to the progress file this task was parsed from
+    sessionId: str = ""        # linked session ID (from frontmatter)
+    commitHash: str = ""       # linked git commit hash (from frontmatter)
+    featureId: Optional[str] = None
+    phaseId: Optional[str] = None
 
 
 # ── Analytics models ───────────────────────────────────────────────
@@ -158,4 +210,39 @@ class Project(BaseModel):
     repoUrl: str = ""
     agentPlatforms: list[str] = Field(default_factory=lambda: ["Claude Code"])
     planDocsPath: str = "docs/project_plans/"
+    sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
+    progressPath: str = "progress"  # relative to project root
 
+
+# ── Feature models ─────────────────────────────────────────────────
+
+class LinkedDocument(BaseModel):
+    id: str
+    title: str
+    filePath: str
+    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "spec"
+
+
+class FeaturePhase(BaseModel):
+    id: Optional[str] = None
+    phase: str  # "1", "2", "all"
+    title: str = ""
+    status: str = "backlog"  # "completed" | "in-progress" | "backlog"
+    progress: int = 0  # 0-100
+    totalTasks: int = 0
+    completedTasks: int = 0
+    tasks: list[ProjectTask] = Field(default_factory=list)
+
+
+class Feature(BaseModel):
+    id: str  # slug, e.g. "discovery-import-fixes-v1"
+    name: str
+    status: str = "backlog"  # overall: done | in-progress | review | backlog
+    totalTasks: int = 0
+    completedTasks: int = 0
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
+    updatedAt: str = ""
+    linkedDocs: list[LinkedDocument] = Field(default_factory=list)
+    phases: list[FeaturePhase] = Field(default_factory=list)
+    relatedFeatures: list[str] = Field(default_factory=list)
