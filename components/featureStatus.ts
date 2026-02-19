@@ -30,11 +30,21 @@ const FEATURE_STATUS_CONFIG: Record<string, FeatureStatusStyle> = {
     dot: 'bg-slate-500',
     badge: 'border-slate-600/80 bg-slate-800/70 text-slate-300 hover:bg-slate-800',
   },
+  deferred: {
+    label: 'Deferred',
+    color: 'bg-amber-500/10 text-amber-400',
+    dot: 'bg-amber-400',
+    badge: 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20',
+  },
 };
 
-export const FEATURE_STATUS_OPTIONS = ['backlog', 'in-progress', 'review', 'done'] as const;
+export const FEATURE_STATUS_OPTIONS = ['backlog', 'in-progress', 'review', 'done', 'deferred'] as const;
+export const COMPLETION_EQUIVALENT_STATUSES = new Set<string>(['done', 'deferred']);
 
 export const getFeatureStatusStyle = (status: string): FeatureStatusStyle => {
   const normalized = (status || '').trim().toLowerCase();
   return FEATURE_STATUS_CONFIG[normalized] || FEATURE_STATUS_CONFIG.backlog;
 };
+
+export const isCompletionEquivalentStatus = (status: string): boolean =>
+  COMPLETION_EQUIVALENT_STATUSES.has((status || '').trim().toLowerCase());

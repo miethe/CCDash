@@ -45,13 +45,14 @@ _KEY_WORKFLOW_COMMAND_MARKERS = (
 # ── Request models ──────────────────────────────────────────────────
 
 class StatusUpdateRequest(BaseModel):
-    status: str  # backlog | in-progress | review | done
+    status: str  # backlog | in-progress | review | done | deferred
 
 
 # ── Status value mapping (frontend values → frontmatter values) ─────
 
 _REVERSE_STATUS = {
     "done": "completed",
+    "deferred": "deferred",
     "in-progress": "in-progress",
     "review": "review",
     "backlog": "draft",
@@ -282,10 +283,26 @@ async def list_features():
     
     results = []
     for f in features_data:
+        data = _safe_json(f.get("data_json"))
+        blob_phases = data.get("phases", []) if isinstance(data.get("phases", []), list) else []
+        blob_phase_deferred: dict[str, int] = {}
+        for phase_blob in blob_phases:
+            if not isinstance(phase_blob, dict):
+                continue
+            phase_key = str(phase_blob.get("phase", ""))
+            deferred_raw = phase_blob.get("deferredTasks", 0)
+            try:
+                blob_phase_deferred[phase_key] = int(deferred_raw or 0)
+            except Exception:
+                blob_phase_deferred[phase_key] = 0
+
         # Phases
         phases_data = await repo.get_phases(f["id"])
         phases = []
+        total_deferred = 0
         for p in phases_data:
+            phase_deferred = blob_phase_deferred.get(str(p.get("phase", "")), 0)
+            total_deferred += phase_deferred
             phases.append({
                 "id": p["id"],
                 "phase": p["phase"],
@@ -294,10 +311,15 @@ async def list_features():
                 "progress": p["progress"],
                 "totalTasks": p["total_tasks"],
                 "completedTasks": p["completed_tasks"],
+                "deferredTasks": phase_deferred,
                 "tasks": [], # stripped for list
             })
-            
-        data = _safe_json(f.get("data_json"))
+
+        deferred_tasks = data.get("deferredTasks", total_deferred)
+        try:
+            deferred_tasks = int(deferred_tasks or 0)
+        except Exception:
+            deferred_tasks = total_deferred
         
         results.append(Feature(
             id=f["id"],
@@ -305,6 +327,7 @@ async def list_features():
             status=f["status"],
             totalTasks=f["total_tasks"],
             completedTasks=f["completed_tasks"],
+            deferredTasks=deferred_tasks,
             category=f["category"],
             tags=data.get("tags", []),
             updatedAt=f["updated_at"] or "",
@@ -371,23 +394,30 @@ async def get_feature(feature_id: str):
         tasks_by_phase.setdefault(phase_key, []).append(row)
     
     blob_phase_tasks: dict[str, list[list[dict[str, Any]]]] = {}
+    blob_phase_deferred: dict[str, int] = {}
     for phase_blob in data.get("phases", []):
         if not isinstance(phase_blob, dict):
             continue
         phase_key = str(phase_blob.get("phase", ""))
+        deferred_raw = phase_blob.get("deferredTasks", 0)
+        try:
+            blob_phase_deferred[phase_key] = int(deferred_raw or 0)
+        except Exception:
+            blob_phase_deferred[phase_key] = 0
         tasks_blob = phase_blob.get("tasks", [])
         if isinstance(tasks_blob, list):
             blob_phase_tasks.setdefault(phase_key, []).append(tasks_blob)
 
+    total_deferred = 0
     for p in phases_data:
         tasks_data = tasks_by_phase.get(str(p.get("id") or ""), [])
+        phase_key = str(p.get("phase", ""))
 
         p_tasks = []
         if tasks_data:
             p_tasks = [_task_from_db_row(t) for t in tasks_data]
         else:
             # Fallback for legacy rows where task PK collisions broke phase linkage.
-            phase_key = str(p.get("phase", ""))
             candidates = blob_phase_tasks.get(phase_key, [])
             if candidates:
                 raw_tasks = candidates.pop(0)
@@ -395,16 +425,36 @@ async def get_feature(feature_id: str):
                     if isinstance(raw_task, dict):
                         p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
 
+        total_tasks = int(p["total_tasks"] or 0)
+        completed_tasks = int(p["completed_tasks"] or 0)
+        deferred_tasks = blob_phase_deferred.get(phase_key, 0)
+        if p_tasks:
+            if total_tasks == 0:
+                total_tasks = len(p_tasks)
+            done_count = sum(1 for t in p_tasks if t.status == "done")
+            deferred_tasks = sum(1 for t in p_tasks if t.status == "deferred")
+            completed_tasks = done_count + deferred_tasks
+        if completed_tasks < deferred_tasks:
+            completed_tasks = deferred_tasks
+        total_deferred += deferred_tasks
+
         phases.append(FeaturePhase(
             id=p["id"],
             phase=p["phase"],
             title=p["title"] or "",
             status=p["status"],
             progress=p["progress"] or 0,
-            totalTasks=p["total_tasks"] or 0,
-            completedTasks=p["completed_tasks"] or 0,
+            totalTasks=total_tasks,
+            completedTasks=completed_tasks,
+            deferredTasks=deferred_tasks,
             tasks=p_tasks,
         ))
+
+    deferred_tasks = data.get("deferredTasks", total_deferred)
+    try:
+        deferred_tasks = int(deferred_tasks or 0)
+    except Exception:
+        deferred_tasks = total_deferred
 
     return Feature(
         id=f["id"],
@@ -412,6 +462,7 @@ async def get_feature(feature_id: str):
         status=f["status"],
         totalTasks=f["total_tasks"],
         completedTasks=f["completed_tasks"],
+        deferredTasks=deferred_tasks,
         category=f["category"],
         tags=data.get("tags", []),
         updatedAt=f["updated_at"] or "",

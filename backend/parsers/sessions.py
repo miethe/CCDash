@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -73,6 +74,15 @@ _CREATE_RESULT_MARKERS = (
     "file did not exist",
     "wrote new",
 )
+
+# Treat recently modified session files without terminal metadata as in-flight.
+_ACTIVE_SESSION_WINDOW_SECONDS = 20 * 60
+_TERMINAL_SYSTEM_SUBTYPES = {
+    "turn_duration",
+    "compact_boundary",
+    "microcompact_boundary",
+    "informational",
+}
 
 
 def _normalize_session_id(raw_id: str) -> str:
@@ -336,6 +346,33 @@ def _classify_bash_result(output_text: str, is_error: bool) -> str:
     return "unknown"
 
 
+def _derive_session_status(entries: list[dict[str, Any]], path: Path) -> str:
+    """Infer session status from terminal metadata + file recency."""
+    if not entries:
+        return "completed"
+
+    last = entries[-1]
+    last_type = str(last.get("type") or "").strip().lower()
+    last_subtype = str(last.get("subtype") or "").strip().lower()
+
+    # Claude emits terminal system entries (for completed turns/sessions) with
+    # duration/subtype metadata. Treat these as definitive completion signals.
+    if last_type == "system":
+        if "durationMs" in last:
+            return "completed"
+        if last_subtype in _TERMINAL_SYSTEM_SUBTYPES:
+            return "completed"
+
+    try:
+        age_seconds = max(0.0, time.time() - float(path.stat().st_mtime))
+    except Exception:
+        age_seconds = float("inf")
+
+    if age_seconds <= _ACTIVE_SESSION_WINDOW_SECONDS:
+        return "active"
+    return "completed"
+
+
 def _parse_task_notification(raw_text: str) -> dict[str, str]:
     details: dict[str, str] = {}
     if not raw_text:
@@ -416,6 +453,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         return None
 
     session_id = _make_id(path)
+    session_status = _derive_session_status(entries, path)
     is_subagent = path.parent.name == "subagents"
     session_type = "subagent" if is_subagent else "session"
 
@@ -1115,7 +1153,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     return AgentSession(
         id=session_id,
         taskId=task_id,
-        status="completed",
+        status=session_status,
         model=model,
         sessionType=session_type,
         parentSessionId=parent_session_id or None,

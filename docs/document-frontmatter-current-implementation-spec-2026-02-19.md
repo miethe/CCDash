@@ -260,7 +260,7 @@ feature_keys:
 | --- | --- | --- | --- |
 | `phase`, `phase_id`, `phase_token`, filename regex | `phaseToken`, `phaseNumber`, `metadata.phase` | numeric parse fallback from filename | phase filter/modal |
 | `overall_progress` or `progress` | `overallProgress`, `metadata.overallProgress` | numeric parse supports `%` string | modal metrics |
-| `total_tasks`, `completed_tasks`, `in_progress_tasks`, `blocked_tasks` | task counters | numeric parse | progress metrics |
+| `total_tasks`, `completed_tasks`, `deferred_tasks`, `in_progress_tasks`, `blocked_tasks` | task counters | numeric parse | progress metrics |
 | `tasks[]` list | task counters | derive counts when explicit counters absent | progress metrics |
 
 ## 6. Current Per-Doc-Type Frontmatter Specs
@@ -379,7 +379,7 @@ contributors: []
 
 ```yaml
 doc_type: progress              # inferred from .claude/progress path
-status: pending|in-progress|completed|blocked|review|active
+status: pending|in-progress|completed|deferred|blocked|review|active
 category: ""
 
 title: ""
@@ -391,13 +391,14 @@ overall_progress: 0
 
 total_tasks: 0
 completed_tasks: 0
+deferred_tasks: 0
 in_progress_tasks: 0
 blocked_tasks: 0
 
 tasks:
   - id: ""
     title: ""
-    status: pending|in-progress|completed|blocked|review
+    status: pending|in-progress|completed|deferred|blocked|review
     assigned_to: []
     session_id: ""
     git_commit: ""
@@ -427,13 +428,14 @@ doc_type: progress
 # - progress_quick_feature (quick-features parent or type)
 # - progress_other (fallback)
 
-status: pending|in-progress|completed|blocked|review|active
+status: pending|in-progress|completed|deferred|blocked|review|active
 title: ""
 progress: 0
 overall_progress: 0
 
 total_tasks: 0
 completed_tasks: 0
+deferred_tasks: 0
 in_progress_tasks: 0
 blocked_tasks: 0
 

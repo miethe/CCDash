@@ -84,13 +84,16 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_includes_observability(self) -> None:
         engine = _FakeSyncEngine()
         request = self._request(engine)
-        project = types.SimpleNamespace(id="project-1")
+        project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
+        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project):
+        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
             payload = await cache_router.get_cache_status(request)
 
         self.assertEqual(payload["status"], "active")
         self.assertEqual(payload["projectId"], "project-1")
+        self.assertEqual(payload["projectName"], "Project One")
+        self.assertEqual(payload["activePaths"]["docsDir"], "/tmp/project/docs")
         self.assertIn("operations", payload)
 
     async def test_sync_background_returns_operation_id(self) -> None:

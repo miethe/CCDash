@@ -84,12 +84,21 @@ async def get_cache_status(request: Request):
     """Return sync engine + watcher status, including live operations."""
     sync_engine = _get_sync_engine(request)
     project = project_manager.get_active_project()
+    sessions_dir = docs_dir = progress_dir = None
+    if project:
+        sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
     observability = await sync_engine.get_observability_snapshot()
     return {
         "status": "active",
         "sync_engine": "ready",
         "watcher": "running" if file_watcher.is_running else "stopped",
         "projectId": getattr(project, "id", ""),
+        "projectName": getattr(project, "name", ""),
+        "activePaths": {
+            "sessionsDir": str(sessions_dir) if sessions_dir else "",
+            "docsDir": str(docs_dir) if docs_dir else "",
+            "progressDir": str(progress_dir) if progress_dir else "",
+        },
         "operations": observability,
     }
 

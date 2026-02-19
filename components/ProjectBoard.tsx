@@ -3,12 +3,12 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, LinkedDocument, PlanDocument, ProjectTask } from '../types';
+import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask } from '../types';
 import { SessionCard, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
-  Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
+  Search, Filter, ArrowUpDown, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
@@ -89,18 +89,61 @@ const isPrimarySession = (session: FeatureSessionLink): boolean => {
 // ── Status helpers ─────────────────────────────────────────────────
 const getStatusStyle = getFeatureStatusStyle;
 
-const ProgressBar = ({ completed, total }: { completed: number; total: number }) => {
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+const getPhaseDeferredCount = (phase: FeaturePhase): number => Math.max(phase.deferredTasks || 0, 0);
+
+const getPhaseCompletedCount = (phase: FeaturePhase): number => {
+  const completed = Math.max(phase.completedTasks || 0, 0);
+  return Math.max(completed, getPhaseDeferredCount(phase));
+};
+
+const getFeatureDeferredCount = (feature: Feature): number => {
+  if (typeof feature.deferredTasks === 'number') return Math.max(feature.deferredTasks, 0);
+  return (feature.phases || []).reduce((sum, phase) => sum + getPhaseDeferredCount(phase), 0);
+};
+
+const getFeatureCompletedCount = (feature: Feature): number => {
+  const completed = Math.max(feature.completedTasks || 0, 0);
+  return Math.max(completed, getFeatureDeferredCount(feature));
+};
+
+const hasDeferredCaveat = (feature: Feature): boolean =>
+  feature.status === 'deferred' || getFeatureDeferredCount(feature) > 0;
+
+const getFeatureBoardStage = (feature: Feature): string => {
+  if (feature.status === 'deferred') return 'done';
+  return feature.status;
+};
+
+const ProgressBar = ({
+  completed,
+  deferred = 0,
+  total,
+}: {
+  completed: number;
+  deferred?: number;
+  total: number;
+}) => {
+  const safeTotal = Math.max(total || 0, 0);
+  const safeCompleted = Math.max(completed || 0, 0);
+  const safeDeferred = Math.min(Math.max(deferred || 0, 0), safeCompleted);
+  const doneCount = Math.max(safeCompleted - safeDeferred, 0);
+  const pct = safeTotal > 0 ? Math.round((safeCompleted / safeTotal) * 100) : 0;
+  const donePct = safeTotal > 0 ? (doneCount / safeTotal) * 100 : 0;
+  const deferredPct = safeTotal > 0 ? (safeDeferred / safeTotal) * 100 : 0;
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${pct === 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-indigo-500' : 'bg-slate-700'}`}
-          style={{ width: `${pct}%` }}
-        />
+        {pct > 0 ? (
+          <div className="h-full w-full flex rounded-full overflow-hidden">
+            {donePct > 0 && <div className="h-full bg-emerald-500 transition-all" style={{ width: `${donePct}%` }} />}
+            {deferredPct > 0 && <div className="h-full bg-amber-400 transition-all" style={{ width: `${deferredPct}%` }} />}
+          </div>
+        ) : (
+          <div className="h-full bg-slate-700 transition-all" style={{ width: '100%' }} />
+        )}
       </div>
-      <span className="text-[10px] text-slate-500 font-mono min-w-[40px] text-right">
-        {completed}/{total}
+      <span className="text-[10px] text-slate-500 font-mono min-w-[64px] text-right">
+        {safeCompleted}/{safeTotal}
       </span>
     </div>
   );
@@ -246,6 +289,8 @@ const FeatureModal = ({
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
   const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
+  const [phaseStatusFilter, setPhaseStatusFilter] = useState<string>('all');
+  const [taskStatusFilter, setTaskStatusFilter] = useState<string>('all');
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
   const [showPrimarySubthreads, setShowPrimarySubthreads] = useState(false);
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
@@ -278,6 +323,8 @@ const FeatureModal = ({
     setShowPrimarySubthreads(false);
     setShowSecondarySessions(false);
     setShowSecondarySubthreads(false);
+    setPhaseStatusFilter('all');
+    setTaskStatusFilter('all');
     setViewingDoc(null);
     refreshFeatureDetail();
     refreshLinkedSessions();
@@ -301,10 +348,19 @@ const FeatureModal = ({
   };
 
   const activeFeature = fullFeature || feature;
-  const statusStyle = getStatusStyle(activeFeature.status);
-  const pct = activeFeature.totalTasks > 0 ? Math.round((activeFeature.completedTasks / activeFeature.totalTasks) * 100) : 0;
   const phases = activeFeature.phases || [];
+  const featureDeferredTasks = getFeatureDeferredCount(activeFeature);
+  const featureCompletedTasks = getFeatureCompletedCount(activeFeature);
+  const featureDoneTasks = Math.max(featureCompletedTasks - featureDeferredTasks, 0);
+  const pct = activeFeature.totalTasks > 0 ? Math.round((featureCompletedTasks / activeFeature.totalTasks) * 100) : 0;
   const linkedDocs = activeFeature.linkedDocs || [];
+  const filteredPhases = useMemo(() => {
+    return phases.filter(phase => {
+      if (phaseStatusFilter !== 'all' && phase.status !== phaseStatusFilter) return false;
+      if (taskStatusFilter === 'all') return true;
+      return (phase.tasks || []).some(task => task.status === taskStatusFilter);
+    });
+  }, [phases, phaseStatusFilter, taskStatusFilter]);
 
   const handleFeatureStatusChange = async (newStatus: string) => {
     setUpdatingStatus(true);
@@ -521,11 +577,19 @@ const FeatureModal = ({
                     {activeFeature.category}
                   </span>
                 )}
+                {featureDeferredTasks > 0 && (
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                    Done With Deferrals
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-bold text-slate-100 truncate">{activeFeature.name}</h2>
               <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
                 <span>{pct}% complete</span>
-                <span>{activeFeature.completedTasks}/{activeFeature.totalTasks} tasks</span>
+                <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
+                {featureDeferredTasks > 0 && (
+                  <span className="text-amber-300">{featureDeferredTasks} deferred</span>
+                )}
                 {activeFeature.updatedAt && activeFeature.updatedAt !== 'None' && (
                   <span className="flex items-center gap-1">
                     <Calendar size={12} />
@@ -539,7 +603,7 @@ const FeatureModal = ({
             </button>
           </div>
           <div className="mt-3">
-            <ProgressBar completed={activeFeature.completedTasks} total={activeFeature.totalTasks} />
+            <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
           </div>
         </div>
 
@@ -574,7 +638,10 @@ const FeatureModal = ({
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Completed</div>
-                  <div className="text-emerald-400 font-bold text-2xl">{activeFeature.completedTasks}</div>
+                  <div className="text-emerald-400 font-bold text-2xl">{featureDoneTasks}</div>
+                  {featureDeferredTasks > 0 && (
+                    <div className="text-[11px] mt-1 text-amber-300">{featureDeferredTasks} deferred</div>
+                  )}
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Phases</div>
@@ -640,16 +707,51 @@ const FeatureModal = ({
           {/* Phases Tab */}
           {activeTab === 'phases' && (
             <div className="space-y-3">
-              {phases.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                  <Layers size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No phases tracked for this feature.</p>
+              {phases.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-slate-800 bg-slate-900/60">
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Phase Status</label>
+                    <select
+                      value={phaseStatusFilter}
+                      onChange={(e) => setPhaseStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All</option>
+                      {FEATURE_STATUS_OPTIONS.map(status => (
+                        <option key={`phase-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Task Status</label>
+                    <select
+                      value={taskStatusFilter}
+                      onChange={(e) => setTaskStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All</option>
+                      {FEATURE_STATUS_OPTIONS.map(status => (
+                        <option key={`task-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
-              {phases.map(phase => {
+              {filteredPhases.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <Layers size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>{phases.length === 0 ? 'No phases tracked for this feature.' : 'No phases match your filters.'}</p>
+                </div>
+              )}
+              {filteredPhases.map(phase => {
                 const phaseStatus = getStatusStyle(phase.status);
                 const phaseKey = phase.id || phase.phase;
                 const isExpanded = expandedPhases.has(phaseKey);
+                const phaseCompletedTasks = getPhaseCompletedCount(phase);
+                const phaseDeferredTasks = getPhaseDeferredCount(phase);
+                const visibleTasks = taskStatusFilter === 'all'
+                  ? phase.tasks
+                  : phase.tasks.filter(task => task.status === taskStatusFilter);
                 return (
                   <div key={phaseKey} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
                     <div className="flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors">
@@ -663,11 +765,16 @@ const FeatureModal = ({
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
                             {phase.title && (
-                              <span className="text-sm text-slate-400 truncate">— {phase.title}</span>
+                              <span className="text-sm text-slate-400 truncate">- {phase.title}</span>
+                            )}
+                            {phaseDeferredTasks > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
+                                Deferred
+                              </span>
                             )}
                           </div>
                           <div className="mt-1">
-                            <ProgressBar completed={phase.completedTasks} total={phase.totalTasks} />
+                            <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phase.totalTasks} />
                           </div>
                         </div>
                       </button>
@@ -679,20 +786,30 @@ const FeatureModal = ({
                     </div>
 
                     {/* Expanded task list */}
-                    {isExpanded && phase.tasks.length > 0 && (
+                    {isExpanded && visibleTasks.length > 0 && (
                       <div className="border-t border-slate-800 px-4 py-3 space-y-1.5 bg-slate-950/30">
-                        {phase.tasks.map(task => {
-                          const taskDone = task.status === 'done';
-                          const nextStatus = taskDone ? 'backlog' : 'done';
+                        {visibleTasks.map(task => {
+                          const normalizedStatus = (task.status || '').toLowerCase();
+                          const taskDone = normalizedStatus === 'done';
+                          const taskDeferred = normalizedStatus === 'deferred';
+                          const nextStatus = taskDone ? 'deferred' : taskDeferred ? 'backlog' : 'done';
+                          const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
+                          const taskTextClass = taskDone
+                            ? 'text-slate-500 line-through'
+                            : taskDeferred
+                              ? 'text-amber-300/90 italic'
+                              : 'text-slate-300';
                           return (
                             <div key={task.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
                               <button
                                 onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus)}
                                 className="flex-shrink-0 hover:scale-110 transition-transform"
-                                title={taskDone ? 'Mark incomplete' : 'Mark done'}
+                                title={markTitle}
                               >
                                 {taskDone ? (
                                   <CheckCircle2 size={14} className="text-emerald-500" />
+                                ) : taskDeferred ? (
+                                  <CircleDashed size={14} className="text-amber-400" />
                                 ) : (
                                   <Circle size={14} className="text-slate-600 hover:text-indigo-400" />
                                 )}
@@ -706,7 +823,7 @@ const FeatureModal = ({
                               </button>
                               <button
                                 onClick={() => setViewingTask(task)}
-                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskDone ? 'text-slate-500 line-through' : 'text-slate-300'}`}
+                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskTextClass}`}
                                 title="View source file"
                               >
                                 {task.title}
@@ -730,14 +847,19 @@ const FeatureModal = ({
                               {task.owner && (
                                 <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
                               )}
+                              <StatusDropdown
+                                status={task.status}
+                                onStatusChange={(s) => handleTaskStatusChange(phase.phase, task.id, s)}
+                                size="xs"
+                              />
                             </div>
                           );
                         })}
                       </div>
                     )}
-                    {isExpanded && phase.tasks.length === 0 && (
+                    {isExpanded && visibleTasks.length === 0 && (
                       <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-600 italic">
-                        No task details available for this phase.
+                        No task details match the current task filter.
                       </div>
                     )}
                   </div>
@@ -893,9 +1015,11 @@ const FeatureCard = ({
   onDragEnd: () => void;
   isDragging: boolean;
 }) => {
-  const statusStyle = getStatusStyle(feature.status);
   const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
   const planDoc = feature.linkedDocs.find(d => d.docType === 'implementation_plan');
+  const featureDeferredTasks = getFeatureDeferredCount(feature);
+  const featureCompletedTasks = getFeatureCompletedCount(feature);
+  const featureHasDeferred = hasDeferredCaveat(feature);
 
   return (
     <div
@@ -916,10 +1040,17 @@ const FeatureCard = ({
       </div>
 
       <h4 className="font-medium text-slate-200 mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
+      {featureHasDeferred && (
+        <div className="mb-2">
+          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
+            Includes deferred steps
+          </span>
+        </div>
+      )}
 
       {/* Progress */}
       <div className="mb-3">
-        <ProgressBar completed={feature.completedTasks} total={feature.totalTasks} />
+        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
       {/* Linked Doc chips */}
@@ -965,7 +1096,9 @@ const FeatureListCard = ({
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
-  const statusStyle = getStatusStyle(feature.status);
+  const featureDeferredTasks = getFeatureDeferredCount(feature);
+  const featureCompletedTasks = getFeatureCompletedCount(feature);
+  const featureHasDeferred = hasDeferredCaveat(feature);
 
   return (
     <div
@@ -984,15 +1117,22 @@ const FeatureListCard = ({
           <h3 className="font-bold text-slate-200 text-lg group-hover:text-indigo-400 transition-colors truncate">{feature.name}</h3>
         </div>
         <div className="text-right ml-4 flex-shrink-0">
-          <div className="text-indigo-400 font-mono font-bold text-sm">{feature.completedTasks}/{feature.totalTasks}</div>
+          <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
           {feature.updatedAt && feature.updatedAt !== 'None' && (
             <div className="text-[10px] text-slate-500">{feature.updatedAt}</div>
           )}
         </div>
       </div>
+      {featureHasDeferred && (
+        <div className="mb-2">
+          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
+            Includes deferred steps
+          </span>
+        </div>
+      )}
 
       <div className="mb-3">
-        <ProgressBar completed={feature.completedTasks} total={feature.totalTasks} />
+        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
       <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
@@ -1137,7 +1277,11 @@ export const ProjectBoard: React.FC = () => {
     }
 
     if (statusFilter !== 'all') {
-      result = result.filter(f => f.status === statusFilter);
+      if (statusFilter === 'deferred') {
+        result = result.filter(f => hasDeferredCaveat(f));
+      } else {
+        result = result.filter(f => getFeatureBoardStage(f) === statusFilter);
+      }
     }
 
     if (categoryFilter !== 'all') {
@@ -1146,8 +1290,8 @@ export const ProjectBoard: React.FC = () => {
 
     return result.sort((a, b) => {
       if (sortBy === 'progress') {
-        const pctA = a.totalTasks > 0 ? a.completedTasks / a.totalTasks : 0;
-        const pctB = b.totalTasks > 0 ? b.completedTasks / b.totalTasks : 0;
+        const pctA = a.totalTasks > 0 ? getFeatureCompletedCount(a) / a.totalTasks : 0;
+        const pctB = b.totalTasks > 0 ? getFeatureCompletedCount(b) / b.totalTasks : 0;
         return pctB - pctA;
       }
       if (sortBy === 'tasks') return b.totalTasks - a.totalTasks;
@@ -1233,6 +1377,7 @@ export const ProjectBoard: React.FC = () => {
                   <option value="in-progress">In Progress</option>
                   <option value="review">Review</option>
                   <option value="done">Done</option>
+                  <option value="deferred">Deferred Caveat</option>
                 </select>
               </div>
 
@@ -1311,7 +1456,7 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Backlog"
               status="backlog"
-              features={filteredFeatures.filter(f => f.status === 'backlog')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1325,7 +1470,7 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="In Progress"
               status="in-progress"
-              features={filteredFeatures.filter(f => f.status === 'in-progress')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1339,7 +1484,7 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Review"
               status="review"
-              features={filteredFeatures.filter(f => f.status === 'review')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1353,7 +1498,7 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Done"
               status="done"
-              features={filteredFeatures.filter(f => f.status === 'done')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}

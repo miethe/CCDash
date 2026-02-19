@@ -13,6 +13,7 @@ from backend.models import ProjectTask
 _STATUS_MAP = {
     "completed": "done",
     "complete": "done",
+    "done": "done",
     "in-progress": "in-progress",
     "in_progress": "in-progress",
     "review": "review",
@@ -21,6 +22,12 @@ _STATUS_MAP = {
     "pending": "backlog",
     "not-started": "backlog",
     "not_started": "backlog",
+    "deferred": "deferred",
+    "defer": "deferred",
+    "postponed": "deferred",
+    "skipped": "deferred",
+    "wont-do": "deferred",
+    "won't-do": "deferred",
 }
 
 # Model name expansion

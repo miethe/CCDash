@@ -28,7 +28,7 @@ root_kind: project_plans        # enum: project_plans|progress
 
 id: DOC-optional-stable-id      # optional stable ID (canonical path remains source of truth)
 title: ""
-status: draft                   # enum: draft|pending|in_progress|review|completed|blocked|archived
+status: draft                   # enum: draft|pending|in_progress|review|completed|deferred|blocked|archived
 category: ""
 
 feature_slug: ""
@@ -381,6 +381,7 @@ phase_title: Foundation
 overall_progress: 35
 total_tasks: 20
 completed_tasks: 7
+deferred_tasks: 2
 in_progress_tasks: 4
 blocked_tasks: 2
 
@@ -398,7 +399,7 @@ blockers:
 tasks:
   - id: TASK-1.1
     title: ""
-    status: in-progress
+    status: in-progress          # pending|in-progress|completed|deferred|blocked|review
     owner: ""
     priority: high
     estimated_effort: 4h
@@ -459,6 +460,7 @@ phase_summaries:
 
 total_tasks: 64
 completed_tasks: 33
+deferred_tasks: 4
 in_progress_tasks: 12
 blocked_tasks: 3
 
@@ -500,6 +502,7 @@ plan_ref: ""
 overall_progress: 60
 total_tasks: 5
 completed_tasks: 3
+deferred_tasks: 1
 in_progress_tasks: 1
 blocked_tasks: 0
 

@@ -1,5 +1,7 @@
 import json
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -420,6 +422,72 @@ class SessionParserTests(unittest.TestCase):
         self.assertTrue(tool_logs[0].metadata.get("bashProgressLinked"))
         self.assertEqual(tool_logs[0].metadata.get("bashElapsedSeconds"), 1.2)
         self.assertEqual(tool_logs[0].metadata.get("bashTotalLines"), 2)
+
+    def test_recent_session_without_terminal_marker_is_active(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T14:00:00Z",
+                    "message": {"role": "user", "content": "working"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T14:00:01Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "in progress"}]},
+                },
+            ]
+        )
+        now = time.time()
+        os.utime(path, (now, now))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "active")
+
+    def test_stale_session_without_terminal_marker_is_completed(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T14:05:00Z",
+                    "message": {"role": "user", "content": "old session"},
+                },
+            ]
+        )
+        old = time.time() - (3 * 3600)
+        os.utime(path, (old, old))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "completed")
+
+    def test_terminal_system_entry_marks_session_completed(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T14:10:00Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+                },
+                {
+                    "type": "system",
+                    "timestamp": "2026-02-16T14:10:02Z",
+                    "subtype": "turn_duration",
+                    "durationMs": 1200,
+                    "isMeta": True,
+                },
+            ]
+        )
+        now = time.time()
+        os.utime(path, (now, now))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "completed")
 
 
 if __name__ == "__main__":

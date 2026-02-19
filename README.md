@@ -39,12 +39,14 @@
 ### 3. Feature Board (Aggregate Delivery View)
 *   **Feature-Centric View**: Redesigned board that groups work into **Features** discovered from project documentation (PRDs and Implementation Plans).
 *   **Document-First Discovery**: Automatically cross-references PRDs, Implementation Plans, and Progress files to build a cohesive view of each feature.
-*   **Views**: Toggle between **Kanban Board** (grouped by feature status: Backlog, In Progress, Review, Done) and **List View**.
+*   **Views**: Toggle between **Kanban Board** (grouped by feature stage: Backlog, In Progress, Review, Done) and **List View**.
+    *   Features with deferred steps still land in **Done** when all tasks are terminal (`done` or `deferred`), and show a deferred caveat indicator.
 *   **Drill-Down Modal**: 
     *   **Overview**: Visualize linked documents (PRDs, Plans, Reports), category badges, and related feature variants (v1, v2).
     *   **Phases tab**: Accordion view of implementation phases. Each phase expands to show a checklist of individual tasks with their real-time status.
     *   **Documents tab**: Quick access to all documentation files associated with the feature.
-*   **Filtering**: Search features by name/slug/tag, filter by category/status, and sort by update date or total task count.
+*   **Filtering**: Search features by name/slug/tag, filter by category/status (including deferred caveat), and sort by update date or total task count.
+    *   In the feature modal, the **Phases** tab supports phase-status and task-status filtering, including deferred.
 
 ### 4. Project Management
 *   **Dynamic Project Switching**: Easily switch between multiple local projects from the sidebar.
@@ -100,6 +102,7 @@ The primary unit of delivery. Aggregates:
 *   `linkedDocs`: References to PRDs, Implementation Plans, and Reports.
 *   `phases`: Implementation phases containing granular `ProjectTask` items.
 *   `relatedFeatures`: Bi-directional links to other version variants of the same feature.
+*   `deferredTasks`: Count of terminal-complete tasks deferred for later follow-up.
 
 ### AgentSession
 The atomic unit of work. Contains:
@@ -110,7 +113,7 @@ The atomic unit of work. Contains:
 
 ### ProjectTask
 Represents a specific unit of implementation.
-*   `status`: Mapped from frontmatter (pending, in-progress, completed).
+*   `status`: Mapped from frontmatter (pending/backlog, in-progress, review, completed/done, deferred).
 *   `cost`: Derived from estimated effort.
 
 ### PlanDocument

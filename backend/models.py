@@ -213,7 +213,7 @@ class ProjectTask(BaseModel):
     id: str
     title: str
     description: str = ""
-    status: str = "backlog"  # backlog | in-progress | review | done
+    status: str = "backlog"  # backlog | in-progress | review | done | deferred
     owner: str = ""
     lastAgent: str = ""
     cost: float = 0.0
@@ -290,19 +290,21 @@ class FeaturePhase(BaseModel):
     id: Optional[str] = None
     phase: str  # "1", "2", "all"
     title: str = ""
-    status: str = "backlog"  # "completed" | "in-progress" | "backlog"
+    status: str = "backlog"  # backlog | in-progress | review | done | deferred
     progress: int = 0  # 0-100
     totalTasks: int = 0
     completedTasks: int = 0
+    deferredTasks: int = 0
     tasks: list[ProjectTask] = Field(default_factory=list)
 
 
 class Feature(BaseModel):
     id: str  # slug, e.g. "discovery-import-fixes-v1"
     name: str
-    status: str = "backlog"  # overall: done | in-progress | review | backlog
+    status: str = "backlog"  # overall: done | deferred | in-progress | review | backlog
     totalTasks: int = 0
     completedTasks: int = 0
+    deferredTasks: int = 0
     category: str = ""
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""

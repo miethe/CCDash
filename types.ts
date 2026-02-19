@@ -1,5 +1,5 @@
 
-export type TaskStatus = 'todo' | 'in-progress' | 'review' | 'done';
+export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' | 'deferred';
 
 export interface ProjectTask {
   id: string;
@@ -276,6 +276,7 @@ export interface FeaturePhase {
   progress: number;
   totalTasks: number;
   completedTasks: number;
+  deferredTasks?: number;
   tasks: ProjectTask[];
 }
 
@@ -285,6 +286,7 @@ export interface Feature {
   status: string;
   totalTasks: number;
   completedTasks: number;
+  deferredTasks?: number;
   category: string;
   tags: string[];
   updatedAt: string;
@@ -298,4 +300,67 @@ export interface PaginatedResponse<T> {
   total: number;
   offset: number;
   limit: number;
+}
+
+export interface SyncOperation {
+  id: string;
+  kind: string;
+  projectId: string;
+  trigger: string;
+  status: 'running' | 'completed' | 'failed' | string;
+  phase: string;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  progress: Record<string, any>;
+  counters: Record<string, any>;
+  stats: Record<string, any>;
+  metadata: Record<string, any>;
+  error: string;
+}
+
+export interface CacheStatusResponse {
+  status: string;
+  sync_engine: string;
+  watcher: string;
+  projectId: string;
+  projectName?: string;
+  activePaths?: {
+    sessionsDir: string;
+    docsDir: string;
+    progressDir: string;
+  };
+  operations: {
+    activeOperationCount: number;
+    activeOperations: SyncOperation[];
+    recentOperations: SyncOperation[];
+    trackedOperationCount: number;
+  };
+}
+
+export interface LinkAuditSuspect {
+  feature_id: string;
+  session_id: string;
+  confidence: number;
+  ambiguity_share: number;
+  title: string;
+  signal_type: string;
+  signal_path: string;
+  commands: string[];
+  reason: string;
+  fanout_count: number;
+}
+
+export interface LinkAuditResponse {
+  status: string;
+  project_id: string;
+  feature_filter?: string | null;
+  row_count: number;
+  suspect_count: number;
+  primary_floor: number;
+  fanout_floor: number;
+  generated_at?: string;
+  suspects: LinkAuditSuspect[];
 }

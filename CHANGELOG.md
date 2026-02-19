@@ -23,6 +23,11 @@
 - Document-to-entity mapping strategy now prioritizes explicit refs, then path hints, then inherited doc refs.
 - Feature doc resolution in board/modal now supports canonical path matching.
 - Frontend document loading now pages API calls to avoid validation failures on large projects.
+- Added deferred lifecycle support for tasks/phases/features:
+  - New `deferred` status option across status controls.
+  - Deferred counts contribute to completion and progress calculations.
+  - Features move to/remain in `Done` stage when all tasks are terminal (`done` or `deferred`) and now show a deferred caveat indicator.
+  - Feature/phase/task filters now include deferred visibility.
 
 ### Fixed
 

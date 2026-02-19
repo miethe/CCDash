@@ -35,8 +35,10 @@ logger = logging.getLogger("ccdash")
 
 # ── Status helpers ──────────────────────────────────────────────────
 
-# Ordering for "furthest progression" inference
-_STATUS_ORDER = {"backlog": 0, "in-progress": 1, "review": 2, "done": 3}
+# Ordering for "furthest progression" inference.
+# `deferred` is completion-equivalent with `done`.
+_STATUS_ORDER = {"backlog": 0, "in-progress": 1, "review": 2, "done": 3, "deferred": 3}
+_TERMINAL_STATUSES = {"done", "deferred"}
 
 
 _STATUS_MAP = {
@@ -55,11 +57,18 @@ _STATUS_MAP = {
     "not-started": "backlog",
     "not_started": "backlog",
     "reference": "done",
+    "deferred": "deferred",
+    "defer": "deferred",
+    "postponed": "deferred",
+    "skipped": "deferred",
+    "wont-do": "deferred",
+    "won't-do": "deferred",
 }
 
 _TASK_STATUS_MAP = {
     "completed": "done",
     "complete": "done",
+    "done": "done",
     "in-progress": "in-progress",
     "in_progress": "in-progress",
     "review": "review",
@@ -67,6 +76,12 @@ _TASK_STATUS_MAP = {
     "pending": "backlog",
     "not-started": "backlog",
     "not_started": "backlog",
+    "deferred": "deferred",
+    "defer": "deferred",
+    "postponed": "deferred",
+    "skipped": "deferred",
+    "wont-do": "deferred",
+    "won't-do": "deferred",
 }
 
 
@@ -340,16 +355,20 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
             phase_num = str(fm.get("phase", "all"))
             phase_title = fm.get("phase_title", fm.get("title", fm.get("name", "")))
             phase_status_raw = str(fm.get("status", "pending"))
+            phase_status = _map_status(phase_status_raw)
             phase_progress = fm.get("progress", 0)
             if not isinstance(phase_progress, (int, float)):
                 phase_progress = 0
 
             total = fm.get("total_tasks", 0)
             completed = fm.get("completed_tasks", 0)
+            deferred = fm.get("deferred_tasks", 0)
             if not isinstance(total, int):
                 total = 0
             if not isinstance(completed, int):
                 completed = 0
+            if not isinstance(deferred, int):
+                deferred = 0
 
             updated = str(fm.get("updated", fm.get("completed_at", "")))
             if updated and updated > latest_updated:
@@ -374,18 +393,35 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
             source_rel = _project_relative(md_file, project_root)
             tasks = _parse_progress_tasks(tasks_raw, source_file=source_rel)
 
-            # If total/completed not provided, derive from tasks
-            if total == 0 and tasks:
-                total = len(tasks)
-                completed = sum(1 for t in tasks if t.status == "done")
+            if tasks:
+                # Task statuses are the source of truth for completion math.
+                total = total or len(tasks)
+                done_count = sum(1 for t in tasks if t.status == "done")
+                deferred = sum(1 for t in tasks if t.status == "deferred")
+                completed = done_count + deferred
+
+            if phase_status == "deferred" and total > 0:
+                # A deferred phase is terminal-complete even with partial task detail.
+                completed = total
+                deferred = total
+
+            if total > 0 and completed > total:
+                completed = total
+            if completed < 0:
+                completed = 0
+            if deferred < 0:
+                deferred = 0
+            if deferred > completed:
+                deferred = completed
 
             phases.append(FeaturePhase(
                 phase=phase_num,
                 title=str(phase_title),
-                status=_map_status(phase_status_raw),
+                status=phase_status,
                 progress=int(phase_progress),
                 totalTasks=total,
                 completedTasks=completed,
+                deferredTasks=deferred,
                 tasks=tasks,
             ))
 
@@ -393,11 +429,15 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
             continue
 
         # Derive overall status from phases
-        all_done = all(p.status == "done" for p in phases)
+        all_terminal = all(p.status in _TERMINAL_STATUSES for p in phases)
+        total_tasks = sum(max(p.totalTasks, 0) for p in phases)
+        completed_tasks = sum(max(p.completedTasks, 0) for p in phases)
         any_in_progress = any(p.status == "in-progress" for p in phases)
         any_review = any(p.status == "review" for p in phases)
 
-        if all_done:
+        if total_tasks > 0 and completed_tasks >= total_tasks:
+            overall_status = "done"
+        elif all_terminal:
             overall_status = "done"
         elif any_in_progress:
             overall_status = "in-progress"
@@ -481,8 +521,16 @@ def resolve_file_for_phase(
 def _max_status(*statuses: str) -> str:
     """Return the status with the highest progression."""
     best = "backlog"
+    terminal_score = _STATUS_ORDER["done"]
     for s in statuses:
-        if _STATUS_ORDER.get(s, 0) > _STATUS_ORDER.get(best, 0):
+        score = _STATUS_ORDER.get(s, 0)
+        best_score = _STATUS_ORDER.get(best, 0)
+        if score > best_score:
+            best = s
+            continue
+        # Tie-break completion-equivalent statuses in favor of deferred so
+        # mixed terminal states remain visible as partially deferred work.
+        if score == best_score == terminal_score and s == "deferred":
             best = s
     return best
 
@@ -742,6 +790,7 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
             # Update counts
             feat.totalTasks = sum(p.totalTasks for p in feat.phases)
             feat.completedTasks = sum(p.completedTasks for p in feat.phases)
+            feat.deferredTasks = sum(p.deferredTasks for p in feat.phases)
 
             # Update timestamp if progress has a newer one
             if prog["updated"] and prog["updated"] > feat.updatedAt:
@@ -794,6 +843,7 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 status=prog["status"],
                 totalTasks=sum(p.totalTasks for p in phases),
                 completedTasks=sum(p.completedTasks for p in phases),
+                deferredTasks=sum(p.deferredTasks for p in phases),
                 phases=phases,
                 updatedAt=prog.get("updated", ""),
                 linkedDocs=linked_docs,
@@ -838,5 +888,6 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 ]
 
     result = sorted(feature_list, key=lambda f: f.updatedAt or "", reverse=True)
-    logger.info(f"Discovered {len(result)} features ({sum(1 for f in result if f.status == 'done')} done)")
+    terminal_count = sum(1 for f in result if f.status in _TERMINAL_STATUSES)
+    logger.info(f"Discovered {len(result)} features ({terminal_count} terminal)")
     return result
