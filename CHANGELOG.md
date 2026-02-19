@@ -23,6 +23,8 @@
 - Document-to-entity mapping strategy now prioritizes explicit refs, then path hints, then inherited doc refs.
 - Feature doc resolution in board/modal now supports canonical path matching.
 - Frontend document loading now pages API calls to avoid validation failures on large projects.
+- `npm run dev` now validates backend health before starting frontend, and exits fast if backend startup fails.
+- Added explicit startup scripts for backend-only dev/prod-style runs (`dev:backend`, `start:backend`) and frontend preview (`start:frontend`).
 - Added deferred lifecycle support for tasks/phases/features:
   - New `deferred` status option across status controls.
   - Deferred counts contribute to completion and progress calculations.
@@ -33,3 +35,8 @@
 
 - `/plans` load failures from oversized `limit` requests and slow N+1 link lookups in list endpoint.
 - Migration ordering issue for typed `documents` index creation on legacy DBs.
+- Reduced frontend false-start state where UI loaded while backend was unavailable (`ECONNREFUSED` proxy errors).
+
+### Docs
+
+- Added `/docs/setup-user-guide.md` with setup, startup, deployment-style runbook, and troubleshooting for `/api` connectivity errors.

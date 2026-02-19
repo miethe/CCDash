@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.models import Feature, ProjectTask, FeaturePhase
+from backend.models import Feature, ProjectTask, FeaturePhase, LinkedDocument
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
@@ -57,6 +57,51 @@ _REVERSE_STATUS = {
     "review": "review",
     "backlog": "draft",
 }
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def _normalize_tags(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(v) for v in raw if str(v).strip()]
+    if isinstance(raw, str):
+        value = raw.strip()
+        return [value] if value else []
+    return []
+
+
+def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
+    if not isinstance(raw, list):
+        return []
+    docs: list[LinkedDocument] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        file_path = str(item.get("filePath") or "").strip()
+        doc_type = str(item.get("docType") or "").strip()
+        title = str(item.get("title") or "").strip() or file_path or f"Document {idx + 1}"
+        if not file_path or not doc_type:
+            continue
+        docs.append(LinkedDocument(
+            id=str(item.get("id") or f"DOC-{idx}"),
+            title=title,
+            filePath=file_path,
+            docType=doc_type,
+            category=str(item.get("category") or ""),
+            slug=str(item.get("slug") or ""),
+            canonicalSlug=str(item.get("canonicalSlug") or ""),
+            frontmatterKeys=[str(v) for v in (item.get("frontmatterKeys") or []) if isinstance(v, str)],
+            relatedRefs=[str(v) for v in (item.get("relatedRefs") or []) if isinstance(v, str)],
+            prdRef=str(item.get("prdRef") or ""),
+        ))
+    return docs
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -283,58 +328,57 @@ async def list_features():
     
     results = []
     for f in features_data:
-        data = _safe_json(f.get("data_json"))
-        blob_phases = data.get("phases", []) if isinstance(data.get("phases", []), list) else []
-        blob_phase_deferred: dict[str, int] = {}
-        for phase_blob in blob_phases:
-            if not isinstance(phase_blob, dict):
-                continue
-            phase_key = str(phase_blob.get("phase", ""))
-            deferred_raw = phase_blob.get("deferredTasks", 0)
-            try:
-                blob_phase_deferred[phase_key] = int(deferred_raw or 0)
-            except Exception:
-                blob_phase_deferred[phase_key] = 0
-
-        # Phases
-        phases_data = await repo.get_phases(f["id"])
-        phases = []
-        total_deferred = 0
-        for p in phases_data:
-            phase_deferred = blob_phase_deferred.get(str(p.get("phase", "")), 0)
-            total_deferred += phase_deferred
-            phases.append({
-                "id": p["id"],
-                "phase": p["phase"],
-                "title": p["title"],
-                "status": p["status"],
-                "progress": p["progress"],
-                "totalTasks": p["total_tasks"],
-                "completedTasks": p["completed_tasks"],
-                "deferredTasks": phase_deferred,
-                "tasks": [], # stripped for list
-            })
-
-        deferred_tasks = data.get("deferredTasks", total_deferred)
         try:
-            deferred_tasks = int(deferred_tasks or 0)
+            data = _safe_json(f.get("data_json"))
+            blob_phases = data.get("phases", []) if isinstance(data.get("phases", []), list) else []
+            blob_phase_deferred: dict[str, int] = {}
+            for phase_blob in blob_phases:
+                if not isinstance(phase_blob, dict):
+                    continue
+                phase_key = str(phase_blob.get("phase", ""))
+                blob_phase_deferred[phase_key] = _safe_int(phase_blob.get("deferredTasks", 0), 0)
+
+            # Phases
+            phases_data = await repo.get_phases(f["id"])
+            phases = []
+            total_deferred = 0
+            for p in phases_data:
+                phase_deferred = blob_phase_deferred.get(str(p.get("phase", "")), 0)
+                total_deferred += phase_deferred
+                phases.append({
+                    "id": p.get("id"),
+                    "phase": str(p.get("phase", "")),
+                    "title": str(p.get("title") or ""),
+                    "status": str(p.get("status") or "backlog"),
+                    "progress": _safe_int(p.get("progress"), 0),
+                    "totalTasks": _safe_int(p.get("total_tasks"), 0),
+                    "completedTasks": _safe_int(p.get("completed_tasks"), 0),
+                    "deferredTasks": phase_deferred,
+                    "tasks": [], # stripped for list
+                })
+
+            deferred_tasks = _safe_int(data.get("deferredTasks", total_deferred), total_deferred)
+            related_features = data.get("relatedFeatures", [])
+            if not isinstance(related_features, list):
+                related_features = []
+
+            results.append(Feature(
+                id=str(f.get("id") or ""),
+                name=str(f.get("name") or ""),
+                status=str(f.get("status") or "backlog"),
+                totalTasks=_safe_int(f.get("total_tasks"), 0),
+                completedTasks=_safe_int(f.get("completed_tasks"), 0),
+                deferredTasks=deferred_tasks,
+                category=str(f.get("category") or ""),
+                tags=_normalize_tags(data.get("tags", [])),
+                updatedAt=str(f.get("updated_at") or ""),
+                linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
+                phases=phases,
+                relatedFeatures=[str(v) for v in related_features if str(v).strip()],
+            ))
         except Exception:
-            deferred_tasks = total_deferred
-        
-        results.append(Feature(
-            id=f["id"],
-            name=f["name"],
-            status=f["status"],
-            totalTasks=f["total_tasks"],
-            completedTasks=f["completed_tasks"],
-            deferredTasks=deferred_tasks,
-            category=f["category"],
-            tags=data.get("tags", []),
-            updatedAt=f["updated_at"] or "",
-            linkedDocs=data.get("linkedDocs", []),
-            phases=phases,
-            relatedFeatures=data.get("relatedFeatures", []),
-        ))
+            logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
+            continue
     return results
 
 
@@ -425,8 +469,8 @@ async def get_feature(feature_id: str):
                     if isinstance(raw_task, dict):
                         p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
 
-        total_tasks = int(p["total_tasks"] or 0)
-        completed_tasks = int(p["completed_tasks"] or 0)
+        total_tasks = _safe_int(p.get("total_tasks"), 0)
+        completed_tasks = _safe_int(p.get("completed_tasks"), 0)
         deferred_tasks = blob_phase_deferred.get(phase_key, 0)
         if p_tasks:
             if total_tasks == 0:
@@ -439,36 +483,35 @@ async def get_feature(feature_id: str):
         total_deferred += deferred_tasks
 
         phases.append(FeaturePhase(
-            id=p["id"],
-            phase=p["phase"],
-            title=p["title"] or "",
-            status=p["status"],
-            progress=p["progress"] or 0,
+            id=p.get("id"),
+            phase=str(p.get("phase", "")),
+            title=str(p.get("title") or ""),
+            status=str(p.get("status") or "backlog"),
+            progress=_safe_int(p.get("progress"), 0),
             totalTasks=total_tasks,
             completedTasks=completed_tasks,
             deferredTasks=deferred_tasks,
             tasks=p_tasks,
         ))
 
-    deferred_tasks = data.get("deferredTasks", total_deferred)
-    try:
-        deferred_tasks = int(deferred_tasks or 0)
-    except Exception:
-        deferred_tasks = total_deferred
+    deferred_tasks = _safe_int(data.get("deferredTasks", total_deferred), total_deferred)
+    related_features = data.get("relatedFeatures", [])
+    if not isinstance(related_features, list):
+        related_features = []
 
     return Feature(
-        id=f["id"],
-        name=f["name"],
-        status=f["status"],
-        totalTasks=f["total_tasks"],
-        completedTasks=f["completed_tasks"],
+        id=str(f.get("id") or ""),
+        name=str(f.get("name") or ""),
+        status=str(f.get("status") or "backlog"),
+        totalTasks=_safe_int(f.get("total_tasks"), 0),
+        completedTasks=_safe_int(f.get("completed_tasks"), 0),
         deferredTasks=deferred_tasks,
-        category=f["category"],
-        tags=data.get("tags", []),
-        updatedAt=f["updated_at"] or "",
-        linkedDocs=data.get("linkedDocs", []),
+        category=str(f.get("category") or ""),
+        tags=_normalize_tags(data.get("tags", [])),
+        updatedAt=str(f.get("updated_at") or ""),
+        linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
         phases=phases,
-        relatedFeatures=data.get("relatedFeatures", []),
+        relatedFeatures=[str(v) for v in related_features if str(v).strip()],
     )
 
 

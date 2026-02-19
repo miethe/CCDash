@@ -124,15 +124,31 @@ Represents Markdown documentation. Contains:
 
 ## 🚀 Running the Project
 
-1.  **Install Dependencies**:
+1.  **Install frontend dependencies**:
     ```bash
     npm install
     ```
 
-2.  **Start Development Server**:
+2.  **Install backend dependencies and create `backend/.venv`**:
+    ```bash
+    npm run setup
+    ```
+
+3.  **Start full local development stack (backend + frontend)**:
     ```bash
     npm run dev
     ```
 
-3.  **Environment Variables**:
-    *   `API_KEY`: Required for Google Gemini "AI Insight" features.
+4.  **Useful scripts**:
+    *   `npm run dev:backend` - backend only (reload mode)
+    *   `npm run dev:frontend` - frontend only
+    *   `npm run build` - build frontend assets
+    *   `npm run start:backend` - production-style backend startup
+    *   `npm run start:frontend` - serve built frontend (`vite preview`)
+
+5.  **Environment Variables**:
+    *   `GEMINI_API_KEY`: Enables AI insight features.
+    *   `CCDASH_BACKEND_HOST` / `CCDASH_BACKEND_PORT`: Backend bind host/port for startup scripts.
+    *   `CCDASH_API_PROXY_TARGET`: Vite proxy target for `/api` requests.
+
+For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).

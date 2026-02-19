@@ -57,10 +57,81 @@ interface FeatureSessionLink {
   } | null;
 }
 
+type CoreSessionGroupId = 'plan' | 'execution' | 'other';
+type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
+
+interface CoreSessionGroupDefinition {
+  id: CoreSessionGroupId;
+  label: string;
+  description: string;
+}
+
+interface DocGroupDefinition {
+  id: DocGroupId;
+  label: string;
+  description: string;
+}
+
 const SHORT_COMMIT_LENGTH = 7;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 const normalizePath = (value: string): string => (value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
+const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
+  {
+    id: 'plan',
+    label: 'Planning Sessions',
+    description: 'Planning tasks, discovery, analysis, and scope definition.',
+  },
+  {
+    id: 'execution',
+    label: 'Execution Sessions',
+    description: 'Implementation work, sorted by phase order.',
+  },
+  {
+    id: 'other',
+    label: 'Other Core Sessions',
+    description: 'Primary linked sessions that do not fit planning or phase execution.',
+  },
+];
+const DOC_GROUPS: DocGroupDefinition[] = [
+  {
+    id: 'initialPlanning',
+    label: 'Initial Planning Docs',
+    description: 'Reports, SPIKEs, ADRs, analysis, and discovery artifacts.',
+  },
+  {
+    id: 'prd',
+    label: 'PRD',
+    description: 'Product requirements and primary feature definition docs.',
+  },
+  {
+    id: 'plans',
+    label: 'Plans',
+    description: 'Implementation and phase plans.',
+  },
+  {
+    id: 'progress',
+    label: 'Progress Files',
+    description: 'Phase and execution progress tracking.',
+  },
+  {
+    id: 'context',
+    label: 'Context & Worknotes',
+    description: 'Additional context docs, notes, and supporting references.',
+  },
+];
+const DEFAULT_CORE_SESSION_GROUP_EXPANDED: Record<CoreSessionGroupId, boolean> = {
+  plan: true,
+  execution: true,
+  other: true,
+};
+const DEFAULT_DOC_GROUP_EXPANDED: Record<DocGroupId, boolean> = {
+  initialPlanning: true,
+  prd: true,
+  plans: true,
+  progress: true,
+  context: true,
+};
 
 const formatSessionReason = (reason: string): string => {
   const normalized = (reason || '').trim();
@@ -84,6 +155,172 @@ const isSubthreadSession = (session: FeatureSessionLink): boolean => {
 const isPrimarySession = (session: FeatureSessionLink): boolean => {
   if (session.isPrimaryLink) return true;
   return session.confidence >= 0.9;
+};
+
+const parsePhaseNumber = (value: string, allowBareNumber = false): number | null => {
+  const normalized = (value || '').trim();
+  if (!normalized) return null;
+  const phaseMatch = normalized.match(/\bphase[\s:_-]*(\d+)\b/i);
+  if (phaseMatch) {
+    const parsed = Number(phaseMatch[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (allowBareNumber && /^\d+$/.test(normalized)) {
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const getSessionPhaseNumbers = (session: FeatureSessionLink): number[] => {
+  const candidates: number[] = [];
+  const relatedPhases = session.sessionMetadata?.relatedPhases || [];
+  relatedPhases.forEach(phase => {
+    const parsed = parsePhaseNumber(String(phase || ''), true);
+    if (parsed !== null) candidates.push(parsed);
+  });
+  [session.title || '', ...session.commands].forEach(value => {
+    const parsed = parsePhaseNumber(value, false);
+    if (parsed !== null) candidates.push(parsed);
+  });
+  return Array.from(new Set(candidates)).sort((a, b) => a - b);
+};
+
+const getSessionPrimaryPhaseNumber = (session: FeatureSessionLink): number | null => {
+  const values = getSessionPhaseNumbers(session);
+  return values.length > 0 ? values[0] : null;
+};
+
+const getSessionClassificationText = (session: FeatureSessionLink): string =>
+  [
+    session.workflowType || '',
+    session.sessionType || '',
+    session.sessionMetadata?.sessionTypeLabel || '',
+    session.title || '',
+    ...session.reasons,
+    ...session.commands,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+const isPlanningSession = (session: FeatureSessionLink): boolean => {
+  const haystack = getSessionClassificationText(session);
+  const workflow = (session.workflowType || '').toLowerCase();
+  if (workflow === 'planning') return true;
+  return [
+    '/plan:',
+    'planning',
+    'analysis',
+    'spike',
+    'adr',
+    'discovery',
+    'research',
+    'scoping',
+  ].some(token => haystack.includes(token));
+};
+
+const isExecutionSession = (session: FeatureSessionLink): boolean => {
+  const workflow = (session.workflowType || '').toLowerCase();
+  if (workflow === 'execution' || workflow === 'debug' || workflow === 'enhancement') return true;
+  const haystack = getSessionClassificationText(session);
+  if ([
+    '/dev:execute-phase',
+    'execute-phase',
+    'execution',
+    'implement',
+    'implementation',
+    'quick-feature',
+  ].some(token => haystack.includes(token))) {
+    return true;
+  }
+  return getSessionPrimaryPhaseNumber(session) !== null;
+};
+
+const getCoreSessionGroupId = (session: FeatureSessionLink): CoreSessionGroupId => {
+  if (isPlanningSession(session)) return 'plan';
+  if (isExecutionSession(session)) return 'execution';
+  return 'other';
+};
+
+const sessionStartedAtValue = (session: FeatureSessionLink): number => Date.parse(session.startedAt || '') || 0;
+
+const sortSessionsWithinGroup = (groupId: CoreSessionGroupId, sessions: FeatureSessionLink[]): FeatureSessionLink[] => {
+  return [...sessions].sort((a, b) => {
+    if (groupId === 'execution') {
+      const aPhase = getSessionPrimaryPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
+      const bPhase = getSessionPrimaryPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
+      if (aPhase !== bPhase) return aPhase - bPhase;
+    }
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return sessionStartedAtValue(b) - sessionStartedAtValue(a);
+  });
+};
+
+const getDocumentClassificationText = (doc: LinkedDocument): string =>
+  [doc.docType || '', doc.title || '', doc.filePath || '', doc.category || ''].join(' ').toLowerCase();
+
+const isInitialPlanningDoc = (doc: LinkedDocument): boolean => {
+  const type = (doc.docType || '').toLowerCase();
+  const haystack = getDocumentClassificationText(doc);
+  if (type === 'report') return true;
+  if ([
+    'spike',
+    'adr',
+    'analysis',
+    'discovery',
+    'research',
+    'investigation',
+    'architecture decision',
+  ].some(token => haystack.includes(token))) {
+    return true;
+  }
+  return type === 'spec';
+};
+
+const getDocGroupId = (doc: LinkedDocument): DocGroupId => {
+  const type = (doc.docType || '').toLowerCase();
+  if (isInitialPlanningDoc(doc)) return 'initialPlanning';
+  if (type === 'prd') return 'prd';
+  if (type === 'implementation_plan' || type === 'phase_plan') return 'plans';
+  if (type === 'progress' || normalizePath(doc.filePath).toLowerCase().includes('/progress/')) return 'progress';
+  return 'context';
+};
+
+const getDocPhaseNumber = (doc: LinkedDocument): number | null => {
+  const fromTitle = parsePhaseNumber(doc.title || '', false);
+  if (fromTitle !== null) return fromTitle;
+  return parsePhaseNumber(doc.filePath || '', false);
+};
+
+const compareDocsByTitle = (a: LinkedDocument, b: LinkedDocument): number => {
+  const titleDiff = (a.title || '').localeCompare((b.title || ''), undefined, { numeric: true, sensitivity: 'base' });
+  if (titleDiff !== 0) return titleDiff;
+  return normalizePath(a.filePath || '').localeCompare(normalizePath(b.filePath || ''), undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const initialPlanningDocPriority = (doc: LinkedDocument): number => {
+  const haystack = getDocumentClassificationText(doc);
+  if (haystack.includes('adr') || haystack.includes('architecture decision')) return 0;
+  if (haystack.includes('spike')) return 1;
+  if (haystack.includes('report')) return 2;
+  if (haystack.includes('analysis') || haystack.includes('discovery') || haystack.includes('research')) return 3;
+  if ((doc.docType || '').toLowerCase() === 'spec') return 4;
+  return 5;
+};
+
+const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): LinkedDocument[] => {
+  return [...docs].sort((a, b) => {
+    if (groupId === 'initialPlanning') {
+      const priorityDiff = initialPlanningDocPriority(a) - initialPlanningDocPriority(b);
+      if (priorityDiff !== 0) return priorityDiff;
+    }
+    if (groupId === 'plans' || groupId === 'progress') {
+      const aPhase = getDocPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
+      const bPhase = getDocPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
+      if (aPhase !== bPhase) return aPhase - bPhase;
+    }
+    return compareDocsByTitle(a, b);
+  });
 };
 
 // ── Status helpers ─────────────────────────────────────────────────
@@ -292,9 +529,13 @@ const FeatureModal = ({
   const [phaseStatusFilter, setPhaseStatusFilter] = useState<string>('all');
   const [taskStatusFilter, setTaskStatusFilter] = useState<string>('all');
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
-  const [showPrimarySubthreads, setShowPrimarySubthreads] = useState(false);
+  const [coreSessionGroupExpanded, setCoreSessionGroupExpanded] = useState<Record<CoreSessionGroupId, boolean>>(
+    () => ({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED })
+  );
+  const [docGroupExpanded, setDocGroupExpanded] = useState<Record<DocGroupId, boolean>>(
+    () => ({ ...DEFAULT_DOC_GROUP_EXPANDED })
+  );
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
-  const [showSecondarySubthreads, setShowSecondarySubthreads] = useState(false);
 
   const refreshFeatureDetail = useCallback(async () => {
     try {
@@ -320,9 +561,9 @@ const FeatureModal = ({
   useEffect(() => {
     setFullFeature(null);
     setLinkedSessionLinks([]);
-    setShowPrimarySubthreads(false);
+    setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
+    setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
     setShowSecondarySessions(false);
-    setShowSecondarySubthreads(false);
     setPhaseStatusFilter('all');
     setTaskStatusFilter('all');
     setViewingDoc(null);
@@ -429,23 +670,60 @@ const FeatureModal = ({
     });
   }, [linkedSessionLinks]);
 
-  const groupedSessions = useMemo(() => {
-    const primaryMain: FeatureSessionLink[] = [];
-    const primarySub: FeatureSessionLink[] = [];
-    const secondaryMain: FeatureSessionLink[] = [];
-    const secondarySub: FeatureSessionLink[] = [];
+  const primarySessions = useMemo(
+    () => linkedSessions.filter(session => isPrimarySession(session)),
+    [linkedSessions]
+  );
 
-    linkedSessions.forEach(session => {
-      const isPrimary = isPrimarySession(session);
-      const isSubthread = isSubthreadSession(session);
-      if (isPrimary && isSubthread) primarySub.push(session);
-      else if (isPrimary) primaryMain.push(session);
-      else if (isSubthread) secondarySub.push(session);
-      else secondaryMain.push(session);
+  const secondarySessions = useMemo(
+    () => linkedSessions.filter(session => !isPrimarySession(session)),
+    [linkedSessions]
+  );
+
+  const coreSessionGroups = useMemo(() => {
+    const grouped: Record<CoreSessionGroupId, FeatureSessionLink[]> = {
+      plan: [],
+      execution: [],
+      other: [],
+    };
+    primarySessions.forEach(session => {
+      grouped[getCoreSessionGroupId(session)].push(session);
     });
+    return CORE_SESSION_GROUPS.map(group => ({
+      ...group,
+      sessions: sortSessionsWithinGroup(group.id, grouped[group.id]),
+    }));
+  }, [primarySessions]);
 
-    return { primaryMain, primarySub, secondaryMain, secondarySub };
-  }, [linkedSessions]);
+  const groupedDocs = useMemo(() => {
+    const grouped: Record<DocGroupId, LinkedDocument[]> = {
+      initialPlanning: [],
+      prd: [],
+      plans: [],
+      progress: [],
+      context: [],
+    };
+    linkedDocs.forEach(doc => {
+      grouped[getDocGroupId(doc)].push(doc);
+    });
+    return DOC_GROUPS.map(group => ({
+      ...group,
+      docs: sortDocsWithinGroup(group.id, grouped[group.id]),
+    })).filter(group => group.docs.length > 0);
+  }, [linkedDocs]);
+
+  const orderedLinkedDocs = useMemo(
+    () => groupedDocs.flatMap(group => group.docs),
+    [groupedDocs]
+  );
+
+  const toggleCoreSessionGroup = (groupId: CoreSessionGroupId) => {
+    setCoreSessionGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const toggleDocGroup = (groupId: DocGroupId) => {
+    setDocGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
@@ -658,7 +936,7 @@ const FeatureModal = ({
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Linked Documents</h3>
                   <div className="space-y-2">
-                    {linkedDocs.map(doc => (
+                    {orderedLinkedDocs.map(doc => (
                       <button
                         key={doc.id}
                         onClick={() => handleDocClick(doc)}
@@ -877,29 +1155,51 @@ const FeatureModal = ({
                   <p>No documents linked to this feature.</p>
                 </div>
               )}
-              {linkedDocs.map(doc => (
-                <button
-                  key={doc.id}
-                  onClick={() => handleDocClick(doc)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <DocTypeIcon docType={doc.docType} />
-                      <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+              {groupedDocs.map(group => (
+                <div key={group.id} className="space-y-2">
+                  <button
+                    onClick={() => toggleDocGroup(group.id)}
+                    className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                        {docGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {group.label}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                        <DocTypeBadge docType={doc.docType} />
-                      </span>
-                      <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                    <span className="text-[11px] text-slate-500">{group.docs.length}</span>
+                  </button>
+
+                  {docGroupExpanded[group.id] && (
+                    <div className="space-y-3">
+                      {group.docs.map(doc => (
+                        <button
+                          key={doc.id}
+                          onClick={() => handleDocClick(doc)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <DocTypeIcon docType={doc.docType} />
+                              <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                <DocTypeBadge docType={doc.docType} />
+                              </span>
+                              <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                            </div>
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
+                            <FolderOpen size={12} />
+                            {doc.filePath}
+                          </div>
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                  <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
-                    <FolderOpen size={12} />
-                    {doc.filePath}
-                  </div>
-                </button>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -919,29 +1219,40 @@ const FeatureModal = ({
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Core Focus Sessions</div>
                       <div className="text-[11px] text-emerald-200/80">
-                        {groupedSessions.primaryMain.length + groupedSessions.primarySub.length}
+                        {primarySessions.length}
                       </div>
                     </div>
                     <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary execution/planning sessions for this feature.</p>
                   </div>
 
-                  {groupedSessions.primaryMain.map(renderSessionCard)}
-
-                  {groupedSessions.primarySub.length > 0 && (
-                    <div className="space-y-2">
+                  {coreSessionGroups.map(group => (
+                    <div key={group.id} className="space-y-2">
                       <button
-                        onClick={() => setShowPrimarySubthreads(prev => !prev)}
+                        onClick={() => toggleCoreSessionGroup(group.id)}
                         className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
                       >
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                          {showPrimarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          Core Sub-Threads
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                            {coreSessionGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            {group.label}
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
                         </div>
-                        <span className="text-[11px] text-slate-500">{groupedSessions.primarySub.length}</span>
+                        <span className="text-[11px] text-slate-500">{group.sessions.length}</span>
                       </button>
-                      {showPrimarySubthreads && groupedSessions.primarySub.map(renderSessionCard)}
+
+                      {coreSessionGroupExpanded[group.id] && (
+                        <div className="space-y-3">
+                          {group.sessions.length === 0 && (
+                            <div className="text-xs text-slate-600 italic px-1">
+                              No sessions currently in this group.
+                            </div>
+                          )}
+                          {group.sessions.map(renderSessionCard)}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
 
                   <div className="space-y-2 pt-2">
                     <button
@@ -952,27 +1263,17 @@ const FeatureModal = ({
                         {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         Secondary Linkages
                       </div>
-                      <span className="text-[11px] text-slate-500">{groupedSessions.secondaryMain.length + groupedSessions.secondarySub.length}</span>
+                      <span className="text-[11px] text-slate-500">{secondarySessions.length}</span>
                     </button>
 
                     {showSecondarySessions && (
                       <div className="space-y-3">
-                        {groupedSessions.secondaryMain.map(renderSessionCard)}
-                        {groupedSessions.secondarySub.length > 0 && (
-                          <div className="space-y-2">
-                            <button
-                              onClick={() => setShowSecondarySubthreads(prev => !prev)}
-                              className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
-                            >
-                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                                {showSecondarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                Related Sub-Threads
-                              </div>
-                              <span className="text-[11px] text-slate-500">{groupedSessions.secondarySub.length}</span>
-                            </button>
-                            {showSecondarySubthreads && groupedSessions.secondarySub.map(renderSessionCard)}
+                        {secondarySessions.length === 0 && (
+                          <div className="text-xs text-slate-600 italic px-1">
+                            No secondary linked sessions.
                           </div>
                         )}
+                        {secondarySessions.map(renderSessionCard)}
                       </div>
                     )}
                   </div>
