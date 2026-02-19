@@ -12,10 +12,12 @@ from typing import Any, Optional
 import yaml
 
 from backend.models import (
+    EntityDates,
     Feature,
     FeaturePhase,
     LinkedDocument,
     ProjectTask,
+    TimelineEvent,
 )
 from backend.document_linking import (
     alias_tokens_from_path,
@@ -52,6 +54,7 @@ _TERMINAL_STATUSES = {"done", "deferred"}
 _DOC_COMPLETION_STATUSES = {"completed", "deferred", "inferred_complete"}
 _DOC_WRITE_THROUGH_TYPES = {"prd", "implementation_plan", "phase_plan"}
 _INFERRED_COMPLETE_STATUS = "inferred_complete"
+_DATE_CONFIDENCE_LEVELS = {"high", "medium", "low"}
 
 
 _STATUS_MAP = {
@@ -958,6 +961,50 @@ def _timeline_event(
     }
 
 
+def _normalize_date_confidence(raw: Any) -> str:
+    token = str(raw or "low").strip().lower()
+    return token if token in _DATE_CONFIDENCE_LEVELS else "low"
+
+
+def _normalize_entity_dates_payload(raw_dates: dict[str, Any]) -> dict[str, dict[str, str]]:
+    normalized: dict[str, dict[str, str]] = {}
+    for key, raw_value in raw_dates.items():
+        if not isinstance(raw_value, dict):
+            continue
+        normalized_value = normalize_iso_date(raw_value.get("value"))
+        if not normalized_value:
+            continue
+        normalized[str(key)] = {
+            "value": normalized_value,
+            "confidence": _normalize_date_confidence(raw_value.get("confidence")),
+            "source": str(raw_value.get("source") or ""),
+            "reason": str(raw_value.get("reason") or ""),
+        }
+    return normalized
+
+
+def _normalize_timeline_payload(raw_timeline: list[Any]) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for idx, raw_event in enumerate(raw_timeline):
+        if not isinstance(raw_event, dict):
+            continue
+        timestamp = normalize_iso_date(raw_event.get("timestamp"))
+        if not timestamp:
+            continue
+        normalized.append(
+            {
+                "id": str(raw_event.get("id") or f"feature-event-{idx}"),
+                "timestamp": timestamp,
+                "label": str(raw_event.get("label") or "Feature Event"),
+                "kind": str(raw_event.get("kind") or ""),
+                "confidence": _normalize_date_confidence(raw_event.get("confidence")),
+                "source": str(raw_event.get("source") or ""),
+                "description": str(raw_event.get("description") or ""),
+            }
+        )
+    return normalized
+
+
 def _derive_feature_dates(feature: Feature) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     planning_doc_types = {"prd", "implementation_plan", "phase_plan", "report", "spec", "document"}
     progress_doc_types = {"progress"}
@@ -1438,12 +1485,17 @@ def scan_features(
     # Step 5: Derive normalized feature dates and timeline from linked docs/progress evidence.
     for feat in features.values():
         dates, timeline = _derive_feature_dates(feat)
-        feat.dates = dates
-        feat.timeline = timeline
-        feat.plannedAt = str(dates.get("plannedAt", {}).get("value", ""))
-        feat.startedAt = str(dates.get("startedAt", {}).get("value", ""))
-        feat.completedAt = str(dates.get("completedAt", {}).get("value", ""))
-        derived_updated = str(dates.get("updatedAt", {}).get("value", ""))
+        feat.dates = EntityDates.model_validate(
+            _normalize_entity_dates_payload(dates if isinstance(dates, dict) else {})
+        )
+        feat.timeline = [
+            TimelineEvent.model_validate(event)
+            for event in _normalize_timeline_payload(timeline if isinstance(timeline, list) else [])
+        ]
+        feat.plannedAt = str(feat.dates.plannedAt.value if feat.dates.plannedAt else "")
+        feat.startedAt = str(feat.dates.startedAt.value if feat.dates.startedAt else "")
+        feat.completedAt = str(feat.dates.completedAt.value if feat.dates.completedAt else "")
+        derived_updated = str(feat.dates.updatedAt.value if feat.dates.updatedAt else "")
         if derived_updated:
             feat.updatedAt = derived_updated
 

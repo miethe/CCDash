@@ -1,9 +1,11 @@
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 import yaml
 
+from backend.models import EntityDates, TimelineEvent
 from backend.parsers.features import scan_features
 
 
@@ -17,6 +19,55 @@ def _frontmatter_status(path: Path) -> str:
 
 
 class FeatureParserInferenceTests(unittest.TestCase):
+    def test_scan_features_emits_typed_dates_and_timeline_without_serializer_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            (progress_dir / "feature-z-v1").mkdir(parents=True, exist_ok=True)
+
+            plan_file = docs_dir / "implementation_plans" / "features" / "feature-z-v1.md"
+            plan_file.write_text(
+                """---
+title: "Implementation Plan: Feature Z"
+status: in-progress
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            progress_file = progress_dir / "feature-z-v1" / "phase-1-progress.md"
+            progress_file.write_text(
+                """---
+title: Feature Z Phase 1
+status: in-progress
+phase: 1
+total_tasks: 2
+completed_tasks: 1
+---
+Progress body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            self.assertEqual(len(features), 1)
+            feature = features[0]
+            self.assertIsInstance(feature.dates, EntityDates)
+            self.assertTrue(all(isinstance(event, TimelineEvent) for event in feature.timeline))
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                feature.model_dump()
+
+            unexpected = [
+                warning for warning in caught
+                if "PydanticSerializationUnexpectedValue" in str(warning.message)
+            ]
+            self.assertEqual(unexpected, [])
+
     def test_progress_completion_marks_feature_done_and_writes_through_top_level_docs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
