@@ -530,28 +530,20 @@ async def get_feature_linked_sessions(feature_id: str):
     session_repo = get_session_repository(db)
     links = await link_repo.get_links_for("feature", feature_id, "related")
 
-    items: list[FeatureSessionLink] = []
-    for link in links:
-        if link.get("source_type") != "feature" or link.get("source_id") != feature_id:
-            continue
-        if link.get("target_type") != "session":
-            continue
-
-        session_id = str(link.get("target_id") or "").strip()
-        if not session_id:
-            continue
-
-        session_row = await session_repo.get_by_id(session_id)
-        if not session_row:
-            continue
+    async def build_session_link_item(
+        session_row: dict[str, Any],
+        metadata: dict[str, Any],
+        confidence: float,
+        inherited: bool = False,
+    ) -> FeatureSessionLink:
+        session_id = str(session_row.get("id") or "").strip()
         logs = await session_repo.get_logs(session_id)
 
-        metadata = _safe_json(link.get("metadata_json"))
         reasons: list[str] = []
-
         strategy = str(metadata.get("linkStrategy") or "").strip()
         if strategy:
             reasons.append(strategy)
+
         signal_types: set[str] = set()
         signals = metadata.get("signals", [])
         if isinstance(signals, list):
@@ -566,19 +558,21 @@ async def get_feature_linked_sessions(feature_id: str):
         if not isinstance(commands, list):
             commands = []
         normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
+
         metadata_hashes = metadata.get("commitHashes", [])
         if not isinstance(metadata_hashes, list):
             metadata_hashes = []
         row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
         merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
-        confidence = float(link.get("confidence") or 0.0)
+
         model_identity = derive_model_identity(session_row.get("model"))
         session_type = str(session_row.get("session_type") or "")
         parent_session_id = session_row.get("parent_session_id")
         root_session_id = str(session_row.get("root_session_id") or session_id)
         is_subthread = bool(parent_session_id) or session_type == "subagent"
-        is_primary_link = _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
+        is_primary_link = False if inherited else _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
         workflow_type = _classify_session_workflow(strategy, normalized_commands, signal_types, session_type)
+
         command_events: list[dict[str, Any]] = []
         latest_summary = ""
         for log in logs:
@@ -599,43 +593,127 @@ async def get_feature_linked_sessions(feature_id: str):
                 "args": str(parsed_metadata.get("args") or ""),
                 "parsedCommand": parsed_metadata.get("parsedCommand") if isinstance(parsed_metadata.get("parsedCommand"), dict) else {},
             })
+
         session_metadata = classify_session_key_metadata(command_events, mappings)
         session_title = _derive_session_title(session_metadata, latest_summary, session_id)
         reasons = list(dict.fromkeys(reasons))
 
-        items.append(
-            FeatureSessionLink(
-                sessionId=session_id,
-                title=session_title,
-                titleSource=str(metadata.get("titleSource") or ""),
-                titleConfidence=float(metadata.get("titleConfidence") or 0.0),
-                confidence=confidence,
-                reasons=reasons,
-                commands=normalized_commands[:12],
-                commitHashes=merged_hashes,
-                status=str(session_row.get("status") or "completed"),
-                model=str(session_row.get("model") or ""),
-                modelDisplayName=model_identity["modelDisplayName"],
-                modelProvider=model_identity["modelProvider"],
-                modelFamily=model_identity["modelFamily"],
-                modelVersion=model_identity["modelVersion"],
-                startedAt=str(session_row.get("started_at") or ""),
-                totalCost=float(session_row.get("total_cost") or 0.0),
-                durationSeconds=int(session_row.get("duration_seconds") or 0),
-                gitCommitHash=session_row.get("git_commit_hash"),
-                gitCommitHashes=merged_hashes,
-                sessionType=session_type,
-                parentSessionId=parent_session_id,
-                rootSessionId=root_session_id,
-                agentId=session_row.get("agent_id"),
-                isSubthread=is_subthread,
-                isPrimaryLink=is_primary_link,
-                linkStrategy=strategy,
-                workflowType=workflow_type,
-                sessionMetadata=session_metadata,
-            )
+        return FeatureSessionLink(
+            sessionId=session_id,
+            title=session_title,
+            titleSource=str(metadata.get("titleSource") or ""),
+            titleConfidence=float(metadata.get("titleConfidence") or 0.0),
+            confidence=confidence,
+            reasons=reasons,
+            commands=normalized_commands[:12],
+            commitHashes=merged_hashes,
+            status=str(session_row.get("status") or "completed"),
+            model=str(session_row.get("model") or ""),
+            modelDisplayName=model_identity["modelDisplayName"],
+            modelProvider=model_identity["modelProvider"],
+            modelFamily=model_identity["modelFamily"],
+            modelVersion=model_identity["modelVersion"],
+            startedAt=str(session_row.get("started_at") or ""),
+            totalCost=float(session_row.get("total_cost") or 0.0),
+            durationSeconds=int(session_row.get("duration_seconds") or 0),
+            gitCommitHash=session_row.get("git_commit_hash"),
+            gitCommitHashes=merged_hashes,
+            sessionType=session_type,
+            parentSessionId=parent_session_id,
+            rootSessionId=root_session_id,
+            agentId=session_row.get("agent_id"),
+            isSubthread=is_subthread,
+            isPrimaryLink=is_primary_link,
+            linkStrategy=strategy,
+            workflowType=workflow_type,
+            sessionMetadata=session_metadata,
         )
 
+    items_by_session_id: dict[str, FeatureSessionLink] = {}
+    for link in links:
+        if link.get("source_type") != "feature" or link.get("source_id") != feature_id:
+            continue
+        if link.get("target_type") != "session":
+            continue
+
+        session_id = str(link.get("target_id") or "").strip()
+        if not session_id:
+            continue
+
+        session_row = await session_repo.get_by_id(session_id)
+        if not session_row:
+            continue
+        metadata = _safe_json(link.get("metadata_json"))
+        confidence = float(link.get("confidence") or 0.0)
+        candidate = await build_session_link_item(session_row, metadata, confidence)
+        existing = items_by_session_id.get(session_id)
+        if not existing or candidate.confidence > existing.confidence:
+            items_by_session_id[session_id] = candidate
+
+    # Keep thread context coherent in the feature sessions tree by inheriting
+    # all sub-threads under directly linked main/root sessions.
+    if active_project and items_by_session_id:
+        root_ids_to_expand: set[str] = set()
+        for item in items_by_session_id.values():
+            if item.isSubthread:
+                continue
+            root_id = (item.rootSessionId or item.sessionId or "").strip()
+            if root_id:
+                root_ids_to_expand.add(root_id)
+
+        if not root_ids_to_expand:
+            for item in items_by_session_id.values():
+                root_id = (item.rootSessionId or item.parentSessionId or item.sessionId or "").strip()
+                if root_id:
+                    root_ids_to_expand.add(root_id)
+
+        for root_id in root_ids_to_expand:
+            total = await session_repo.count(
+                active_project.id,
+                {"include_subagents": True, "root_session_id": root_id},
+            )
+            if total <= 0:
+                continue
+
+            offset = 0
+            while offset < total:
+                page = await session_repo.list_paginated(
+                    offset,
+                    250,
+                    active_project.id,
+                    "started_at",
+                    "desc",
+                    {"include_subagents": True, "root_session_id": root_id},
+                )
+                if not page:
+                    break
+
+                for session_row in page:
+                    session_id = str(session_row.get("id") or "").strip()
+                    if not session_id or session_id in items_by_session_id:
+                        continue
+                    inherited_metadata = {
+                        "linkStrategy": "thread_inheritance",
+                        "signals": [{"type": "thread_inheritance", "rootSessionId": root_id}],
+                        "commands": [],
+                        "commitHashes": [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)],
+                        "titleSource": "thread",
+                        "titleConfidence": 0.35,
+                    }
+                    inherited_confidence = 0.34
+                    candidate = await build_session_link_item(
+                        session_row,
+                        inherited_metadata,
+                        inherited_confidence,
+                        inherited=True,
+                    )
+                    items_by_session_id[session_id] = candidate
+
+                offset += len(page)
+                if len(page) < 250:
+                    break
+
+    items = list(items_by_session_id.values())
     items.sort(key=lambda item: (item.confidence, item.startedAt), reverse=True)
     return items
 

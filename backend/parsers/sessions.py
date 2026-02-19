@@ -28,6 +28,7 @@ _COMMIT_PATTERN = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
+_ASYNC_TASK_AGENT_ID_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9_-]+)\b", re.IGNORECASE)
 
 # Tools we treat as concrete file actions for session file tracking.
 _FILE_ACTION_BY_TOOL: dict[str, str] = {
@@ -643,6 +644,61 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     source_tool_name=None,
                 )
 
+    def extract_async_task_agent_id(tool_use_result: Any, output_text: str) -> str:
+        if isinstance(tool_use_result, dict):
+            raw_agent_id = tool_use_result.get("agentId")
+            if isinstance(raw_agent_id, str) and raw_agent_id.strip():
+                return raw_agent_id.strip()
+        match = _ASYNC_TASK_AGENT_ID_PATTERN.search(output_text or "")
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def link_subagent_to_task_call(
+        parent_tool_call_id: str,
+        raw_agent_id: str,
+        event_timestamp: str,
+        source: str,
+    ) -> None:
+        if not parent_tool_call_id:
+            return
+        clean_agent_id = (raw_agent_id or "").strip()
+        if not clean_agent_id:
+            return
+        if clean_agent_id.lower().startswith("agent-"):
+            clean_agent_id = clean_agent_id.split("agent-", 1)[-1] or clean_agent_id
+
+        linked_session = _normalize_session_id(f"agent-{clean_agent_id}")
+        subagent_link_by_parent_tool[parent_tool_call_id] = linked_session
+
+        tool_log_idx = tool_logs_by_id.get(parent_tool_call_id)
+        if tool_log_idx is not None:
+            logs[tool_log_idx].linkedSessionId = linked_session
+            logs[tool_log_idx].metadata["subagentAgentId"] = clean_agent_id
+
+        emit_key = (parent_tool_call_id, linked_session)
+        if emit_key in emitted_subagent_starts:
+            return
+        emitted_subagent_starts.add(emit_key)
+        start_idx = append_log(
+            timestamp=event_timestamp,
+            speaker="system",
+            type="subagent_start",
+            content=f"Subagent started: {clean_agent_id}",
+            linkedSessionId=linked_session,
+            relatedToolCallId=parent_tool_call_id,
+            metadata={"agentId": clean_agent_id},
+        )
+        start_log = logs[start_idx]
+        add_artifact(
+            kind="agent",
+            title=f"agent-{clean_agent_id}",
+            description="Subagent thread spawned from a Task tool call",
+            source=source,
+            source_log_id=start_log.id,
+            source_tool_name="Task",
+        )
+
     for entry in entries:
         entry_type = entry.get("type", "")
         current_ts = entry.get("timestamp", "")
@@ -691,35 +747,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 parent_tool_call_id = entry.get("parentToolUseID")
                 subagent_agent_id = data.get("agentId")
                 if isinstance(parent_tool_call_id, str) and isinstance(subagent_agent_id, str):
-                    linked_session = _normalize_session_id(f"agent-{subagent_agent_id}")
-                    subagent_link_by_parent_tool[parent_tool_call_id] = linked_session
-
-                    tool_log_idx = tool_logs_by_id.get(parent_tool_call_id)
-                    if tool_log_idx is not None:
-                        logs[tool_log_idx].linkedSessionId = linked_session
-                        logs[tool_log_idx].metadata["subagentAgentId"] = subagent_agent_id
-
-                    emit_key = (parent_tool_call_id, linked_session)
-                    if emit_key not in emitted_subagent_starts:
-                        emitted_subagent_starts.add(emit_key)
-                        start_idx = append_log(
-                            timestamp=current_ts,
-                            speaker="system",
-                            type="subagent_start",
-                            content=f"Subagent started: {subagent_agent_id}",
-                            linkedSessionId=linked_session,
-                            relatedToolCallId=parent_tool_call_id,
-                            metadata={"agentId": subagent_agent_id},
-                        )
-                        start_log = logs[start_idx]
-                        add_artifact(
-                            kind="agent",
-                            title=f"agent-{subagent_agent_id}",
-                            description="Subagent thread spawned from a Task tool call",
-                            source="agent-progress",
-                            source_log_id=start_log.id,
-                            source_tool_name="Task",
-                        )
+                    link_subagent_to_task_call(parent_tool_call_id, subagent_agent_id, current_ts, "agent-progress")
 
             elif isinstance(data, dict) and data.get("type") == "bash_progress":
                 parent_tool_call_id = entry.get("parentToolUseID")
@@ -1064,6 +1092,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 output_text = _tool_result_to_text(block.get("content", ""))
                 is_error = bool(block.get("is_error", False))
                 related_idx = tool_logs_by_id.get(related_id) if isinstance(related_id, str) else None
+                tool_use_result = entry.get("toolUseResult")
+                launch_agent_id = extract_async_task_agent_id(tool_use_result, output_text)
+                launch_status = ""
+                if isinstance(tool_use_result, dict):
+                    launch_status = str(tool_use_result.get("status") or "").strip().lower()
 
                 if related_idx is not None:
                     related_log = logs[related_idx]
@@ -1082,6 +1115,17 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         for file_update in file_changes:
                             if file_update.sourceLogId == related_log.id and file_update.action == "update":
                                 file_update.action = "create"
+                    if (
+                        tool_name == "Task"
+                        and isinstance(related_id, str)
+                        and launch_agent_id
+                        and (launch_status == "async_launched" or "agentid:" in output_text.lower())
+                    ):
+                        link_subagent_to_task_call(related_id, launch_agent_id, current_ts, "tool-result")
+                        if isinstance(related_log.metadata, dict):
+                            related_log.metadata["taskLaunchStatus"] = launch_status
+                            if isinstance(tool_use_result, dict):
+                                related_log.metadata["taskIsAsyncLaunch"] = bool(tool_use_result.get("isAsync", False))
                     if tool_name == "Bash":
                         command_text = ""
                         if isinstance(related_log.metadata, dict):
