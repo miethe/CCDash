@@ -83,6 +83,9 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
    canonicalPath: String(raw.canonicalPath || fallback.canonicalPath || raw.filePath || fallback.filePath || ''),
    status: String(raw.status || fallback.status || 'active'),
    statusNormalized: String(raw.statusNormalized || fallback.statusNormalized || ''),
+   createdAt: String(raw.createdAt || fallback.createdAt || ''),
+   updatedAt: String(raw.updatedAt || fallback.updatedAt || ''),
+   completedAt: String(raw.completedAt || fallback.completedAt || ''),
    lastModified: String(raw.lastModified || fallback.lastModified || ''),
    author: String(raw.author || fallback.author || ''),
    content: typeof raw.content === 'string' ? raw.content : fallback.content,
@@ -127,6 +130,8 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       sessions: raw.linkCounts?.sessions ?? fallback.linkCounts?.sessions ?? 0,
       documents: raw.linkCounts?.documents ?? fallback.linkCounts?.documents ?? 0,
    },
+   dates: raw.dates ?? fallback.dates,
+   timeline: Array.isArray(raw.timeline) ? raw.timeline : (fallback.timeline || []),
    frontmatter: {
       tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
       linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
@@ -264,6 +269,18 @@ export const DocumentModal = ({
       inProgress: doc.inProgressTasks || 0,
       blocked: doc.blockedTasks || 0,
    };
+   const formatDate = (value?: string): string => {
+      if (!value) return '-';
+      const parsed = Date.parse(value);
+      if (Number.isNaN(parsed)) return value;
+      return new Date(parsed).toLocaleDateString();
+   };
+   const dateChip = (key: keyof NonNullable<PlanDocument['dates']>) => {
+      const value = doc.dates?.[key];
+      if (!value?.value) return '';
+      const confidence = value.confidence ? ` (${value.confidence})` : '';
+      return `${formatDate(value.value)}${confidence}`;
+   };
 
    return (
       <div className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200`} onClick={onClose}>
@@ -350,7 +367,9 @@ export const DocumentModal = ({
                            <div className="space-y-2 text-sm">
                               <div className="flex justify-between text-slate-400"><span>Status</span><span className="text-slate-200">{doc.statusNormalized || doc.status}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Author</span><span className="text-slate-200">{doc.author || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Modified</span><span className="text-slate-200">{doc.lastModified ? new Date(doc.lastModified).toLocaleDateString() : '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Created</span><span className="text-slate-200">{dateChip('createdAt') || formatDate(doc.createdAt)}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Updated</span><span className="text-slate-200">{dateChip('updatedAt') || formatDate(doc.updatedAt || doc.lastModified)}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Completed</span><span className="text-slate-200">{dateChip('completedAt') || formatDate(doc.completedAt)}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Category</span><span className="text-slate-200">{doc.category || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Feature Hint</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>

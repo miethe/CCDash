@@ -113,7 +113,14 @@ interface SessionCardProps {
   title: string;
   model: SessionCardModel;
   startedAt?: string;
+  endedAt?: string;
+  updatedAt?: string;
   status?: string;
+  dates?: {
+    startedAt?: { value: string; confidence: string };
+    completedAt?: { value: string; confidence: string };
+    updatedAt?: { value: string; confidence: string };
+  };
   metadata?: SessionCardMetadata | null;
   headerRight?: React.ReactNode;
   infoBadges?: React.ReactNode;
@@ -127,7 +134,10 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   title,
   model,
   startedAt,
+  endedAt,
+  updatedAt,
   status,
+  dates,
   metadata,
   headerRight,
   infoBadges,
@@ -139,6 +149,12 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   const relatedFileName = fileNameFromPath(relatedFilePath);
   const hasIndicators = Boolean(sessionTypeLabel || relatedCommand || relatedPhases.length > 0 || relatedFileName);
   const modelDisplay = formatModelDisplayName(model.raw, model.displayName);
+  const completedValue = dates?.completedAt?.value || endedAt;
+  const startedValue = dates?.startedAt?.value || startedAt;
+  const updatedValue = dates?.updatedAt?.value || updatedAt;
+  const primaryDateLabel = status === 'completed' ? 'Completed' : 'Started';
+  const primaryDateValue = status === 'completed' ? (completedValue || startedValue) : startedValue;
+  const primaryConfidence = status === 'completed' ? dates?.completedAt?.confidence : dates?.startedAt?.confidence;
 
   return (
     <div
@@ -190,15 +206,23 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             <div className="text-sm font-semibold text-slate-200 truncate">{title}</div>
             <div className="font-mono text-[11px] text-slate-400 truncate">{sessionId}</div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
-              {startedAt && (
+              {primaryDateValue && (
                 <span className="text-[10px] text-slate-500 flex items-center gap-1">
                   <Calendar size={10} />
-                  {new Date(startedAt).toLocaleDateString()}
+                  {primaryDateLabel} {new Date(primaryDateValue).toLocaleDateString()}
+                  {primaryConfidence && (
+                    <span className="uppercase text-[9px] text-slate-600">({primaryConfidence})</span>
+                  )}
                 </span>
               )}
               <span className="text-[10px] text-slate-500 font-mono truncate" title={model.raw || modelDisplay}>
                 {modelDisplay}
               </span>
+              {updatedValue && (
+                <span className="text-[10px] text-slate-600">
+                  Updated {new Date(updatedValue).toLocaleDateString()}
+                </span>
+              )}
               {infoBadges}
             </div>
           </div>

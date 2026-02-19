@@ -30,6 +30,9 @@ interface FeatureSessionLink {
   modelFamily?: string;
   modelVersion?: string;
   startedAt: string;
+  endedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   totalCost: number;
   durationSeconds: number;
   gitCommitHash?: string;
@@ -459,6 +462,51 @@ const getFeatureBoardStage = (feature: Feature): string => {
   return feature.status;
 };
 
+const toEpoch = (value?: string): number => {
+  const parsed = Date.parse(value || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const inDateRange = (value: string, from?: string, to?: string): boolean => {
+  if (!from && !to) return true;
+  const target = toEpoch(value);
+  if (!target) return false;
+  const fromEpoch = from ? toEpoch(from) : 0;
+  const toEpochValue = to ? toEpoch(to) + 86_399_000 : Number.POSITIVE_INFINITY;
+  return target >= fromEpoch && target <= toEpochValue;
+};
+
+const getFeatureDateValue = (
+  feature: Feature,
+  key: 'plannedAt' | 'startedAt' | 'completedAt' | 'updatedAt' | 'lastActivityAt',
+): { value: string; confidence?: string } => {
+  const fromDates = feature.dates?.[key];
+  if (fromDates?.value) return { value: fromDates.value, confidence: fromDates.confidence };
+  if (key === 'plannedAt') return { value: feature.plannedAt || '' };
+  if (key === 'startedAt') return { value: feature.startedAt || '' };
+  if (key === 'completedAt') return { value: feature.completedAt || '' };
+  if (key === 'updatedAt' || key === 'lastActivityAt') return { value: feature.updatedAt || '' };
+  return { value: '' };
+};
+
+const getFeaturePrimaryDate = (feature: Feature): { label: string; value: string; confidence?: string } => {
+  const stage = getFeatureBoardStage(feature);
+  if (stage === 'backlog') {
+    const planned = getFeatureDateValue(feature, 'plannedAt');
+    if (planned.value) return { label: 'Planned', ...planned };
+  }
+  if (stage === 'in-progress' || stage === 'review') {
+    const started = getFeatureDateValue(feature, 'startedAt');
+    if (started.value) return { label: 'Started', ...started };
+  }
+  if (stage === 'done') {
+    const completed = getFeatureDateValue(feature, 'completedAt');
+    if (completed.value) return { label: 'Completed', ...completed };
+  }
+  const updated = getFeatureDateValue(feature, 'updatedAt');
+  return { label: 'Updated', ...updated };
+};
+
 const ProgressBar = ({
   completed,
   deferred = 0,
@@ -628,7 +676,7 @@ const FeatureModal = ({
 }) => {
   const navigate = useNavigate();
   const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
-  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions' | 'history'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
@@ -779,6 +827,73 @@ const FeatureModal = ({
       return bTime - aTime;
     });
   }, [linkedSessionLinks]);
+  const primaryFeatureDate = getFeaturePrimaryDate(activeFeature);
+  const featureHistoryEvents = useMemo(() => {
+    const events: Array<{
+      id: string;
+      timestamp: string;
+      label: string;
+      kind: string;
+      confidence: string;
+      source: string;
+      description?: string;
+    }> = [];
+
+    (activeFeature.timeline || []).forEach((event, idx) => {
+      if (!event || !event.timestamp) return;
+      events.push({
+        id: event.id || `feature-${idx}`,
+        timestamp: event.timestamp,
+        label: event.label || 'Feature event',
+        kind: event.kind || 'feature',
+        confidence: event.confidence || 'low',
+        source: event.source || 'feature',
+        description: event.description,
+      });
+    });
+
+    linkedDocs.forEach((doc, docIndex) => {
+      (doc.timeline || []).forEach((event, idx) => {
+        if (!event || !event.timestamp) return;
+        events.push({
+          id: `${doc.id || docIndex}-${event.id || idx}`,
+          timestamp: event.timestamp,
+          label: `${event.label || 'Doc update'} (${doc.docType || 'doc'})`,
+          kind: event.kind || 'document',
+          confidence: event.confidence || 'low',
+          source: event.source || `document:${doc.filePath}`,
+          description: event.description,
+        });
+      });
+    });
+
+    linkedSessions.forEach((session) => {
+      if (session.startedAt) {
+        events.push({
+          id: `${session.sessionId}-started`,
+          timestamp: session.startedAt,
+          label: `Session Started (${session.workflowType || session.sessionType || 'related'})`,
+          kind: 'session_started',
+          confidence: 'high',
+          source: `session:${session.sessionId}`,
+        });
+      }
+      if (session.endedAt) {
+        events.push({
+          id: `${session.sessionId}-completed`,
+          timestamp: session.endedAt,
+          label: `Session Completed (${session.workflowType || session.sessionType || 'related'})`,
+          kind: 'session_completed',
+          confidence: 'high',
+          source: `session:${session.sessionId}`,
+        });
+      }
+    });
+
+    return events
+      .filter(event => !!event.timestamp)
+      .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
+  }, [activeFeature.timeline, linkedDocs, linkedSessions]);
 
   const allSessionRoots = useMemo(
     () => buildSessionThreadForest(linkedSessions),
@@ -865,6 +980,7 @@ const FeatureModal = ({
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
     { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
     { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
+    { id: 'history', label: 'History', icon: Calendar },
   ];
 
   const renderSessionCard = (session: FeatureSessionLink) => {
@@ -887,6 +1003,13 @@ const FeatureModal = ({
         title={displayTitle}
         status={session.status}
         startedAt={session.startedAt}
+        endedAt={session.endedAt}
+        updatedAt={session.updatedAt}
+        dates={{
+          startedAt: session.startedAt ? { value: session.startedAt, confidence: 'high' } : undefined,
+          completedAt: session.endedAt ? { value: session.endedAt, confidence: 'high' } : undefined,
+          updatedAt: session.updatedAt ? { value: session.updatedAt, confidence: 'medium' } : undefined,
+        }}
         model={{ raw: session.model, displayName: session.modelDisplayName }}
         metadata={session.sessionMetadata || null}
         onClick={openSession}
@@ -1037,10 +1160,11 @@ const FeatureModal = ({
                 {featureDeferredTasks > 0 && (
                   <span className="text-amber-300">{featureDeferredTasks} deferred</span>
                 )}
-                {activeFeature.updatedAt && activeFeature.updatedAt !== 'None' && (
+                {primaryFeatureDate.value && (
                   <span className="flex items-center gap-1">
                     <Calendar size={12} />
-                    {activeFeature.updatedAt}
+                    {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
+                    {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
                   </span>
                 )}
               </div>
@@ -1097,6 +1221,26 @@ const FeatureModal = ({
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Documents</div>
                   <div className="text-purple-400 font-bold text-2xl">{linkedDocs.length}</div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-slate-200 mb-3">Date Signals</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  {[
+                    { label: 'Planned', value: getFeatureDateValue(activeFeature, 'plannedAt') },
+                    { label: 'Started', value: getFeatureDateValue(activeFeature, 'startedAt') },
+                    { label: 'Completed', value: getFeatureDateValue(activeFeature, 'completedAt') },
+                    { label: 'Updated', value: getFeatureDateValue(activeFeature, 'updatedAt') },
+                  ].map(item => (
+                    <div key={item.label} className="p-2 rounded border border-slate-800 bg-slate-950">
+                      <div className="text-slate-500 uppercase">{item.label}</div>
+                      <div className="text-slate-200 mt-1">
+                        {item.value.value ? new Date(item.value.value).toLocaleDateString() : '-'}
+                        {item.value.confidence ? ` (${item.value.confidence})` : ''}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -1450,6 +1594,42 @@ const FeatureModal = ({
               )}
             </div>
           )}
+          {activeTab === 'history' && (
+            <div className="space-y-3">
+              {featureHistoryEvents.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <Calendar size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>No timeline events available yet.</p>
+                </div>
+              )}
+              {featureHistoryEvents.length > 0 && (
+                <div className="space-y-2">
+                  {featureHistoryEvents.map(event => (
+                    <div key={event.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm text-slate-200">{event.label}</div>
+                        <div className="text-xs text-slate-500">
+                          {new Date(event.timestamp).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
+                          {event.kind}
+                        </span>
+                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
+                          {event.confidence}
+                        </span>
+                        <span className="font-mono truncate">{event.source}</span>
+                      </div>
+                      {event.description && (
+                        <p className="mt-2 text-xs text-slate-500">{event.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Task Source Dialog */}
@@ -1555,6 +1735,7 @@ const FeatureCard = ({
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
+  const primaryDate = getFeaturePrimaryDate(feature);
 
   return (
     <div
@@ -1612,9 +1793,16 @@ const FeatureCard = ({
 
       {/* Footer */}
       <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-        {feature.category ? (
-          <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
-        ) : <span />}
+        <div className="flex flex-col min-w-0">
+          {feature.category ? (
+            <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
+          ) : <span />}
+          {primaryDate.value && (
+            <span className="text-[10px] text-slate-600 truncate">
+              {primaryDate.label}: {new Date(primaryDate.value).toLocaleDateString()}
+            </span>
+          )}
+        </div>
         <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
           Details <ChevronRight size={10} />
         </span>
@@ -1641,6 +1829,7 @@ const FeatureListCard = ({
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
+  const primaryDate = getFeaturePrimaryDate(feature);
 
   return (
     <div
@@ -1661,8 +1850,11 @@ const FeatureListCard = ({
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
-          {feature.updatedAt && feature.updatedAt !== 'None' && (
-            <div className="text-[10px] text-slate-500">{feature.updatedAt}</div>
+          {primaryDate.value && (
+            <div className="text-[10px] text-slate-500">
+              {primaryDate.label}: {new Date(primaryDate.value).toLocaleDateString()}
+              {primaryDate.confidence ? ` (${primaryDate.confidence})` : ''}
+            </div>
           )}
         </div>
       </div>
@@ -1808,6 +2000,14 @@ export const ProjectBoard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'progress' | 'tasks'>('date');
+  const [plannedFrom, setPlannedFrom] = useState('');
+  const [plannedTo, setPlannedTo] = useState('');
+  const [startedFrom, setStartedFrom] = useState('');
+  const [startedTo, setStartedTo] = useState('');
+  const [completedFrom, setCompletedFrom] = useState('');
+  const [completedTo, setCompletedTo] = useState('');
+  const [updatedFrom, setUpdatedFrom] = useState('');
+  const [updatedTo, setUpdatedTo] = useState('');
 
   // Derive unique categories
   const categories = useMemo(() => {
@@ -1839,6 +2039,20 @@ export const ProjectBoard: React.FC = () => {
       result = result.filter(f => f.category === categoryFilter);
     }
 
+    result = result.filter(feature => {
+      const planned = getFeatureDateValue(feature, 'plannedAt').value;
+      const started = getFeatureDateValue(feature, 'startedAt').value;
+      const completed = getFeatureDateValue(feature, 'completedAt').value;
+      const updated = getFeatureDateValue(feature, 'updatedAt').value;
+      if (!inDateRange(planned, plannedFrom || undefined, plannedTo || undefined)) return false;
+      if (!inDateRange(started, startedFrom || undefined, startedTo || undefined)) return false;
+      if (!inDateRange(updated, updatedFrom || undefined, updatedTo || undefined)) return false;
+      if ((completedFrom || completedTo) && !inDateRange(completed, completedFrom || undefined, completedTo || undefined)) {
+        return false;
+      }
+      return true;
+    });
+
     return result.sort((a, b) => {
       if (sortBy === 'progress') {
         const pctA = a.totalTasks > 0 ? getFeatureCompletedCount(a) / a.totalTasks : 0;
@@ -1847,9 +2061,23 @@ export const ProjectBoard: React.FC = () => {
       }
       if (sortBy === 'tasks') return b.totalTasks - a.totalTasks;
       // date sort (default)
-      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+      return toEpoch(getFeatureDateValue(b, 'updatedAt').value) - toEpoch(getFeatureDateValue(a, 'updatedAt').value);
     });
-  }, [apiFeatures, searchQuery, statusFilter, categoryFilter, sortBy]);
+  }, [
+    apiFeatures,
+    searchQuery,
+    statusFilter,
+    categoryFilter,
+    sortBy,
+    plannedFrom,
+    plannedTo,
+    startedFrom,
+    startedTo,
+    completedFrom,
+    completedTo,
+    updatedFrom,
+    updatedTo,
+  ]);
 
   const handleStatusChange = useCallback(async (featureId: string, newStatus: string) => {
     const feature = apiFeatures.find(f => f.id === featureId);
@@ -1978,6 +2206,81 @@ export const ProjectBoard: React.FC = () => {
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-slate-800/60">
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">Planned</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={plannedFrom}
+                      onChange={e => setPlannedFrom(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-slate-600 text-[10px]">-</span>
+                    <input
+                      type="date"
+                      value={plannedTo}
+                      onChange={e => setPlannedTo(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">Started</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={startedFrom}
+                      onChange={e => setStartedFrom(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-slate-600 text-[10px]">-</span>
+                    <input
+                      type="date"
+                      value={startedTo}
+                      onChange={e => setStartedTo(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">Completed</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={completedFrom}
+                      onChange={e => setCompletedFrom(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-slate-600 text-[10px]">-</span>
+                    <input
+                      type="date"
+                      value={completedTo}
+                      onChange={e => setCompletedTo(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">Updated</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={updatedFrom}
+                      onChange={e => setUpdatedFrom(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-slate-600 text-[10px]">-</span>
+                    <input
+                      type="date"
+                      value={updatedTo}
+                      onChange={e => setUpdatedTo(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -28,6 +28,13 @@ from backend.document_linking import (
     make_document_id,
     normalize_doc_status,
 )
+from backend.date_utils import (
+    choose_first,
+    choose_latest,
+    file_metadata_dates,
+    make_date_value,
+    normalize_iso_date,
+)
 
 _DONE_STATUSES = {"done", "completed", "complete"}
 _IN_PROGRESS_STATUSES = {"in-progress", "in_progress", "active", "working"}
@@ -51,6 +58,7 @@ _NORMALIZED_STATUS = {
     "blocked": "blocked",
     "archived": "archived",
 }
+_COMPLETION_EQUIVALENT_STATUSES = {"completed", "inferred_complete", "deferred"}
 
 
 def _extract_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
@@ -140,6 +148,87 @@ def _normalize_status(status: str) -> str:
         return "pending"
     mapped = _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
     return normalize_doc_status(mapped, default="pending")
+
+
+def _frontmatter_date(fm: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = normalize_iso_date(fm.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _build_document_date_fields(path: Path, fm: dict[str, Any], status_normalized: str) -> tuple[str, str, str, dict[str, Any], list[dict[str, Any]]]:
+    fs_dates = file_metadata_dates(path)
+    fm_created = _frontmatter_date(fm, "created", "created_at", "date_created")
+    fm_updated = _frontmatter_date(fm, "updated", "updated_at", "last_updated", "modified", "modified_at")
+    fm_completed = _frontmatter_date(fm, "completed", "completed_at", "completion_date", "done_at")
+
+    created = choose_first([
+        make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "file_birthtime"),
+        make_date_value(fm_created, "medium", "frontmatter", "created"),
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback"),
+    ])
+    updated = choose_first([
+        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "mtime"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated"),
+        make_date_value(fm_created, "low", "frontmatter", "created_fallback"),
+    ])
+    completed = choose_first([
+        make_date_value(fm_completed, "high", "frontmatter", "completed"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated_completion_fallback")
+        if status_normalized in _COMPLETION_EQUIVALENT_STATUSES else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_completion_fallback")
+        if status_normalized in _COMPLETION_EQUIVALENT_STATUSES else {},
+    ])
+    last_activity = choose_latest([updated, completed])
+
+    dates: dict[str, Any] = {}
+    if created:
+        dates["createdAt"] = created
+    if updated:
+        dates["updatedAt"] = updated
+    if completed:
+        dates["completedAt"] = completed
+    if last_activity:
+        dates["lastActivityAt"] = last_activity
+
+    timeline: list[dict[str, Any]] = []
+    if created:
+        timeline.append({
+            "id": "doc-created",
+            "timestamp": created["value"],
+            "label": "Document Created",
+            "kind": "created",
+            "confidence": created["confidence"],
+            "source": created["source"],
+            "description": created.get("reason", ""),
+        })
+    if updated:
+        timeline.append({
+            "id": "doc-updated",
+            "timestamp": updated["value"],
+            "label": "Last Updated",
+            "kind": "updated",
+            "confidence": updated["confidence"],
+            "source": updated["source"],
+            "description": updated.get("reason", ""),
+        })
+    if completed:
+        timeline.append({
+            "id": "doc-completed",
+            "timestamp": completed["value"],
+            "label": "Marked Complete",
+            "kind": "completed",
+            "confidence": completed["confidence"],
+            "source": completed["source"],
+            "description": completed.get("reason", ""),
+        })
+
+    created_at = created.get("value", "")
+    updated_at = updated.get("value", "")
+    completed_at = completed.get("value", "")
+    return created_at, updated_at, completed_at, dates, timeline
 
 
 def _normalize_task_counts(fm: dict[str, Any]) -> DocumentTaskCounts:
@@ -241,9 +330,8 @@ def parse_document_file(
     status_normalized = _normalize_status(status)
     tags = [str(v) for v in _to_string_list(fm.get("tags"))]
 
-    created = fm.get("created", "")
-    updated = fm.get("updated", created)
-    last_modified = str(updated) if updated else ""
+    created_at, updated_at, completed_at, dates, timeline = _build_document_date_fields(path, fm, status_normalized)
+    last_modified = updated_at or created_at
     audience = fm.get("audience", [])
     if isinstance(audience, list) and audience:
         author = str(audience[0])
@@ -335,6 +423,9 @@ def parse_document_file(
         title=title,
         filePath=canonical_path,
         status=status,
+        createdAt=created_at,
+        updatedAt=updated_at,
+        completedAt=completed_at,
         lastModified=last_modified,
         author=author,
         docType=doc_type,
@@ -373,6 +464,8 @@ def parse_document_file(
             raw=_json_safe({str(k): v for k, v in fm.items()}),
         ),
         metadata=metadata,
+        dates=dates,
+        timeline=timeline,
         content=body[:5000] if body else None,
     )
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -32,6 +33,7 @@ from backend.document_linking import (
     normalize_doc_type,
     normalize_ref_path,
 )
+from backend.date_utils import make_date_value
 
 _NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
 _KEY_WORKFLOW_COMMAND_MARKERS = (
@@ -143,6 +145,21 @@ def _phase_label(phase_token: str) -> str:
     return f"Phase {token}"
 
 
+def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
+    dates: dict[str, Any] = {}
+    for key, candidate in (
+        ("createdAt", make_date_value(row.get("created_at"), "medium", "repository", "session_record_created")),
+        ("updatedAt", make_date_value(row.get("updated_at"), "medium", "repository", "session_record_updated")),
+        ("startedAt", make_date_value(row.get("started_at"), "high", "session", "session_started")),
+        ("completedAt", make_date_value(row.get("ended_at"), "high", "session", "session_completed")),
+        ("endedAt", make_date_value(row.get("ended_at"), "high", "session", "session_completed")),
+        ("lastActivityAt", make_date_value(row.get("ended_at") or row.get("updated_at"), "medium", "session", "last_activity")),
+    ):
+        if candidate:
+            dates[key] = candidate
+    return dates
+
+
 def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
     summary_text = (summary or "").strip()
     if summary_text:
@@ -199,6 +216,12 @@ async def list_sessions(
     root_session_id: str | None = Query(None, description="Filter to a specific root thread family"),
     start_date: str | None = Query(None, description="ISO timestamp for start range"),
     end_date: str | None = Query(None, description="ISO timestamp for end range"),
+    created_start: str | None = Query(None, description="ISO timestamp for created-at range start"),
+    created_end: str | None = Query(None, description="ISO timestamp for created-at range end"),
+    completed_start: str | None = Query(None, description="ISO timestamp for completed-at range start"),
+    completed_end: str | None = Query(None, description="ISO timestamp for completed-at range end"),
+    updated_start: str | None = Query(None, description="ISO timestamp for updated-at range start"),
+    updated_end: str | None = Query(None, description="ISO timestamp for updated-at range end"),
     min_duration: int | None = Query(None, description="Minimum duration in seconds"),
     max_duration: int | None = Query(None, description="Maximum duration in seconds"),
 ):
@@ -222,6 +245,12 @@ async def list_sessions(
     if root_session_id: filters["root_session_id"] = root_session_id
     if start_date: filters["start_date"] = start_date
     if end_date: filters["end_date"] = end_date
+    if created_start: filters["created_start"] = created_start
+    if created_end: filters["created_end"] = created_end
+    if completed_start: filters["completed_start"] = completed_start
+    if completed_end: filters["completed_end"] = completed_end
+    if updated_start: filters["updated_start"] = updated_start
+    if updated_end: filters["updated_end"] = updated_end
     if min_duration is not None: filters["min_duration"] = min_duration
     if max_duration is not None: filters["max_duration"] = max_duration
 
@@ -272,6 +301,9 @@ async def list_sessions(
             tokensOut=s["tokens_out"],
             totalCost=s["total_cost"],
             startedAt=s["started_at"] or "",
+            endedAt=s.get("ended_at") or "",
+            createdAt=s.get("created_at") or "",
+            updatedAt=s.get("updated_at") or "",
             qualityRating=s["quality_rating"],
             frictionRating=s["friction_rating"],
             gitCommitHash=s["git_commit_hash"],
@@ -284,6 +316,7 @@ async def list_sessions(
             impactHistory=[],
             logs=[],
             sessionMetadata=session_metadata,
+            dates=_session_dates_payload(s),
         ))
         
     return PaginatedResponse(
@@ -430,6 +463,9 @@ async def get_session(session_id: str):
         tokensOut=s["tokens_out"],
         totalCost=s["total_cost"],
         startedAt=s["started_at"] or "",
+        endedAt=s.get("ended_at") or "",
+        createdAt=s.get("created_at") or "",
+        updatedAt=s.get("updated_at") or "",
         qualityRating=s["quality_rating"],
         frictionRating=s["friction_rating"],
         gitCommitHash=s["git_commit_hash"],
@@ -446,6 +482,33 @@ async def get_session(session_id: str):
                           # For now, return empty list.
         logs=session_logs,
         sessionMetadata=session_metadata,
+        dates=_session_dates_payload(s),
+        timeline=[
+            *(
+                [{
+                    "id": "session-started",
+                    "timestamp": s.get("started_at") or "",
+                    "label": "Session Started",
+                    "kind": "started",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "First session event timestamp",
+                }]
+                if s.get("started_at") else []
+            ),
+            *(
+                [{
+                    "id": "session-completed",
+                    "timestamp": s.get("ended_at") or "",
+                    "label": "Session Completed",
+                    "kind": "completed",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "Last session event timestamp",
+                }]
+                if s.get("ended_at") else []
+            ),
+        ],
     )
 
 
@@ -567,6 +630,20 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
     metadata_task_counts = metadata.get("taskCounts")
     if not isinstance(metadata_task_counts, dict):
         metadata_task_counts = {}
+    date_metadata = metadata.get("dates")
+    if not isinstance(date_metadata, dict):
+        date_metadata = {}
+    if not date_metadata.get("createdAt") and row.get("created_at"):
+        date_metadata["createdAt"] = make_date_value(row.get("created_at"), "medium", "repository", "document_record_created")
+    if not date_metadata.get("updatedAt") and row.get("updated_at"):
+        date_metadata["updatedAt"] = make_date_value(row.get("updated_at"), "medium", "repository", "document_record_updated")
+    if not date_metadata.get("lastActivityAt"):
+        last_activity = row.get("last_modified") or row.get("updated_at")
+        if last_activity:
+            date_metadata["lastActivityAt"] = make_date_value(last_activity, "medium", "repository", "document_last_activity")
+    timeline = metadata.get("timeline")
+    if not isinstance(timeline, list):
+        timeline = []
 
     frontmatter_obj = {
         "tags": fm.get("tags") if isinstance(fm.get("tags"), list) else [],
@@ -594,11 +671,19 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         doc_type=normalized_doc_type,
     )
 
+    completed_at = ""
+    raw_completed = date_metadata.get("completedAt")
+    if isinstance(raw_completed, dict):
+        completed_at = str(raw_completed.get("value") or "")
+
     return PlanDocument(
         id=str(row.get("id") or make_document_id(normalized_canonical)),
         title=str(row.get("title") or ""),
         filePath=file_path,
         status=str(row.get("status") or "active"),
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+        completedAt=completed_at,
         lastModified=str(row.get("last_modified") or ""),
         author=str(row.get("author") or ""),
         docType=normalized_doc_type,
@@ -645,6 +730,8 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
             "sessions": int((link_counts or {}).get("sessions", 0)),
             "documents": int((link_counts or {}).get("documents", 0)),
         },
+        dates=date_metadata,
+        timeline=[event for event in timeline if isinstance(event, dict)],
         content=(str(row.get("content") or "") if include_content else None),
     )
 

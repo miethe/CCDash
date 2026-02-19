@@ -1,6 +1,35 @@
 
 export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' | 'deferred';
 
+export type DateConfidence = 'high' | 'medium' | 'low';
+
+export interface DateValue {
+  value: string;
+  confidence: DateConfidence;
+  source: string;
+  reason?: string;
+}
+
+export interface EntityDates {
+  createdAt?: DateValue;
+  updatedAt?: DateValue;
+  completedAt?: DateValue;
+  plannedAt?: DateValue;
+  startedAt?: DateValue;
+  endedAt?: DateValue;
+  lastActivityAt?: DateValue;
+}
+
+export interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  label: string;
+  kind?: string;
+  confidence: DateConfidence;
+  source: string;
+  description?: string;
+}
+
 export interface ProjectTask {
   id: string;
   title: string;
@@ -127,6 +156,9 @@ export interface AgentSession {
   tokensOut: number;
   totalCost: number;
   startedAt: string;
+  endedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   qualityRating?: number; // 1-5
   frictionRating?: number; // 1-5
   toolsUsed: ToolUsage[];
@@ -140,6 +172,8 @@ export interface AgentSession {
   gitCommitHashes?: string[];
   gitAuthor?: string;
   gitBranch?: string;
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface PlanDocument {
@@ -149,6 +183,9 @@ export interface PlanDocument {
   canonicalPath?: string;
   status: string;
   statusNormalized?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
   lastModified: string;
   author: string;
   content?: string; // Raw markdown content
@@ -209,6 +246,8 @@ export interface PlanDocument {
     sessions: number;
     documents: number;
   };
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface AnalyticsMetric {
@@ -268,6 +307,8 @@ export interface LinkedDocument {
   frontmatterKeys?: string[];
   relatedRefs?: string[];
   prdRef?: string;
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface FeaturePhase {
@@ -292,9 +333,14 @@ export interface Feature {
   category: string;
   tags: string[];
   updatedAt: string;
+  plannedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
   linkedDocs: LinkedDocument[];
   phases: FeaturePhase[];
   relatedFeatures: string[];
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface PaginatedResponse<T> {

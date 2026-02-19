@@ -19,6 +19,7 @@ from backend.models import (
     ToolCallInfo,
     ToolUsage,
 )
+from backend.date_utils import file_metadata_dates, make_date_value
 
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
@@ -455,6 +456,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
     session_id = _make_id(path)
     session_status = _derive_session_status(entries, path)
+    fs_dates = file_metadata_dates(path)
     is_subagent = path.parent.name == "subagents"
     session_type = "subagent" if is_subagent else "session"
 
@@ -1193,6 +1195,38 @@ def parse_session_file(path: Path) -> AgentSession | None:
         git_commits.add(git_commit)
     sorted_commits = sorted(git_commits)
     primary_commit = git_commit or (sorted_commits[0] if sorted_commits else None)
+    session_dates: dict[str, Any] = {}
+    for key, candidate in (
+        ("createdAt", make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "session_file_created")),
+        ("updatedAt", make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "session_file_modified")),
+        ("startedAt", make_date_value(first_ts, "high", "session", "first_log_event")),
+        ("completedAt", make_date_value(last_ts, "high", "session", "last_log_event")),
+        ("endedAt", make_date_value(last_ts, "high", "session", "last_log_event")),
+        ("lastActivityAt", make_date_value(last_ts or fs_dates.get("updatedAt", ""), "high", "session", "last_activity")),
+    ):
+        if candidate:
+            session_dates[key] = candidate
+    timeline = []
+    if first_ts:
+        timeline.append({
+            "id": "session-started",
+            "timestamp": first_ts,
+            "label": "Session Started",
+            "kind": "started",
+            "confidence": "high",
+            "source": "session",
+            "description": "First session log event",
+        })
+    if last_ts:
+        timeline.append({
+            "id": "session-completed",
+            "timestamp": last_ts,
+            "label": "Session Completed",
+            "kind": "completed",
+            "confidence": "high",
+            "source": "session",
+            "description": "Last session log event",
+        })
 
     return AgentSession(
         id=session_id,
@@ -1208,6 +1242,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         tokensOut=tokens_out,
         totalCost=round(cost, 4),
         startedAt=first_ts,
+        endedAt=last_ts,
+        createdAt=fs_dates.get("createdAt", ""),
+        updatedAt=fs_dates.get("updatedAt", ""),
         gitBranch=git_branch or None,
         gitAuthor=git_author or None,
         gitCommitHash=primary_commit,
@@ -1217,6 +1254,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         toolsUsed=tools_used,
         impactHistory=impacts,
         logs=logs,
+        dates=session_dates,
+        timeline=timeline,
     )
 
 

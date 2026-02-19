@@ -178,10 +178,18 @@ class PostgresDocumentRepository:
 
     async def upsert(self, doc_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = doc_data.get("createdAt", "") or now
+        updated_at = doc_data.get("updatedAt", "") or doc_data.get("lastModified", "") or now
         frontmatter = doc_data.get("frontmatter", {})
-        metadata = doc_data.get("metadata", {})
+        raw_metadata = doc_data.get("metadata", {})
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        metadata_payload = dict(metadata)
+        if isinstance(doc_data.get("dates"), dict) and doc_data.get("dates"):
+            metadata_payload["dates"] = doc_data.get("dates")
+        if isinstance(doc_data.get("timeline"), list) and doc_data.get("timeline"):
+            metadata_payload["timeline"] = doc_data.get("timeline")
         fm_json = json.dumps(frontmatter if isinstance(frontmatter, dict) else {})
-        metadata_json = json.dumps(metadata if isinstance(metadata, dict) else {})
+        metadata_json = json.dumps(metadata_payload)
 
         canonical_path = str(doc_data.get("canonicalPath") or doc_data.get("filePath") or "")
         normalized_path = normalize_ref_path(canonical_path)
@@ -280,8 +288,8 @@ class PostgresDocumentRepository:
             doc_data.get("blockedTasks", 0),
             metadata_json,
             doc_data.get("parentDocId"),
-            doc_data.get("createdAt", now),
-            now,
+            created_at,
+            updated_at,
             doc_data.get("lastModified", ""),
             fm_json,
             doc_data.get("sourceFile", file_path),

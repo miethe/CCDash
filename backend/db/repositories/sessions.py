@@ -16,6 +16,8 @@ class SqliteSessionRepository:
 
     async def upsert(self, session_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = session_data.get("createdAt", "") or now
+        updated_at = session_data.get("updatedAt", "") or now
         await self.db.execute(
             """INSERT INTO sessions (
                 id, project_id, task_id, status, model,
@@ -63,7 +65,7 @@ class SqliteSessionRepository:
                 session_data.get("agentId"),
                 session_data.get("startedAt", ""),
                 session_data.get("endedAt", ""),
-                now, now,
+                created_at, updated_at,
                 session_data.get("sourceFile", ""),
             ),
         )
@@ -140,6 +142,24 @@ class SqliteSessionRepository:
         if filters.get("end_date"):
             where_clauses.append("started_at <= ?")
             params.append(filters["end_date"])
+        if filters.get("created_start"):
+            where_clauses.append("created_at >= ?")
+            params.append(filters["created_start"])
+        if filters.get("created_end"):
+            where_clauses.append("created_at <= ?")
+            params.append(filters["created_end"])
+        if filters.get("completed_start"):
+            where_clauses.append("ended_at >= ?")
+            params.append(filters["completed_start"])
+        if filters.get("completed_end"):
+            where_clauses.append("ended_at <= ?")
+            params.append(filters["completed_end"])
+        if filters.get("updated_start"):
+            where_clauses.append("updated_at >= ?")
+            params.append(filters["updated_start"])
+        if filters.get("updated_end"):
+            where_clauses.append("updated_at <= ?")
+            params.append(filters["updated_end"])
 
         # Duration range
         if filters.get("min_duration") is not None:
@@ -208,6 +228,24 @@ class SqliteSessionRepository:
         if filters.get("end_date"):
             where_clauses.append("started_at <= ?")
             params.append(filters["end_date"])
+        if filters.get("created_start"):
+            where_clauses.append("created_at >= ?")
+            params.append(filters["created_start"])
+        if filters.get("created_end"):
+            where_clauses.append("created_at <= ?")
+            params.append(filters["created_end"])
+        if filters.get("completed_start"):
+            where_clauses.append("ended_at >= ?")
+            params.append(filters["completed_start"])
+        if filters.get("completed_end"):
+            where_clauses.append("ended_at <= ?")
+            params.append(filters["completed_end"])
+        if filters.get("updated_start"):
+            where_clauses.append("updated_at >= ?")
+            params.append(filters["updated_start"])
+        if filters.get("updated_end"):
+            where_clauses.append("updated_at <= ?")
+            params.append(filters["updated_end"])
         if filters.get("min_duration") is not None:
             where_clauses.append("duration_seconds >= ?")
             params.append(filters["min_duration"])

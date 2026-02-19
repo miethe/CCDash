@@ -2318,6 +2318,12 @@ const SessionFilterBar: React.FC = () => {
         || localFilters.model_version
         || localFilters.start_date
         || localFilters.end_date
+        || localFilters.created_start
+        || localFilters.created_end
+        || localFilters.completed_start
+        || localFilters.completed_end
+        || localFilters.updated_start
+        || localFilters.updated_end
         || localFilters.include_subagents === false
     );
 
@@ -2406,6 +2412,57 @@ const SessionFilterBar: React.FC = () => {
                     className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
                     value={localFilters.end_date || ''}
                     onChange={e => handleChange('end_date', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">Created</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.created_start || ''}
+                    onChange={e => handleChange('created_start', e.target.value)}
+                />
+                <span className="text-slate-600">-</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.created_end || ''}
+                    onChange={e => handleChange('created_end', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">Completed</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.completed_start || ''}
+                    onChange={e => handleChange('completed_start', e.target.value)}
+                />
+                <span className="text-slate-600">-</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.completed_end || ''}
+                    onChange={e => handleChange('completed_end', e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">Updated</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.updated_start || ''}
+                    onChange={e => handleChange('updated_start', e.target.value)}
+                />
+                <span className="text-slate-600">-</span>
+                <input
+                    type="date"
+                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
+                    value={localFilters.updated_end || ''}
+                    onChange={e => handleChange('updated_end', e.target.value)}
                 />
             </div>
 
@@ -2965,6 +3022,9 @@ const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void;
             title={displayTitle}
             status={session.status}
             startedAt={session.startedAt}
+            endedAt={session.endedAt}
+            updatedAt={session.updatedAt}
+            dates={session.dates}
             model={{ raw: session.model, displayName: session.modelDisplayName }}
             metadata={session.sessionMetadata || null}
             onClick={onClick}

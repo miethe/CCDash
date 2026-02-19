@@ -112,6 +112,40 @@ const normalizeDocumentSubtype = (value: string, rootKind: string, docType: stri
     return 'document';
 };
 
+const getDateEpoch = (value?: string): number => {
+    const parsed = Date.parse(value || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const getDocumentDateValue = (doc: PlanDocument, key: 'createdAt' | 'updatedAt' | 'completedAt'): string => {
+    const fromDates = doc.dates?.[key]?.value;
+    if (fromDates) return fromDates;
+    if (key === 'updatedAt') return doc.updatedAt || doc.lastModified || '';
+    if (key === 'createdAt') return doc.createdAt || '';
+    return doc.completedAt || '';
+};
+
+const inDateRange = (value: string, from?: string, to?: string): boolean => {
+    if (!from && !to) return true;
+    const target = getDateEpoch(value);
+    if (!target) return false;
+    const fromEpoch = from ? getDateEpoch(from) : 0;
+    const toEpoch = to ? getDateEpoch(to) : Number.POSITIVE_INFINITY;
+    return target >= fromEpoch && target <= toEpoch + 86_399_000; // inclusive day range
+};
+
+const getPrimaryDocumentDate = (doc: PlanDocument): { label: string; value: string; confidence?: string } => {
+    const status = normalizeDocumentStatus(doc.statusNormalized || doc.status || '');
+    if (status === 'completed' || status === 'inferred_complete' || status === 'deferred') {
+        const completed = doc.dates?.completedAt?.value || doc.completedAt;
+        if (completed) {
+            return { label: 'Completed', value: completed, confidence: doc.dates?.completedAt?.confidence };
+        }
+    }
+    const updated = doc.dates?.updatedAt?.value || doc.updatedAt || doc.lastModified;
+    return { label: 'Updated', value: updated, confidence: doc.dates?.updatedAt?.confidence };
+};
+
 const FolderTreeItem = ({
     name,
     path,
@@ -180,6 +214,12 @@ export const PlanCatalog: React.FC = () => {
     const [prdFilter, setPrdFilter] = useState<string>('all');
     const [phaseFilter, setPhaseFilter] = useState<string>('all');
     const [frontmatterFilter, setFrontmatterFilter] = useState<'all' | 'with' | 'without'>('all');
+    const [createdFrom, setCreatedFrom] = useState('');
+    const [createdTo, setCreatedTo] = useState('');
+    const [updatedFrom, setUpdatedFrom] = useState('');
+    const [updatedTo, setUpdatedTo] = useState('');
+    const [completedFrom, setCompletedFrom] = useState('');
+    const [completedTo, setCompletedTo] = useState('');
     const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
 
     // Auto-select document from URL search params (e.g. /plans?doc=DOC-xxx)
@@ -258,6 +298,15 @@ export const PlanCatalog: React.FC = () => {
             if (frontmatterFilter === 'with' && !doc.hasFrontmatter) return false;
             if (frontmatterFilter === 'without' && doc.hasFrontmatter) return false;
 
+            const createdValue = getDocumentDateValue(doc, 'createdAt');
+            const updatedValue = getDocumentDateValue(doc, 'updatedAt');
+            const completedValue = getDocumentDateValue(doc, 'completedAt');
+            if (!inDateRange(createdValue, createdFrom || undefined, createdTo || undefined)) return false;
+            if (!inDateRange(updatedValue, updatedFrom || undefined, updatedTo || undefined)) return false;
+            if ((completedFrom || completedTo) && !inDateRange(completedValue, completedFrom || undefined, completedTo || undefined)) {
+                return false;
+            }
+
             if (!query) return true;
             const searchHaystack = [
                 doc.title,
@@ -296,6 +345,12 @@ export const PlanCatalog: React.FC = () => {
         prdFilter,
         phaseFilter,
         frontmatterFilter,
+        createdFrom,
+        createdTo,
+        updatedFrom,
+        updatedTo,
+        completedFrom,
+        completedTo,
     ]);
 
     // Tree Building Logic
@@ -389,6 +444,60 @@ export const PlanCatalog: React.FC = () => {
                                     <option value="without">Without frontmatter</option>
                                 </select>
                             </div>
+                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Created</label>
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        type="date"
+                                        value={createdFrom}
+                                        onChange={(e) => setCreatedFrom(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                    <span className="text-slate-600 text-[10px]">-</span>
+                                    <input
+                                        type="date"
+                                        value={createdTo}
+                                        onChange={(e) => setCreatedTo(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Updated</label>
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        type="date"
+                                        value={updatedFrom}
+                                        onChange={(e) => setUpdatedFrom(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                    <span className="text-slate-600 text-[10px]">-</span>
+                                    <input
+                                        type="date"
+                                        value={updatedTo}
+                                        onChange={(e) => setUpdatedTo(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Completed</label>
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        type="date"
+                                        value={completedFrom}
+                                        onChange={(e) => setCompletedFrom(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                    <span className="text-slate-600 text-[10px]">-</span>
+                                    <input
+                                        type="date"
+                                        value={completedTo}
+                                        onChange={(e) => setCompletedTo(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>,
@@ -439,6 +548,7 @@ export const PlanCatalog: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 overflow-y-auto h-full pb-6">
                         {filteredDocs.map(doc => {
                             const linkedFeatures = resolveLinkedFeatures(doc);
+                            const primaryDate = getPrimaryDocumentDate(doc);
                             return (
                                 <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group hover:shadow-lg">
                                     {linkedFeatures.length > 0 && (
@@ -486,7 +596,10 @@ export const PlanCatalog: React.FC = () => {
 
                                     <div className="border-t border-slate-800 pt-3 flex justify-between items-center text-xs text-slate-500">
                                         <span>{doc.author}</span>
-                                        <span>{new Date(doc.lastModified).toLocaleDateString()}</span>
+                                        <span>
+                                            {primaryDate.label}: {primaryDate.value ? new Date(primaryDate.value).toLocaleDateString() : '-'}
+                                            {primaryDate.confidence ? ` (${primaryDate.confidence})` : ''}
+                                        </span>
                                     </div>
                                 </div>
                             );
@@ -585,8 +698,14 @@ export const PlanCatalog: React.FC = () => {
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Modified</div>
-                                        <div className="text-sm text-slate-300">{new Date(activeDoc.lastModified).toLocaleDateString()}</div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Primary Date</div>
+                                        <div className="text-sm text-slate-300">
+                                            {(() => {
+                                                const primaryDate = getPrimaryDocumentDate(activeDoc);
+                                                if (!primaryDate.value) return '-';
+                                                return `${primaryDate.label}: ${new Date(primaryDate.value).toLocaleDateString()}`;
+                                            })()}
+                                        </div>
                                     </div>
                                     <div>
                                         <div className="text-[10px] text-slate-500 uppercase mb-2">Tags</div>

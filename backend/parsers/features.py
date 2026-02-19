@@ -32,6 +32,14 @@ from backend.document_linking import (
     normalize_ref_path,
 )
 from backend.parsers.status_writer import update_frontmatter_field
+from backend.date_utils import (
+    choose_earliest,
+    choose_first,
+    choose_latest,
+    file_metadata_dates,
+    make_date_value,
+    normalize_iso_date,
+)
 
 logger = logging.getLogger("ccdash")
 
@@ -136,6 +144,82 @@ def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str,
     project_rel = _project_relative(path, project_root)
     refs = extract_frontmatter_references(frontmatter)
     slug = _slug_from_path(path)
+    status_raw = str(frontmatter.get("status") or "")
+    status_normalized = normalize_doc_status(status_raw, default="")
+    fs_dates = file_metadata_dates(path)
+    fm_created = normalize_iso_date(frontmatter.get("created") or frontmatter.get("created_at"))
+    fm_updated = normalize_iso_date(
+        frontmatter.get("updated")
+        or frontmatter.get("updated_at")
+        or frontmatter.get("last_updated")
+    )
+    fm_completed = normalize_iso_date(
+        frontmatter.get("completed")
+        or frontmatter.get("completed_at")
+        or frontmatter.get("completion_date")
+    )
+
+    created_date = choose_first([
+        make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "file_birthtime"),
+        make_date_value(fm_created, "medium", "frontmatter", "created"),
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback"),
+    ])
+    updated_date = choose_first([
+        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "mtime"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated"),
+        make_date_value(fm_created, "low", "frontmatter", "created_fallback"),
+    ])
+    completed_date = choose_first([
+        make_date_value(fm_completed, "high", "frontmatter", "completed"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated_completion_fallback")
+        if status_normalized in _DOC_COMPLETION_STATUSES else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_completion_fallback")
+        if status_normalized in _DOC_COMPLETION_STATUSES else {},
+    ])
+    last_activity = choose_latest([updated_date, completed_date])
+
+    dates: dict[str, Any] = {}
+    if created_date:
+        dates["createdAt"] = created_date
+    if updated_date:
+        dates["updatedAt"] = updated_date
+    if completed_date:
+        dates["completedAt"] = completed_date
+    if last_activity:
+        dates["lastActivityAt"] = last_activity
+
+    timeline: list[dict[str, Any]] = []
+    if created_date:
+        timeline.append({
+            "id": "doc-created",
+            "timestamp": created_date["value"],
+            "label": "Document Created",
+            "kind": "created",
+            "confidence": created_date["confidence"],
+            "source": created_date["source"],
+            "description": created_date.get("reason", ""),
+        })
+    if updated_date:
+        timeline.append({
+            "id": "doc-updated",
+            "timestamp": updated_date["value"],
+            "label": "Last Updated",
+            "kind": "updated",
+            "confidence": updated_date["confidence"],
+            "source": updated_date["source"],
+            "description": updated_date.get("reason", ""),
+        })
+    if completed_date:
+        timeline.append({
+            "id": "doc-completed",
+            "timestamp": completed_date["value"],
+            "label": "Marked Complete",
+            "kind": "completed",
+            "confidence": completed_date["confidence"],
+            "source": completed_date["source"],
+            "description": completed_date.get("reason", ""),
+        })
+
     return {
         "file_path": project_rel,
         "slug": slug,
@@ -146,6 +230,12 @@ def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str,
         "related_refs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
         "feature_refs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
         "prd_ref": str(refs.get("prd") or ""),
+        "dates": dates,
+        "timeline": timeline,
+        "created_at": created_date.get("value", ""),
+        "updated_at": updated_date.get("value", ""),
+        "completed_at": completed_date.get("value", ""),
+        "status_normalized": status_normalized,
     }
 
 
@@ -182,9 +272,9 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
         tags = fm.get("tags", [])
         if isinstance(tags, str):
             tags = [tags]
-        updated = str(fm.get("updated", fm.get("created", "")))
         doc_meta = _extract_doc_metadata(path, project_root, fm)
         rel_path = doc_meta["file_path"]
+        updated = str(doc_meta.get("updated_at") or "")
 
         # Determine if this is a phase sub-plan (inside a sub-dir of an impl plan)
         # Phase sub-plans are files like impl_plans/harden-polish/discovery-import-fixes-v1/phase-1-bug-fixes.md
@@ -213,6 +303,8 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
                     "frontmatter_keys": doc_meta["frontmatter_keys"],
                     "related_refs": doc_meta["related_refs"],
                     "prd_ref": doc_meta["prd_ref"],
+                    "dates": doc_meta.get("dates", {}),
+                    "timeline": doc_meta.get("timeline", []),
                 })
             continue
 
@@ -227,6 +319,8 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
             "phase_docs": [],
+            "dates": doc_meta.get("dates", {}),
+            "timeline": doc_meta.get("timeline", []),
         }
 
     return plans
@@ -262,9 +356,9 @@ def _scan_prds(docs_dir: Path, project_root: Path) -> dict[str, dict]:
         tags = fm.get("tags", [])
         if isinstance(tags, str):
             tags = [tags]
-        updated = str(fm.get("updated", fm.get("created", "")))
         doc_meta = _extract_doc_metadata(path, project_root, fm)
         rel_path = doc_meta["file_path"]
+        updated = str(doc_meta.get("updated_at") or "")
 
         prds[slug] = {
             "title": title,
@@ -276,6 +370,8 @@ def _scan_prds(docs_dir: Path, project_root: Path) -> dict[str, dict]:
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
             "prd_ref": doc_meta["prd_ref"],
+            "dates": doc_meta.get("dates", {}),
+            "timeline": doc_meta.get("timeline", []),
         }
 
     return prds
@@ -384,11 +480,11 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
             if not isinstance(deferred, int):
                 deferred = 0
 
-            updated = str(fm.get("updated", fm.get("completed_at", "")))
+            doc_meta = _extract_doc_metadata(md_file, project_root, fm)
+            updated = str(doc_meta.get("updated_at") or "")
             if updated and updated > latest_updated:
                 latest_updated = updated
 
-            doc_meta = _extract_doc_metadata(md_file, project_root, fm)
             progress_docs.append({
                 "path": doc_meta["file_path"],
                 "title": str(fm.get("title", md_file.stem.replace("-", " ").title())),
@@ -397,6 +493,8 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
                 "frontmatter_keys": doc_meta["frontmatter_keys"],
                 "related_refs": doc_meta["related_refs"],
                 "prd_ref": doc_meta["prd_ref"],
+                "dates": doc_meta.get("dates", {}),
+                "timeline": doc_meta.get("timeline", []),
             })
 
             # Parse tasks
@@ -601,6 +699,8 @@ def _scan_auxiliary_docs(docs_dir: Path, progress_dir: Path, project_root: Path)
                 "prdRef": str(metadata["prd_ref"] or ""),
                 "featureRefs": feature_refs,
                 "aliases": aliases,
+                "dates": metadata.get("dates", {}),
+                "timeline": metadata.get("timeline", []),
             })
     return docs
 
@@ -650,6 +750,136 @@ def _phase_is_completion_equivalent(phase: FeaturePhase) -> bool:
     total = max(int(phase.totalTasks or 0), 0)
     completed = max(int(phase.completedTasks or 0), 0)
     return total > 0 and completed >= total
+
+
+def _date_candidate_from_value(value: Any, default_source: str = "") -> dict[str, str]:
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        normalized_value = normalize_iso_date(value.get("value"))
+        if not normalized_value:
+            return {}
+        return {
+            "value": normalized_value,
+            "confidence": str(value.get("confidence") or "low"),
+            "source": str(value.get("source") or default_source),
+            "reason": str(value.get("reason") or ""),
+        }
+    normalized_value = normalize_iso_date(getattr(value, "value", ""))
+    if not normalized_value:
+        return {}
+    return {
+        "value": normalized_value,
+        "confidence": str(getattr(value, "confidence", "low") or "low"),
+        "source": str(getattr(value, "source", "") or default_source),
+        "reason": str(getattr(value, "reason", "") or ""),
+    }
+
+
+def _timeline_event(
+    event_id: str,
+    label: str,
+    kind: str,
+    candidate: dict[str, str],
+    source: str = "",
+) -> dict[str, str]:
+    if not candidate:
+        return {}
+    return {
+        "id": event_id,
+        "timestamp": candidate.get("value", ""),
+        "label": label,
+        "kind": kind,
+        "confidence": candidate.get("confidence", "low"),
+        "source": source or candidate.get("source", ""),
+        "description": candidate.get("reason", ""),
+    }
+
+
+def _derive_feature_dates(feature: Feature) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    planning_doc_types = {"prd", "implementation_plan", "phase_plan", "report", "spec", "document"}
+    progress_doc_types = {"progress"}
+
+    planned_candidates: list[dict[str, str]] = []
+    started_candidates: list[dict[str, str]] = []
+    completed_candidates: list[dict[str, str]] = []
+    updated_candidates: list[dict[str, str]] = []
+    timeline: list[dict[str, Any]] = []
+
+    for doc in feature.linkedDocs:
+        doc_dates = getattr(doc, "dates", None)
+        doc_type = str(doc.docType or "").strip().lower()
+        created = _date_candidate_from_value(getattr(doc_dates, "createdAt", None), f"document:{doc_type}")
+        updated = _date_candidate_from_value(getattr(doc_dates, "updatedAt", None), f"document:{doc_type}")
+        completed = _date_candidate_from_value(getattr(doc_dates, "completedAt", None), f"document:{doc_type}")
+
+        if created and doc_type in planning_doc_types:
+            planned_candidates.append({**created, "reason": f"{doc_type} created"})
+        if created and doc_type in progress_doc_types:
+            started_candidates.append({**created, "reason": "progress doc created"})
+        if updated:
+            updated_candidates.append({**updated, "reason": f"{doc_type} updated"})
+        if updated and doc_type in progress_doc_types:
+            started_candidates.append({**updated, "reason": "progress doc updated"})
+        if completed:
+            completed_candidates.append({**completed, "reason": f"{doc_type} completed"})
+
+        for raw_event in getattr(doc, "timeline", []) or []:
+            if not isinstance(raw_event, dict):
+                continue
+            timestamp = normalize_iso_date(raw_event.get("timestamp"))
+            if not timestamp:
+                continue
+            timeline.append({
+                "id": f"{doc.id}-{raw_event.get('id') or raw_event.get('kind') or 'event'}",
+                "timestamp": timestamp,
+                "label": str(raw_event.get("label") or f"{doc_type} update"),
+                "kind": str(raw_event.get("kind") or "document"),
+                "confidence": str(raw_event.get("confidence") or "low"),
+                "source": str(raw_event.get("source") or f"document:{doc.filePath}"),
+                "description": str(raw_event.get("description") or ""),
+            })
+
+    if feature.updatedAt:
+        updated_candidates.append(make_date_value(feature.updatedAt, "low", "feature", "feature_updated"))
+
+    planned_at = choose_earliest(planned_candidates)
+    started_at = choose_earliest(started_candidates)
+    completed_at = choose_latest(completed_candidates)
+    updated_at = choose_latest(updated_candidates)
+
+    if feature.status in _TERMINAL_STATUSES and not completed_at:
+        completed_at = choose_first([
+            make_date_value(updated_at.get("value", ""), updated_at.get("confidence", "low"), updated_at.get("source", "derived"), "terminal_status_fallback"),
+        ])
+
+    last_activity = choose_latest([updated_at, completed_at])
+
+    derived_events = [
+        _timeline_event("feature-planned", "Feature Planned", "planned", planned_at, "feature"),
+        _timeline_event("feature-started", "Implementation Began", "started", started_at, "feature"),
+        _timeline_event("feature-completed", "Feature Completed", "completed", completed_at, "feature"),
+        _timeline_event("feature-updated", "Latest Feature Update", "updated", updated_at, "feature"),
+    ]
+    timeline.extend([event for event in derived_events if event])
+    timeline = sorted(
+        timeline,
+        key=lambda event: normalize_iso_date(str(event.get("timestamp") or "")),
+    )
+
+    dates: dict[str, Any] = {}
+    if planned_at:
+        dates["plannedAt"] = planned_at
+    if started_at:
+        dates["startedAt"] = started_at
+    if completed_at:
+        dates["completedAt"] = completed_at
+    if updated_at:
+        dates["updatedAt"] = updated_at
+    if last_activity:
+        dates["lastActivityAt"] = last_activity
+
+    return dates, timeline
 
 
 def _read_frontmatter_status_cached(
@@ -758,6 +988,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 frontmatterKeys=plan.get("frontmatter_keys", []),
                 relatedRefs=plan.get("related_refs", []),
                 prdRef=plan.get("prd_ref", ""),
+                dates=plan.get("dates", {}),
+                timeline=plan.get("timeline", []),
             )
         ]
 
@@ -774,6 +1006,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 frontmatterKeys=pd.get("frontmatter_keys", []),
                 relatedRefs=pd.get("related_refs", []),
                 prdRef=pd.get("prd_ref", ""),
+                dates=pd.get("dates", {}),
+                timeline=pd.get("timeline", []),
             ))
 
         features[slug] = Feature(
@@ -825,6 +1059,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 frontmatterKeys=prd.get("frontmatter_keys", []),
                 relatedRefs=prd.get("related_refs", []),
                 prdRef=prd.get("prd_ref", ""),
+                dates=prd.get("dates", {}),
+                timeline=prd.get("timeline", []),
             ))
             # Merge tags
             for tag in prd.get("tags", []):
@@ -849,6 +1085,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                     frontmatterKeys=prd.get("frontmatter_keys", []),
                     relatedRefs=prd.get("related_refs", []),
                     prdRef=prd.get("prd_ref", ""),
+                    dates=prd.get("dates", {}),
+                    timeline=prd.get("timeline", []),
                 )],
             )
 
@@ -912,6 +1150,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
+                    dates=progress_doc.get("dates", {}),
+                    timeline=progress_doc.get("timeline", []),
                 ))
                 existing_paths.add(file_path)
         else:
@@ -936,6 +1176,8 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
+                    dates=progress_doc.get("dates", {}),
+                    timeline=progress_doc.get("timeline", []),
                 ))
             features[prog_slug] = Feature(
                 id=prog_slug,
@@ -970,10 +1212,24 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                 frontmatterKeys=[str(v) for v in doc.get("frontmatterKeys", []) if isinstance(v, str)],
                 relatedRefs=[str(v) for v in doc.get("relatedRefs", []) if isinstance(v, str)],
                 prdRef=str(doc.get("prdRef") or ""),
+                dates=doc.get("dates", {}),
+                timeline=doc.get("timeline", []),
             ))
             existing_paths.add(file_path)
 
-    # Step 5: Link related features (same base slug, different versions)
+    # Step 5: Derive normalized feature dates and timeline from linked docs/progress evidence.
+    for feat in features.values():
+        dates, timeline = _derive_feature_dates(feat)
+        feat.dates = dates
+        feat.timeline = timeline
+        feat.plannedAt = str(dates.get("plannedAt", {}).get("value", ""))
+        feat.startedAt = str(dates.get("startedAt", {}).get("value", ""))
+        feat.completedAt = str(dates.get("completedAt", {}).get("value", ""))
+        derived_updated = str(dates.get("updatedAt", {}).get("value", ""))
+        if derived_updated:
+            feat.updatedAt = derived_updated
+
+    # Step 6: Link related features (same base slug, different versions)
     feature_list = list(features.values())
     base_groups: dict[str, list[str]] = {}
     for feat in feature_list:

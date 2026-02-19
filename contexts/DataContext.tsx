@@ -11,6 +11,12 @@ export interface SessionFilters {
     root_session_id?: string;
     start_date?: string;
     end_date?: string;
+    created_start?: string;
+    created_end?: string;
+    completed_start?: string;
+    completed_end?: string;
+    updated_start?: string;
+    updated_end?: string;
     min_duration?: number;
     max_duration?: number;
 }
@@ -146,6 +152,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (sessionFilters.root_session_id) params.append('root_session_id', sessionFilters.root_session_id);
             if (sessionFilters.start_date) params.append('start_date', sessionFilters.start_date);
             if (sessionFilters.end_date) params.append('end_date', sessionFilters.end_date);
+            if (sessionFilters.created_start) params.append('created_start', sessionFilters.created_start);
+            if (sessionFilters.created_end) params.append('created_end', sessionFilters.created_end);
+            if (sessionFilters.completed_start) params.append('completed_start', sessionFilters.completed_start);
+            if (sessionFilters.completed_end) params.append('completed_end', sessionFilters.completed_end);
+            if (sessionFilters.updated_start) params.append('updated_start', sessionFilters.updated_start);
+            if (sessionFilters.updated_end) params.append('updated_end', sessionFilters.updated_end);
             if (sessionFilters.min_duration) params.append('min_duration', sessionFilters.min_duration.toString());
             if (sessionFilters.max_duration) params.append('max_duration', sessionFilters.max_duration.toString());
 

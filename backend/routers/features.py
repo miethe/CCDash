@@ -100,6 +100,8 @@ def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
             frontmatterKeys=[str(v) for v in (item.get("frontmatterKeys") or []) if isinstance(v, str)],
             relatedRefs=[str(v) for v in (item.get("relatedRefs") or []) if isinstance(v, str)],
             prdRef=str(item.get("prdRef") or ""),
+            dates=item.get("dates") if isinstance(item.get("dates"), dict) else {},
+            timeline=item.get("timeline") if isinstance(item.get("timeline"), list) else [],
         ))
     return docs
 
@@ -127,6 +129,9 @@ class FeatureSessionLink(BaseModel):
     modelFamily: str = ""
     modelVersion: str = ""
     startedAt: str = ""
+    endedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
     totalCost: float = 0.0
     durationSeconds: int = 0
     gitCommitHash: str | None = None
@@ -372,9 +377,14 @@ async def list_features():
                 category=str(f.get("category") or ""),
                 tags=_normalize_tags(data.get("tags", [])),
                 updatedAt=str(f.get("updated_at") or ""),
+                plannedAt=str(data.get("plannedAt") or ""),
+                startedAt=str(data.get("startedAt") or ""),
+                completedAt=str(data.get("completedAt") or ""),
                 linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
                 phases=phases,
                 relatedFeatures=[str(v) for v in related_features if str(v).strip()],
+                dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
+                timeline=data.get("timeline") if isinstance(data.get("timeline"), list) else [],
             ))
         except Exception:
             logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
@@ -509,9 +519,14 @@ async def get_feature(feature_id: str):
         category=str(f.get("category") or ""),
         tags=_normalize_tags(data.get("tags", [])),
         updatedAt=str(f.get("updated_at") or ""),
+        plannedAt=str(data.get("plannedAt") or ""),
+        startedAt=str(data.get("startedAt") or ""),
+        completedAt=str(data.get("completedAt") or ""),
         linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
         phases=phases,
         relatedFeatures=[str(v) for v in related_features if str(v).strip()],
+        dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
+        timeline=data.get("timeline") if isinstance(data.get("timeline"), list) else [],
     )
 
 
@@ -614,6 +629,9 @@ async def get_feature_linked_sessions(feature_id: str):
             modelFamily=model_identity["modelFamily"],
             modelVersion=model_identity["modelVersion"],
             startedAt=str(session_row.get("started_at") or ""),
+            endedAt=str(session_row.get("ended_at") or ""),
+            createdAt=str(session_row.get("created_at") or ""),
+            updatedAt=str(session_row.get("updated_at") or ""),
             totalCost=float(session_row.get("total_cost") or 0.0),
             durationSeconds=int(session_row.get("duration_seconds") or 0),
             gitCommitHash=session_row.get("git_commit_hash"),

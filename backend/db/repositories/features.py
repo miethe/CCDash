@@ -15,6 +15,9 @@ class SqliteFeatureRepository:
 
     async def upsert(self, feature_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = feature_data.get("createdAt", "") or now
+        updated_at = feature_data.get("updatedAt", "") or now
+        completed_at = feature_data.get("completedAt", "")
         data_json = json.dumps(feature_data)
 
         await self.db.execute(
@@ -41,9 +44,9 @@ class SqliteFeatureRepository:
                 feature_data.get("totalTasks", 0),
                 feature_data.get("completedTasks", 0),
                 feature_data.get("parentFeatureId"),
-                feature_data.get("createdAt", now),
-                now,
-                feature_data.get("completedAt", ""),
+                created_at,
+                updated_at,
+                completed_at,
                 data_json,
             ),
         )

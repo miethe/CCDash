@@ -16,6 +16,8 @@ class PostgresSessionRepository:
 
     async def upsert(self, session_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = session_data.get("createdAt", "") or now
+        updated_at = session_data.get("updatedAt", "") or now
         # Postgres ON CONFLICT syntax is similar to SQLite
         query = """
             INSERT INTO sessions (
@@ -65,7 +67,7 @@ class PostgresSessionRepository:
             session_data.get("agentId"),
             session_data.get("startedAt", ""),
             session_data.get("endedAt", ""),
-            now, now,
+            created_at, updated_at,
             session_data.get("sourceFile", ""),
         )
 
@@ -137,6 +139,30 @@ class PostgresSessionRepository:
         if filters.get("end_date"):
             where_parts.append(f"started_at <= ${idx}")
             params.append(filters["end_date"])
+            idx += 1
+        if filters.get("created_start"):
+            where_parts.append(f"created_at >= ${idx}")
+            params.append(filters["created_start"])
+            idx += 1
+        if filters.get("created_end"):
+            where_parts.append(f"created_at <= ${idx}")
+            params.append(filters["created_end"])
+            idx += 1
+        if filters.get("completed_start"):
+            where_parts.append(f"ended_at >= ${idx}")
+            params.append(filters["completed_start"])
+            idx += 1
+        if filters.get("completed_end"):
+            where_parts.append(f"ended_at <= ${idx}")
+            params.append(filters["completed_end"])
+            idx += 1
+        if filters.get("updated_start"):
+            where_parts.append(f"updated_at >= ${idx}")
+            params.append(filters["updated_start"])
+            idx += 1
+        if filters.get("updated_end"):
+            where_parts.append(f"updated_at <= ${idx}")
+            params.append(filters["updated_end"])
             idx += 1
         if filters.get("min_duration") is not None:
             where_parts.append(f"duration_seconds >= ${idx}")
@@ -210,6 +236,30 @@ class PostgresSessionRepository:
         if filters.get("end_date"):
             where_parts.append(f"started_at <= ${idx}")
             params.append(filters["end_date"])
+            idx += 1
+        if filters.get("created_start"):
+            where_parts.append(f"created_at >= ${idx}")
+            params.append(filters["created_start"])
+            idx += 1
+        if filters.get("created_end"):
+            where_parts.append(f"created_at <= ${idx}")
+            params.append(filters["created_end"])
+            idx += 1
+        if filters.get("completed_start"):
+            where_parts.append(f"ended_at >= ${idx}")
+            params.append(filters["completed_start"])
+            idx += 1
+        if filters.get("completed_end"):
+            where_parts.append(f"ended_at <= ${idx}")
+            params.append(filters["completed_end"])
+            idx += 1
+        if filters.get("updated_start"):
+            where_parts.append(f"updated_at >= ${idx}")
+            params.append(filters["updated_start"])
+            idx += 1
+        if filters.get("updated_end"):
+            where_parts.append(f"updated_at <= ${idx}")
+            params.append(filters["updated_end"])
             idx += 1
         if filters.get("min_duration") is not None:
             where_parts.append(f"duration_seconds >= ${idx}")

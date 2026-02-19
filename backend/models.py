@@ -10,6 +10,35 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: int
     offset: int
     limit: int
+
+
+class DateValue(BaseModel):
+    value: str = ""
+    confidence: Literal["high", "medium", "low"] = "low"
+    source: str = ""
+    reason: str = ""
+
+
+class EntityDates(BaseModel):
+    createdAt: Optional[DateValue] = None
+    updatedAt: Optional[DateValue] = None
+    completedAt: Optional[DateValue] = None
+    plannedAt: Optional[DateValue] = None
+    startedAt: Optional[DateValue] = None
+    endedAt: Optional[DateValue] = None
+    lastActivityAt: Optional[DateValue] = None
+
+
+class TimelineEvent(BaseModel):
+    id: str
+    timestamp: str
+    label: str
+    kind: str = ""
+    confidence: Literal["high", "medium", "low"] = "low"
+    source: str = ""
+    description: str = ""
+
+
 # ── Session-related models ──────────────────────────────────────────
 
 class ToolCallInfo(BaseModel):
@@ -115,6 +144,9 @@ class AgentSession(BaseModel):
     tokensOut: int = 0
     totalCost: float = 0.0
     startedAt: str = ""
+    endedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
     qualityRating: int = 0
     frictionRating: int = 0
     gitCommitHash: Optional[str] = None
@@ -127,6 +159,8 @@ class AgentSession(BaseModel):
     impactHistory: list[ImpactPoint] = Field(default_factory=list)
     logs: list[SessionLog] = Field(default_factory=list)
     sessionMetadata: Optional[SessionMetadata] = None
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
 # ── Document-related models ────────────────────────────────────────
@@ -179,6 +213,9 @@ class PlanDocument(BaseModel):
     title: str
     filePath: str
     status: str = "active"
+    createdAt: str = ""
+    updatedAt: str = ""
+    completedAt: str = ""
     lastModified: str = ""
     author: str = ""
     docType: str = ""
@@ -204,6 +241,8 @@ class PlanDocument(BaseModel):
     frontmatter: DocumentFrontmatter = Field(default_factory=DocumentFrontmatter)
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
     linkCounts: DocumentLinkCounts = Field(default_factory=DocumentLinkCounts)
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
     content: Optional[str] = None  # markdown body, loaded on demand
 
 
@@ -284,6 +323,8 @@ class LinkedDocument(BaseModel):
     frontmatterKeys: list[str] = Field(default_factory=list)
     relatedRefs: list[str] = Field(default_factory=list)
     prdRef: str = ""
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
 class FeaturePhase(BaseModel):
@@ -308,6 +349,11 @@ class Feature(BaseModel):
     category: str = ""
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""
+    plannedAt: str = ""
+    startedAt: str = ""
+    completedAt: str = ""
     linkedDocs: list[LinkedDocument] = Field(default_factory=list)
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
