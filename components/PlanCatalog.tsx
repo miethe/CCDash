@@ -14,6 +14,104 @@ type ViewMode = 'card' | 'list' | 'folder';
 type ScopeMode = 'plans' | 'prds' | 'reports' | 'progress' | 'all';
 type ResolvedLinkedFeature = { id: string; status: string };
 
+const normalizeToken = (value: string): string =>
+    (value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+const normalizeDocumentStatus = (value: string): string => {
+    const token = normalizeToken(value);
+    const aliases: Record<string, string> = {
+        completed: 'completed',
+        complete: 'completed',
+        done: 'completed',
+        active: 'in_progress',
+        in_progress: 'in_progress',
+        inprogress: 'in_progress',
+        working: 'in_progress',
+        review: 'review',
+        draft: 'pending',
+        planning: 'pending',
+        pending: 'pending',
+        backlog: 'pending',
+        deferred: 'deferred',
+        blocked: 'blocked',
+        archived: 'archived',
+        inferred_complete: 'inferred_complete',
+    };
+    return aliases[token] || 'pending';
+};
+
+const normalizeDocumentType = (value: string): string => {
+    const token = normalizeToken(value);
+    const aliases: Record<string, string> = {
+        prd: 'prd',
+        product_requirements: 'prd',
+        requirements: 'prd',
+        implementation_plan: 'implementation_plan',
+        implementationplan: 'implementation_plan',
+        phase_plan: 'phase_plan',
+        phaseplan: 'phase_plan',
+        report: 'report',
+        implementation_report: 'report',
+        status_report: 'report',
+        qa_report: 'report',
+        benchmark: 'report',
+        postmortem: 'report',
+        spec: 'spec',
+        technical_spec: 'spec',
+        api_spec: 'spec',
+        progress: 'progress',
+    };
+    return aliases[token] || 'document';
+};
+
+const normalizeDocumentSubtype = (value: string, rootKind: string, docType: string): string => {
+    const token = normalizeToken(value);
+    const aliases: Record<string, string> = {
+        implementation_plan: 'implementation_plan',
+        implementationplan: 'implementation_plan',
+        phase_plan: 'phase_plan',
+        phaseplan: 'phase_plan',
+        prd: 'prd',
+        product_requirements: 'prd',
+        report: 'report',
+        implementation_report: 'report',
+        status_report: 'report',
+        qa_report: 'report',
+        postmortem: 'report',
+        benchmark: 'report',
+        spec: 'spec',
+        technical_spec: 'spec',
+        api_spec: 'spec',
+        design_spec: 'design_spec',
+        design_doc: 'design_doc',
+        spike: 'spike',
+        idea: 'idea',
+        bug_doc: 'bug_doc',
+        progress_phase: 'progress_phase',
+        phase_progress: 'progress_phase',
+        progress_all_phases: 'progress_all_phases',
+        all_phases_progress: 'progress_all_phases',
+        progress_quick_feature: 'progress_quick_feature',
+        quick_feature_progress: 'progress_quick_feature',
+        progress_other: 'progress_other',
+        document: 'document',
+    };
+    if (aliases[token]) return aliases[token];
+
+    if (rootKind === 'progress' || docType === 'progress') {
+        if (token.includes('quick')) return 'progress_quick_feature';
+        if (token.includes('all') && token.includes('phase')) return 'progress_all_phases';
+        if (token.startsWith('phase') || token.includes('phase')) return 'progress_phase';
+        return 'progress_other';
+    }
+    return 'document';
+};
+
 const FolderTreeItem = ({
     name,
     path,
@@ -123,9 +221,9 @@ export const PlanCatalog: React.FC = () => {
             Array.from(new Set(values.map(v => String(v || '').trim()).filter(Boolean))).sort()
         );
         return {
-            docSubtypes: collect(documents.map(d => d.docSubtype)),
-            docTypes: collect(documents.map(d => d.docType)),
-            statuses: collect(documents.map(d => d.statusNormalized || d.status)),
+            docSubtypes: collect(documents.map(d => normalizeDocumentSubtype(d.docSubtype || '', d.rootKind || '', d.docType || ''))),
+            docTypes: collect(documents.map(d => normalizeDocumentType(d.docType || ''))),
+            statuses: collect(documents.map(d => normalizeDocumentStatus(d.statusNormalized || d.status || ''))),
             categories: collect(documents.map(d => d.category)),
             features: collect(documents.map(d => d.featureSlugCanonical || d.featureSlugHint)),
             prds: collect(documents.map(d => d.prdRef || d.frontmatter?.prd)),
@@ -147,9 +245,12 @@ export const PlanCatalog: React.FC = () => {
                 if (doc.rootKind !== 'progress') return false;
             }
 
-            if (docSubtypeFilter !== 'all' && (doc.docSubtype || '') !== docSubtypeFilter) return false;
-            if (docTypeFilter !== 'all' && (doc.docType || '') !== docTypeFilter) return false;
-            if (statusFilter !== 'all' && (doc.statusNormalized || doc.status || '') !== statusFilter) return false;
+            if (
+                docSubtypeFilter !== 'all'
+                && normalizeDocumentSubtype(doc.docSubtype || '', doc.rootKind || '', doc.docType || '') !== docSubtypeFilter
+            ) return false;
+            if (docTypeFilter !== 'all' && normalizeDocumentType(doc.docType || '') !== docTypeFilter) return false;
+            if (statusFilter !== 'all' && normalizeDocumentStatus(doc.statusNormalized || doc.status || '') !== statusFilter) return false;
             if (categoryFilter !== 'all' && (doc.category || '') !== categoryFilter) return false;
             if (featureFilter !== 'all' && (doc.featureSlugCanonical || doc.featureSlugHint || '') !== featureFilter) return false;
             if (prdFilter !== 'all' && (doc.prdRef || doc.frontmatter?.prd || '') !== prdFilter) return false;

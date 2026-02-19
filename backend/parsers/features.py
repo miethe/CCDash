@@ -28,8 +28,10 @@ from backend.document_linking import (
     infer_project_root,
     is_generic_alias_token,
     is_feature_like_token,
+    normalize_doc_status,
     normalize_ref_path,
 )
+from backend.parsers.status_writer import update_frontmatter_field
 
 logger = logging.getLogger("ccdash")
 
@@ -39,13 +41,15 @@ logger = logging.getLogger("ccdash")
 # `deferred` is completion-equivalent with `done`.
 _STATUS_ORDER = {"backlog": 0, "in-progress": 1, "review": 2, "done": 3, "deferred": 3}
 _TERMINAL_STATUSES = {"done", "deferred"}
+_DOC_COMPLETION_STATUSES = {"completed", "deferred", "inferred_complete"}
+_DOC_WRITE_THROUGH_TYPES = {"prd", "implementation_plan", "phase_plan"}
+_INFERRED_COMPLETE_STATUS = "inferred_complete"
 
 
 _STATUS_MAP = {
     "completed": "done",
     "complete": "done",
     "done": "done",
-    "in-progress": "in-progress",
     "in_progress": "in-progress",
     "active": "in-progress",
     "review": "review",
@@ -54,43 +58,52 @@ _STATUS_MAP = {
     "blocked": "backlog",
     "planning": "backlog",
     "pending": "backlog",
-    "not-started": "backlog",
     "not_started": "backlog",
     "reference": "done",
     "deferred": "deferred",
     "defer": "deferred",
     "postponed": "deferred",
     "skipped": "deferred",
-    "wont-do": "deferred",
-    "won't-do": "deferred",
+    "wont_do": "deferred",
+    "won_t_do": "deferred",
+    "inferred_complete": "done",
 }
 
 _TASK_STATUS_MAP = {
     "completed": "done",
     "complete": "done",
     "done": "done",
-    "in-progress": "in-progress",
     "in_progress": "in-progress",
     "review": "review",
     "blocked": "backlog",
     "pending": "backlog",
-    "not-started": "backlog",
     "not_started": "backlog",
     "deferred": "deferred",
     "defer": "deferred",
     "postponed": "deferred",
     "skipped": "deferred",
-    "wont-do": "deferred",
-    "won't-do": "deferred",
+    "wont_do": "deferred",
+    "won_t_do": "deferred",
+    "inferred_complete": "done",
 }
 
 
+def _normalize_status_token(raw: str) -> str:
+    token = re.sub(r"[^a-z0-9]+", "_", (raw or "").strip().lower())
+    return re.sub(r"_+", "_", token).strip("_")
+
+
 def _map_status(raw: str) -> str:
-    return _STATUS_MAP.get(raw.lower().strip(), "backlog")
+    return _STATUS_MAP.get(_normalize_status_token(raw), "backlog")
 
 
 def _map_task_status(raw: str) -> str:
-    return _TASK_STATUS_MAP.get(raw.lower().strip(), "backlog")
+    return _TASK_STATUS_MAP.get(_normalize_status_token(raw), "backlog")
+
+
+def _is_completion_equivalent_doc_status(raw: str) -> bool:
+    normalized = normalize_doc_status(raw, default="")
+    return normalized in _DOC_COMPLETION_STATUSES
 
 
 # ── Frontmatter extraction ──────────────────────────────────────────
@@ -195,6 +208,7 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
                     "path": rel_path,
                     "title": title,
                     "slug": slug,
+                    "status": status,
                     "category": doc_meta["category"],
                     "frontmatter_keys": doc_meta["frontmatter_keys"],
                     "related_refs": doc_meta["related_refs"],
@@ -630,6 +644,92 @@ def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool
     return False
 
 
+def _phase_is_completion_equivalent(phase: FeaturePhase) -> bool:
+    if phase.status in _TERMINAL_STATUSES:
+        return True
+    total = max(int(phase.totalTasks or 0), 0)
+    completed = max(int(phase.completedTasks or 0), 0)
+    return total > 0 and completed >= total
+
+
+def _read_frontmatter_status_cached(
+    project_root: Path,
+    relative_path: str,
+    status_cache: dict[str, str],
+) -> str:
+    normalized = normalize_ref_path(relative_path) or relative_path
+    cached = status_cache.get(normalized)
+    if cached is not None:
+        return cached
+    absolute_path = project_root / normalized
+    status_value = ""
+    try:
+        text = absolute_path.read_text(encoding="utf-8")
+        fm = _extract_frontmatter(text)
+        status_value = str(fm.get("status") or "")
+    except Exception:
+        status_value = ""
+    status_cache[normalized] = status_value
+    return status_value
+
+
+def _reconcile_completion_equivalence(features: list[Feature], project_root: Path) -> int:
+    """Infer feature completion from equivalent doc collections and write through inferred status."""
+    status_cache: dict[str, str] = {}
+    write_updates = 0
+
+    for feature in features:
+        prd_statuses: list[str] = []
+        plan_statuses: list[str] = []
+        phase_plan_statuses: list[str] = []
+        completion_doc_paths: list[tuple[str, str]] = []
+
+        for doc in feature.linkedDocs:
+            doc_type = str(doc.docType or "").strip().lower()
+            if doc_type not in _DOC_WRITE_THROUGH_TYPES:
+                continue
+            status_value = _read_frontmatter_status_cached(project_root, doc.filePath, status_cache)
+            completion_doc_paths.append((doc_type, doc.filePath))
+            if doc_type == "prd":
+                prd_statuses.append(status_value)
+            elif doc_type == "implementation_plan":
+                plan_statuses.append(status_value)
+            elif doc_type == "phase_plan":
+                phase_plan_statuses.append(status_value)
+
+        prd_complete = any(_is_completion_equivalent_doc_status(s) for s in prd_statuses)
+        plan_complete = any(_is_completion_equivalent_doc_status(s) for s in plan_statuses)
+        phased_plan_complete = bool(phase_plan_statuses) and all(
+            _is_completion_equivalent_doc_status(s) for s in phase_plan_statuses
+        )
+        progress_complete = bool(feature.phases) and all(_phase_is_completion_equivalent(p) for p in feature.phases)
+
+        equivalent_complete = prd_complete or plan_complete or phased_plan_complete or progress_complete
+        if not equivalent_complete:
+            continue
+
+        feature.status = _max_status(feature.status, "done")
+
+        for doc_type, relative_path in completion_doc_paths:
+            if doc_type not in {"prd", "implementation_plan", "phase_plan"}:
+                continue
+            current_status = _read_frontmatter_status_cached(project_root, relative_path, status_cache)
+            if _is_completion_equivalent_doc_status(current_status):
+                continue
+            normalized = normalize_ref_path(relative_path) or relative_path
+            absolute_path = project_root / normalized
+            if not absolute_path.exists():
+                continue
+            try:
+                update_frontmatter_field(absolute_path, "status", _INFERRED_COMPLETE_STATUS)
+                status_cache[normalized] = _INFERRED_COMPLETE_STATUS
+                write_updates += 1
+            except Exception:
+                logger.exception("Failed to write inferred status for %s", absolute_path)
+
+    return write_updates
+
+
 def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
     """
     Discover features by cross-referencing impl plans, PRDs, and progress dirs.
@@ -887,7 +987,14 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
                     fid for fid in group if fid != feat_id
                 ]
 
+    inferred_updates = _reconcile_completion_equivalence(feature_list, project_root)
+
     result = sorted(feature_list, key=lambda f: f.updatedAt or "", reverse=True)
     terminal_count = sum(1 for f in result if f.status in _TERMINAL_STATUSES)
-    logger.info(f"Discovered {len(result)} features ({terminal_count} terminal)")
+    logger.info(
+        "Discovered %s features (%s terminal, %s inferred write-through updates)",
+        len(result),
+        terminal_count,
+        inferred_updates,
+    )
     return result

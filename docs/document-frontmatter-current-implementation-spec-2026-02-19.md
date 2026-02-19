@@ -233,12 +233,41 @@ feature_keys:
 | Source | Target field(s) | Transform | Used in app |
 | --- | --- | --- | --- |
 | `title` or filename stem | `title` | fallback title-case stem | cards/list/modal title |
-| `status` | `status`, `statusNormalized` | enum normalization (`draft -> pending`, etc.) | filters, badges |
+| `status` | `status`, `statusNormalized` | canonical enum normalization (`draft -> pending`, `done -> completed`, `inferred complete -> inferred_complete`, etc.) | filters, badges |
 | `author` or `audience[0]` | `author` | first audience entry wins | modal/list metadata |
 | file path | `canonicalPath`, `id` | project-relative canonical path + `DOC-` id | identity/deep-linking |
 | `doc_type`/`doctype` + path | `docType` | explicit override else path classification | scopes/filters |
 | path + `type` | `docSubtype`, `rootKind` | subtype logic (`progress_phase`, etc.) | scope tabs, filters |
 | `category` or path segment | `category` | explicit else inferred | filters |
+
+Status canonical set:
+
+- `pending`
+- `in_progress`
+- `review`
+- `completed`
+- `deferred`
+- `blocked`
+- `archived`
+- `inferred_complete`
+
+Subtype canonical set:
+
+- `implementation_plan`
+- `phase_plan`
+- `prd`
+- `report`
+- `spec`
+- `design_spec`
+- `design_doc`
+- `spike`
+- `idea`
+- `bug_doc`
+- `progress_phase`
+- `progress_all_phases`
+- `progress_quick_feature`
+- `progress_other`
+- `document`
 
 ## 5.2 Relationship extraction mapping
 
@@ -506,7 +535,19 @@ Supporting endpoints:
 - Document modal shows typed metadata, progress counters, owners/contributors, request IDs/commits, and linked entities.
 - Feature board resolves linked docs by ID, canonical path, then normalized file path fallback.
 
-## 10. Known Current Gaps
+## 10. Feature Completion Equivalence
+
+Feature completion inference treats these document collections as equivalent:
+
+- PRD completion
+- Plan completion (implementation plan, or all phase-plan docs when phase plans are present)
+- Completion across all linked progress phase docs
+
+If any equivalent collection is complete, the feature status is treated as `done` even when other linked docs are stale.
+
+When this inference occurs, CCDash writes through `status: inferred_complete` to linked PRD/Plan docs that are not already completion-equivalent.
+
+## 11. Known Current Gaps
 
 - No strict frontmatter schema validation/linting at ingest time.
 - No standalone `RequestLog` entity table (request IDs are indexed strings only).

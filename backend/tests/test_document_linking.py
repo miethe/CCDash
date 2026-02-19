@@ -10,6 +10,8 @@ from backend.document_linking import (
     feature_slug_from_path,
     infer_project_root,
     is_generic_phase_progress_slug,
+    normalize_doc_status,
+    normalize_doc_subtype,
 )
 
 
@@ -87,6 +89,17 @@ class DocumentLinkingTests(unittest.TestCase):
             classify_doc_subtype(".claude/progress/feature-a/phase-2-progress.md"),
             "progress_phase",
         )
+
+    def test_normalize_doc_status_maps_variants_to_canonical_values(self) -> None:
+        self.assertEqual(normalize_doc_status("Done"), "completed")
+        self.assertEqual(normalize_doc_status("inferred complete"), "inferred_complete")
+        self.assertEqual(normalize_doc_status("WIP"), "in_progress")
+        self.assertEqual(normalize_doc_status("unknown-status"), "pending")
+
+    def test_normalize_doc_subtype_maps_variants_to_canonical_values(self) -> None:
+        self.assertEqual(normalize_doc_subtype("implementation-report"), "report")
+        self.assertEqual(normalize_doc_subtype("quick feature progress", root_kind="progress"), "progress_quick_feature")
+        self.assertEqual(normalize_doc_subtype("phase progress", root_kind="progress"), "progress_phase")
 
     def test_extract_frontmatter_references_supports_additional_keys(self) -> None:
         refs = extract_frontmatter_references(

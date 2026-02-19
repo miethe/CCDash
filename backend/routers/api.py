@@ -25,7 +25,13 @@ from backend.session_mappings import (
     load_session_mappings,
 )
 from backend.model_identity import derive_model_identity
-from backend.document_linking import make_document_id, normalize_ref_path
+from backend.document_linking import (
+    make_document_id,
+    normalize_doc_status,
+    normalize_doc_subtype,
+    normalize_doc_type,
+    normalize_ref_path,
+)
 
 _NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
 _KEY_WORKFLOW_COMMAND_MARKERS = (
@@ -578,6 +584,16 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         "raw": fm.get("raw") if isinstance(fm.get("raw"), dict) else fm,
     }
 
+    raw_status_normalized = str(row.get("status_normalized") or row.get("status") or "")
+    normalized_status = normalize_doc_status(raw_status_normalized, default="pending")
+    raw_doc_type = str(row.get("doc_type") or "")
+    normalized_doc_type = normalize_doc_type(raw_doc_type, default="document")
+    normalized_subtype = normalize_doc_subtype(
+        str(row.get("doc_subtype") or ""),
+        root_kind=str(row.get("root_kind") or ""),
+        doc_type=normalized_doc_type,
+    )
+
     return PlanDocument(
         id=str(row.get("id") or make_document_id(normalized_canonical)),
         title=str(row.get("title") or ""),
@@ -585,14 +601,14 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         status=str(row.get("status") or "active"),
         lastModified=str(row.get("last_modified") or ""),
         author=str(row.get("author") or ""),
-        docType=str(row.get("doc_type") or ""),
+        docType=normalized_doc_type,
         category=str(row.get("category") or ""),
-        docSubtype=str(row.get("doc_subtype") or ""),
+        docSubtype=normalized_subtype,
         rootKind=str(row.get("root_kind") or "project_plans"),  # type: ignore[arg-type]
         canonicalPath=normalized_canonical,
         hasFrontmatter=bool(row.get("has_frontmatter")),
         frontmatterType=str(row.get("frontmatter_type") or ""),
-        statusNormalized=str(row.get("status_normalized") or ""),
+        statusNormalized=normalized_status,
         featureSlugHint=str(row.get("feature_slug_hint") or ""),
         featureSlugCanonical=str(row.get("feature_slug_canonical") or ""),
         prdRef=str(row.get("prd_ref") or ""),

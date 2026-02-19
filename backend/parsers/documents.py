@@ -26,6 +26,7 @@ from backend.document_linking import (
     feature_slug_from_path,
     is_feature_like_token,
     make_document_id,
+    normalize_doc_status,
 )
 
 _DONE_STATUSES = {"done", "completed", "complete"}
@@ -36,6 +37,9 @@ _NORMALIZED_STATUS = {
     "completed": "completed",
     "complete": "completed",
     "done": "completed",
+    "inferred_complete": "inferred_complete",
+    "inferred-complete": "inferred_complete",
+    "inferred complete": "inferred_complete",
     "active": "in_progress",
     "in-progress": "in_progress",
     "in_progress": "in_progress",
@@ -134,7 +138,8 @@ def _normalize_status(status: str) -> str:
     token = (status or "").strip().lower()
     if not token:
         return "pending"
-    return _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
+    mapped = _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
+    return normalize_doc_status(mapped, default="pending")
 
 
 def _normalize_task_counts(fm: dict[str, Any]) -> DocumentTaskCounts:

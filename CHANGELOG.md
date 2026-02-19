@@ -30,6 +30,10 @@
   - Deferred counts contribute to completion and progress calculations.
   - Features move to/remain in `Done` stage when all tasks are terminal (`done` or `deferred`) and now show a deferred caveat indicator.
   - Feature/phase/task filters now include deferred visibility.
+- Added completion-equivalence reconciliation across linked feature docs:
+  - Feature status now resolves to done when any equivalent completion collection is complete (`PRD`, `Plan`/phase plans, or all progress docs).
+  - Inferred completion writes through `status: inferred_complete` to linked PRD/Plan docs that are not already completion-equivalent.
+- Document filter facets now normalize status/subtype variants into canonical values.
 
 ### Fixed
 
@@ -40,3 +44,4 @@
 ### Docs
 
 - Added `/docs/setup-user-guide.md` with setup, startup, deployment-style runbook, and troubleshooting for `/api` connectivity errors.
+- Updated document entity/frontmatter specs with completion-equivalence and canonical filter-value behavior.

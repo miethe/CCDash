@@ -48,6 +48,15 @@ The sidebar supports faceted filtering by:
 - `Phase`
 - `Frontmatter presence`
 
+Filter values are normalized into a fixed canonical set before faceting so historical value drift does not fragment options.
+
+- `Status` canonical values: `pending`, `in_progress`, `review`, `completed`, `deferred`, `blocked`, `archived`, `inferred_complete`
+- `Subtype` canonical values:
+  - `implementation_plan`, `phase_plan`, `prd`, `report`, `spec`
+  - `design_spec`, `design_doc`, `spike`, `idea`, `bug_doc`
+  - `progress_phase`, `progress_all_phases`, `progress_quick_feature`, `progress_other`
+  - `document` (fallback)
+
 ## Search
 
 Search now matches across:
@@ -84,6 +93,18 @@ Links include:
 - `Document -> Document`
 
 Feature links prioritize explicit refs; path inference and referenced-document inheritance are fallback strategies.
+
+## Completion Equivalence and Write-Through
+
+Feature completion now treats the following document collections as equivalent completion sources:
+
+- PRD completion
+- Plan completion (top-level implementation plan, or all phase-plan docs when those are the plan shape)
+- All linked progress phase documents completed
+
+If any of those completion groups is complete, the Feature is treated as `done` even when other linked docs were not manually updated.
+
+When completion is inferred this way, CCDash writes through to linked PRD/Plan docs and sets their frontmatter status to `inferred_complete` when they were not already completion-equivalent.
 
 ## Known Operational Notes
 

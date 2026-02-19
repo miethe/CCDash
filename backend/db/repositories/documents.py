@@ -8,7 +8,13 @@ from typing import Any
 
 import aiosqlite
 
-from backend.document_linking import canonical_slug, normalize_ref_path
+from backend.document_linking import (
+    canonical_slug,
+    normalize_doc_status,
+    normalize_doc_subtype,
+    normalize_doc_type,
+    normalize_ref_path,
+)
 
 
 class SqliteDocumentRepository:
@@ -87,16 +93,16 @@ class SqliteDocumentRepository:
             params.append(str(filters["root_kind"]))
         if filters.get("doc_subtype"):
             clauses.append("doc_subtype = ?")
-            params.append(str(filters["doc_subtype"]))
+            params.append(normalize_doc_subtype(str(filters["doc_subtype"])))
         if filters.get("doc_type"):
             clauses.append("doc_type = ?")
-            params.append(str(filters["doc_type"]))
+            params.append(normalize_doc_type(str(filters["doc_type"])))
         if filters.get("category"):
             clauses.append("category = ?")
             params.append(str(filters["category"]))
         if filters.get("status"):
             clauses.append("(status_normalized = ? OR status = ?)")
-            status = str(filters["status"])
+            status = normalize_doc_status(str(filters["status"]))
             params.extend([status, status])
         if filters.get("feature"):
             token = canonical_slug(str(filters["feature"]).strip().lower())

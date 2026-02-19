@@ -8,7 +8,13 @@ from typing import Any
 
 import asyncpg
 
-from backend.document_linking import canonical_slug, normalize_ref_path
+from backend.document_linking import (
+    canonical_slug,
+    normalize_doc_status,
+    normalize_doc_subtype,
+    normalize_doc_type,
+    normalize_ref_path,
+)
 
 
 class PostgresDocumentRepository:
@@ -89,13 +95,14 @@ class PostgresDocumentRepository:
         if filters.get("root_kind"):
             clauses.append(f"root_kind = {add_param(str(filters['root_kind']))}")
         if filters.get("doc_subtype"):
-            clauses.append(f"doc_subtype = {add_param(str(filters['doc_subtype']))}")
+            doc_subtype = normalize_doc_subtype(str(filters["doc_subtype"]))
+            clauses.append(f"doc_subtype = {add_param(doc_subtype)}")
         if filters.get("doc_type"):
-            clauses.append(f"doc_type = {add_param(str(filters['doc_type']))}")
+            clauses.append(f"doc_type = {add_param(normalize_doc_type(str(filters['doc_type'])))}")
         if filters.get("category"):
             clauses.append(f"category = {add_param(str(filters['category']))}")
         if filters.get("status"):
-            status = str(filters["status"])
+            status = normalize_doc_status(str(filters["status"]))
             p1 = add_param(status)
             p2 = add_param(status)
             clauses.append(f"(status_normalized = {p1} OR status = {p2})")

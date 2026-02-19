@@ -134,6 +134,191 @@ _FEATURE_TYPE_DIR_TOKENS = {
     "quick-features",
 }
 
+_DOC_TYPE_ALIASES = {
+    "prd": "prd",
+    "product_requirements": "prd",
+    "product_requirements_doc": "prd",
+    "requirements": "prd",
+    "implementation_plan": "implementation_plan",
+    "implementation_plans": "implementation_plan",
+    "implementationplan": "implementation_plan",
+    "plan": "implementation_plan",
+    "phase_plan": "phase_plan",
+    "phase_plans": "phase_plan",
+    "phaseplan": "phase_plan",
+    "report": "report",
+    "reports": "report",
+    "implementation_report": "report",
+    "status_report": "report",
+    "qa_report": "report",
+    "benchmark": "report",
+    "postmortem": "report",
+    "spec": "spec",
+    "specification": "spec",
+    "technical_spec": "spec",
+    "api_spec": "spec",
+    "progress": "progress",
+}
+
+_DOC_STATUS_ALIASES = {
+    "completed": "completed",
+    "complete": "completed",
+    "done": "completed",
+    "active": "in_progress",
+    "in_progress": "in_progress",
+    "inprogress": "in_progress",
+    "working": "in_progress",
+    "wip": "in_progress",
+    "review": "review",
+    "in_review": "review",
+    "pending": "pending",
+    "draft": "pending",
+    "planning": "pending",
+    "backlog": "pending",
+    "todo": "pending",
+    "blocked": "blocked",
+    "waiting": "blocked",
+    "stalled": "blocked",
+    "deferred": "deferred",
+    "postponed": "deferred",
+    "skipped": "deferred",
+    "archived": "archived",
+    "inferred_complete": "inferred_complete",
+    "inferredcompleted": "inferred_complete",
+    "auto_complete": "inferred_complete",
+}
+
+_CANONICAL_DOC_STATUSES = {
+    "pending",
+    "in_progress",
+    "review",
+    "completed",
+    "deferred",
+    "blocked",
+    "archived",
+    "inferred_complete",
+}
+
+_DOC_SUBTYPE_ALIASES = {
+    "implementation_plan": "implementation_plan",
+    "implementationplan": "implementation_plan",
+    "plan": "implementation_plan",
+    "phase_plan": "phase_plan",
+    "phaseplan": "phase_plan",
+    "prd": "prd",
+    "product_requirements": "prd",
+    "product_requirements_doc": "prd",
+    "requirements": "prd",
+    "report": "report",
+    "implementation_report": "report",
+    "status_report": "report",
+    "qa_report": "report",
+    "benchmark": "report",
+    "postmortem": "report",
+    "spec": "spec",
+    "technical_spec": "spec",
+    "api_spec": "spec",
+    "design_spec": "design_spec",
+    "design_doc": "design_doc",
+    "spike": "spike",
+    "idea": "idea",
+    "bug_doc": "bug_doc",
+    "progress_phase": "progress_phase",
+    "phase_progress": "progress_phase",
+    "progress_all_phases": "progress_all_phases",
+    "all_phases_progress": "progress_all_phases",
+    "progress_quick_feature": "progress_quick_feature",
+    "quick_feature_progress": "progress_quick_feature",
+    "progress_other": "progress_other",
+    "document": "document",
+}
+
+_CANONICAL_DOC_SUBTYPES = {
+    "implementation_plan",
+    "phase_plan",
+    "prd",
+    "report",
+    "spec",
+    "design_spec",
+    "design_doc",
+    "spike",
+    "idea",
+    "bug_doc",
+    "progress_phase",
+    "progress_all_phases",
+    "progress_quick_feature",
+    "progress_other",
+    "document",
+}
+
+
+def _normalize_token(value: str) -> str:
+    token = re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower())
+    return re.sub(r"_+", "_", token).strip("_")
+
+
+def normalize_doc_status(value: str, default: str = "pending") -> str:
+    token = _normalize_token(value)
+    if not token:
+        return default
+    mapped = _DOC_STATUS_ALIASES.get(token, token)
+    if mapped in _CANONICAL_DOC_STATUSES:
+        return mapped
+    if token.startswith("inferred") and "complete" in token:
+        return "inferred_complete"
+    return default
+
+
+def normalize_doc_type(value: str, default: str = "document") -> str:
+    token = _normalize_token(value)
+    if not token:
+        return default
+    mapped = _DOC_TYPE_ALIASES.get(token)
+    if mapped:
+        return mapped
+    if "progress" in token:
+        return "progress"
+    if "phase" in token and "plan" in token:
+        return "phase_plan"
+    if "plan" in token:
+        return "implementation_plan"
+    if "prd" in token or "requirements" in token:
+        return "prd"
+    if "report" in token:
+        return "report"
+    if "spec" in token:
+        return "spec"
+    return default
+
+
+def normalize_doc_subtype(
+    value: str,
+    *,
+    root_kind: str = "",
+    doc_type: str = "",
+    default: str = "document",
+) -> str:
+    token = _normalize_token(value)
+    mapped = _DOC_SUBTYPE_ALIASES.get(token, token)
+    if mapped in _CANONICAL_DOC_SUBTYPES:
+        return mapped
+
+    normalized_root = _normalize_token(root_kind)
+    normalized_doc_type = normalize_doc_type(doc_type, default="")
+    if normalized_root == "progress" or normalized_doc_type == "progress":
+        if "quick" in token:
+            return "progress_quick_feature"
+        if "all" in token and "phase" in token:
+            return "progress_all_phases"
+        if token.startswith("phase") or "phase" in token:
+            return "progress_phase"
+        return "progress_other"
+
+    if normalized_doc_type in {"prd", "implementation_plan", "phase_plan", "report", "spec"}:
+        return normalized_doc_type
+
+    return default
+
 
 def _unique(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -404,7 +589,7 @@ def alias_tokens_from_path(path_value: str) -> set[str]:
 def classify_doc_type(path_value: str, frontmatter: dict[str, Any] | None = None) -> str:
     normalized = normalize_ref_path(path_value).lower()
     fm = frontmatter or {}
-    explicit = str(fm.get("doc_type") or fm.get("doctype") or "").strip().lower()
+    explicit = normalize_doc_type(str(fm.get("doc_type") or fm.get("doctype") or ""), default="")
     if explicit:
         return explicit
     if normalized.startswith("progress/") or "/progress/" in normalized:
@@ -435,19 +620,26 @@ def detect_root_kind(path_value: str) -> str:
 def classify_doc_subtype(path_value: str, frontmatter: dict[str, Any] | None = None) -> str:
     normalized = normalize_ref_path(path_value).lower()
     fm = frontmatter or {}
-    explicit_type = str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or "").strip().lower()
+    explicit_type_raw = str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or "")
+    explicit_type = normalize_doc_type(explicit_type_raw, default="")
+    explicit_type_token = _normalize_token(explicit_type_raw)
+    explicit_subtype = str(fm.get("doc_subtype") or fm.get("docSubtype") or fm.get("subtype") or "").strip()
     stem = Path(normalized).stem.lower() if normalized else ""
     parent = Path(normalized).parent.name.lower() if normalized else ""
-    if detect_root_kind(normalized) == "progress":
-        if parent == "quick-features" or explicit_type in {"quick-feature", "quick-feature-plan"}:
+    root_kind = detect_root_kind(normalized)
+    if root_kind == "progress":
+        if parent == "quick-features" or explicit_type_token in {"quick_feature", "quick_feature_plan"}:
             return "progress_quick_feature"
         if "all-phases" in stem:
             return "progress_all_phases"
         if stem.startswith("phase-"):
             return "progress_phase"
-        return "progress_other"
+        raw_subtype = explicit_subtype or "progress_other"
+        return normalize_doc_subtype(raw_subtype, root_kind=root_kind, doc_type="progress", default="progress_other")
 
     doc_type = classify_doc_type(normalized, fm)
+    if explicit_subtype:
+        return normalize_doc_subtype(explicit_subtype, root_kind=root_kind, doc_type=doc_type)
     if doc_type == "phase_plan":
         return "phase_plan"
     if doc_type == "implementation_plan":
@@ -468,7 +660,7 @@ def classify_doc_subtype(path_value: str, frontmatter: dict[str, Any] | None = N
         return "idea"
     if normalized.startswith("bugs/") or "/bugs/" in normalized:
         return "bug_doc"
-    return "document"
+    return normalize_doc_subtype("", root_kind=root_kind, doc_type=doc_type, default="document")
 
 
 def classify_doc_category(path_value: str, frontmatter: dict[str, Any] | None = None) -> str:
