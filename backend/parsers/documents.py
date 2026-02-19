@@ -159,20 +159,45 @@ def _frontmatter_date(fm: dict[str, Any], *keys: str) -> str:
 
 
 def _build_document_date_fields(path: Path, fm: dict[str, Any], status_normalized: str) -> tuple[str, str, str, dict[str, Any], list[dict[str, Any]]]:
+    return _build_document_date_fields_with_git(path, fm, status_normalized)
+
+
+def _build_document_date_fields_with_git(
+    path: Path,
+    fm: dict[str, Any],
+    status_normalized: str,
+    canonical_path: str = "",
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> tuple[str, str, str, dict[str, Any], list[dict[str, Any]]]:
     fs_dates = file_metadata_dates(path)
+    git_dates = (git_date_index or {}).get(canonical_path, {})
+    dirty = canonical_path in (dirty_paths or set())
+
     fm_created = _frontmatter_date(fm, "created", "created_at", "date_created")
     fm_updated = _frontmatter_date(fm, "updated", "updated_at", "last_updated", "modified", "modified_at")
     fm_completed = _frontmatter_date(fm, "completed", "completed_at", "completion_date", "done_at")
+    git_created = normalize_iso_date(git_dates.get("createdAt"))
+    git_updated = normalize_iso_date(git_dates.get("updatedAt"))
 
     created = choose_first([
-        make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "file_birthtime"),
-        make_date_value(fm_created, "medium", "frontmatter", "created"),
-        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback"),
+        make_date_value(fm_created, "high", "frontmatter", "created"),
+        make_date_value(git_created, "high", "git", "first_commit"),
+        make_date_value(fs_dates.get("createdAt", ""), "medium", "filesystem", "file_birthtime"),
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_created else {},
     ])
-    updated = choose_first([
-        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "mtime"),
+    updated_candidates = [
+        make_date_value(git_updated, "high", "git", "latest_commit"),
         make_date_value(fm_updated, "medium", "frontmatter", "updated"),
+        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "dirty_worktree")
+        if dirty else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_updated and not fm_updated else {},
         make_date_value(fm_created, "low", "frontmatter", "created_fallback"),
+    ]
+    updated = choose_latest([
+        candidate for candidate in updated_candidates if candidate
     ])
     completed = choose_first([
         make_date_value(fm_completed, "high", "frontmatter", "completed"),
@@ -306,6 +331,8 @@ def parse_document_file(
     path: Path,
     base_dir: Path,
     project_root: Path | None = None,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
 ) -> PlanDocument | None:
     """Parse a single markdown file into a PlanDocument."""
     try:
@@ -330,7 +357,14 @@ def parse_document_file(
     status_normalized = _normalize_status(status)
     tags = [str(v) for v in _to_string_list(fm.get("tags"))]
 
-    created_at, updated_at, completed_at, dates, timeline = _build_document_date_fields(path, fm, status_normalized)
+    created_at, updated_at, completed_at, dates, timeline = _build_document_date_fields_with_git(
+        path,
+        fm,
+        status_normalized,
+        canonical_path=canonical_path,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
     last_modified = updated_at or created_at
     audience = fm.get("audience", [])
     if isinstance(audience, list) and audience:

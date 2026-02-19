@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import re
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from typing import Any
 import aiosqlite
 import yaml
 
+from backend import config
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file
@@ -67,6 +69,7 @@ _KEY_WORKFLOW_COMMANDS = (
     "/dev:complete-user-story",
     "/fix:debug",
 )
+_LINK_STATE_METADATA_KEY = "entity_link_state"
 
 
 def _file_hash(path: Path) -> str:
@@ -224,6 +227,236 @@ class SyncEngine:
         self._operation_order: list[str] = []
         self._active_operation_ids: set[str] = set()
         self._max_operation_history = 40
+        self._git_doc_dates_cache_key = ""
+        self._git_doc_dates_cache_index: dict[str, dict[str, str]] = {}
+        self._git_doc_dates_cache_dirty: set[str] = set()
+        self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
+
+    def _to_git_scope(self, project_root: Path, value: Path | str) -> str:
+        raw = str(value)
+        try:
+            path = value if isinstance(value, Path) else Path(raw)
+            if path.is_absolute():
+                rel = path.resolve().relative_to(project_root.resolve())
+                raw = str(rel)
+        except Exception:
+            pass
+        return normalize_ref_path(raw)
+
+    def _build_git_doc_dates(
+        self,
+        project_root: Path,
+        scopes: list[Path | str],
+    ) -> tuple[dict[str, dict[str, str]], set[str]]:
+        if not project_root.exists():
+            return {}, set()
+
+        scope_tokens: list[str] = []
+        for scope in scopes:
+            token = self._to_git_scope(project_root, scope)
+            if token:
+                scope_tokens.append(token)
+        scope_tokens = sorted(set(scope_tokens))
+        if not scope_tokens:
+            return {}, set()
+
+        try:
+            repo_check = subprocess.run(
+                ["git", "-C", str(project_root), "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if repo_check.returncode != 0 or repo_check.stdout.strip().lower() != "true":
+                return {}, set()
+            head = subprocess.run(
+                ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if head.returncode != 0:
+                return {}, set()
+            head_sha = head.stdout.strip()
+        except Exception:
+            return {}, set()
+
+        cache_key = f"{project_root.resolve()}::{head_sha}::{'|'.join(scope_tokens)}"
+        index: dict[str, dict[str, str]]
+        if cache_key == self._git_doc_dates_cache_key:
+            index = dict(self._git_doc_dates_cache_index)
+        else:
+            index = {}
+            try:
+                log_cmd = [
+                    "git",
+                    "-C",
+                    str(project_root),
+                    "log",
+                    "--format=%ct",
+                    "--name-only",
+                    "--date-order",
+                    "--",
+                    *scope_tokens,
+                ]
+                result = subprocess.run(log_cmd, capture_output=True, text=True, check=False)
+                if result.returncode == 0:
+                    current_epoch = ""
+                    for raw_line in result.stdout.splitlines():
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        if line.isdigit():
+                            current_epoch = line
+                            continue
+                        if not current_epoch:
+                            continue
+                        normalized = normalize_ref_path(line)
+                        if not normalized:
+                            continue
+                        epoch = int(current_epoch)
+                        iso = datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
+                        row = index.setdefault(normalized, {})
+                        if "updatedAt" not in row:
+                            row["updatedAt"] = iso
+                        row["createdAt"] = iso
+            except Exception:
+                return {}, set()
+
+            self._git_doc_dates_cache_key = cache_key
+            self._git_doc_dates_cache_index = dict(index)
+
+        dirty_paths: set[str] = set()
+        try:
+            status_cmd = [
+                "git",
+                "-C",
+                str(project_root),
+                "status",
+                "--porcelain",
+                "--untracked-files=normal",
+                "--",
+                *scope_tokens,
+            ]
+            status_result = subprocess.run(status_cmd, capture_output=True, text=True, check=False)
+            if status_result.returncode == 0:
+                for raw_line in status_result.stdout.splitlines():
+                    line = raw_line.rstrip()
+                    if len(line) < 4:
+                        continue
+                    payload = line[3:].strip()
+                    if " -> " in payload:
+                        payload = payload.split(" -> ", 1)[1].strip()
+                    normalized = normalize_ref_path(payload)
+                    if normalized:
+                        dirty_paths.add(normalized)
+        except Exception:
+            dirty_paths = set()
+
+        self._git_doc_dates_cache_dirty = set(dirty_paths)
+        return dict(index), set(dirty_paths)
+
+    async def _load_link_state(self, project_id: str) -> dict[str, Any]:
+        raw_value: str | None = None
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                """
+                SELECT value
+                FROM app_metadata
+                WHERE entity_type = ? AND entity_id = ? AND key = ?
+                LIMIT 1
+                """,
+                ("project", project_id, _LINK_STATE_METADATA_KEY),
+            ) as cur:
+                row = await cur.fetchone()
+                raw_value = row[0] if row else None
+        else:
+            row = await self.db.fetchrow(
+                """
+                SELECT value
+                FROM app_metadata
+                WHERE entity_type = $1 AND entity_id = $2 AND key = $3
+                LIMIT 1
+                """,
+                "project",
+                project_id,
+                _LINK_STATE_METADATA_KEY,
+            )
+            raw_value = row["value"] if row else None
+
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    async def _save_link_state(
+        self,
+        project_id: str,
+        *,
+        trigger: str,
+        reason: str,
+        links_created: int,
+    ) -> None:
+        payload = json.dumps(
+            {
+                "logicVersion": self._linking_logic_version,
+                "lastRebuildAt": datetime.now(timezone.utc).isoformat(),
+                "trigger": trigger,
+                "reason": reason,
+                "linksCreated": int(links_created),
+            }
+        )
+        if isinstance(self.db, aiosqlite.Connection):
+            await self.db.execute(
+                """
+                INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                ("project", project_id, _LINK_STATE_METADATA_KEY, payload),
+            )
+            await self.db.commit()
+        else:
+            await self.db.execute(
+                """
+                INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                VALUES ($1, $2, $3, $4, NOW()::text)
+                ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                "project",
+                project_id,
+                _LINK_STATE_METADATA_KEY,
+                payload,
+            )
+
+    def _is_link_logic_version_stale(self, link_state: dict[str, Any]) -> bool:
+        last_version = str(link_state.get("logicVersion") or "").strip()
+        return last_version != self._linking_logic_version
+
+    def _should_rebuild_links_after_full_sync(
+        self,
+        *,
+        force: bool,
+        link_state: dict[str, Any],
+        stats: dict[str, Any],
+    ) -> tuple[bool, str]:
+        if force:
+            return True, "force"
+        if self._is_link_logic_version_stale(link_state):
+            return True, "logic_version_changed"
+        if any(
+            int(stats.get(key, 0)) > 0
+            for key in ("sessions_synced", "documents_synced", "tasks_synced", "features_synced")
+        ):
+            return True, "entities_changed"
+        return False, "up_to_date"
 
     async def start_operation(
         self,
@@ -485,21 +718,42 @@ class SyncEngine:
             # Phase 4: Features (derived from docs + progress)
             f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
             stats["features_synced"] = f_stats["synced"]
-            await self._update_operation(
-                operation_id,
-                phase="links",
-                message="Rebuilding entity links",
-                counters={"featuresSynced": stats["features_synced"]},
+            link_state = await self._load_link_state(project.id)
+            should_rebuild_links, rebuild_reason = self._should_rebuild_links_after_full_sync(
+                force=force,
+                link_state=link_state,
+                stats=stats,
             )
+            if should_rebuild_links:
+                await self._update_operation(
+                    operation_id,
+                    phase="links",
+                    message="Rebuilding entity links",
+                    counters={"featuresSynced": stats["features_synced"]},
+                )
 
-            # Phase 5: Auto-discover cross-references
-            l_stats = await self._rebuild_entity_links(
-                project.id,
-                docs_dir,
-                progress_dir,
-                operation_id=operation_id,
-            )
-            stats["links_created"] = l_stats["created"]
+                # Phase 5: Auto-discover cross-references
+                l_stats = await self._rebuild_entity_links(
+                    project.id,
+                    docs_dir,
+                    progress_dir,
+                    operation_id=operation_id,
+                )
+                stats["links_created"] = l_stats["created"]
+                await self._save_link_state(
+                    project.id,
+                    trigger=trigger,
+                    reason=rebuild_reason,
+                    links_created=stats["links_created"],
+                )
+            else:
+                await self._update_operation(
+                    operation_id,
+                    phase="links",
+                    message="Skipping entity link rebuild (no relevant changes)",
+                    counters={"featuresSynced": stats["features_synced"]},
+                    stats={"links_created": 0},
+                )
             await self._update_operation(
                 operation_id,
                 phase="analytics",
@@ -580,6 +834,12 @@ class SyncEngine:
                 operation_id=operation_id,
             )
             stats["created"] = int(l_stats.get("created", 0))
+            await self._save_link_state(
+                project_id,
+                trigger=trigger,
+                reason="explicit_rebuild",
+                links_created=stats["created"],
+            )
             if capture_analytics:
                 await self._update_operation(
                     operation_id,
@@ -743,7 +1003,7 @@ class SyncEngine:
 
         changed_files: list of (change_type, path) where change_type is 'modified'|'added'|'deleted'
         """
-        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0, "operation_id": ""}
+        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0, "links_created": 0, "operation_id": ""}
         if not operation_id and trigger != "watcher":
             operation_id = await self._start_operation(
                 "sync_changed_files",
@@ -763,6 +1023,31 @@ class SyncEngine:
             )
 
         should_resync_features = False
+        should_rebuild_links = False
+        project_root = infer_project_root(docs_dir, progress_dir)
+        root_scopes: list[Path] = []
+        if docs_dir.exists():
+            root_scopes.append(docs_dir)
+        if progress_dir.exists():
+            root_scopes.append(progress_dir)
+        needs_doc_git_context = False
+        dirty_overrides: set[str] = set()
+
+        for change_type, path in changed_files:
+            if path.suffix != ".md":
+                continue
+            in_docs_scope = docs_dir in path.parents or progress_dir in path.parents
+            if not in_docs_scope:
+                continue
+            needs_doc_git_context = True
+            if change_type != "deleted":
+                dirty_overrides.add(canonical_project_path(path, project_root))
+
+        git_date_index: dict[str, dict[str, str]] = {}
+        dirty_paths: set[str] = set(dirty_overrides)
+        if needs_doc_git_context and root_scopes:
+            git_date_index, indexed_dirty = self._build_git_doc_dates(project_root, root_scopes)
+            dirty_paths.update(indexed_dirty)
 
         try:
             for index, (change_type, path) in enumerate(changed_files, start=1):
@@ -772,30 +1057,55 @@ class SyncEngine:
                     if path.suffix == ".jsonl":
                         await self.session_repo.delete_by_source(str(path))
                         stats["sessions"] += 1
+                        should_rebuild_links = True
                     elif path.suffix == ".md":
                         await self.document_repo.delete_by_source(str(path))
                         await self.task_repo.delete_by_source(str(path))
                         if progress_dir in path.parents:
                             await self.task_repo.delete_by_source(_canonical_task_source(path, progress_dir))
                         stats["documents"] += 1
+                        should_rebuild_links = True
                         if docs_dir in path.parents or progress_dir in path.parents:
                             should_resync_features = True
                 else:
                     # Modified or added
                     if path.suffix == ".jsonl" and sessions_dir in path.parents:
-                        await self._sync_single_session(project_id, path)
-                        stats["sessions"] += 1
+                        if await self._sync_single_session(project_id, path):
+                            stats["sessions"] += 1
+                            should_rebuild_links = True
                     elif path.suffix == ".md":
                         if docs_dir in path.parents:
-                            await self._sync_single_document(project_id, path, docs_dir, progress_dir)
-                            stats["documents"] += 1
-                            should_resync_features = True
+                            synced = await self._sync_single_document(
+                                project_id,
+                                path,
+                                docs_dir,
+                                progress_dir,
+                                project_root=project_root,
+                                git_date_index=git_date_index,
+                                dirty_paths=dirty_paths,
+                            )
+                            if synced:
+                                stats["documents"] += 1
+                                should_resync_features = True
+                                should_rebuild_links = True
                         if progress_dir in path.parents:
-                            await self._sync_single_document(project_id, path, docs_dir, progress_dir)
-                            await self._sync_single_progress(project_id, path, progress_dir)
-                            stats["documents"] += 1
-                            stats["tasks"] += 1
-                            should_resync_features = True
+                            doc_synced = await self._sync_single_document(
+                                project_id,
+                                path,
+                                docs_dir,
+                                progress_dir,
+                                project_root=project_root,
+                                git_date_index=git_date_index,
+                                dirty_paths=dirty_paths,
+                            )
+                            task_synced = await self._sync_single_progress(project_id, path, progress_dir)
+                            if doc_synced:
+                                stats["documents"] += 1
+                            if task_synced:
+                                stats["tasks"] += 1
+                            if doc_synced or task_synced:
+                                should_resync_features = True
+                                should_rebuild_links = True
 
                 if operation_id and (index == len(changed_files) or index % 10 == 0):
                     await self._update_operation(
@@ -820,8 +1130,41 @@ class SyncEngine:
                         phase="features",
                         message="Resyncing derived features after changed files",
                     )
-                f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
+                f_stats = await self._sync_features(
+                    project_id,
+                    docs_dir,
+                    progress_dir,
+                    project_root=project_root,
+                    git_date_index=git_date_index,
+                    dirty_paths=dirty_paths,
+                )
                 stats["features"] = f_stats.get("synced", 0)
+                if stats["features"] > 0:
+                    should_rebuild_links = True
+
+            link_state = await self._load_link_state(project_id)
+            should_rebuild_for_version = self._is_link_logic_version_stale(link_state)
+            if should_rebuild_links or should_rebuild_for_version:
+                rebuild_reason = "changed_files" if should_rebuild_links else "logic_version_changed"
+                if operation_id:
+                    await self._update_operation(
+                        operation_id,
+                        phase="links",
+                        message="Rebuilding entity links after changed-file sync",
+                    )
+                l_stats = await self._rebuild_entity_links(
+                    project_id,
+                    docs_dir,
+                    progress_dir,
+                    operation_id=operation_id,
+                )
+                stats["links_created"] = int(l_stats.get("created", 0))
+                await self._save_link_state(
+                    project_id,
+                    trigger=trigger,
+                    reason=rebuild_reason,
+                    links_created=stats["links_created"],
+                )
 
             if operation_id:
                 await self._update_operation(
@@ -920,11 +1263,23 @@ class SyncEngine:
         if not roots:
             return stats
 
+        project_root = infer_project_root(docs_dir, progress_dir)
+        git_date_index, dirty_paths = self._build_git_doc_dates(project_root, roots)
+
         for root in roots:
             for md_file in sorted(root.rglob("*.md")):
                 if md_file.name.startswith("."):
                     continue
-                synced = await self._sync_single_document(project_id, md_file, docs_dir, progress_dir, force)
+                synced = await self._sync_single_document(
+                    project_id,
+                    md_file,
+                    docs_dir,
+                    progress_dir,
+                    force,
+                    project_root=project_root,
+                    git_date_index=git_date_index,
+                    dirty_paths=dirty_paths,
+                )
                 if synced:
                     stats["synced"] += 1
                 else:
@@ -939,6 +1294,9 @@ class SyncEngine:
         docs_dir: Path,
         progress_dir: Path,
         force: bool = False,
+        project_root: Path | None = None,
+        git_date_index: dict[str, dict[str, str]] | None = None,
+        dirty_paths: set[str] | None = None,
     ) -> bool:
         file_path = str(path)
         mtime = path.stat().st_mtime
@@ -948,10 +1306,16 @@ class SyncEngine:
             if cached and cached["file_mtime"] == mtime:
                 return False
 
-        project_root = infer_project_root(docs_dir, progress_dir)
+        project_root = project_root or infer_project_root(docs_dir, progress_dir)
         base_dir = progress_dir if progress_dir in path.parents else docs_dir
         t0 = time.monotonic()
-        doc = parse_document_file(path, base_dir, project_root=project_root)
+        doc = parse_document_file(
+            path,
+            base_dir,
+            project_root=project_root,
+            git_date_index=git_date_index,
+            dirty_paths=dirty_paths,
+        )
         parse_ms = int((time.monotonic() - t0) * 1000)
 
         if doc:
@@ -1043,11 +1407,41 @@ class SyncEngine:
 
     # ── Feature Sync ────────────────────────────────────────────────
 
-    async def _sync_features(self, project_id: str, docs_dir: Path, progress_dir: Path) -> dict:
+    async def _sync_features(
+        self,
+        project_id: str,
+        docs_dir: Path,
+        progress_dir: Path,
+        *,
+        project_root: Path | None = None,
+        git_date_index: dict[str, dict[str, str]] | None = None,
+        dirty_paths: set[str] | None = None,
+    ) -> dict:
         """Re-derive features from docs + progress and upsert all."""
         stats = {"synced": 0}
 
-        features = scan_features(docs_dir, progress_dir)
+        project_root = project_root or infer_project_root(docs_dir, progress_dir)
+        resolved_dirty_paths = set(dirty_paths or set())
+        if git_date_index is None:
+            roots: list[Path] = []
+            if docs_dir.exists():
+                roots.append(docs_dir)
+            if progress_dir.exists():
+                roots.append(progress_dir)
+            if roots:
+                resolved_git_date_index, indexed_dirty = self._build_git_doc_dates(project_root, roots)
+                resolved_dirty_paths.update(indexed_dirty)
+            else:
+                resolved_git_date_index = {}
+        else:
+            resolved_git_date_index = dict(git_date_index)
+
+        features = scan_features(
+            docs_dir,
+            progress_dir,
+            git_date_index=resolved_git_date_index,
+            dirty_paths=resolved_dirty_paths,
+        )
         for feature in features:
             try:
                 f_dict = feature.model_dump()

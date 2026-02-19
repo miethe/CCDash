@@ -150,5 +150,6 @@ Represents Markdown documentation. Contains:
     *   `GEMINI_API_KEY`: Enables AI insight features.
     *   `CCDASH_BACKEND_HOST` / `CCDASH_BACKEND_PORT`: Backend bind host/port for startup scripts.
     *   `CCDASH_API_PROXY_TARGET`: Vite proxy target for `/api` requests.
+    *   `CCDASH_LINKING_LOGIC_VERSION`: Link-rebuild version gate (default `1`). Bump when link inference logic changes to force one full relink.
 
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).

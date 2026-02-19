@@ -1,6 +1,7 @@
 import unittest
 
 from backend.db.sync_engine import (
+    SyncEngine,
     _extract_tagged_commands_from_message,
     _select_linking_commands,
     _select_preferred_command_event,
@@ -8,6 +9,11 @@ from backend.db.sync_engine import (
 
 
 class SyncEngineLinkingTests(unittest.TestCase):
+    def _build_engine_stub(self, version: str = "1") -> SyncEngine:
+        engine = SyncEngine.__new__(SyncEngine)
+        engine._linking_logic_version = version
+        return engine
+
     def test_select_linking_commands_filters_noise_and_prioritizes_execute_phase(self) -> None:
         commands = {
             "/clear",
@@ -55,6 +61,38 @@ class SyncEngineLinkingTests(unittest.TestCase):
                 ("/clear", ""),
             ],
         )
+
+    def test_should_rebuild_links_after_full_sync_when_logic_version_changes(self) -> None:
+        engine = self._build_engine_stub("2")
+        should_rebuild, reason = engine._should_rebuild_links_after_full_sync(
+            force=False,
+            link_state={"logicVersion": "1"},
+            stats={
+                "sessions_synced": 0,
+                "documents_synced": 0,
+                "tasks_synced": 0,
+                "features_synced": 0,
+            },
+        )
+
+        self.assertTrue(should_rebuild)
+        self.assertEqual(reason, "logic_version_changed")
+
+    def test_should_skip_rebuild_after_full_sync_when_unchanged_and_version_matches(self) -> None:
+        engine = self._build_engine_stub("1")
+        should_rebuild, reason = engine._should_rebuild_links_after_full_sync(
+            force=False,
+            link_state={"logicVersion": "1"},
+            stats={
+                "sessions_synced": 0,
+                "documents_synced": 0,
+                "tasks_synced": 0,
+                "features_synced": 0,
+            },
+        )
+
+        self.assertFalse(should_rebuild)
+        self.assertEqual(reason, "up_to_date")
 
 
 if __name__ == "__main__":

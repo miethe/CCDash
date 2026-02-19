@@ -140,13 +140,27 @@ def _project_relative(path: Path, project_root: Path) -> str:
     return canonical_project_path(path, project_root)
 
 
-def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str, Any]) -> dict[str, Any]:
+def _extract_doc_metadata(
+    path: Path,
+    project_root: Path,
+    frontmatter: dict[str, Any],
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> dict[str, Any]:
     project_rel = _project_relative(path, project_root)
     refs = extract_frontmatter_references(frontmatter)
     slug = _slug_from_path(path)
     status_raw = str(frontmatter.get("status") or "")
     status_normalized = normalize_doc_status(status_raw, default="")
     fs_dates = file_metadata_dates(path)
+    git_dates: dict[str, str] = {}
+    dirty = False
+    if isinstance(git_date_index, dict):
+        candidate = git_date_index.get(project_rel)
+        if isinstance(candidate, dict):
+            git_dates = candidate
+    if isinstance(dirty_paths, set):
+        dirty = project_rel in dirty_paths
     fm_created = normalize_iso_date(frontmatter.get("created") or frontmatter.get("created_at"))
     fm_updated = normalize_iso_date(
         frontmatter.get("updated")
@@ -158,15 +172,23 @@ def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str,
         or frontmatter.get("completed_at")
         or frontmatter.get("completion_date")
     )
+    git_created = normalize_iso_date(git_dates.get("createdAt"))
+    git_updated = normalize_iso_date(git_dates.get("updatedAt"))
 
     created_date = choose_first([
-        make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "file_birthtime"),
-        make_date_value(fm_created, "medium", "frontmatter", "created"),
-        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback"),
+        make_date_value(fm_created, "high", "frontmatter", "created"),
+        make_date_value(git_created, "high", "git", "first_commit"),
+        make_date_value(fs_dates.get("createdAt", ""), "medium", "filesystem", "file_birthtime"),
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_created else {},
     ])
-    updated_date = choose_first([
-        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "mtime"),
+    updated_date = choose_latest([
+        make_date_value(git_updated, "high", "git", "latest_commit"),
         make_date_value(fm_updated, "medium", "frontmatter", "updated"),
+        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "dirty_worktree")
+        if dirty else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_updated and not fm_updated else {},
         make_date_value(fm_created, "low", "frontmatter", "created_fallback"),
     ])
     completed_date = choose_first([
@@ -241,7 +263,12 @@ def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str,
 
 # ── Phase 1: Scan Implementation Plans ──────────────────────────────
 
-def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
+def _scan_impl_plans(
+    docs_dir: Path,
+    project_root: Path,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> dict[str, dict]:
     """Scan implementation_plans/ and return a dict keyed by slug."""
     impl_dir = docs_dir / "implementation_plans"
     plans: dict[str, dict] = {}
@@ -272,7 +299,7 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
         tags = fm.get("tags", [])
         if isinstance(tags, str):
             tags = [tags]
-        doc_meta = _extract_doc_metadata(path, project_root, fm)
+        doc_meta = _extract_doc_metadata(path, project_root, fm, git_date_index=git_date_index, dirty_paths=dirty_paths)
         rel_path = doc_meta["file_path"]
         updated = str(doc_meta.get("updated_at") or "")
 
@@ -328,7 +355,12 @@ def _scan_impl_plans(docs_dir: Path, project_root: Path) -> dict[str, dict]:
 
 # ── Phase 2: Scan PRDs ──────────────────────────────────────────────
 
-def _scan_prds(docs_dir: Path, project_root: Path) -> dict[str, dict]:
+def _scan_prds(
+    docs_dir: Path,
+    project_root: Path,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> dict[str, dict]:
     """Scan PRDs/ and return a dict keyed by slug."""
     prd_dir = docs_dir / "PRDs"
     prds: dict[str, dict] = {}
@@ -356,7 +388,7 @@ def _scan_prds(docs_dir: Path, project_root: Path) -> dict[str, dict]:
         tags = fm.get("tags", [])
         if isinstance(tags, str):
             tags = [tags]
-        doc_meta = _extract_doc_metadata(path, project_root, fm)
+        doc_meta = _extract_doc_metadata(path, project_root, fm, git_date_index=git_date_index, dirty_paths=dirty_paths)
         rel_path = doc_meta["file_path"]
         updated = str(doc_meta.get("updated_at") or "")
 
@@ -432,7 +464,12 @@ def _parse_progress_tasks(tasks_raw: list, source_file: str = "") -> list[Projec
     return tasks
 
 
-def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dict]:
+def _scan_progress_dirs(
+    progress_dir: Path,
+    project_root: Path,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> dict[str, dict]:
     """Scan progress/ subdirectories and return dict keyed by slug."""
     progress_data: dict[str, dict] = {}
     if not progress_dir.exists():
@@ -480,7 +517,7 @@ def _scan_progress_dirs(progress_dir: Path, project_root: Path) -> dict[str, dic
             if not isinstance(deferred, int):
                 deferred = 0
 
-            doc_meta = _extract_doc_metadata(md_file, project_root, fm)
+            doc_meta = _extract_doc_metadata(md_file, project_root, fm, git_date_index=git_date_index, dirty_paths=dirty_paths)
             updated = str(doc_meta.get("updated_at") or "")
             if updated and updated > latest_updated:
                 latest_updated = updated
@@ -655,7 +692,13 @@ def _linked_doc_id_from_path(file_path: str) -> str:
     return f"DOC-{token}"
 
 
-def _scan_auxiliary_docs(docs_dir: Path, progress_dir: Path, project_root: Path) -> list[dict[str, Any]]:
+def _scan_auxiliary_docs(
+    docs_dir: Path,
+    progress_dir: Path,
+    project_root: Path,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
     roots = [docs_dir, progress_dir]
@@ -670,7 +713,7 @@ def _scan_auxiliary_docs(docs_dir: Path, progress_dir: Path, project_root: Path)
             except Exception:
                 continue
             fm = _extract_frontmatter(text)
-            metadata = _extract_doc_metadata(path, project_root, fm)
+            metadata = _extract_doc_metadata(path, project_root, fm, git_date_index=git_date_index, dirty_paths=dirty_paths)
             file_path = str(metadata["file_path"])
             if not file_path or file_path in seen_paths:
                 continue
@@ -960,17 +1003,43 @@ def _reconcile_completion_equivalence(features: list[Feature], project_root: Pat
     return write_updates
 
 
-def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
+def scan_features(
+    docs_dir: Path,
+    progress_dir: Path,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> list[Feature]:
     """
     Discover features by cross-referencing impl plans, PRDs, and progress dirs.
 
     Priority: impl plans seed features, enriched with PRD + progress data.
     """
     project_root = infer_project_root(docs_dir, progress_dir)
-    impl_plans = _scan_impl_plans(docs_dir, project_root)
-    prds = _scan_prds(docs_dir, project_root)
-    progress_data = _scan_progress_dirs(progress_dir, project_root)
-    auxiliary_docs = _scan_auxiliary_docs(docs_dir, progress_dir, project_root)
+    impl_plans = _scan_impl_plans(
+        docs_dir,
+        project_root,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
+    prds = _scan_prds(
+        docs_dir,
+        project_root,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
+    progress_data = _scan_progress_dirs(
+        progress_dir,
+        project_root,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
+    auxiliary_docs = _scan_auxiliary_docs(
+        docs_dir,
+        progress_dir,
+        project_root,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
 
     features: dict[str, Feature] = {}
 

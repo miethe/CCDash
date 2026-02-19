@@ -34,6 +34,13 @@
   - Feature status now resolves to done when any equivalent completion collection is complete (`PRD`, `Plan`/phase plans, or all progress docs).
   - Inferred completion writes through `status: inferred_complete` to linked PRD/Plan docs that are not already completion-equivalent.
 - Document filter facets now normalize status/subtype variants into canonical values.
+- Document and feature date derivation now uses normalized source precedence with git-backed file history:
+  - batched `git log` extraction for `createdAt`/`updatedAt`
+  - dirty/untracked worktree detection for in-progress local edits
+  - parser fallback to frontmatter/filesystem when git data is unavailable
+- Link rebuild execution now uses cached-state gating:
+  - startup full sync skips relink when synced entities are unchanged and logic version matches
+  - full relink still runs on force sync, explicit rebuild endpoint, changed-file link-impact, or logic-version bump (`CCDASH_LINKING_LOGIC_VERSION`)
 
 ### Fixed
 
@@ -45,3 +52,5 @@
 
 - Added `/docs/setup-user-guide.md` with setup, startup, deployment-style runbook, and troubleshooting for `/api` connectivity errors.
 - Updated document entity/frontmatter specs with completion-equivalence and canonical filter-value behavior.
+- Updated sync/document developer docs with git date extraction strategy and one-time backfill workflow.
+- Documented linking rebuild gate and `CCDASH_LINKING_LOGIC_VERSION` usage for deployment-safe relink triggers.

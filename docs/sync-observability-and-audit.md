@@ -72,6 +72,21 @@ Every sync/rebuild operation tracks:
 4. If only links changed, use `POST /api/cache/rebuild-links` instead of full sync.
 5. For specific files, run `POST /api/cache/sync-paths`.
 
+## Date Metadata Notes
+
+- Full sync and changed-file sync now compute document git dates in batches (no per-file git process fanout).
+- Commit history is cached by repo `HEAD` and sync scope.
+- Dirty/untracked markdown files are checked each sync so local edits can update `updatedAt` confidence.
+- Feature date derivation receives this same git-backed document metadata.
+
+## Backfill Workflow (All Existing Docs)
+
+To refresh normalized date fields for all previously indexed docs/features:
+
+1. Trigger `POST /api/cache/sync` with `{ "force": true, "background": true }`.
+2. Poll operation status until `completed`.
+3. Re-open document/feature views (or refetch API data) to confirm updated dates/timelines.
+
 ## Code references
 
 - `/Users/miethe/dev/homelab/development/CCDash/backend/db/sync_engine.py`

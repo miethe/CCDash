@@ -33,6 +33,10 @@ This is the implementation-level reference for the document-entity enhancement p
     - `phaseToken`, `phaseNumber`
     - `overallProgress`, task counters
     - owners/contributors/request/commit refs
+    - normalized `dates` + `timeline` with confidence/source metadata
+
+- `backend/parsers/features.py`
+  - Reuses document-level date extraction for linked docs when deriving feature timelines/dates.
 
 ## Sync and linking
 
@@ -41,6 +45,7 @@ This is the implementation-level reference for the document-entity enhancement p
   - Synces changed progress markdown into both `documents` and `tasks`
   - Rebuilds document links to features/tasks/sessions/documents
   - Uses canonical project root inference
+  - Builds git date metadata in batches (no per-file git calls)
 
 ## Storage
 
@@ -138,6 +143,54 @@ Expected outcomes:
 - `documents` populated for plans + progress markdown
 - typed columns and `document_refs` filled
 - link graph rebuilt with document-centric mappings
+- date fields recomputed from normalized precedence (frontmatter + git + filesystem)
+
+## Date Resolution Strategy
+
+`createdAt` precedence:
+
+1. frontmatter `created*` (`high`)
+2. git first commit touching file (`high`)
+3. filesystem birthtime (`medium`)
+4. filesystem mtime fallback (`low`)
+
+`updatedAt` precedence:
+
+1. git latest commit touching file (`high`)
+2. frontmatter `updated*` (`medium`)
+3. filesystem mtime when file is dirty/untracked (`high`)
+4. filesystem mtime fallback (`low`)
+5. frontmatter created fallback (`low`)
+
+`completedAt` precedence:
+
+1. frontmatter `completed*` (`high`)
+2. frontmatter `updated*` for completion-equivalent statuses (`medium`)
+3. filesystem mtime fallback for completion-equivalent statuses (`low`)
+
+Implementation references:
+
+- `backend/db/sync_engine.py` (`_build_git_doc_dates`, `_sync_documents`, `sync_changed_files`, `_sync_features`)
+- `backend/parsers/documents.py` (`_build_document_date_fields_with_git`)
+- `backend/parsers/features.py` (`_extract_doc_metadata`, `scan_features`)
+
+## One-Time Date Backfill (Existing Data)
+
+Use a full forced sync to recalculate and persist dates for all docs/features:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/cache/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"force": true, "background": true, "trigger": "api"}'
+```
+
+Then poll operation status until `completed`:
+
+```bash
+curl http://127.0.0.1:8000/api/cache/operations/<operation_id>
+```
+
+This backfills existing rows; no manual per-file migration is required.
 
 ## Tests Added/Updated
 

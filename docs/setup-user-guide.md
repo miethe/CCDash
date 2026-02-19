@@ -22,6 +22,7 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_BACKEND_PORT` (default `8000`)
 - `CCDASH_API_PROXY_TARGET` (default `http://127.0.0.1:8000`)
 - `CCDASH_PYTHON` (optional explicit Python path)
+- `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
 
 ## 3) Install Backend Dependencies
 
@@ -42,6 +43,7 @@ What this does:
 - Starts backend first and waits for `GET /api/health` to become healthy
 - Starts Vite frontend only after backend is ready
 - Shuts both down together on Ctrl+C
+- Startup sync reuses cached links when synced entities are unchanged; full relink runs on force sync, entity changes, explicit rebuild, or linking-logic version bump
 
 ## Optional: Run Services Separately
 
