@@ -29,7 +29,7 @@ export const Dashboard: React.FC = () => {
     return sessions.map(s => ({
       date: s.startedAt?.split('T')[0] || 'Unknown',
       cost: s.totalCost,
-      featuresShipped: tasks.filter(t => t.status === 'done').length,
+      featuresShipped: tasks.filter(t => t.status === 'done' || t.status === 'deferred').length,
       avgQuality: s.qualityRating || 4,
     }));
   }, [sessions, tasks]);

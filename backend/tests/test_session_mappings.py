@@ -30,9 +30,11 @@ class SessionMappingsTests(unittest.TestCase):
         assert classified is not None
         self.assertEqual(classified.get("sessionTypeLabel"), "Phased Execution")
         self.assertEqual(classified.get("relatedPhases"), ["4"])
+        self.assertEqual(classified.get("relatedFilePath"), "docs/project_plans/implementation_plans/features/example-v1.md")
         fields = {item["id"]: item["value"] for item in classified.get("fields", [])}
         self.assertEqual(fields.get("related-command"), "/dev:execute-phase")
         self.assertEqual(fields.get("related-phases"), "4")
+        self.assertEqual(fields.get("feature-path"), "docs/project_plans/implementation_plans/features/example-v1.md")
 
     def test_classify_session_key_metadata_uses_highest_priority_match(self) -> None:
         mappings = default_session_mappings()

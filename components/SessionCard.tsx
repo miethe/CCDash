@@ -5,6 +5,7 @@ export interface SessionCardMetadata {
   sessionTypeLabel?: string;
   relatedCommand?: string;
   relatedPhases?: string[];
+  relatedFilePath?: string;
   fields?: Array<{ id: string; label: string; value: string }>;
 }
 
@@ -62,6 +63,7 @@ export const extractSessionCardIndicators = (metadata?: SessionCardMetadata | nu
   sessionTypeLabel: string;
   relatedCommand: string;
   relatedPhases: string[];
+  relatedFilePath: string;
 } => {
   const sessionTypeLabel = (metadata?.sessionTypeLabel || '').trim();
   const fields = Array.isArray(metadata?.fields) ? metadata?.fields : [];
@@ -77,7 +79,20 @@ export const extractSessionCardIndicators = (metadata?: SessionCardMetadata | nu
     .map(token => token.trim())
     .filter(Boolean);
   const relatedPhases = Array.from(new Set((relatedPhasesRaw.length > 0 ? relatedPhasesRaw : relatedPhasesFallback).filter(Boolean)));
-  return { sessionTypeLabel, relatedCommand, relatedPhases };
+  const relatedFilePath = (
+    metadata?.relatedFilePath
+    || fieldById('feature-path')
+    || fieldById('related-file-path')
+  ).trim();
+
+  return { sessionTypeLabel, relatedCommand, relatedPhases, relatedFilePath };
+};
+
+const fileNameFromPath = (path: string): string => {
+  const normalized = (path || '').replace(/\\/g, '/').trim();
+  if (!normalized) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] || normalized;
 };
 
 export const deriveSessionCardTitle = (sessionId: string, explicitTitle?: string, metadata?: SessionCardMetadata | null): string => {
@@ -120,8 +135,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onClick,
   children,
 }) => {
-  const { sessionTypeLabel, relatedCommand, relatedPhases } = extractSessionCardIndicators(metadata);
-  const hasIndicators = Boolean(sessionTypeLabel || relatedCommand || relatedPhases.length > 0);
+  const { sessionTypeLabel, relatedCommand, relatedPhases, relatedFilePath } = extractSessionCardIndicators(metadata);
+  const relatedFileName = fileNameFromPath(relatedFilePath);
+  const hasIndicators = Boolean(sessionTypeLabel || relatedCommand || relatedPhases.length > 0 || relatedFileName);
   const modelDisplay = formatModelDisplayName(model.raw, model.displayName);
 
   return (
@@ -151,14 +167,22 @@ export const SessionCard: React.FC<SessionCardProps> = ({
                     {sessionTypeLabel}
                   </span>
                 )}
+                {relatedCommand && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/35 text-cyan-200 bg-cyan-500/10 font-mono">
+                    {relatedCommand}
+                  </span>
+                )}
                 {relatedPhases.map(phase => (
                   <span key={`${sessionId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200 bg-amber-500/10 font-semibold">
                     {formatPhaseIndicator(phase)}
                   </span>
                 ))}
-                {relatedCommand && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/35 text-cyan-200 bg-cyan-500/10 font-mono">
-                    {relatedCommand}
+                {relatedFileName && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-fuchsia-500/35 text-fuchsia-200 bg-fuchsia-500/10 font-mono"
+                    title={relatedFilePath}
+                  >
+                    {relatedFileName}
                   </span>
                 )}
               </div>

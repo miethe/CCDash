@@ -19,7 +19,7 @@ from backend.routers.api import (
 from backend.routers.analytics import analytics_router
 from backend.routers.projects import projects_router
 from backend.routers.features import features_router
-from backend.routers.cache import cache_router
+from backend.routers.cache import cache_router, links_router
 from backend.routers.session_mappings import session_mappings_router
 
 from backend.db import connection, migrations, sync_engine
@@ -106,6 +106,7 @@ app.include_router(analytics_router)
 app.include_router(projects_router)
 app.include_router(features_router)
 app.include_router(cache_router)
+app.include_router(links_router)
 app.include_router(session_mappings_router)
 
 

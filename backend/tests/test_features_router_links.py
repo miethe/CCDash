@@ -22,11 +22,21 @@ class FeatureRouterLinkHelpersTests(unittest.TestCase):
 
         self.assertEqual(title, "/dev:execute-phase - marketplace-source-detection-improvements-v1")
 
-    def test_primary_link_accepts_key_command_with_moderate_confidence(self) -> None:
+    def test_primary_link_does_not_promote_low_confidence_key_command(self) -> None:
         is_primary = features_router._is_primary_session_link(
             "session_evidence",
             0.55,
             {"file_read"},
+            ["/dev:execute-phase"],
+        )
+
+        self.assertFalse(is_primary)
+
+    def test_primary_link_accepts_high_confidence_command_path(self) -> None:
+        is_primary = features_router._is_primary_session_link(
+            "session_evidence",
+            0.8,
+            {"command_args_path"},
             ["/dev:execute-phase"],
         )
 

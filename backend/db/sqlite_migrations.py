@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -184,11 +184,31 @@ CREATE TABLE IF NOT EXISTS documents (
     project_id     TEXT NOT NULL,
     title          TEXT NOT NULL,
     file_path      TEXT NOT NULL,
+    canonical_path TEXT DEFAULT '',
+    root_kind      TEXT DEFAULT 'project_plans',
+    doc_subtype    TEXT DEFAULT '',
+    file_name      TEXT DEFAULT '',
+    file_stem      TEXT DEFAULT '',
+    file_dir       TEXT DEFAULT '',
+    has_frontmatter INTEGER DEFAULT 0,
+    frontmatter_type TEXT DEFAULT '',
     status         TEXT DEFAULT 'active',
+    status_normalized TEXT DEFAULT '',
     author         TEXT DEFAULT '',
     content        TEXT,
     doc_type       TEXT DEFAULT '',
     category       TEXT DEFAULT '',
+    feature_slug_hint TEXT DEFAULT '',
+    feature_slug_canonical TEXT DEFAULT '',
+    prd_ref        TEXT DEFAULT '',
+    phase_token    TEXT DEFAULT '',
+    phase_number   INTEGER,
+    overall_progress REAL,
+    total_tasks    INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0,
+    in_progress_tasks INTEGER DEFAULT 0,
+    blocked_tasks  INTEGER DEFAULT 0,
+    metadata_json  TEXT DEFAULT '{}',
     parent_doc_id  TEXT,
     created_at     TEXT DEFAULT '',
     updated_at     TEXT DEFAULT '',
@@ -199,6 +219,22 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_docs_project ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_docs_type    ON documents(doc_type);
+
+CREATE TABLE IF NOT EXISTS document_refs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id    TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    project_id     TEXT NOT NULL,
+    ref_kind       TEXT NOT NULL,
+    ref_value      TEXT NOT NULL,
+    ref_value_norm TEXT NOT NULL,
+    source_field   TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_refs_unique
+    ON document_refs(document_id, ref_kind, ref_value_norm, source_field);
+CREATE INDEX IF NOT EXISTS idx_document_refs_query
+    ON document_refs(project_id, ref_kind, ref_value_norm);
 
 -- ── 6. Tasks ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tasks (
@@ -396,6 +432,55 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+
+    await _ensure_column(db, "documents", "canonical_path", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "root_kind", "TEXT DEFAULT 'project_plans'")
+    await _ensure_column(db, "documents", "doc_subtype", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "file_name", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "file_stem", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "file_dir", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "has_frontmatter", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "documents", "frontmatter_type", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "status_normalized", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "feature_slug_hint", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "feature_slug_canonical", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "prd_ref", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "phase_token", "TEXT DEFAULT ''")
+    await _ensure_column(db, "documents", "phase_number", "INTEGER")
+    await _ensure_column(db, "documents", "overall_progress", "REAL")
+    await _ensure_column(db, "documents", "total_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "documents", "completed_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "documents", "in_progress_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "documents", "blocked_tasks", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "documents", "metadata_json", "TEXT DEFAULT '{}'")
+
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_docs_canonical_path ON documents(project_id, canonical_path)")
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_docs_root_subtype ON documents(project_id, root_kind, doc_subtype)")
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_docs_status_norm ON documents(project_id, status_normalized)")
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_docs_feature_slug ON documents(project_id, feature_slug_canonical)")
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS document_refs (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id    TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            project_id     TEXT NOT NULL,
+            ref_kind       TEXT NOT NULL,
+            ref_value      TEXT NOT NULL,
+            ref_value_norm TEXT NOT NULL,
+            source_field   TEXT NOT NULL,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_document_refs_unique ON document_refs(document_id, ref_kind, ref_value_norm, source_field)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_document_refs_query ON document_refs(project_id, ref_kind, ref_value_norm)",
+    )
 
     # Seed metric types
     await db.executescript(_SEED_METRIC_TYPES)

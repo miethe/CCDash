@@ -89,7 +89,7 @@ const SESSIONS_PER_PAGE = 50;
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
     const [sessionTotal, setSessionTotal] = useState(0);
-    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({});
+    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({ include_subagents: true });
     const [documents, setDocuments] = useState<PlanDocument[]>([]);
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);
@@ -202,8 +202,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const refreshDocuments = useCallback(async () => {
         try {
-            const data = await fetchJson<PlanDocument[]>('/documents');
-            setDocuments(data);
+            const pageSize = 500;
+            const firstPage = await fetchJson<PaginatedResponse<PlanDocument> | PlanDocument[]>(
+                `/documents?offset=0&limit=${pageSize}&include_progress=true`
+            );
+            if (Array.isArray(firstPage)) {
+                setDocuments(firstPage);
+                return;
+            }
+
+            const collected = [...(firstPage.items || [])];
+            const total = firstPage.total || collected.length;
+            let offset = collected.length;
+
+            while (offset < total) {
+                const page = await fetchJson<PaginatedResponse<PlanDocument>>(
+                    `/documents?offset=${offset}&limit=${pageSize}&include_progress=true`
+                );
+                const items = page.items || [];
+                if (items.length === 0) break;
+                collected.push(...items);
+                offset += items.length;
+            }
+
+            setDocuments(collected);
         } catch (e) {
             console.error('Failed to fetch documents:', e);
         }

@@ -9,6 +9,7 @@ import { Settings } from './components/Settings';
 import { PlanCatalog } from './components/PlanCatalog';
 import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
 import { SessionMappings } from './components/SessionMappings';
+import { OpsPanel } from './components/OpsPanel';
 
 const App: React.FC = () => {
   return (
@@ -22,6 +23,7 @@ const App: React.FC = () => {
             <Route path="/sessions" element={<SessionInspector />} />
             <Route path="/analytics" element={<AnalyticsDashboard />} />
             <Route path="/session-mappings" element={<SessionMappings />} />
+            <Route path="/ops" element={<OpsPanel />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

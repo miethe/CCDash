@@ -59,7 +59,7 @@ class _FakeLinkRepo:
                 "source_id": "feat-alpha",
                 "target_type": "session",
                 "target_id": "S-main",
-                "confidence": 0.55,
+                "confidence": 0.8,
                 "metadata_json": json.dumps(
                     {
                         "linkStrategy": "session_evidence",

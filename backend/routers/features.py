@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.models import Feature, ProjectTask, FeaturePhase
+from backend.models import Feature, ProjectTask, FeaturePhase, LinkedDocument
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
@@ -45,17 +45,63 @@ _KEY_WORKFLOW_COMMAND_MARKERS = (
 # ── Request models ──────────────────────────────────────────────────
 
 class StatusUpdateRequest(BaseModel):
-    status: str  # backlog | in-progress | review | done
+    status: str  # backlog | in-progress | review | done | deferred
 
 
 # ── Status value mapping (frontend values → frontmatter values) ─────
 
 _REVERSE_STATUS = {
     "done": "completed",
+    "deferred": "deferred",
     "in-progress": "in-progress",
     "review": "review",
     "backlog": "draft",
 }
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def _normalize_tags(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(v) for v in raw if str(v).strip()]
+    if isinstance(raw, str):
+        value = raw.strip()
+        return [value] if value else []
+    return []
+
+
+def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
+    if not isinstance(raw, list):
+        return []
+    docs: list[LinkedDocument] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        file_path = str(item.get("filePath") or "").strip()
+        doc_type = str(item.get("docType") or "").strip()
+        title = str(item.get("title") or "").strip() or file_path or f"Document {idx + 1}"
+        if not file_path or not doc_type:
+            continue
+        docs.append(LinkedDocument(
+            id=str(item.get("id") or f"DOC-{idx}"),
+            title=title,
+            filePath=file_path,
+            docType=doc_type,
+            category=str(item.get("category") or ""),
+            slug=str(item.get("slug") or ""),
+            canonicalSlug=str(item.get("canonicalSlug") or ""),
+            frontmatterKeys=[str(v) for v in (item.get("frontmatterKeys") or []) if isinstance(v, str)],
+            relatedRefs=[str(v) for v in (item.get("relatedRefs") or []) if isinstance(v, str)],
+            prdRef=str(item.get("prdRef") or ""),
+        ))
+    return docs
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -126,12 +172,6 @@ def _is_primary_session_link(
     if confidence >= 0.9:
         return True
     if confidence >= 0.75 and ("file_write" in signal_types or "command_args_path" in signal_types):
-        return True
-    if confidence >= 0.55 and any(
-        marker in command.lower()
-        for command in commands
-        for marker in ("/dev:execute-phase", "/dev:quick-feature", "/plan:plan-feature")
-    ):
         return True
     return False
 
@@ -288,36 +328,57 @@ async def list_features():
     
     results = []
     for f in features_data:
-        # Phases
-        phases_data = await repo.get_phases(f["id"])
-        phases = []
-        for p in phases_data:
-            phases.append({
-                "id": p["id"],
-                "phase": p["phase"],
-                "title": p["title"],
-                "status": p["status"],
-                "progress": p["progress"],
-                "totalTasks": p["total_tasks"],
-                "completedTasks": p["completed_tasks"],
-                "tasks": [], # stripped for list
-            })
-            
-        data = _safe_json(f.get("data_json"))
-        
-        results.append(Feature(
-            id=f["id"],
-            name=f["name"],
-            status=f["status"],
-            totalTasks=f["total_tasks"],
-            completedTasks=f["completed_tasks"],
-            category=f["category"],
-            tags=data.get("tags", []),
-            updatedAt=f["updated_at"] or "",
-            linkedDocs=data.get("linkedDocs", []),
-            phases=phases,
-            relatedFeatures=data.get("relatedFeatures", []),
-        ))
+        try:
+            data = _safe_json(f.get("data_json"))
+            blob_phases = data.get("phases", []) if isinstance(data.get("phases", []), list) else []
+            blob_phase_deferred: dict[str, int] = {}
+            for phase_blob in blob_phases:
+                if not isinstance(phase_blob, dict):
+                    continue
+                phase_key = str(phase_blob.get("phase", ""))
+                blob_phase_deferred[phase_key] = _safe_int(phase_blob.get("deferredTasks", 0), 0)
+
+            # Phases
+            phases_data = await repo.get_phases(f["id"])
+            phases = []
+            total_deferred = 0
+            for p in phases_data:
+                phase_deferred = blob_phase_deferred.get(str(p.get("phase", "")), 0)
+                total_deferred += phase_deferred
+                phases.append({
+                    "id": p.get("id"),
+                    "phase": str(p.get("phase", "")),
+                    "title": str(p.get("title") or ""),
+                    "status": str(p.get("status") or "backlog"),
+                    "progress": _safe_int(p.get("progress"), 0),
+                    "totalTasks": _safe_int(p.get("total_tasks"), 0),
+                    "completedTasks": _safe_int(p.get("completed_tasks"), 0),
+                    "deferredTasks": phase_deferred,
+                    "tasks": [], # stripped for list
+                })
+
+            deferred_tasks = _safe_int(data.get("deferredTasks", total_deferred), total_deferred)
+            related_features = data.get("relatedFeatures", [])
+            if not isinstance(related_features, list):
+                related_features = []
+
+            results.append(Feature(
+                id=str(f.get("id") or ""),
+                name=str(f.get("name") or ""),
+                status=str(f.get("status") or "backlog"),
+                totalTasks=_safe_int(f.get("total_tasks"), 0),
+                completedTasks=_safe_int(f.get("completed_tasks"), 0),
+                deferredTasks=deferred_tasks,
+                category=str(f.get("category") or ""),
+                tags=_normalize_tags(data.get("tags", [])),
+                updatedAt=str(f.get("updated_at") or ""),
+                linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
+                phases=phases,
+                relatedFeatures=[str(v) for v in related_features if str(v).strip()],
+            ))
+        except Exception:
+            logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
+            continue
     return results
 
 
@@ -377,23 +438,30 @@ async def get_feature(feature_id: str):
         tasks_by_phase.setdefault(phase_key, []).append(row)
     
     blob_phase_tasks: dict[str, list[list[dict[str, Any]]]] = {}
+    blob_phase_deferred: dict[str, int] = {}
     for phase_blob in data.get("phases", []):
         if not isinstance(phase_blob, dict):
             continue
         phase_key = str(phase_blob.get("phase", ""))
+        deferred_raw = phase_blob.get("deferredTasks", 0)
+        try:
+            blob_phase_deferred[phase_key] = int(deferred_raw or 0)
+        except Exception:
+            blob_phase_deferred[phase_key] = 0
         tasks_blob = phase_blob.get("tasks", [])
         if isinstance(tasks_blob, list):
             blob_phase_tasks.setdefault(phase_key, []).append(tasks_blob)
 
+    total_deferred = 0
     for p in phases_data:
         tasks_data = tasks_by_phase.get(str(p.get("id") or ""), [])
+        phase_key = str(p.get("phase", ""))
 
         p_tasks = []
         if tasks_data:
             p_tasks = [_task_from_db_row(t) for t in tasks_data]
         else:
             # Fallback for legacy rows where task PK collisions broke phase linkage.
-            phase_key = str(p.get("phase", ""))
             candidates = blob_phase_tasks.get(phase_key, [])
             if candidates:
                 raw_tasks = candidates.pop(0)
@@ -401,29 +469,49 @@ async def get_feature(feature_id: str):
                     if isinstance(raw_task, dict):
                         p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
 
+        total_tasks = _safe_int(p.get("total_tasks"), 0)
+        completed_tasks = _safe_int(p.get("completed_tasks"), 0)
+        deferred_tasks = blob_phase_deferred.get(phase_key, 0)
+        if p_tasks:
+            if total_tasks == 0:
+                total_tasks = len(p_tasks)
+            done_count = sum(1 for t in p_tasks if t.status == "done")
+            deferred_tasks = sum(1 for t in p_tasks if t.status == "deferred")
+            completed_tasks = done_count + deferred_tasks
+        if completed_tasks < deferred_tasks:
+            completed_tasks = deferred_tasks
+        total_deferred += deferred_tasks
+
         phases.append(FeaturePhase(
-            id=p["id"],
-            phase=p["phase"],
-            title=p["title"] or "",
-            status=p["status"],
-            progress=p["progress"] or 0,
-            totalTasks=p["total_tasks"] or 0,
-            completedTasks=p["completed_tasks"] or 0,
+            id=p.get("id"),
+            phase=str(p.get("phase", "")),
+            title=str(p.get("title") or ""),
+            status=str(p.get("status") or "backlog"),
+            progress=_safe_int(p.get("progress"), 0),
+            totalTasks=total_tasks,
+            completedTasks=completed_tasks,
+            deferredTasks=deferred_tasks,
             tasks=p_tasks,
         ))
 
+    deferred_tasks = _safe_int(data.get("deferredTasks", total_deferred), total_deferred)
+    related_features = data.get("relatedFeatures", [])
+    if not isinstance(related_features, list):
+        related_features = []
+
     return Feature(
-        id=f["id"],
-        name=f["name"],
-        status=f["status"],
-        totalTasks=f["total_tasks"],
-        completedTasks=f["completed_tasks"],
-        category=f["category"],
-        tags=data.get("tags", []),
-        updatedAt=f["updated_at"] or "",
-        linkedDocs=data.get("linkedDocs", []),
+        id=str(f.get("id") or ""),
+        name=str(f.get("name") or ""),
+        status=str(f.get("status") or "backlog"),
+        totalTasks=_safe_int(f.get("total_tasks"), 0),
+        completedTasks=_safe_int(f.get("completed_tasks"), 0),
+        deferredTasks=deferred_tasks,
+        category=str(f.get("category") or ""),
+        tags=_normalize_tags(data.get("tags", [])),
+        updatedAt=str(f.get("updated_at") or ""),
+        linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
         phases=phases,
-        relatedFeatures=data.get("relatedFeatures", []),
+        relatedFeatures=[str(v) for v in related_features if str(v).strip()],
     )
 
 
@@ -442,28 +530,20 @@ async def get_feature_linked_sessions(feature_id: str):
     session_repo = get_session_repository(db)
     links = await link_repo.get_links_for("feature", feature_id, "related")
 
-    items: list[FeatureSessionLink] = []
-    for link in links:
-        if link.get("source_type") != "feature" or link.get("source_id") != feature_id:
-            continue
-        if link.get("target_type") != "session":
-            continue
-
-        session_id = str(link.get("target_id") or "").strip()
-        if not session_id:
-            continue
-
-        session_row = await session_repo.get_by_id(session_id)
-        if not session_row:
-            continue
+    async def build_session_link_item(
+        session_row: dict[str, Any],
+        metadata: dict[str, Any],
+        confidence: float,
+        inherited: bool = False,
+    ) -> FeatureSessionLink:
+        session_id = str(session_row.get("id") or "").strip()
         logs = await session_repo.get_logs(session_id)
 
-        metadata = _safe_json(link.get("metadata_json"))
         reasons: list[str] = []
-
         strategy = str(metadata.get("linkStrategy") or "").strip()
         if strategy:
             reasons.append(strategy)
+
         signal_types: set[str] = set()
         signals = metadata.get("signals", [])
         if isinstance(signals, list):
@@ -478,19 +558,21 @@ async def get_feature_linked_sessions(feature_id: str):
         if not isinstance(commands, list):
             commands = []
         normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
+
         metadata_hashes = metadata.get("commitHashes", [])
         if not isinstance(metadata_hashes, list):
             metadata_hashes = []
         row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
         merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
-        confidence = float(link.get("confidence") or 0.0)
+
         model_identity = derive_model_identity(session_row.get("model"))
         session_type = str(session_row.get("session_type") or "")
         parent_session_id = session_row.get("parent_session_id")
         root_session_id = str(session_row.get("root_session_id") or session_id)
         is_subthread = bool(parent_session_id) or session_type == "subagent"
-        is_primary_link = _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
+        is_primary_link = False if inherited else _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
         workflow_type = _classify_session_workflow(strategy, normalized_commands, signal_types, session_type)
+
         command_events: list[dict[str, Any]] = []
         latest_summary = ""
         for log in logs:
@@ -511,43 +593,127 @@ async def get_feature_linked_sessions(feature_id: str):
                 "args": str(parsed_metadata.get("args") or ""),
                 "parsedCommand": parsed_metadata.get("parsedCommand") if isinstance(parsed_metadata.get("parsedCommand"), dict) else {},
             })
+
         session_metadata = classify_session_key_metadata(command_events, mappings)
         session_title = _derive_session_title(session_metadata, latest_summary, session_id)
         reasons = list(dict.fromkeys(reasons))
 
-        items.append(
-            FeatureSessionLink(
-                sessionId=session_id,
-                title=session_title,
-                titleSource=str(metadata.get("titleSource") or ""),
-                titleConfidence=float(metadata.get("titleConfidence") or 0.0),
-                confidence=confidence,
-                reasons=reasons,
-                commands=normalized_commands[:12],
-                commitHashes=merged_hashes,
-                status=str(session_row.get("status") or "completed"),
-                model=str(session_row.get("model") or ""),
-                modelDisplayName=model_identity["modelDisplayName"],
-                modelProvider=model_identity["modelProvider"],
-                modelFamily=model_identity["modelFamily"],
-                modelVersion=model_identity["modelVersion"],
-                startedAt=str(session_row.get("started_at") or ""),
-                totalCost=float(session_row.get("total_cost") or 0.0),
-                durationSeconds=int(session_row.get("duration_seconds") or 0),
-                gitCommitHash=session_row.get("git_commit_hash"),
-                gitCommitHashes=merged_hashes,
-                sessionType=session_type,
-                parentSessionId=parent_session_id,
-                rootSessionId=root_session_id,
-                agentId=session_row.get("agent_id"),
-                isSubthread=is_subthread,
-                isPrimaryLink=is_primary_link,
-                linkStrategy=strategy,
-                workflowType=workflow_type,
-                sessionMetadata=session_metadata,
-            )
+        return FeatureSessionLink(
+            sessionId=session_id,
+            title=session_title,
+            titleSource=str(metadata.get("titleSource") or ""),
+            titleConfidence=float(metadata.get("titleConfidence") or 0.0),
+            confidence=confidence,
+            reasons=reasons,
+            commands=normalized_commands[:12],
+            commitHashes=merged_hashes,
+            status=str(session_row.get("status") or "completed"),
+            model=str(session_row.get("model") or ""),
+            modelDisplayName=model_identity["modelDisplayName"],
+            modelProvider=model_identity["modelProvider"],
+            modelFamily=model_identity["modelFamily"],
+            modelVersion=model_identity["modelVersion"],
+            startedAt=str(session_row.get("started_at") or ""),
+            totalCost=float(session_row.get("total_cost") or 0.0),
+            durationSeconds=int(session_row.get("duration_seconds") or 0),
+            gitCommitHash=session_row.get("git_commit_hash"),
+            gitCommitHashes=merged_hashes,
+            sessionType=session_type,
+            parentSessionId=parent_session_id,
+            rootSessionId=root_session_id,
+            agentId=session_row.get("agent_id"),
+            isSubthread=is_subthread,
+            isPrimaryLink=is_primary_link,
+            linkStrategy=strategy,
+            workflowType=workflow_type,
+            sessionMetadata=session_metadata,
         )
 
+    items_by_session_id: dict[str, FeatureSessionLink] = {}
+    for link in links:
+        if link.get("source_type") != "feature" or link.get("source_id") != feature_id:
+            continue
+        if link.get("target_type") != "session":
+            continue
+
+        session_id = str(link.get("target_id") or "").strip()
+        if not session_id:
+            continue
+
+        session_row = await session_repo.get_by_id(session_id)
+        if not session_row:
+            continue
+        metadata = _safe_json(link.get("metadata_json"))
+        confidence = float(link.get("confidence") or 0.0)
+        candidate = await build_session_link_item(session_row, metadata, confidence)
+        existing = items_by_session_id.get(session_id)
+        if not existing or candidate.confidence > existing.confidence:
+            items_by_session_id[session_id] = candidate
+
+    # Keep thread context coherent in the feature sessions tree by inheriting
+    # all sub-threads under directly linked main/root sessions.
+    if active_project and items_by_session_id:
+        root_ids_to_expand: set[str] = set()
+        for item in items_by_session_id.values():
+            if item.isSubthread:
+                continue
+            root_id = (item.rootSessionId or item.sessionId or "").strip()
+            if root_id:
+                root_ids_to_expand.add(root_id)
+
+        if not root_ids_to_expand:
+            for item in items_by_session_id.values():
+                root_id = (item.rootSessionId or item.parentSessionId or item.sessionId or "").strip()
+                if root_id:
+                    root_ids_to_expand.add(root_id)
+
+        for root_id in root_ids_to_expand:
+            total = await session_repo.count(
+                active_project.id,
+                {"include_subagents": True, "root_session_id": root_id},
+            )
+            if total <= 0:
+                continue
+
+            offset = 0
+            while offset < total:
+                page = await session_repo.list_paginated(
+                    offset,
+                    250,
+                    active_project.id,
+                    "started_at",
+                    "desc",
+                    {"include_subagents": True, "root_session_id": root_id},
+                )
+                if not page:
+                    break
+
+                for session_row in page:
+                    session_id = str(session_row.get("id") or "").strip()
+                    if not session_id or session_id in items_by_session_id:
+                        continue
+                    inherited_metadata = {
+                        "linkStrategy": "thread_inheritance",
+                        "signals": [{"type": "thread_inheritance", "rootSessionId": root_id}],
+                        "commands": [],
+                        "commitHashes": [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)],
+                        "titleSource": "thread",
+                        "titleConfidence": 0.35,
+                    }
+                    inherited_confidence = 0.34
+                    candidate = await build_session_link_item(
+                        session_row,
+                        inherited_metadata,
+                        inherited_confidence,
+                        inherited=True,
+                    )
+                    items_by_session_id[session_id] = candidate
+
+                offset += len(page)
+                if len(page) < 250:
+                    break
+
+    items = list(items_by_session_id.values())
     items.sort(key=lambda item: (item.confidence, item.startedAt), reverse=True)
     return items
 

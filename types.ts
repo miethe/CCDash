@@ -1,5 +1,5 @@
 
-export type TaskStatus = 'todo' | 'in-progress' | 'review' | 'done';
+export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' | 'deferred';
 
 export interface ProjectTask {
   id: string;
@@ -77,6 +77,7 @@ export interface SessionMetadata {
   mappingId: string;
   relatedCommand: string;
   relatedPhases: string[];
+  relatedFilePath?: string;
   fields: SessionMetadataField[];
 }
 
@@ -118,6 +119,8 @@ export interface AgentSession {
   modelFamily?: string;
   modelVersion?: string;
   durationSeconds: number;
+  sessionType?: string;
+  parentSessionId?: string | null;
   rootSessionId?: string;
   agentId?: string;
   tokensIn: number;
@@ -143,10 +146,27 @@ export interface PlanDocument {
   id: string;
   title: string;
   filePath: string;
-  status: 'draft' | 'active' | 'archived' | 'deprecated' | 'completed';
+  canonicalPath?: string;
+  status: string;
+  statusNormalized?: string;
   lastModified: string;
   author: string;
   content?: string; // Raw markdown content
+  docType?: string;
+  docSubtype?: string;
+  rootKind?: 'project_plans' | 'progress' | 'document';
+  hasFrontmatter?: boolean;
+  frontmatterType?: string;
+  featureSlugHint?: string;
+  featureSlugCanonical?: string;
+  prdRef?: string;
+  phaseToken?: string;
+  phaseNumber?: number | null;
+  overallProgress?: number | null;
+  totalTasks?: number;
+  completedTasks?: number;
+  inProgressTasks?: number;
+  blockedTasks?: number;
   frontmatter: {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
@@ -155,6 +175,39 @@ export interface PlanDocument {
     version?: string;
     commits?: string[];
     prs?: string[];
+    relatedRefs?: string[];
+    pathRefs?: string[];
+    slugRefs?: string[];
+    prd?: string;
+    prdRefs?: string[];
+    fieldKeys?: string[];
+    raw?: Record<string, any>;
+  };
+  category?: string;
+  pathSegments?: string[];
+  featureCandidates?: string[];
+  metadata?: {
+    phase?: string;
+    phaseNumber?: number | null;
+    overallProgress?: number | null;
+    taskCounts?: {
+      total: number;
+      completed: number;
+      inProgress: number;
+      blocked: number;
+    };
+    owners?: string[];
+    contributors?: string[];
+    requestLogIds?: string[];
+    commitRefs?: string[];
+    featureSlugHint?: string;
+    canonicalPath?: string;
+  };
+  linkCounts?: {
+    features: number;
+    tasks: number;
+    sessions: number;
+    documents: number;
   };
 }
 
@@ -208,7 +261,13 @@ export interface LinkedDocument {
   id: string;
   title: string;
   filePath: string;
-  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'spec';
+  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'progress' | 'spec' | string;
+  category?: string;
+  slug?: string;
+  canonicalSlug?: string;
+  frontmatterKeys?: string[];
+  relatedRefs?: string[];
+  prdRef?: string;
 }
 
 export interface FeaturePhase {
@@ -219,6 +278,7 @@ export interface FeaturePhase {
   progress: number;
   totalTasks: number;
   completedTasks: number;
+  deferredTasks?: number;
   tasks: ProjectTask[];
 }
 
@@ -228,6 +288,7 @@ export interface Feature {
   status: string;
   totalTasks: number;
   completedTasks: number;
+  deferredTasks?: number;
   category: string;
   tags: string[];
   updatedAt: string;
@@ -241,4 +302,67 @@ export interface PaginatedResponse<T> {
   total: number;
   offset: number;
   limit: number;
+}
+
+export interface SyncOperation {
+  id: string;
+  kind: string;
+  projectId: string;
+  trigger: string;
+  status: 'running' | 'completed' | 'failed' | string;
+  phase: string;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  progress: Record<string, any>;
+  counters: Record<string, any>;
+  stats: Record<string, any>;
+  metadata: Record<string, any>;
+  error: string;
+}
+
+export interface CacheStatusResponse {
+  status: string;
+  sync_engine: string;
+  watcher: string;
+  projectId: string;
+  projectName?: string;
+  activePaths?: {
+    sessionsDir: string;
+    docsDir: string;
+    progressDir: string;
+  };
+  operations: {
+    activeOperationCount: number;
+    activeOperations: SyncOperation[];
+    recentOperations: SyncOperation[];
+    trackedOperationCount: number;
+  };
+}
+
+export interface LinkAuditSuspect {
+  feature_id: string;
+  session_id: string;
+  confidence: number;
+  ambiguity_share: number;
+  title: string;
+  signal_type: string;
+  signal_path: string;
+  commands: string[];
+  reason: string;
+  fanout_count: number;
+}
+
+export interface LinkAuditResponse {
+  status: string;
+  project_id: string;
+  feature_filter?: string | null;
+  row_count: number;
+  suspect_count: number;
+  primary_floor: number;
+  fanout_floor: number;
+  generated_at?: string;
+  suspects: LinkAuditSuspect[];
 }

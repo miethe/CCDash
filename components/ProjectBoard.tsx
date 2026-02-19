@@ -3,14 +3,16 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, LinkedDocument, ProjectTask } from '../types';
+import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask } from '../types';
 import { SessionCard, deriveSessionCardTitle } from './SessionCard';
+import { DocumentModal } from './DocumentModal';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
-  Search, Filter, ArrowUpDown, CheckCircle2, Circle, Layers, Box,
+  Search, Filter, ArrowUpDown, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
+import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -46,6 +48,7 @@ interface FeatureSessionLink {
     mappingId: string;
     relatedCommand: string;
     relatedPhases: string[];
+    relatedFilePath?: string;
     fields: Array<{
       id: string;
       label: string;
@@ -54,9 +57,94 @@ interface FeatureSessionLink {
   } | null;
 }
 
+type CoreSessionGroupId = 'plan' | 'execution' | 'other';
+type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
+
+interface CoreSessionGroupDefinition {
+  id: CoreSessionGroupId;
+  label: string;
+  description: string;
+}
+
+interface DocGroupDefinition {
+  id: DocGroupId;
+  label: string;
+  description: string;
+}
+
+interface FeatureSessionTreeNode {
+  session: FeatureSessionLink;
+  children: FeatureSessionTreeNode[];
+}
+
+interface FeatureSessionSummary {
+  total: number;
+  mainThreads: number;
+  subThreads: number;
+  unresolvedSubThreads: number;
+  byType: Array<{ type: string; count: number }>;
+}
+
 const SHORT_COMMIT_LENGTH = 7;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
+const normalizePath = (value: string): string => (value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
+const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
+  {
+    id: 'plan',
+    label: 'Planning Sessions',
+    description: 'Planning tasks, discovery, analysis, and scope definition.',
+  },
+  {
+    id: 'execution',
+    label: 'Execution Sessions',
+    description: 'Implementation work, sorted by phase order.',
+  },
+  {
+    id: 'other',
+    label: 'Other Core Sessions',
+    description: 'Primary linked sessions that do not fit planning or phase execution.',
+  },
+];
+const DOC_GROUPS: DocGroupDefinition[] = [
+  {
+    id: 'initialPlanning',
+    label: 'Initial Planning Docs',
+    description: 'Reports, SPIKEs, ADRs, analysis, and discovery artifacts.',
+  },
+  {
+    id: 'prd',
+    label: 'PRD',
+    description: 'Product requirements and primary feature definition docs.',
+  },
+  {
+    id: 'plans',
+    label: 'Plans',
+    description: 'Implementation and phase plans.',
+  },
+  {
+    id: 'progress',
+    label: 'Progress Files',
+    description: 'Phase and execution progress tracking.',
+  },
+  {
+    id: 'context',
+    label: 'Context & Worknotes',
+    description: 'Additional context docs, notes, and supporting references.',
+  },
+];
+const DEFAULT_CORE_SESSION_GROUP_EXPANDED: Record<CoreSessionGroupId, boolean> = {
+  plan: true,
+  execution: true,
+  other: true,
+};
+const DEFAULT_DOC_GROUP_EXPANDED: Record<DocGroupId, boolean> = {
+  initialPlanning: true,
+  prd: true,
+  plans: true,
+  progress: true,
+  context: true,
+};
 
 const formatSessionReason = (reason: string): string => {
   const normalized = (reason || '').trim();
@@ -82,31 +170,325 @@ const isPrimarySession = (session: FeatureSessionLink): boolean => {
   return session.confidence >= 0.9;
 };
 
-// ── Status helpers ─────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  'done': { label: 'Done', color: 'bg-emerald-500/10 text-emerald-500', dot: 'bg-emerald-500' },
-  'in-progress': { label: 'In Progress', color: 'bg-indigo-500/10 text-indigo-500', dot: 'bg-indigo-500' },
-  'review': { label: 'Review', color: 'bg-amber-500/10 text-amber-500', dot: 'bg-amber-500' },
-  'backlog': { label: 'Backlog', color: 'bg-slate-500/10 text-slate-500', dot: 'bg-slate-500' },
+const parsePhaseNumber = (value: string, allowBareNumber = false): number | null => {
+  const normalized = (value || '').trim();
+  if (!normalized) return null;
+  const phaseMatch = normalized.match(/\bphase[\s:_-]*(\d+)\b/i);
+  if (phaseMatch) {
+    const parsed = Number(phaseMatch[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (allowBareNumber && /^\d+$/.test(normalized)) {
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 };
 
-const STATUS_OPTIONS = ['backlog', 'in-progress', 'review', 'done'] as const;
+const getSessionPhaseNumbers = (session: FeatureSessionLink): number[] => {
+  const candidates: number[] = [];
+  const relatedPhases = session.sessionMetadata?.relatedPhases || [];
+  relatedPhases.forEach(phase => {
+    const parsed = parsePhaseNumber(String(phase || ''), true);
+    if (parsed !== null) candidates.push(parsed);
+  });
+  [session.title || '', ...session.commands].forEach(value => {
+    const parsed = parsePhaseNumber(value, false);
+    if (parsed !== null) candidates.push(parsed);
+  });
+  return Array.from(new Set(candidates)).sort((a, b) => a - b);
+};
 
-const getStatusStyle = (status: string) => STATUS_CONFIG[status] || STATUS_CONFIG['backlog'];
+const getSessionPrimaryPhaseNumber = (session: FeatureSessionLink): number | null => {
+  const values = getSessionPhaseNumbers(session);
+  return values.length > 0 ? values[0] : null;
+};
 
-const ProgressBar = ({ completed, total }: { completed: number; total: number }) => {
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+const getSessionClassificationText = (session: FeatureSessionLink): string =>
+  [
+    session.workflowType || '',
+    session.sessionType || '',
+    session.sessionMetadata?.sessionTypeLabel || '',
+    session.title || '',
+    ...session.reasons,
+    ...session.commands,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+const isPlanningSession = (session: FeatureSessionLink): boolean => {
+  const haystack = getSessionClassificationText(session);
+  const workflow = (session.workflowType || '').toLowerCase();
+  if (workflow === 'planning') return true;
+  return [
+    '/plan:',
+    'planning',
+    'analysis',
+    'spike',
+    'adr',
+    'discovery',
+    'research',
+    'scoping',
+  ].some(token => haystack.includes(token));
+};
+
+const isExecutionSession = (session: FeatureSessionLink): boolean => {
+  const workflow = (session.workflowType || '').toLowerCase();
+  if (workflow === 'execution' || workflow === 'debug' || workflow === 'enhancement') return true;
+  const haystack = getSessionClassificationText(session);
+  if ([
+    '/dev:execute-phase',
+    'execute-phase',
+    'execution',
+    'implement',
+    'implementation',
+    'quick-feature',
+  ].some(token => haystack.includes(token))) {
+    return true;
+  }
+  return getSessionPrimaryPhaseNumber(session) !== null;
+};
+
+const getCoreSessionGroupId = (session: FeatureSessionLink): CoreSessionGroupId => {
+  if (isPlanningSession(session)) return 'plan';
+  if (isExecutionSession(session)) return 'execution';
+  return 'other';
+};
+
+const sessionStartedAtValue = (session: FeatureSessionLink): number => Date.parse(session.startedAt || '') || 0;
+const compareSessionsByConfidenceAndTime = (a: FeatureSessionLink, b: FeatureSessionLink): number => {
+  if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+  return sessionStartedAtValue(b) - sessionStartedAtValue(a);
+};
+
+const compareSessionsForGroup = (groupId: CoreSessionGroupId, a: FeatureSessionLink, b: FeatureSessionLink): number => {
+  if (groupId === 'execution') {
+    const aPhase = getSessionPrimaryPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
+    const bPhase = getSessionPrimaryPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
+    if (aPhase !== bPhase) return aPhase - bPhase;
+  }
+  return compareSessionsByConfidenceAndTime(a, b);
+};
+
+const sortThreadNodes = (
+  nodes: FeatureSessionTreeNode[],
+  comparator: (a: FeatureSessionLink, b: FeatureSessionLink) => number,
+): FeatureSessionTreeNode[] => {
+  const sortedRoots = [...nodes]
+    .sort((a, b) => comparator(a.session, b.session))
+    .map(node => ({
+      ...node,
+      children: sortThreadNodes(node.children, compareSessionsByConfidenceAndTime),
+    }));
+  return sortedRoots;
+};
+
+const countThreadNodes = (nodes: FeatureSessionTreeNode[]): number =>
+  nodes.reduce((sum, node) => sum + 1 + countThreadNodes(node.children), 0);
+
+const buildSessionThreadForest = (sessions: FeatureSessionLink[]): FeatureSessionTreeNode[] => {
+  const nodes = new Map<string, FeatureSessionTreeNode>();
+  sessions.forEach(session => {
+    nodes.set(session.sessionId, { session, children: [] });
+  });
+
+  const attached = new Set<string>();
+  sessions.forEach(session => {
+    const node = nodes.get(session.sessionId);
+    if (!node || !isSubthreadSession(session)) return;
+
+    const candidateParents = [
+      session.parentSessionId || '',
+      session.rootSessionId && session.rootSessionId !== session.sessionId ? session.rootSessionId : '',
+    ];
+    const parentId = candidateParents.find(id => !!id && nodes.has(id));
+    if (!parentId || parentId === session.sessionId) return;
+    const parentNode = nodes.get(parentId);
+    if (!parentNode) return;
+    parentNode.children.push(node);
+    attached.add(session.sessionId);
+  });
+
+  const roots: FeatureSessionTreeNode[] = [];
+  sessions.forEach(session => {
+    if (!attached.has(session.sessionId)) {
+      const node = nodes.get(session.sessionId);
+      if (node) roots.push(node);
+    }
+  });
+  return roots;
+};
+
+const sessionTypeBucketLabel = (session: FeatureSessionLink): string => {
+  const workflow = (session.workflowType || '').trim();
+  if (workflow) return workflow;
+  const metadataLabel = (session.sessionMetadata?.sessionTypeLabel || '').trim();
+  if (metadataLabel) return metadataLabel;
+  const sessionType = (session.sessionType || '').trim();
+  if (sessionType) return sessionType === 'subagent' ? 'Sub-thread' : sessionType;
+  return 'Other';
+};
+
+const buildFeatureSessionSummary = (sessions: FeatureSessionLink[]): FeatureSessionSummary => {
+  const typeCounts = new Map<string, number>();
+  const idSet = new Set(sessions.map(session => session.sessionId));
+  let mainThreads = 0;
+  let subThreads = 0;
+  let unresolvedSubThreads = 0;
+
+  sessions.forEach(session => {
+    const typeLabel = sessionTypeBucketLabel(session);
+    typeCounts.set(typeLabel, (typeCounts.get(typeLabel) || 0) + 1);
+
+    if (isSubthreadSession(session)) {
+      subThreads += 1;
+      const parentId = session.parentSessionId || '';
+      const rootId = session.rootSessionId || '';
+      const hasKnownMain = (!!parentId && idSet.has(parentId)) || (!!rootId && rootId !== session.sessionId && idSet.has(rootId));
+      if (!hasKnownMain) unresolvedSubThreads += 1;
+    } else {
+      mainThreads += 1;
+    }
+  });
+
+  const byType = Array.from(typeCounts.entries())
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+
+  return {
+    total: sessions.length,
+    mainThreads,
+    subThreads,
+    unresolvedSubThreads,
+    byType,
+  };
+};
+
+const getDocumentClassificationText = (doc: LinkedDocument): string =>
+  [doc.docType || '', doc.title || '', doc.filePath || '', doc.category || ''].join(' ').toLowerCase();
+
+const isInitialPlanningDoc = (doc: LinkedDocument): boolean => {
+  const type = (doc.docType || '').toLowerCase();
+  const haystack = getDocumentClassificationText(doc);
+  if (type === 'report') return true;
+  if ([
+    'spike',
+    'adr',
+    'analysis',
+    'discovery',
+    'research',
+    'investigation',
+    'architecture decision',
+  ].some(token => haystack.includes(token))) {
+    return true;
+  }
+  return type === 'spec';
+};
+
+const getDocGroupId = (doc: LinkedDocument): DocGroupId => {
+  const type = (doc.docType || '').toLowerCase();
+  if (isInitialPlanningDoc(doc)) return 'initialPlanning';
+  if (type === 'prd') return 'prd';
+  if (type === 'implementation_plan' || type === 'phase_plan') return 'plans';
+  if (type === 'progress' || normalizePath(doc.filePath).toLowerCase().includes('/progress/')) return 'progress';
+  return 'context';
+};
+
+const getDocPhaseNumber = (doc: LinkedDocument): number | null => {
+  const fromTitle = parsePhaseNumber(doc.title || '', false);
+  if (fromTitle !== null) return fromTitle;
+  return parsePhaseNumber(doc.filePath || '', false);
+};
+
+const compareDocsByTitle = (a: LinkedDocument, b: LinkedDocument): number => {
+  const titleDiff = (a.title || '').localeCompare((b.title || ''), undefined, { numeric: true, sensitivity: 'base' });
+  if (titleDiff !== 0) return titleDiff;
+  return normalizePath(a.filePath || '').localeCompare(normalizePath(b.filePath || ''), undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const initialPlanningDocPriority = (doc: LinkedDocument): number => {
+  const haystack = getDocumentClassificationText(doc);
+  if (haystack.includes('adr') || haystack.includes('architecture decision')) return 0;
+  if (haystack.includes('spike')) return 1;
+  if (haystack.includes('report')) return 2;
+  if (haystack.includes('analysis') || haystack.includes('discovery') || haystack.includes('research')) return 3;
+  if ((doc.docType || '').toLowerCase() === 'spec') return 4;
+  return 5;
+};
+
+const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): LinkedDocument[] => {
+  return [...docs].sort((a, b) => {
+    if (groupId === 'initialPlanning') {
+      const priorityDiff = initialPlanningDocPriority(a) - initialPlanningDocPriority(b);
+      if (priorityDiff !== 0) return priorityDiff;
+    }
+    if (groupId === 'plans' || groupId === 'progress') {
+      const aPhase = getDocPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
+      const bPhase = getDocPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
+      if (aPhase !== bPhase) return aPhase - bPhase;
+    }
+    return compareDocsByTitle(a, b);
+  });
+};
+
+// ── Status helpers ─────────────────────────────────────────────────
+const getStatusStyle = getFeatureStatusStyle;
+
+const getPhaseDeferredCount = (phase: FeaturePhase): number => Math.max(phase.deferredTasks || 0, 0);
+
+const getPhaseCompletedCount = (phase: FeaturePhase): number => {
+  const completed = Math.max(phase.completedTasks || 0, 0);
+  return Math.max(completed, getPhaseDeferredCount(phase));
+};
+
+const getFeatureDeferredCount = (feature: Feature): number => {
+  if (typeof feature.deferredTasks === 'number') return Math.max(feature.deferredTasks, 0);
+  return (feature.phases || []).reduce((sum, phase) => sum + getPhaseDeferredCount(phase), 0);
+};
+
+const getFeatureCompletedCount = (feature: Feature): number => {
+  const completed = Math.max(feature.completedTasks || 0, 0);
+  return Math.max(completed, getFeatureDeferredCount(feature));
+};
+
+const hasDeferredCaveat = (feature: Feature): boolean =>
+  feature.status === 'deferred' || getFeatureDeferredCount(feature) > 0;
+
+const getFeatureBoardStage = (feature: Feature): string => {
+  if (feature.status === 'deferred') return 'done';
+  return feature.status;
+};
+
+const ProgressBar = ({
+  completed,
+  deferred = 0,
+  total,
+}: {
+  completed: number;
+  deferred?: number;
+  total: number;
+}) => {
+  const safeTotal = Math.max(total || 0, 0);
+  const safeCompleted = Math.max(completed || 0, 0);
+  const safeDeferred = Math.min(Math.max(deferred || 0, 0), safeCompleted);
+  const doneCount = Math.max(safeCompleted - safeDeferred, 0);
+  const pct = safeTotal > 0 ? Math.round((safeCompleted / safeTotal) * 100) : 0;
+  const donePct = safeTotal > 0 ? (doneCount / safeTotal) * 100 : 0;
+  const deferredPct = safeTotal > 0 ? (safeDeferred / safeTotal) * 100 : 0;
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${pct === 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-indigo-500' : 'bg-slate-700'}`}
-          style={{ width: `${pct}%` }}
-        />
+        {pct > 0 ? (
+          <div className="h-full w-full flex rounded-full overflow-hidden">
+            {donePct > 0 && <div className="h-full bg-emerald-500 transition-all" style={{ width: `${donePct}%` }} />}
+            {deferredPct > 0 && <div className="h-full bg-amber-400 transition-all" style={{ width: `${deferredPct}%` }} />}
+          </div>
+        ) : (
+          <div className="h-full bg-slate-700 transition-all" style={{ width: '100%' }} />
+        )}
       </div>
-      <span className="text-[10px] text-slate-500 font-mono min-w-[40px] text-right">
-        {completed}/{total}
+      <span className="text-[10px] text-slate-500 font-mono min-w-[64px] text-right">
+        {safeCompleted}/{safeTotal}
       </span>
     </div>
   );
@@ -117,6 +499,7 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
     case 'prd': return <ClipboardList size={12} className="text-purple-400" />;
     case 'implementation_plan': return <Layers size={12} className="text-blue-400" />;
     case 'phase_plan': return <FileText size={12} className="text-amber-400" />;
+    case 'progress': return <Terminal size={12} className="text-cyan-400" />;
     case 'report': return <BarChart3 size={12} className="text-emerald-400" />;
     default: return <FileText size={12} className="text-slate-400" />;
   }
@@ -127,6 +510,7 @@ const DocTypeBadge = ({ docType }: { docType: string }) => {
     prd: 'PRD',
     implementation_plan: 'Plan',
     phase_plan: 'Phase',
+    progress: 'Progress',
     report: 'Report',
     spec: 'Spec',
   };
@@ -158,7 +542,7 @@ const StatusDropdown = ({
       className={`font-bold uppercase rounded cursor-pointer border-0 appearance-none ${sizeClasses} ${style.color} bg-transparent hover:ring-1 hover:ring-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all`}
       style={{ WebkitAppearance: 'none' }}
     >
-      {STATUS_OPTIONS.map(s => (
+      {FEATURE_STATUS_OPTIONS.map(s => (
         <option key={s} value={s} className="bg-slate-900 text-slate-300">
           {getStatusStyle(s).label}
         </option>
@@ -243,16 +627,24 @@ const FeatureModal = ({
   onClose: () => void;
 }) => {
   const navigate = useNavigate();
-  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus } = useData();
+  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
   const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
+  const [phaseStatusFilter, setPhaseStatusFilter] = useState<string>('all');
+  const [taskStatusFilter, setTaskStatusFilter] = useState<string>('all');
   const [linkedSessionLinks, setLinkedSessionLinks] = useState<FeatureSessionLink[]>([]);
-  const [showPrimarySubthreads, setShowPrimarySubthreads] = useState(false);
+  const [coreSessionGroupExpanded, setCoreSessionGroupExpanded] = useState<Record<CoreSessionGroupId, boolean>>(
+    () => ({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED })
+  );
+  const [docGroupExpanded, setDocGroupExpanded] = useState<Record<DocGroupId, boolean>>(
+    () => ({ ...DEFAULT_DOC_GROUP_EXPANDED })
+  );
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
-  const [showSecondarySubthreads, setShowSecondarySubthreads] = useState(false);
+  const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
 
   const refreshFeatureDetail = useCallback(async () => {
     try {
@@ -278,9 +670,13 @@ const FeatureModal = ({
   useEffect(() => {
     setFullFeature(null);
     setLinkedSessionLinks([]);
-    setShowPrimarySubthreads(false);
+    setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
+    setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
     setShowSecondarySessions(false);
-    setShowSecondarySubthreads(false);
+    setExpandedSubthreadsBySessionId(new Set());
+    setPhaseStatusFilter('all');
+    setTaskStatusFilter('all');
+    setViewingDoc(null);
     refreshFeatureDetail();
     refreshLinkedSessions();
   }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
@@ -303,10 +699,19 @@ const FeatureModal = ({
   };
 
   const activeFeature = fullFeature || feature;
-  const statusStyle = getStatusStyle(activeFeature.status);
-  const pct = activeFeature.totalTasks > 0 ? Math.round((activeFeature.completedTasks / activeFeature.totalTasks) * 100) : 0;
   const phases = activeFeature.phases || [];
+  const featureDeferredTasks = getFeatureDeferredCount(activeFeature);
+  const featureCompletedTasks = getFeatureCompletedCount(activeFeature);
+  const featureDoneTasks = Math.max(featureCompletedTasks - featureDeferredTasks, 0);
+  const pct = activeFeature.totalTasks > 0 ? Math.round((featureCompletedTasks / activeFeature.totalTasks) * 100) : 0;
   const linkedDocs = activeFeature.linkedDocs || [];
+  const filteredPhases = useMemo(() => {
+    return phases.filter(phase => {
+      if (phaseStatusFilter !== 'all' && phase.status !== phaseStatusFilter) return false;
+      if (taskStatusFilter === 'all') return true;
+      return (phase.tasks || []).some(task => task.status === taskStatusFilter);
+    });
+  }, [phases, phaseStatusFilter, taskStatusFilter]);
 
   const handleFeatureStatusChange = async (newStatus: string) => {
     setUpdatingStatus(true);
@@ -339,10 +744,31 @@ const FeatureModal = ({
   };
 
   const handleDocClick = (doc: LinkedDocument) => {
-    // Navigate to Documents tab and pre-select this doc
-    const docId = `DOC-${doc.filePath.replace(/\//g, '-').replace('.md', '')}`;
-    onClose();
-    navigate(`/plans?doc=${encodeURIComponent(docId)}`);
+    const docPath = normalizePath(doc.filePath);
+    const matchedDoc = documents.find(candidate => (
+      candidate.id === doc.id
+      || candidate.canonicalPath === docPath
+      || normalizePath(candidate.filePath) === docPath
+    ));
+    if (matchedDoc) {
+      setViewingDoc(matchedDoc);
+      return;
+    }
+    setViewingDoc({
+      id: doc.id || `DOC-${docPath.replace(/\//g, '-').replace(/\.md$/i, '')}`,
+      title: doc.title,
+      filePath: doc.filePath,
+      status: 'active',
+      lastModified: '',
+      author: '',
+      docType: doc.docType,
+      category: doc.category || '',
+      pathSegments: [],
+      featureCandidates: [],
+      frontmatter: {
+        tags: [],
+      },
+    });
   };
 
   const linkedSessions = useMemo(() => {
@@ -354,23 +780,85 @@ const FeatureModal = ({
     });
   }, [linkedSessionLinks]);
 
-  const groupedSessions = useMemo(() => {
-    const primaryMain: FeatureSessionLink[] = [];
-    const primarySub: FeatureSessionLink[] = [];
-    const secondaryMain: FeatureSessionLink[] = [];
-    const secondarySub: FeatureSessionLink[] = [];
+  const allSessionRoots = useMemo(
+    () => buildSessionThreadForest(linkedSessions),
+    [linkedSessions]
+  );
 
-    linkedSessions.forEach(session => {
-      const isPrimary = isPrimarySession(session);
-      const isSubthread = isSubthreadSession(session);
-      if (isPrimary && isSubthread) primarySub.push(session);
-      else if (isPrimary) primaryMain.push(session);
-      else if (isSubthread) secondarySub.push(session);
-      else secondaryMain.push(session);
+  const primarySessionRoots = useMemo(
+    () => allSessionRoots.filter(node => isPrimarySession(node.session)),
+    [allSessionRoots]
+  );
+
+  const secondarySessionRoots = useMemo(
+    () => sortThreadNodes(allSessionRoots.filter(node => !isPrimarySession(node.session)), compareSessionsByConfidenceAndTime),
+    [allSessionRoots]
+  );
+
+  const primarySessionCount = useMemo(
+    () => countThreadNodes(primarySessionRoots),
+    [primarySessionRoots]
+  );
+
+  const secondarySessionCount = useMemo(
+    () => countThreadNodes(secondarySessionRoots),
+    [secondarySessionRoots]
+  );
+
+  const coreSessionGroups = useMemo(() => {
+    const grouped: Record<CoreSessionGroupId, FeatureSessionTreeNode[]> = {
+      plan: [],
+      execution: [],
+      other: [],
+    };
+    primarySessionRoots.forEach(root => {
+      grouped[getCoreSessionGroupId(root.session)].push(root);
     });
+    return CORE_SESSION_GROUPS.map(group => ({
+      ...group,
+      roots: sortThreadNodes(grouped[group.id], (a, b) => compareSessionsForGroup(group.id, a, b)),
+      totalSessions: countThreadNodes(grouped[group.id]),
+    }));
+  }, [primarySessionRoots]);
 
-    return { primaryMain, primarySub, secondaryMain, secondarySub };
-  }, [linkedSessions]);
+  const groupedDocs = useMemo(() => {
+    const grouped: Record<DocGroupId, LinkedDocument[]> = {
+      initialPlanning: [],
+      prd: [],
+      plans: [],
+      progress: [],
+      context: [],
+    };
+    linkedDocs.forEach(doc => {
+      grouped[getDocGroupId(doc)].push(doc);
+    });
+    return DOC_GROUPS.map(group => ({
+      ...group,
+      docs: sortDocsWithinGroup(group.id, grouped[group.id]),
+    })).filter(group => group.docs.length > 0);
+  }, [linkedDocs]);
+
+  const orderedLinkedDocs = useMemo(
+    () => groupedDocs.flatMap(group => group.docs),
+    [groupedDocs]
+  );
+
+  const toggleCoreSessionGroup = (groupId: CoreSessionGroupId) => {
+    setCoreSessionGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const toggleDocGroup = (groupId: DocGroupId) => {
+    setDocGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const toggleSubthreads = (sessionId: string) => {
+    setExpandedSubthreadsBySessionId(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
@@ -395,7 +883,6 @@ const FeatureModal = ({
 
     return (
       <SessionCard
-        key={session.sessionId}
         sessionId={session.sessionId}
         title={displayTitle}
         status={session.status}
@@ -485,6 +972,41 @@ const FeatureModal = ({
     );
   };
 
+  const renderSessionTreeNode = (node: FeatureSessionTreeNode, depth = 0): React.ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedSubthreadsBySessionId.has(node.session.sessionId);
+
+    return (
+      <div key={node.session.sessionId} className="space-y-2">
+        {renderSessionCard(node.session)}
+        {hasChildren && (
+          <div className="mt-2 pt-2 border-t border-slate-800/60">
+            <button
+              onClick={() => toggleSubthreads(node.session.sessionId)}
+              className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
+            >
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                Expand to see Sub-Threads
+              </span>
+              <span className="text-[11px] text-slate-500">{countThreadNodes(node.children)}</span>
+            </button>
+            {isExpanded && (
+              <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                {node.children.map(child => (
+                  <div key={child.session.sessionId} className="relative pl-3">
+                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                    {renderSessionTreeNode(child, depth + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
       <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -502,11 +1024,19 @@ const FeatureModal = ({
                     {activeFeature.category}
                   </span>
                 )}
+                {featureDeferredTasks > 0 && (
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                    Done With Deferrals
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-bold text-slate-100 truncate">{activeFeature.name}</h2>
               <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
                 <span>{pct}% complete</span>
-                <span>{activeFeature.completedTasks}/{activeFeature.totalTasks} tasks</span>
+                <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
+                {featureDeferredTasks > 0 && (
+                  <span className="text-amber-300">{featureDeferredTasks} deferred</span>
+                )}
                 {activeFeature.updatedAt && activeFeature.updatedAt !== 'None' && (
                   <span className="flex items-center gap-1">
                     <Calendar size={12} />
@@ -520,7 +1050,7 @@ const FeatureModal = ({
             </button>
           </div>
           <div className="mt-3">
-            <ProgressBar completed={activeFeature.completedTasks} total={activeFeature.totalTasks} />
+            <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
           </div>
         </div>
 
@@ -555,7 +1085,10 @@ const FeatureModal = ({
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Completed</div>
-                  <div className="text-emerald-400 font-bold text-2xl">{activeFeature.completedTasks}</div>
+                  <div className="text-emerald-400 font-bold text-2xl">{featureDoneTasks}</div>
+                  {featureDeferredTasks > 0 && (
+                    <div className="text-[11px] mt-1 text-amber-300">{featureDeferredTasks} deferred</div>
+                  )}
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Phases</div>
@@ -572,7 +1105,7 @@ const FeatureModal = ({
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Linked Documents</h3>
                   <div className="space-y-2">
-                    {linkedDocs.map(doc => (
+                    {orderedLinkedDocs.map(doc => (
                       <button
                         key={doc.id}
                         onClick={() => handleDocClick(doc)}
@@ -621,16 +1154,51 @@ const FeatureModal = ({
           {/* Phases Tab */}
           {activeTab === 'phases' && (
             <div className="space-y-3">
-              {phases.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                  <Layers size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No phases tracked for this feature.</p>
+              {phases.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-slate-800 bg-slate-900/60">
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Phase Status</label>
+                    <select
+                      value={phaseStatusFilter}
+                      onChange={(e) => setPhaseStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All</option>
+                      {FEATURE_STATUS_OPTIONS.map(status => (
+                        <option key={`phase-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Task Status</label>
+                    <select
+                      value={taskStatusFilter}
+                      onChange={(e) => setTaskStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All</option>
+                      {FEATURE_STATUS_OPTIONS.map(status => (
+                        <option key={`task-filter-${status}`} value={status}>{getStatusStyle(status).label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
-              {phases.map(phase => {
+              {filteredPhases.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <Layers size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>{phases.length === 0 ? 'No phases tracked for this feature.' : 'No phases match your filters.'}</p>
+                </div>
+              )}
+              {filteredPhases.map(phase => {
                 const phaseStatus = getStatusStyle(phase.status);
                 const phaseKey = phase.id || phase.phase;
                 const isExpanded = expandedPhases.has(phaseKey);
+                const phaseCompletedTasks = getPhaseCompletedCount(phase);
+                const phaseDeferredTasks = getPhaseDeferredCount(phase);
+                const visibleTasks = taskStatusFilter === 'all'
+                  ? phase.tasks
+                  : phase.tasks.filter(task => task.status === taskStatusFilter);
                 return (
                   <div key={phaseKey} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
                     <div className="flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors">
@@ -644,11 +1212,16 @@ const FeatureModal = ({
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
                             {phase.title && (
-                              <span className="text-sm text-slate-400 truncate">— {phase.title}</span>
+                              <span className="text-sm text-slate-400 truncate">- {phase.title}</span>
+                            )}
+                            {phaseDeferredTasks > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
+                                Deferred
+                              </span>
                             )}
                           </div>
                           <div className="mt-1">
-                            <ProgressBar completed={phase.completedTasks} total={phase.totalTasks} />
+                            <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phase.totalTasks} />
                           </div>
                         </div>
                       </button>
@@ -660,20 +1233,30 @@ const FeatureModal = ({
                     </div>
 
                     {/* Expanded task list */}
-                    {isExpanded && phase.tasks.length > 0 && (
+                    {isExpanded && visibleTasks.length > 0 && (
                       <div className="border-t border-slate-800 px-4 py-3 space-y-1.5 bg-slate-950/30">
-                        {phase.tasks.map(task => {
-                          const taskDone = task.status === 'done';
-                          const nextStatus = taskDone ? 'backlog' : 'done';
+                        {visibleTasks.map(task => {
+                          const normalizedStatus = (task.status || '').toLowerCase();
+                          const taskDone = normalizedStatus === 'done';
+                          const taskDeferred = normalizedStatus === 'deferred';
+                          const nextStatus = taskDone ? 'deferred' : taskDeferred ? 'backlog' : 'done';
+                          const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
+                          const taskTextClass = taskDone
+                            ? 'text-slate-500 line-through'
+                            : taskDeferred
+                              ? 'text-amber-300/90 italic'
+                              : 'text-slate-300';
                           return (
                             <div key={task.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
                               <button
                                 onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus)}
                                 className="flex-shrink-0 hover:scale-110 transition-transform"
-                                title={taskDone ? 'Mark incomplete' : 'Mark done'}
+                                title={markTitle}
                               >
                                 {taskDone ? (
                                   <CheckCircle2 size={14} className="text-emerald-500" />
+                                ) : taskDeferred ? (
+                                  <CircleDashed size={14} className="text-amber-400" />
                                 ) : (
                                   <Circle size={14} className="text-slate-600 hover:text-indigo-400" />
                                 )}
@@ -687,7 +1270,7 @@ const FeatureModal = ({
                               </button>
                               <button
                                 onClick={() => setViewingTask(task)}
-                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskDone ? 'text-slate-500 line-through' : 'text-slate-300'}`}
+                                className={`text-sm flex-1 truncate text-left hover:text-indigo-400 transition-colors ${taskTextClass}`}
                                 title="View source file"
                               >
                                 {task.title}
@@ -711,14 +1294,19 @@ const FeatureModal = ({
                               {task.owner && (
                                 <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
                               )}
+                              <StatusDropdown
+                                status={task.status}
+                                onStatusChange={(s) => handleTaskStatusChange(phase.phase, task.id, s)}
+                                size="xs"
+                              />
                             </div>
                           );
                         })}
                       </div>
                     )}
-                    {isExpanded && phase.tasks.length === 0 && (
+                    {isExpanded && visibleTasks.length === 0 && (
                       <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-600 italic">
-                        No task details available for this phase.
+                        No task details match the current task filter.
                       </div>
                     )}
                   </div>
@@ -736,29 +1324,51 @@ const FeatureModal = ({
                   <p>No documents linked to this feature.</p>
                 </div>
               )}
-              {linkedDocs.map(doc => (
-                <button
-                  key={doc.id}
-                  onClick={() => handleDocClick(doc)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <DocTypeIcon docType={doc.docType} />
-                      <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+              {groupedDocs.map(group => (
+                <div key={group.id} className="space-y-2">
+                  <button
+                    onClick={() => toggleDocGroup(group.id)}
+                    className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                        {docGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {group.label}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                        <DocTypeBadge docType={doc.docType} />
-                      </span>
-                      <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                    <span className="text-[11px] text-slate-500">{group.docs.length}</span>
+                  </button>
+
+                  {docGroupExpanded[group.id] && (
+                    <div className="space-y-3">
+                      {group.docs.map(doc => (
+                        <button
+                          key={doc.id}
+                          onClick={() => handleDocClick(doc)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <DocTypeIcon docType={doc.docType} />
+                              <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                <DocTypeBadge docType={doc.docType} />
+                              </span>
+                              <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                            </div>
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
+                            <FolderOpen size={12} />
+                            {doc.filePath}
+                          </div>
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                  <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
-                    <FolderOpen size={12} />
-                    {doc.filePath}
-                  </div>
-                </button>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -778,29 +1388,40 @@ const FeatureModal = ({
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Core Focus Sessions</div>
                       <div className="text-[11px] text-emerald-200/80">
-                        {groupedSessions.primaryMain.length + groupedSessions.primarySub.length}
+                        {primarySessionCount}
                       </div>
                     </div>
                     <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary execution/planning sessions for this feature.</p>
                   </div>
 
-                  {groupedSessions.primaryMain.map(renderSessionCard)}
-
-                  {groupedSessions.primarySub.length > 0 && (
-                    <div className="space-y-2">
+                  {coreSessionGroups.map(group => (
+                    <div key={group.id} className="space-y-2">
                       <button
-                        onClick={() => setShowPrimarySubthreads(prev => !prev)}
+                        onClick={() => toggleCoreSessionGroup(group.id)}
                         className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
                       >
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                          {showPrimarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          Core Sub-Threads
+                        <div>
+                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                            {coreSessionGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            {group.label}
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
                         </div>
-                        <span className="text-[11px] text-slate-500">{groupedSessions.primarySub.length}</span>
+                        <span className="text-[11px] text-slate-500">{group.totalSessions}</span>
                       </button>
-                      {showPrimarySubthreads && groupedSessions.primarySub.map(renderSessionCard)}
+
+                      {coreSessionGroupExpanded[group.id] && (
+                        <div className="space-y-3">
+                          {group.roots.length === 0 && (
+                            <div className="text-xs text-slate-600 italic px-1">
+                              No sessions currently in this group.
+                            </div>
+                          )}
+                          {group.roots.map(node => renderSessionTreeNode(node))}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
 
                   <div className="space-y-2 pt-2">
                     <button
@@ -811,27 +1432,17 @@ const FeatureModal = ({
                         {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         Secondary Linkages
                       </div>
-                      <span className="text-[11px] text-slate-500">{groupedSessions.secondaryMain.length + groupedSessions.secondarySub.length}</span>
+                      <span className="text-[11px] text-slate-500">{secondarySessionCount}</span>
                     </button>
 
                     {showSecondarySessions && (
                       <div className="space-y-3">
-                        {groupedSessions.secondaryMain.map(renderSessionCard)}
-                        {groupedSessions.secondarySub.length > 0 && (
-                          <div className="space-y-2">
-                            <button
-                              onClick={() => setShowSecondarySubthreads(prev => !prev)}
-                              className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
-                            >
-                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                                {showSecondarySubthreads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                Related Sub-Threads
-                              </div>
-                              <span className="text-[11px] text-slate-500">{groupedSessions.secondarySub.length}</span>
-                            </button>
-                            {showSecondarySubthreads && groupedSessions.secondarySub.map(renderSessionCard)}
+                        {secondarySessionRoots.length === 0 && (
+                          <div className="text-xs text-slate-600 italic px-1">
+                            No secondary linked sessions.
                           </div>
                         )}
+                        {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
                       </div>
                     )}
                   </div>
@@ -843,6 +1454,15 @@ const FeatureModal = ({
 
         {/* Task Source Dialog */}
         {viewingTask && <TaskSourceDialog task={viewingTask} onClose={() => setViewingTask(null)} />}
+        {viewingDoc && (
+          <DocumentModal
+            doc={viewingDoc}
+            onClose={() => setViewingDoc(null)}
+            onBack={() => setViewingDoc(null)}
+            backLabel="Back to feature"
+            zIndexClassName="z-[60]"
+          />
+        )}
       </div>
     </div>
   );
@@ -850,8 +1470,71 @@ const FeatureModal = ({
 
 // ── Feature Card ───────────────────────────────────────────────────
 
+const FeatureSessionIndicator = ({
+  summary,
+  loading,
+}: {
+  summary?: FeatureSessionSummary;
+  loading: boolean;
+}) => {
+  const total = summary?.total ?? 0;
+  const typeRows = (summary?.byType || []).slice(0, 5);
+
+  return (
+    <div
+      className="relative group/session-indicator"
+      onClick={(e) => e.stopPropagation()}
+      title="Linked session summary"
+    >
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-700 bg-slate-900/80 text-slate-300">
+        <Terminal size={11} />
+        {loading ? <RefreshCw size={10} className="animate-spin" /> : total}
+      </span>
+
+      <div className="pointer-events-none absolute right-0 top-[calc(100%+8px)] w-60 rounded-lg border border-slate-700 bg-slate-950/95 shadow-2xl px-3 py-2 opacity-0 translate-y-1 group-hover/session-indicator:opacity-100 group-hover/session-indicator:translate-y-0 transition-all duration-150 z-20">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Linked Sessions</div>
+        <div className="space-y-1 text-[11px] text-slate-300">
+          <div className="flex items-center justify-between">
+            <span>Total</span>
+            <span className="font-mono">{total}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Main Threads</span>
+            <span className="font-mono">{summary?.mainThreads ?? 0}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Sub-Threads</span>
+            <span className="font-mono">{summary?.subThreads ?? 0}</span>
+          </div>
+          {(summary?.unresolvedSubThreads || 0) > 0 && (
+            <div className="flex items-center justify-between text-amber-300">
+              <span>Unresolved Sub-Threads</span>
+              <span className="font-mono">{summary?.unresolvedSubThreads ?? 0}</span>
+            </div>
+          )}
+        </div>
+        {typeRows.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-slate-800">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Types</div>
+            <div className="space-y-1">
+              {typeRows.map(row => (
+                <div key={row.type} className="flex items-center justify-between text-[11px] text-slate-300">
+                  <span className="truncate pr-2">{row.type}</span>
+                  <span className="font-mono text-slate-400">{row.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const FeatureCard = ({
   feature,
+  sessionSummary,
+  sessionSummaryLoading,
   onClick,
   onStatusChange,
   onDragStart,
@@ -859,15 +1542,19 @@ const FeatureCard = ({
   isDragging,
 }: {
   feature: Feature;
+  sessionSummary?: FeatureSessionSummary;
+  sessionSummaryLoading: boolean;
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
   onDragStart: (featureId: string) => void;
   onDragEnd: () => void;
   isDragging: boolean;
 }) => {
-  const statusStyle = getStatusStyle(feature.status);
   const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
   const planDoc = feature.linkedDocs.find(d => d.docType === 'implementation_plan');
+  const featureDeferredTasks = getFeatureDeferredCount(feature);
+  const featureCompletedTasks = getFeatureCompletedCount(feature);
+  const featureHasDeferred = hasDeferredCaveat(feature);
 
   return (
     <div
@@ -884,14 +1571,24 @@ const FeatureCard = ({
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
         <span className="font-mono text-[10px] text-slate-500 truncate max-w-[180px]">{feature.id}</span>
-        <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+        <div className="flex items-center gap-2">
+          <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
+          <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+        </div>
       </div>
 
       <h4 className="font-medium text-slate-200 mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
+      {featureHasDeferred && (
+        <div className="mb-2">
+          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
+            Includes deferred steps
+          </span>
+        </div>
+      )}
 
       {/* Progress */}
       <div className="mb-3">
-        <ProgressBar completed={feature.completedTasks} total={feature.totalTasks} />
+        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
       {/* Linked Doc chips */}
@@ -930,14 +1627,20 @@ const FeatureCard = ({
 
 const FeatureListCard = ({
   feature,
+  sessionSummary,
+  sessionSummaryLoading,
   onClick,
   onStatusChange,
 }: {
   feature: Feature;
+  sessionSummary?: FeatureSessionSummary;
+  sessionSummaryLoading: boolean;
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
-  const statusStyle = getStatusStyle(feature.status);
+  const featureDeferredTasks = getFeatureDeferredCount(feature);
+  const featureCompletedTasks = getFeatureCompletedCount(feature);
+  const featureHasDeferred = hasDeferredCaveat(feature);
 
   return (
     <div
@@ -948,6 +1651,7 @@ const FeatureListCard = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
             <span className="font-mono text-xs text-slate-500 border border-slate-800 px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
+            <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
             <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
             {feature.category && (
               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 capitalize">{feature.category}</span>
@@ -956,15 +1660,22 @@ const FeatureListCard = ({
           <h3 className="font-bold text-slate-200 text-lg group-hover:text-indigo-400 transition-colors truncate">{feature.name}</h3>
         </div>
         <div className="text-right ml-4 flex-shrink-0">
-          <div className="text-indigo-400 font-mono font-bold text-sm">{feature.completedTasks}/{feature.totalTasks}</div>
+          <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
           {feature.updatedAt && feature.updatedAt !== 'None' && (
             <div className="text-[10px] text-slate-500">{feature.updatedAt}</div>
           )}
         </div>
       </div>
+      {featureHasDeferred && (
+        <div className="mb-2">
+          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
+            Includes deferred steps
+          </span>
+        </div>
+      )}
 
       <div className="mb-3">
-        <ProgressBar completed={feature.completedTasks} total={feature.totalTasks} />
+        <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
       <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
@@ -990,6 +1701,8 @@ const StatusColumn = ({
   title,
   status,
   features,
+  featureSessionSummaries,
+  loadingFeatureSessionSummaries,
   onFeatureClick,
   onStatusChange,
   onCardDragStart,
@@ -1003,6 +1716,8 @@ const StatusColumn = ({
   title: string;
   status: string;
   features: Feature[];
+  featureSessionSummaries: Record<string, FeatureSessionSummary>;
+  loadingFeatureSessionSummaries: Set<string>;
   onFeatureClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
   onCardDragStart: (featureId: string) => void;
@@ -1043,6 +1758,8 @@ const StatusColumn = ({
           <FeatureCard
             key={f.id}
             feature={f}
+            sessionSummary={featureSessionSummaries[f.id]}
+            sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
             onClick={() => onFeatureClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
             onDragStart={onCardDragStart}
@@ -1069,6 +1786,8 @@ export const ProjectBoard: React.FC = () => {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
+  const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
+  const [loadingFeatureSessionSummaries, setLoadingFeatureSessionSummaries] = useState<Set<string>>(new Set());
 
   // Auto-select feature from URL search params
   useEffect(() => {
@@ -1109,7 +1828,11 @@ export const ProjectBoard: React.FC = () => {
     }
 
     if (statusFilter !== 'all') {
-      result = result.filter(f => f.status === statusFilter);
+      if (statusFilter === 'deferred') {
+        result = result.filter(f => hasDeferredCaveat(f));
+      } else {
+        result = result.filter(f => getFeatureBoardStage(f) === statusFilter);
+      }
     }
 
     if (categoryFilter !== 'all') {
@@ -1118,8 +1841,8 @@ export const ProjectBoard: React.FC = () => {
 
     return result.sort((a, b) => {
       if (sortBy === 'progress') {
-        const pctA = a.totalTasks > 0 ? a.completedTasks / a.totalTasks : 0;
-        const pctB = b.totalTasks > 0 ? b.completedTasks / b.totalTasks : 0;
+        const pctA = a.totalTasks > 0 ? getFeatureCompletedCount(a) / a.totalTasks : 0;
+        const pctB = b.totalTasks > 0 ? getFeatureCompletedCount(b) / b.totalTasks : 0;
         return pctB - pctA;
       }
       if (sortBy === 'tasks') return b.totalTasks - a.totalTasks;
@@ -1133,6 +1856,34 @@ export const ProjectBoard: React.FC = () => {
     if (!feature || feature.status === newStatus) return;
     await updateFeatureStatus(featureId, newStatus);
   }, [apiFeatures, updateFeatureStatus]);
+
+  const loadFeatureSessionSummary = useCallback(async (featureId: string) => {
+    if (!featureId || featureSessionSummaries[featureId] || loadingFeatureSessionSummaries.has(featureId)) return;
+
+    setLoadingFeatureSessionSummaries(prev => {
+      if (prev.has(featureId)) return prev;
+      const next = new Set(prev);
+      next.add(featureId);
+      return next;
+    });
+
+    try {
+      const res = await fetch(`/api/features/${encodeURIComponent(featureId)}/linked-sessions`);
+      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
+      const data = await res.json();
+      const sessions = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
+      const summary = buildFeatureSessionSummary(sessions);
+      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: summary }));
+    } catch {
+      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: buildFeatureSessionSummary([]) }));
+    } finally {
+      setLoadingFeatureSessionSummaries(prev => {
+        const next = new Set(prev);
+        next.delete(featureId);
+        return next;
+      });
+    }
+  }, [featureSessionSummaries, loadingFeatureSessionSummaries]);
 
   const handleCardDragStart = useCallback((featureId: string) => {
     setDraggedFeatureId(featureId);
@@ -1158,6 +1909,12 @@ export const ProjectBoard: React.FC = () => {
     if (!featureId) return;
     await handleStatusChange(featureId, newStatus);
   }, [handleStatusChange]);
+
+  useEffect(() => {
+    filteredFeatures.forEach(feature => {
+      void loadFeatureSessionSummary(feature.id);
+    });
+  }, [filteredFeatures, loadFeatureSessionSummary]);
 
   // Keep selected feature in sync with API data
   useEffect(() => {
@@ -1205,6 +1962,7 @@ export const ProjectBoard: React.FC = () => {
                   <option value="in-progress">In Progress</option>
                   <option value="review">Review</option>
                   <option value="done">Done</option>
+                  <option value="deferred">Deferred Caveat</option>
                 </select>
               </div>
 
@@ -1283,7 +2041,9 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Backlog"
               status="backlog"
-              features={filteredFeatures.filter(f => f.status === 'backlog')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1297,7 +2057,9 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="In Progress"
               status="in-progress"
-              features={filteredFeatures.filter(f => f.status === 'in-progress')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1311,7 +2073,9 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Review"
               status="review"
-              features={filteredFeatures.filter(f => f.status === 'review')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1325,7 +2089,9 @@ export const ProjectBoard: React.FC = () => {
             <StatusColumn
               title="Done"
               status="done"
-              features={filteredFeatures.filter(f => f.status === 'done')}
+              features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1343,6 +2109,8 @@ export const ProjectBoard: React.FC = () => {
               <FeatureListCard
                 key={f.id}
                 feature={f}
+                sessionSummary={featureSessionSummaries[f.id]}
+                sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
                 onClick={() => setSelectedFeature(f)}
                 onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
               />

@@ -1,5 +1,7 @@
 import json
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -132,6 +134,63 @@ class SessionParserTests(unittest.TestCase):
 
         task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
         self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a123")
+
+    def test_async_task_tool_result_creates_subagent_start_link(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_task_2",
+                                "name": "Task",
+                                "input": {"subagent_type": "Explore"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:01Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_task_2",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Async agent launched successfully.\nagentId: a456\n",
+                                    }
+                                ],
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                    "toolUseResult": {
+                        "isAsync": True,
+                        "status": "async_launched",
+                        "agentId": "a456",
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        starts = [l for l in session.logs if l.type == "subagent_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0].linkedSessionId, "S-agent-a456")
+
+        task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
+        self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a456")
 
     def test_thinking_becomes_thought_log_and_extracts_artifacts_and_files(self) -> None:
         path = self._write_jsonl(
@@ -420,6 +479,72 @@ class SessionParserTests(unittest.TestCase):
         self.assertTrue(tool_logs[0].metadata.get("bashProgressLinked"))
         self.assertEqual(tool_logs[0].metadata.get("bashElapsedSeconds"), 1.2)
         self.assertEqual(tool_logs[0].metadata.get("bashTotalLines"), 2)
+
+    def test_recent_session_without_terminal_marker_is_active(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T14:00:00Z",
+                    "message": {"role": "user", "content": "working"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T14:00:01Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "in progress"}]},
+                },
+            ]
+        )
+        now = time.time()
+        os.utime(path, (now, now))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "active")
+
+    def test_stale_session_without_terminal_marker_is_completed(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T14:05:00Z",
+                    "message": {"role": "user", "content": "old session"},
+                },
+            ]
+        )
+        old = time.time() - (3 * 3600)
+        os.utime(path, (old, old))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "completed")
+
+    def test_terminal_system_entry_marks_session_completed(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T14:10:00Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+                },
+                {
+                    "type": "system",
+                    "timestamp": "2026-02-16T14:10:02Z",
+                    "subtype": "turn_duration",
+                    "durationMs": 1200,
+                    "isMeta": True,
+                },
+            ]
+        )
+        now = time.time()
+        os.utime(path, (now, now))
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.status, "completed")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Optional, Generic, TypeVar
+from typing import Any, Optional, Generic, TypeVar, Literal
 
 T = TypeVar("T")
 
@@ -92,6 +92,7 @@ class SessionMetadata(BaseModel):
     mappingId: str = ""
     relatedCommand: str = ""
     relatedPhases: list[str] = Field(default_factory=list)
+    relatedFilePath: str = ""
     fields: list[SessionMetadataField] = Field(default_factory=list)
 
 
@@ -137,6 +138,40 @@ class DocumentFrontmatter(BaseModel):
     version: Optional[str] = None
     commits: list[str] = Field(default_factory=list)
     prs: list[str] = Field(default_factory=list)
+    relatedRefs: list[str] = Field(default_factory=list)
+    pathRefs: list[str] = Field(default_factory=list)
+    slugRefs: list[str] = Field(default_factory=list)
+    prd: str = ""
+    prdRefs: list[str] = Field(default_factory=list)
+    fieldKeys: list[str] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentTaskCounts(BaseModel):
+    total: int = 0
+    completed: int = 0
+    inProgress: int = 0
+    blocked: int = 0
+
+
+class DocumentMetadata(BaseModel):
+    phase: str = ""
+    phaseNumber: Optional[int] = None
+    overallProgress: Optional[float] = None
+    taskCounts: DocumentTaskCounts = Field(default_factory=DocumentTaskCounts)
+    owners: list[str] = Field(default_factory=list)
+    contributors: list[str] = Field(default_factory=list)
+    requestLogIds: list[str] = Field(default_factory=list)
+    commitRefs: list[str] = Field(default_factory=list)
+    featureSlugHint: str = ""
+    canonicalPath: str = ""
+
+
+class DocumentLinkCounts(BaseModel):
+    features: int = 0
+    tasks: int = 0
+    sessions: int = 0
+    documents: int = 0
 
 
 class PlanDocument(BaseModel):
@@ -146,7 +181,29 @@ class PlanDocument(BaseModel):
     status: str = "active"
     lastModified: str = ""
     author: str = ""
+    docType: str = ""
+    category: str = ""
+    docSubtype: str = ""
+    rootKind: Literal["project_plans", "progress", "document"] = "project_plans"
+    canonicalPath: str = ""
+    hasFrontmatter: bool = False
+    frontmatterType: str = ""
+    statusNormalized: str = ""
+    featureSlugHint: str = ""
+    featureSlugCanonical: str = ""
+    prdRef: str = ""
+    phaseToken: str = ""
+    phaseNumber: Optional[int] = None
+    overallProgress: Optional[float] = None
+    totalTasks: int = 0
+    completedTasks: int = 0
+    inProgressTasks: int = 0
+    blockedTasks: int = 0
+    pathSegments: list[str] = Field(default_factory=list)
+    featureCandidates: list[str] = Field(default_factory=list)
     frontmatter: DocumentFrontmatter = Field(default_factory=DocumentFrontmatter)
+    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+    linkCounts: DocumentLinkCounts = Field(default_factory=DocumentLinkCounts)
     content: Optional[str] = None  # markdown body, loaded on demand
 
 
@@ -156,7 +213,7 @@ class ProjectTask(BaseModel):
     id: str
     title: str
     description: str = ""
-    status: str = "backlog"  # backlog | in-progress | review | done
+    status: str = "backlog"  # backlog | in-progress | review | done | deferred
     owner: str = ""
     lastAgent: str = ""
     cost: float = 0.0
@@ -220,26 +277,34 @@ class LinkedDocument(BaseModel):
     id: str
     title: str
     filePath: str
-    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "spec"
+    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "progress" | "spec"
+    category: str = ""
+    slug: str = ""
+    canonicalSlug: str = ""
+    frontmatterKeys: list[str] = Field(default_factory=list)
+    relatedRefs: list[str] = Field(default_factory=list)
+    prdRef: str = ""
 
 
 class FeaturePhase(BaseModel):
     id: Optional[str] = None
     phase: str  # "1", "2", "all"
     title: str = ""
-    status: str = "backlog"  # "completed" | "in-progress" | "backlog"
+    status: str = "backlog"  # backlog | in-progress | review | done | deferred
     progress: int = 0  # 0-100
     totalTasks: int = 0
     completedTasks: int = 0
+    deferredTasks: int = 0
     tasks: list[ProjectTask] = Field(default_factory=list)
 
 
 class Feature(BaseModel):
     id: str  # slug, e.g. "discovery-import-fixes-v1"
     name: str
-    status: str = "backlog"  # overall: done | in-progress | review | backlog
+    status: str = "backlog"  # overall: done | deferred | in-progress | review | backlog
     totalTasks: int = 0
     completedTasks: int = 0
+    deferredTasks: int = 0
     category: str = ""
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""
