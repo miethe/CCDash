@@ -169,6 +169,10 @@ class DocumentFrontmatter(BaseModel):
     tags: list[str] = Field(default_factory=list)
     linkedFeatures: list[str] = Field(default_factory=list)
     linkedSessions: list[str] = Field(default_factory=list)
+    lineageFamily: str = ""
+    lineageParent: str = ""
+    lineageChildren: list[str] = Field(default_factory=list)
+    lineageType: str = ""
     version: Optional[str] = None
     commits: list[str] = Field(default_factory=list)
     prs: list[str] = Field(default_factory=list)
@@ -323,6 +327,10 @@ class LinkedDocument(BaseModel):
     frontmatterKeys: list[str] = Field(default_factory=list)
     relatedRefs: list[str] = Field(default_factory=list)
     prdRef: str = ""
+    lineageFamily: str = ""
+    lineageParent: str = ""
+    lineageChildren: list[str] = Field(default_factory=list)
+    lineageType: str = ""
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 

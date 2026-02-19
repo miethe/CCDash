@@ -136,6 +136,10 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
       linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
       linkedSessions: Array.isArray(raw.frontmatter?.linkedSessions) ? raw.frontmatter.linkedSessions : (fallback.frontmatter?.linkedSessions || []),
+      lineageFamily: raw.frontmatter?.lineageFamily ?? fallback.frontmatter?.lineageFamily,
+      lineageParent: raw.frontmatter?.lineageParent ?? fallback.frontmatter?.lineageParent,
+      lineageChildren: Array.isArray(raw.frontmatter?.lineageChildren) ? raw.frontmatter.lineageChildren : (fallback.frontmatter?.lineageChildren || []),
+      lineageType: raw.frontmatter?.lineageType ?? fallback.frontmatter?.lineageType,
       relatedFiles: Array.isArray(raw.frontmatter?.relatedFiles) ? raw.frontmatter.relatedFiles : (fallback.frontmatter?.relatedFiles || []),
       version: raw.frontmatter?.version ?? fallback.frontmatter?.version,
       commits: Array.isArray(raw.frontmatter?.commits) ? raw.frontmatter.commits : (fallback.frontmatter?.commits || []),
@@ -373,6 +377,9 @@ export const DocumentModal = ({
                               <div className="flex justify-between text-slate-400"><span>Category</span><span className="text-slate-200">{doc.category || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Feature Hint</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Family</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageFamily || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Parent</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageParent || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Type</span><span className="text-slate-200">{doc.frontmatter.lineageType || '-'}</span></div>
                            </div>
                         </div>
 
@@ -420,6 +427,10 @@ export const DocumentModal = ({
                               <div>
                                  <div className="text-slate-500 uppercase mb-1">Commit Refs</div>
                                  <div className="text-slate-300 font-mono break-all">{(doc.metadata?.commitRefs || doc.frontmatter.commits || []).join(', ') || '-'}</div>
+                              </div>
+                              <div>
+                                 <div className="text-slate-500 uppercase mb-1">Lineage Children</div>
+                                 <div className="text-slate-300 font-mono break-all">{(doc.frontmatter.lineageChildren || []).join(', ') || '-'}</div>
                               </div>
                            </div>
                         </div>

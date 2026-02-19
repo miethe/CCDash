@@ -57,6 +57,7 @@ _RELATED_KEYS = (
     "source_docs",
     "sources",
     "artifacts",
+    "related_features",
 )
 _PRD_KEYS = (
     "prd",
@@ -106,6 +107,15 @@ _FEATURE_KEYS = (
     "feature_slug_hint",
     "linked_features",
     "linkedfeatures",
+    "related_features",
+    "lineage_parent",
+    "lineage_children",
+    "parent_feature",
+    "parent_feature_slug",
+    "extends_feature",
+    "derived_from",
+    "supersedes",
+    "superseded_by",
 )
 _DOC_TYPE_DIR_TOKENS = {
     "implementation_plans",

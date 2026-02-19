@@ -27,6 +27,7 @@ from backend.document_linking import (
     is_feature_like_token,
     make_document_id,
     normalize_doc_status,
+    normalize_ref_path,
 )
 from backend.date_utils import (
     choose_first,
@@ -104,6 +105,34 @@ def _to_string_list(value: Any) -> list[str]:
 def _first_string(value: Any) -> str:
     values = _to_string_list(value)
     return values[0] if values else ""
+
+
+def _normalize_feature_ref(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    path_slug = feature_slug_from_path(raw)
+    if path_slug:
+        return path_slug
+    normalized_path = normalize_ref_path(raw)
+    if normalized_path and normalized_path.endswith(".md"):
+        stem = Path(normalized_path).stem.lower()
+        if is_feature_like_token(stem):
+            return stem
+    token = raw.lower()
+    return token if is_feature_like_token(token) else ""
+
+
+def _normalize_feature_ref_list(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _normalize_feature_ref(value)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized
 
 
 def _to_int(value: Any) -> int:
@@ -417,21 +446,58 @@ def parse_document_file(
 
     feature_slug_hint = str(fm.get("feature_slug") or fm.get("feature_slug_hint") or "").strip().lower()
     if not feature_slug_hint:
+        feature_slug_hint = feature_slug_from_path(canonical_path)
+    if not feature_slug_hint:
         for candidate in linked_feature_refs:
             token = str(candidate or "").strip().lower()
             if is_feature_like_token(token):
                 feature_slug_hint = token
                 break
-    if not feature_slug_hint:
-        feature_slug_hint = feature_slug_from_path(canonical_path)
     feature_slug_canonical = canonical_slug(feature_slug_hint) if feature_slug_hint else ""
+
+    lineage_family_raw = _first_string(fm.get("lineage_family") or fm.get("feature_family"))
+    lineage_parent_raw = _first_string(
+        fm.get("lineage_parent")
+        or fm.get("parent_feature")
+        or fm.get("parent_feature_slug")
+        or fm.get("extends_feature")
+        or fm.get("derived_from")
+        or fm.get("supersedes")
+    )
+    lineage_children_raw = _to_string_list(
+        fm.get("lineage_children")
+        or fm.get("child_features")
+        or fm.get("superseded_by")
+    )
+    lineage_type = str(
+        _first_string(
+            fm.get("lineage_type")
+            or fm.get("lineage_relationship")
+            or fm.get("feature_lineage_type")
+        )
+    ).strip().lower().replace(" ", "_")
+    lineage_parent = _normalize_feature_ref(lineage_parent_raw)
+    lineage_children = _normalize_feature_ref_list(lineage_children_raw)
+    normalized_lineage_family = _normalize_feature_ref(lineage_family_raw)
+    lineage_family = canonical_slug(
+        normalized_lineage_family or feature_slug_hint or feature_slug_canonical
+    )
+
+    all_linked_feature_refs = sorted(
+        {
+            *linked_feature_refs,
+            *([lineage_parent] if lineage_parent else []),
+            *lineage_children,
+        }
+    )
 
     feature_candidates = sorted(
         {
-            *linked_feature_refs,
+            *all_linked_feature_refs,
             *alias_tokens_from_path(canonical_path),
             *( [feature_slug_hint] if feature_slug_hint else [] ),
             *( [feature_slug_canonical] if feature_slug_canonical else [] ),
+            *( [lineage_family] if lineage_family else [] ),
         }
     )
 
@@ -484,8 +550,12 @@ def parse_document_file(
         featureCandidates=feature_candidates,
         frontmatter=DocumentFrontmatter(
             tags=tags,
-            linkedFeatures=linked_feature_refs,
+            linkedFeatures=all_linked_feature_refs,
             linkedSessions=linked_session_refs,
+            lineageFamily=lineage_family,
+            lineageParent=lineage_parent,
+            lineageChildren=lineage_children,
+            lineageType=lineage_type,
             version=version or None,
             commits=all_commit_refs,
             prs=prs,

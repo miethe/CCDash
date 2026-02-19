@@ -126,6 +126,51 @@ def _extract_frontmatter(text: str) -> dict:
         return {}
 
 
+def _to_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        result: list[str] = []
+        for entry in value:
+            result.extend(_to_string_list(entry))
+        return result
+    if isinstance(value, dict):
+        result: list[str] = []
+        for nested in value.values():
+            result.extend(_to_string_list(nested))
+        return result
+    return []
+
+
+def _normalize_feature_ref(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    path_slug = feature_slug_from_path(raw)
+    if path_slug:
+        return path_slug
+    normalized_path = normalize_ref_path(raw)
+    if normalized_path and normalized_path.endswith(".md"):
+        stem = Path(normalized_path).stem.lower()
+        if is_feature_like_token(stem):
+            return stem
+    token = raw.lower()
+    return token if is_feature_like_token(token) else ""
+
+
+def _normalize_feature_refs(values: list[str]) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _normalize_feature_ref(value)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        items.append(token)
+    return items
+
+
 def _slug_from_path(path: Path) -> str:
     """Derive a slug from a file's stem, stripping version suffixes for matching."""
     return path.stem.lower()
@@ -152,6 +197,32 @@ def _extract_doc_metadata(
     slug = _slug_from_path(path)
     status_raw = str(frontmatter.get("status") or "")
     status_normalized = normalize_doc_status(status_raw, default="")
+    lineage_family_raw = str(frontmatter.get("lineage_family") or frontmatter.get("feature_family") or "").strip()
+    lineage_parent_raw = str(
+        frontmatter.get("lineage_parent")
+        or frontmatter.get("parent_feature")
+        or frontmatter.get("parent_feature_slug")
+        or frontmatter.get("extends_feature")
+        or frontmatter.get("derived_from")
+        or frontmatter.get("supersedes")
+        or ""
+    ).strip()
+    lineage_children_raw = _to_string_list(
+        frontmatter.get("lineage_children")
+        or frontmatter.get("child_features")
+        or frontmatter.get("superseded_by")
+    )
+    lineage_type = str(
+        frontmatter.get("lineage_type")
+        or frontmatter.get("lineage_relationship")
+        or frontmatter.get("feature_lineage_type")
+        or ""
+    ).strip().lower().replace(" ", "_")
+    lineage_parent = _normalize_feature_ref(lineage_parent_raw)
+    lineage_children = _normalize_feature_refs(lineage_children_raw)
+    lineage_family = canonical_slug(
+        _normalize_feature_ref(lineage_family_raw) or _normalize_feature_ref(str(frontmatter.get("feature_slug") or ""))
+    )
     fs_dates = file_metadata_dates(path)
     git_dates: dict[str, str] = {}
     dirty = False
@@ -258,6 +329,10 @@ def _extract_doc_metadata(
         "updated_at": updated_date.get("value", ""),
         "completed_at": completed_date.get("value", ""),
         "status_normalized": status_normalized,
+        "lineage_family": lineage_family,
+        "lineage_parent": lineage_parent,
+        "lineage_children": lineage_children,
+        "lineage_type": lineage_type,
     }
 
 
@@ -330,6 +405,10 @@ def _scan_impl_plans(
                     "frontmatter_keys": doc_meta["frontmatter_keys"],
                     "related_refs": doc_meta["related_refs"],
                     "prd_ref": doc_meta["prd_ref"],
+                    "lineage_family": doc_meta.get("lineage_family", ""),
+                    "lineage_parent": doc_meta.get("lineage_parent", ""),
+                    "lineage_children": doc_meta.get("lineage_children", []),
+                    "lineage_type": doc_meta.get("lineage_type", ""),
                     "dates": doc_meta.get("dates", {}),
                     "timeline": doc_meta.get("timeline", []),
                 })
@@ -345,6 +424,10 @@ def _scan_impl_plans(
             "rel_path": rel_path,
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
+            "lineage_family": doc_meta.get("lineage_family", ""),
+            "lineage_parent": doc_meta.get("lineage_parent", ""),
+            "lineage_children": doc_meta.get("lineage_children", []),
+            "lineage_type": doc_meta.get("lineage_type", ""),
             "phase_docs": [],
             "dates": doc_meta.get("dates", {}),
             "timeline": doc_meta.get("timeline", []),
@@ -402,6 +485,10 @@ def _scan_prds(
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
             "prd_ref": doc_meta["prd_ref"],
+            "lineage_family": doc_meta.get("lineage_family", ""),
+            "lineage_parent": doc_meta.get("lineage_parent", ""),
+            "lineage_children": doc_meta.get("lineage_children", []),
+            "lineage_type": doc_meta.get("lineage_type", ""),
             "dates": doc_meta.get("dates", {}),
             "timeline": doc_meta.get("timeline", []),
         }
@@ -530,6 +617,10 @@ def _scan_progress_dirs(
                 "frontmatter_keys": doc_meta["frontmatter_keys"],
                 "related_refs": doc_meta["related_refs"],
                 "prd_ref": doc_meta["prd_ref"],
+                "lineage_family": doc_meta.get("lineage_family", ""),
+                "lineage_parent": doc_meta.get("lineage_parent", ""),
+                "lineage_children": doc_meta.get("lineage_children", []),
+                "lineage_type": doc_meta.get("lineage_type", ""),
                 "dates": doc_meta.get("dates", {}),
                 "timeline": doc_meta.get("timeline", []),
             })
@@ -742,6 +833,10 @@ def _scan_auxiliary_docs(
                 "prdRef": str(metadata["prd_ref"] or ""),
                 "featureRefs": feature_refs,
                 "aliases": aliases,
+                "lineageFamily": str(metadata.get("lineage_family") or ""),
+                "lineageParent": str(metadata.get("lineage_parent") or ""),
+                "lineageChildren": [str(v) for v in metadata.get("lineage_children", []) if isinstance(v, str)],
+                "lineageType": str(metadata.get("lineage_type") or ""),
                 "dates": metadata.get("dates", {}),
                 "timeline": metadata.get("timeline", []),
             })
@@ -765,6 +860,7 @@ def _feature_aliases(feature: Feature) -> set[str]:
 
 def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool:
     feature_bases = {_base_slug(alias) for alias in feature_aliases if alias}
+    doc_type = str(doc.get("docType") or "").strip().lower()
 
     def _matches_feature(candidate: str) -> bool:
         value = (candidate or "").strip().lower()
@@ -774,8 +870,13 @@ def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool
 
     doc_path = str(doc.get("filePath") or "")
     path_feature_slug = feature_slug_from_path(doc_path)
-    if path_feature_slug and _matches_feature(path_feature_slug):
-        return True
+    if path_feature_slug:
+        if _matches_feature(path_feature_slug):
+            return True
+        # Ownership guard for plan/progress docs: if path and target disagree,
+        # do not accept indirect refs that would cross-link feature ownership.
+        if doc_type in _DOC_WRITE_THROUGH_TYPES or doc_type == "progress":
+            return False
     feature_refs = {str(v).lower() for v in doc.get("featureRefs", []) if str(v).strip()}
     if any(_matches_feature(feature_ref) for feature_ref in feature_refs):
         return True
@@ -784,6 +885,24 @@ def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool
         prd_slug = feature_slug_from_path(prd_ref) if ("/" in prd_ref or prd_ref.endswith(".md")) else prd_ref
         if _matches_feature(prd_slug):
             return True
+    return False
+
+
+def _doc_owned_by_feature(doc: LinkedDocument, feature_id: str) -> bool:
+    feature_base = _base_slug(feature_id)
+
+    path_feature_slug = feature_slug_from_path(str(doc.filePath or ""))
+    if path_feature_slug:
+        return _base_slug(path_feature_slug) == feature_base
+
+    doc_slug = (doc.slug or Path(doc.filePath).stem).strip().lower()
+    if doc_slug and _base_slug(doc_slug) == feature_base:
+        return True
+
+    canonical = str(doc.canonicalSlug or "").strip().lower()
+    if canonical and _base_slug(canonical) == feature_base:
+        return True
+
     return False
 
 
@@ -961,6 +1080,8 @@ def _reconcile_completion_equivalence(features: list[Feature], project_root: Pat
             doc_type = str(doc.docType or "").strip().lower()
             if doc_type not in _DOC_WRITE_THROUGH_TYPES:
                 continue
+            if not _doc_owned_by_feature(doc, feature.id):
+                continue
             status_value = _read_frontmatter_status_cached(project_root, doc.filePath, status_cache)
             completion_doc_paths.append((doc_type, doc.filePath))
             if doc_type == "prd":
@@ -1046,20 +1167,24 @@ def scan_features(
     # Step 1: Seed features from implementation plans
     for slug, plan in impl_plans.items():
         linked_docs = [
-            LinkedDocument(
-                id=f"PLAN-{slug}",
-                title=plan["title"],
-                filePath=plan["rel_path"],
-                docType="implementation_plan",
+                LinkedDocument(
+                    id=f"PLAN-{slug}",
+                    title=plan["title"],
+                    filePath=plan["rel_path"],
+                    docType="implementation_plan",
                 category=plan.get("category", ""),
                 slug=slug,
                 canonicalSlug=_base_slug(slug),
-                frontmatterKeys=plan.get("frontmatter_keys", []),
-                relatedRefs=plan.get("related_refs", []),
-                prdRef=plan.get("prd_ref", ""),
-                dates=plan.get("dates", {}),
-                timeline=plan.get("timeline", []),
-            )
+                    frontmatterKeys=plan.get("frontmatter_keys", []),
+                    relatedRefs=plan.get("related_refs", []),
+                    prdRef=plan.get("prd_ref", ""),
+                    lineageFamily=str(plan.get("lineage_family", "")),
+                    lineageParent=str(plan.get("lineage_parent", "")),
+                    lineageChildren=[str(v) for v in plan.get("lineage_children", []) if isinstance(v, str)],
+                    lineageType=str(plan.get("lineage_type", "")),
+                    dates=plan.get("dates", {}),
+                    timeline=plan.get("timeline", []),
+                )
         ]
 
         # Add phase sub-plan docs
@@ -1075,6 +1200,10 @@ def scan_features(
                 frontmatterKeys=pd.get("frontmatter_keys", []),
                 relatedRefs=pd.get("related_refs", []),
                 prdRef=pd.get("prd_ref", ""),
+                lineageFamily=str(pd.get("lineage_family", "")),
+                lineageParent=str(pd.get("lineage_parent", "")),
+                lineageChildren=[str(v) for v in pd.get("lineage_children", []) if isinstance(v, str)],
+                lineageType=str(pd.get("lineage_type", "")),
                 dates=pd.get("dates", {}),
                 timeline=pd.get("timeline", []),
             ))
@@ -1128,6 +1257,10 @@ def scan_features(
                 frontmatterKeys=prd.get("frontmatter_keys", []),
                 relatedRefs=prd.get("related_refs", []),
                 prdRef=prd.get("prd_ref", ""),
+                lineageFamily=str(prd.get("lineage_family", "")),
+                lineageParent=str(prd.get("lineage_parent", "")),
+                lineageChildren=[str(v) for v in prd.get("lineage_children", []) if isinstance(v, str)],
+                lineageType=str(prd.get("lineage_type", "")),
                 dates=prd.get("dates", {}),
                 timeline=prd.get("timeline", []),
             ))
@@ -1154,6 +1287,10 @@ def scan_features(
                     frontmatterKeys=prd.get("frontmatter_keys", []),
                     relatedRefs=prd.get("related_refs", []),
                     prdRef=prd.get("prd_ref", ""),
+                    lineageFamily=str(prd.get("lineage_family", "")),
+                    lineageParent=str(prd.get("lineage_parent", "")),
+                    lineageChildren=[str(v) for v in prd.get("lineage_children", []) if isinstance(v, str)],
+                    lineageType=str(prd.get("lineage_type", "")),
                     dates=prd.get("dates", {}),
                     timeline=prd.get("timeline", []),
                 )],
@@ -1219,6 +1356,10 @@ def scan_features(
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
+                    lineageFamily=str(progress_doc.get("lineage_family") or ""),
+                    lineageParent=str(progress_doc.get("lineage_parent") or ""),
+                    lineageChildren=[str(v) for v in progress_doc.get("lineage_children", []) if isinstance(v, str)],
+                    lineageType=str(progress_doc.get("lineage_type") or ""),
                     dates=progress_doc.get("dates", {}),
                     timeline=progress_doc.get("timeline", []),
                 ))
@@ -1245,6 +1386,10 @@ def scan_features(
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
+                    lineageFamily=str(progress_doc.get("lineage_family") or ""),
+                    lineageParent=str(progress_doc.get("lineage_parent") or ""),
+                    lineageChildren=[str(v) for v in progress_doc.get("lineage_children", []) if isinstance(v, str)],
+                    lineageType=str(progress_doc.get("lineage_type") or ""),
                     dates=progress_doc.get("dates", {}),
                     timeline=progress_doc.get("timeline", []),
                 ))
@@ -1281,6 +1426,10 @@ def scan_features(
                 frontmatterKeys=[str(v) for v in doc.get("frontmatterKeys", []) if isinstance(v, str)],
                 relatedRefs=[str(v) for v in doc.get("relatedRefs", []) if isinstance(v, str)],
                 prdRef=str(doc.get("prdRef") or ""),
+                lineageFamily=str(doc.get("lineageFamily") or ""),
+                lineageParent=str(doc.get("lineageParent") or ""),
+                lineageChildren=[str(v) for v in doc.get("lineageChildren", []) if isinstance(v, str)],
+                lineageType=str(doc.get("lineageType") or ""),
                 dates=doc.get("dates", {}),
                 timeline=doc.get("timeline", []),
             ))
@@ -1300,6 +1449,8 @@ def scan_features(
 
     # Step 6: Link related features (same base slug, different versions)
     feature_list = list(features.values())
+    feature_ids = sorted(features.keys())
+    related_by_id: dict[str, set[str]] = {feat_id: set() for feat_id in feature_ids}
     base_groups: dict[str, list[str]] = {}
     for feat in feature_list:
         base = _base_slug(feat.id)
@@ -1308,9 +1459,36 @@ def scan_features(
     for group in base_groups.values():
         if len(group) > 1:
             for feat_id in group:
-                features[feat_id].relatedFeatures = [
-                    fid for fid in group if fid != feat_id
-                ]
+                for other_id in group:
+                    if other_id != feat_id:
+                        related_by_id[feat_id].add(other_id)
+
+    def _resolve_lineage_target_ids(raw_ref: str, current_id: str) -> list[str]:
+        token = _normalize_feature_ref(raw_ref)
+        if not token:
+            return []
+        if token in features and token != current_id:
+            return [token]
+        token_base = _base_slug(token)
+        return [feat_id for feat_id in feature_ids if feat_id != current_id and _base_slug(feat_id) == token_base]
+
+    for feat in feature_list:
+        for doc in feat.linkedDocs:
+            for raw_ref in [str(doc.lineageParent or ""), *[str(v) for v in doc.lineageChildren or []]]:
+                for target_id in _resolve_lineage_target_ids(raw_ref, feat.id):
+                    related_by_id[feat.id].add(target_id)
+                    related_by_id[target_id].add(feat.id)
+            lineage_family = canonical_slug(str(doc.lineageFamily or "").strip().lower())
+            if not lineage_family:
+                continue
+            for target_id in feature_ids:
+                if target_id == feat.id:
+                    continue
+                if _base_slug(target_id) == lineage_family:
+                    related_by_id[feat.id].add(target_id)
+
+    for feat_id in feature_ids:
+        features[feat_id].relatedFeatures = sorted(related_by_id[feat_id])
 
     inferred_updates = _reconcile_completion_equivalence(feature_list, project_root)
 

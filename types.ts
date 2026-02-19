@@ -208,6 +208,10 @@ export interface PlanDocument {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
     linkedSessions?: string[]; // IDs like S-8821
+    lineageFamily?: string;
+    lineageParent?: string;
+    lineageChildren?: string[];
+    lineageType?: string;
     relatedFiles?: string[];
     version?: string;
     commits?: string[];

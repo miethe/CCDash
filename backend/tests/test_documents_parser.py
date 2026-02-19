@@ -44,6 +44,37 @@ Body
             self.assertIn("feature-a-v1", doc.featureCandidates)
             self.assertIn("REQ-20260101-feature-a-1", doc.metadata.requestLogIds)
 
+    def test_parse_lineage_frontmatter_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans" / "implementation_plans" / "features"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            path = docs_dir / "composite-artifact-ux-v2.md"
+            path.write_text(
+                """---
+title: Composite Artifact UX v2
+status: draft
+feature_slug: composite-artifact-ux-v2
+lineage_family: composite-artifact
+lineage_parent: /docs/project_plans/implementation_plans/features/composite-artifact-infrastructure-v1.md
+lineage_children:
+  - composite-artifact-ux-v3
+lineage_type: expansion
+---
+Body
+""",
+                encoding="utf-8",
+            )
+
+            doc = parse_document_file(path, root / "docs" / "project_plans", project_root=root)
+            self.assertIsNotNone(doc)
+            assert doc is not None
+            self.assertEqual(doc.frontmatter.lineageFamily, "composite-artifact")
+            self.assertEqual(doc.frontmatter.lineageParent, "composite-artifact-infrastructure-v1")
+            self.assertEqual(doc.frontmatter.lineageChildren, ["composite-artifact-ux-v3"])
+            self.assertEqual(doc.frontmatter.lineageType, "expansion")
+            self.assertIn("composite-artifact-infrastructure-v1", doc.frontmatter.linkedFeatures)
+
 
 if __name__ == "__main__":
     unittest.main()

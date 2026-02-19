@@ -105,6 +105,137 @@ PRD body
             self.assertEqual(_frontmatter_status(plan_file), "completed")
             self.assertEqual(_frontmatter_status(prd_file), "inferred_complete")
 
+    def test_related_refs_do_not_cause_cross_feature_inferred_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            infra_plan = docs_dir / "implementation_plans" / "features" / "composite-artifact-infrastructure-v1.md"
+            infra_plan.write_text(
+                """---
+title: "Implementation Plan: Composite Artifact Infrastructure"
+status: completed
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            infra_prd = docs_dir / "PRDs" / "features" / "composite-artifact-infrastructure-v1.md"
+            infra_prd.write_text(
+                """---
+title: "PRD: Composite Artifact Infrastructure"
+status: draft
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            ux_plan = docs_dir / "implementation_plans" / "features" / "composite-artifact-ux-v2.md"
+            ux_plan.write_text(
+                """---
+title: "Implementation Plan: Composite Artifact UX v2"
+status: draft
+related:
+  - /docs/project_plans/implementation_plans/features/composite-artifact-infrastructure-v1.md
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            ux_prd = docs_dir / "PRDs" / "features" / "composite-artifact-ux-v2.md"
+            ux_prd.write_text(
+                """---
+title: "PRD: Composite Artifact UX v2"
+status: draft
+related:
+  - /docs/project_plans/PRDs/features/composite-artifact-infrastructure-v1.md
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            by_id = {feature.id: feature for feature in features}
+
+            self.assertEqual(by_id["composite-artifact-infrastructure-v1"].status, "done")
+            self.assertEqual(by_id["composite-artifact-ux-v2"].status, "backlog")
+            self.assertEqual(_frontmatter_status(infra_prd), "inferred_complete")
+            self.assertEqual(_frontmatter_status(ux_plan), "draft")
+            self.assertEqual(_frontmatter_status(ux_prd), "draft")
+
+    def test_lineage_parent_builds_related_feature_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            infra_plan = docs_dir / "implementation_plans" / "features" / "composite-artifact-infrastructure-v1.md"
+            infra_plan.write_text(
+                """---
+title: "Implementation Plan: Composite Artifact Infrastructure"
+status: draft
+feature_slug: composite-artifact-infrastructure-v1
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            infra_prd = docs_dir / "PRDs" / "features" / "composite-artifact-infrastructure-v1.md"
+            infra_prd.write_text(
+                """---
+title: "PRD: Composite Artifact Infrastructure"
+status: draft
+feature_slug: composite-artifact-infrastructure-v1
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            ux_plan = docs_dir / "implementation_plans" / "features" / "composite-artifact-ux-v2.md"
+            ux_plan.write_text(
+                """---
+title: "Implementation Plan: Composite Artifact UX v2"
+status: draft
+feature_slug: composite-artifact-ux-v2
+lineage_parent: composite-artifact-infrastructure-v1
+lineage_family: composite-artifact
+lineage_type: expansion
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            ux_prd = docs_dir / "PRDs" / "features" / "composite-artifact-ux-v2.md"
+            ux_prd.write_text(
+                """---
+title: "PRD: Composite Artifact UX v2"
+status: draft
+feature_slug: composite-artifact-ux-v2
+lineage_parent: composite-artifact-infrastructure-v1
+lineage_family: composite-artifact
+lineage_type: expansion
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            by_id = {feature.id: feature for feature in features}
+
+            self.assertIn("composite-artifact-infrastructure-v1", by_id["composite-artifact-ux-v2"].relatedFeatures)
+            self.assertIn("composite-artifact-ux-v2", by_id["composite-artifact-infrastructure-v1"].relatedFeatures)
+
 
 if __name__ == "__main__":
     unittest.main()

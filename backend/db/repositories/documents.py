@@ -33,7 +33,7 @@ class SqliteDocumentRepository:
             if not raw:
                 return
             norm = normalize_ref_path(raw).lower() if "/" in raw or raw.lower().endswith(".md") else raw.lower()
-            if kind in {"feature", "feature_ref", "feature_slug"}:
+            if kind in {"feature", "feature_ref", "feature_slug", "lineage_parent", "lineage_child", "lineage_family"}:
                 norm = canonical_slug(norm)
             refs.append((kind, raw, norm, source_field))
 
@@ -43,6 +43,17 @@ class SqliteDocumentRepository:
         for value in frontmatter.get("linkedSessions", []) or []:
             if isinstance(value, str):
                 add("session", value, "linkedSessions")
+        lineage_parent = frontmatter.get("lineageParent")
+        if isinstance(lineage_parent, str):
+            add("lineage_parent", lineage_parent, "lineageParent")
+            add("feature", lineage_parent, "lineageParent")
+        lineage_family = frontmatter.get("lineageFamily")
+        if isinstance(lineage_family, str):
+            add("lineage_family", lineage_family, "lineageFamily")
+        for value in frontmatter.get("lineageChildren", []) or []:
+            if isinstance(value, str):
+                add("lineage_child", value, "lineageChildren")
+                add("feature", value, "lineageChildren")
         for value in frontmatter.get("relatedRefs", []) or []:
             if isinstance(value, str):
                 add("related", value, "relatedRefs")
