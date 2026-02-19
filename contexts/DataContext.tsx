@@ -89,7 +89,7 @@ const SESSIONS_PER_PAGE = 50;
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
     const [sessionTotal, setSessionTotal] = useState(0);
-    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({});
+    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({ include_subagents: true });
     const [documents, setDocuments] = useState<PlanDocument[]>([]);
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
     const [alerts, setAlerts] = useState<AlertConfig[]>([]);

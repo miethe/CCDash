@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw } from 'lucide-react';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw, LayoutGrid } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
@@ -220,6 +220,67 @@ const formatSessionReason = (reason: string): string => {
     if (normalized === 'search_reference') return 'search reference';
     if (normalized === 'file_read') return 'file read';
     return normalized.replace(/_/g, ' ');
+};
+
+interface SessionThreadNode {
+    session: AgentSession;
+    children: SessionThreadNode[];
+}
+
+const isSubthread = (session: AgentSession): boolean => {
+    if (session.parentSessionId) return true;
+    return (session.sessionType || '').toLowerCase() === 'subagent';
+};
+
+const sessionTimeValue = (session: AgentSession): number => {
+    const parsed = Date.parse(session.startedAt || '');
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const compareSessionsByTime = (a: AgentSession, b: AgentSession): number =>
+    sessionTimeValue(b) - sessionTimeValue(a);
+
+const sortSessionThreadNodes = (nodes: SessionThreadNode[]): SessionThreadNode[] =>
+    [...nodes]
+        .sort((a, b) => compareSessionsByTime(a.session, b.session))
+        .map(node => ({
+            ...node,
+            children: sortSessionThreadNodes(node.children),
+        }));
+
+const countSessionThreadNodes = (nodes: SessionThreadNode[]): number =>
+    nodes.reduce((sum, node) => sum + 1 + countSessionThreadNodes(node.children), 0);
+
+const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[] => {
+    const nodes = new Map<string, SessionThreadNode>();
+    sessions.forEach(session => {
+        nodes.set(session.id, { session, children: [] });
+    });
+
+    const attached = new Set<string>();
+    sessions.forEach(session => {
+        if (!isSubthread(session)) return;
+        const candidateParents = [
+            session.parentSessionId || '',
+            session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
+        ];
+        const parentId = candidateParents.find(id => !!id && nodes.has(id));
+        if (!parentId || parentId === session.id) return;
+        const parentNode = nodes.get(parentId);
+        const node = nodes.get(session.id);
+        if (!parentNode || !node) return;
+        parentNode.children.push(node);
+        attached.add(session.id);
+    });
+
+    const roots: SessionThreadNode[] = [];
+    sessions.forEach(session => {
+        if (!attached.has(session.id)) {
+            const node = nodes.get(session.id);
+            if (node) roots.push(node);
+        }
+    });
+    return sortSessionThreadNodes(roots);
 };
 
 // --- Sub-Components ---
@@ -2230,7 +2291,7 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
 
 const SessionFilterBar: React.FC = () => {
     const { sessionFilters, setSessionFilters } = useData();
-    const [localFilters, setLocalFilters] = useState({ ...sessionFilters, include_subagents: sessionFilters.include_subagents ?? false });
+    const [localFilters, setLocalFilters] = useState({ ...sessionFilters, include_subagents: sessionFilters.include_subagents ?? true });
 
     // Debounce triggers
     useEffect(() => {
@@ -2243,8 +2304,22 @@ const SessionFilterBar: React.FC = () => {
     }, [localFilters, sessionFilters, setSessionFilters]);
 
     const handleChange = (key: keyof typeof sessionFilters, value: any) => {
-        setLocalFilters(prev => ({ ...prev, [key]: value || undefined }));
+        setLocalFilters(prev => ({
+            ...prev,
+            [key]: typeof value === 'boolean' ? value : (value || undefined),
+        }));
     };
+
+    const hasActiveFilters = Boolean(
+        localFilters.status
+        || localFilters.model
+        || localFilters.model_provider
+        || localFilters.model_family
+        || localFilters.model_version
+        || localFilters.start_date
+        || localFilters.end_date
+        || localFilters.include_subagents === false
+    );
 
     return (
         <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-4 items-center mb-6">
@@ -2334,9 +2409,9 @@ const SessionFilterBar: React.FC = () => {
                 />
             </div>
 
-            {(localFilters.status || localFilters.model || localFilters.model_provider || localFilters.model_family || localFilters.model_version || localFilters.start_date || localFilters.end_date || localFilters.include_subagents) && (
+            {hasActiveFilters && (
                 <button
-                    onClick={() => setLocalFilters({ include_subagents: false })}
+                    onClick={() => setLocalFilters({ include_subagents: true })}
                     className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
                 >
                     Clear
@@ -2691,8 +2766,75 @@ export const SessionInspector: React.FC = () => {
         }
     }, [searchParams, sessions, setSearchParams, openSession]);
 
-    const activeSessions = sessions.filter(s => s.status === 'active');
-    const pastSessions = sessions.filter(s => s.status !== 'active');
+    const [sessionsViewMode, setSessionsViewMode] = useState<'threaded' | 'cards'>('threaded');
+    const [expandedThreadSessionIds, setExpandedThreadSessionIds] = useState<Set<string>>(new Set());
+
+    const activeSessions = useMemo(() => sessions.filter(s => s.status === 'active'), [sessions]);
+    const pastSessions = useMemo(() => sessions.filter(s => s.status !== 'active'), [sessions]);
+
+    const sessionThreadRoots = useMemo(() => buildSessionThreadForest(sessions), [sessions]);
+    const activeSessionThreadRoots = useMemo(
+        () => sessionThreadRoots.filter(node => node.session.status === 'active'),
+        [sessionThreadRoots]
+    );
+    const pastSessionThreadRoots = useMemo(
+        () => sessionThreadRoots.filter(node => node.session.status !== 'active'),
+        [sessionThreadRoots]
+    );
+
+    const openSessionFromList = useCallback((session: AgentSession) => {
+        setSessionBackStack([]);
+        void openSession(session.id, session);
+    }, [openSession]);
+
+    const toggleThreadChildren = useCallback((sessionId: string) => {
+        setExpandedThreadSessionIds(prev => {
+            const next = new Set(prev);
+            if (next.has(sessionId)) next.delete(sessionId);
+            else next.add(sessionId);
+            return next;
+        });
+    }, []);
+
+    const renderThreadNode = useCallback((node: SessionThreadNode, depth = 0): React.ReactNode => {
+        const hasChildren = node.children.length > 0;
+        const expanded = expandedThreadSessionIds.has(node.session.id);
+
+        return (
+            <div key={node.session.id} className="space-y-2">
+                <SessionSummaryCard
+                    session={node.session}
+                    onClick={() => openSessionFromList(node.session)}
+                />
+
+                {hasChildren && (
+                    <div className="mt-2 pt-2 border-t border-slate-800/60">
+                        <button
+                            onClick={() => toggleThreadChildren(node.session.id)}
+                            className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
+                        >
+                            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                Expand to see Sub-Threads
+                            </span>
+                            <span className="text-[11px] text-slate-500">{countSessionThreadNodes(node.children)}</span>
+                        </button>
+
+                        {expanded && (
+                            <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                                {node.children.map(child => (
+                                    <div key={child.session.id} className="relative pl-3">
+                                        <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                                        {renderThreadNode(child, depth + 1)}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }, [expandedThreadSessionIds, openSessionFromList, toggleThreadChildren]);
 
     if (selectedSession) {
         return (
@@ -2713,29 +2855,59 @@ export const SessionInspector: React.FC = () => {
             </div>
 
             <div className="space-y-10">
+                <div className="flex justify-end">
+                    <div className="bg-slate-900 border border-slate-800 p-1 rounded-lg flex gap-1">
+                        <button
+                            onClick={() => setSessionsViewMode('threaded')}
+                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'threaded' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                            title="Nested thread tree view"
+                        >
+                            <Layers size={14} />
+                            Threaded
+                        </button>
+                        <button
+                            onClick={() => setSessionsViewMode('cards')}
+                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'cards' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                            title="Flat all-sessions card view"
+                        >
+                            <LayoutGrid size={14} />
+                            All Session Cards
+                        </button>
+                    </div>
+                </div>
+
                 {/* Active Sessions Section */}
                 <div className="space-y-4">
                     <h3 className="text-xs font-bold text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2">
                         <Activity size={16} /> Live In-Flight
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                        {activeSessions.map(session => (
-                            <SessionSummaryCard
-                                key={session.id}
-                                session={session}
-                                onClick={() => {
-                                    setSessionBackStack([]);
-                                    void openSession(session.id, session);
-                                }}
-                            />
-                        ))}
-                        {activeSessions.length === 0 && (
-                            <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
-                                <Zap size={32} className="mx-auto mb-3 opacity-10" />
-                                <p className="text-sm">No live sessions detected on local system.</p>
-                            </div>
-                        )}
-                    </div>
+                    {sessionsViewMode === 'threaded' ? (
+                        <div className="space-y-4">
+                            {activeSessionThreadRoots.map(node => renderThreadNode(node))}
+                            {activeSessionThreadRoots.length === 0 && (
+                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                    <Zap size={32} className="mx-auto mb-3 opacity-10" />
+                                    <p className="text-sm">No live sessions detected on local system.</p>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                            {activeSessions.map(session => (
+                                <SessionSummaryCard
+                                    key={session.id}
+                                    session={session}
+                                    onClick={() => openSessionFromList(session)}
+                                />
+                            ))}
+                            {activeSessions.length === 0 && (
+                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                    <Zap size={32} className="mx-auto mb-3 opacity-10" />
+                                    <p className="text-sm">No live sessions detected on local system.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Past Sessions Section */}
@@ -2743,18 +2915,28 @@ export const SessionInspector: React.FC = () => {
                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
                         <Archive size={16} /> Historical Index
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                        {pastSessions.map(session => (
-                            <SessionSummaryCard
-                                key={session.id}
-                                session={session}
-                                onClick={() => {
-                                    setSessionBackStack([]);
-                                    void openSession(session.id, session);
-                                }}
-                            />
-                        ))}
-                    </div>
+
+                    {sessionsViewMode === 'threaded' ? (
+                        <div className="space-y-4">
+                            {pastSessionThreadRoots.map(node => renderThreadNode(node))}
+                            {pastSessionThreadRoots.length === 0 && (
+                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                    <Zap size={32} className="mx-auto mb-3 opacity-10" />
+                                    <p className="text-sm">No historical sessions found.</p>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                            {pastSessions.map(session => (
+                                <SessionSummaryCard
+                                    key={session.id}
+                                    session={session}
+                                    onClick={() => openSessionFromList(session)}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     {hasMoreSessions && (
                         <div className="pt-4 flex justify-center">
@@ -2774,7 +2956,7 @@ export const SessionInspector: React.FC = () => {
     );
 };
 
-const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void }> = ({ session, onClick }) => {
+const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void; className?: string }> = ({ session, onClick, className }) => {
     const displayTitle = deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null);
     const agentNames = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3);
     return (
@@ -2786,7 +2968,7 @@ const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void 
             model={{ raw: session.model, displayName: session.modelDisplayName }}
             metadata={session.sessionMetadata || null}
             onClick={onClick}
-            className="group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden"
+            className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
                 <div className="text-right">
                     <div className="text-emerald-400 font-mono font-bold text-sm">${session.totalCost.toFixed(2)}</div>

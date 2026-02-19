@@ -72,6 +72,19 @@ interface DocGroupDefinition {
   description: string;
 }
 
+interface FeatureSessionTreeNode {
+  session: FeatureSessionLink;
+  children: FeatureSessionTreeNode[];
+}
+
+interface FeatureSessionSummary {
+  total: number;
+  mainThreads: number;
+  subThreads: number;
+  unresolvedSubThreads: number;
+  byType: Array<{ type: string; count: number }>;
+}
+
 const SHORT_COMMIT_LENGTH = 7;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
@@ -243,17 +256,112 @@ const getCoreSessionGroupId = (session: FeatureSessionLink): CoreSessionGroupId 
 };
 
 const sessionStartedAtValue = (session: FeatureSessionLink): number => Date.parse(session.startedAt || '') || 0;
+const compareSessionsByConfidenceAndTime = (a: FeatureSessionLink, b: FeatureSessionLink): number => {
+  if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+  return sessionStartedAtValue(b) - sessionStartedAtValue(a);
+};
 
-const sortSessionsWithinGroup = (groupId: CoreSessionGroupId, sessions: FeatureSessionLink[]): FeatureSessionLink[] => {
-  return [...sessions].sort((a, b) => {
-    if (groupId === 'execution') {
-      const aPhase = getSessionPrimaryPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
-      const bPhase = getSessionPrimaryPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
-      if (aPhase !== bPhase) return aPhase - bPhase;
-    }
-    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-    return sessionStartedAtValue(b) - sessionStartedAtValue(a);
+const compareSessionsForGroup = (groupId: CoreSessionGroupId, a: FeatureSessionLink, b: FeatureSessionLink): number => {
+  if (groupId === 'execution') {
+    const aPhase = getSessionPrimaryPhaseNumber(a) ?? Number.POSITIVE_INFINITY;
+    const bPhase = getSessionPrimaryPhaseNumber(b) ?? Number.POSITIVE_INFINITY;
+    if (aPhase !== bPhase) return aPhase - bPhase;
+  }
+  return compareSessionsByConfidenceAndTime(a, b);
+};
+
+const sortThreadNodes = (
+  nodes: FeatureSessionTreeNode[],
+  comparator: (a: FeatureSessionLink, b: FeatureSessionLink) => number,
+): FeatureSessionTreeNode[] => {
+  const sortedRoots = [...nodes]
+    .sort((a, b) => comparator(a.session, b.session))
+    .map(node => ({
+      ...node,
+      children: sortThreadNodes(node.children, compareSessionsByConfidenceAndTime),
+    }));
+  return sortedRoots;
+};
+
+const countThreadNodes = (nodes: FeatureSessionTreeNode[]): number =>
+  nodes.reduce((sum, node) => sum + 1 + countThreadNodes(node.children), 0);
+
+const buildSessionThreadForest = (sessions: FeatureSessionLink[]): FeatureSessionTreeNode[] => {
+  const nodes = new Map<string, FeatureSessionTreeNode>();
+  sessions.forEach(session => {
+    nodes.set(session.sessionId, { session, children: [] });
   });
+
+  const attached = new Set<string>();
+  sessions.forEach(session => {
+    const node = nodes.get(session.sessionId);
+    if (!node || !isSubthreadSession(session)) return;
+
+    const candidateParents = [
+      session.parentSessionId || '',
+      session.rootSessionId && session.rootSessionId !== session.sessionId ? session.rootSessionId : '',
+    ];
+    const parentId = candidateParents.find(id => !!id && nodes.has(id));
+    if (!parentId || parentId === session.sessionId) return;
+    const parentNode = nodes.get(parentId);
+    if (!parentNode) return;
+    parentNode.children.push(node);
+    attached.add(session.sessionId);
+  });
+
+  const roots: FeatureSessionTreeNode[] = [];
+  sessions.forEach(session => {
+    if (!attached.has(session.sessionId)) {
+      const node = nodes.get(session.sessionId);
+      if (node) roots.push(node);
+    }
+  });
+  return roots;
+};
+
+const sessionTypeBucketLabel = (session: FeatureSessionLink): string => {
+  const workflow = (session.workflowType || '').trim();
+  if (workflow) return workflow;
+  const metadataLabel = (session.sessionMetadata?.sessionTypeLabel || '').trim();
+  if (metadataLabel) return metadataLabel;
+  const sessionType = (session.sessionType || '').trim();
+  if (sessionType) return sessionType === 'subagent' ? 'Sub-thread' : sessionType;
+  return 'Other';
+};
+
+const buildFeatureSessionSummary = (sessions: FeatureSessionLink[]): FeatureSessionSummary => {
+  const typeCounts = new Map<string, number>();
+  const idSet = new Set(sessions.map(session => session.sessionId));
+  let mainThreads = 0;
+  let subThreads = 0;
+  let unresolvedSubThreads = 0;
+
+  sessions.forEach(session => {
+    const typeLabel = sessionTypeBucketLabel(session);
+    typeCounts.set(typeLabel, (typeCounts.get(typeLabel) || 0) + 1);
+
+    if (isSubthreadSession(session)) {
+      subThreads += 1;
+      const parentId = session.parentSessionId || '';
+      const rootId = session.rootSessionId || '';
+      const hasKnownMain = (!!parentId && idSet.has(parentId)) || (!!rootId && rootId !== session.sessionId && idSet.has(rootId));
+      if (!hasKnownMain) unresolvedSubThreads += 1;
+    } else {
+      mainThreads += 1;
+    }
+  });
+
+  const byType = Array.from(typeCounts.entries())
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+
+  return {
+    total: sessions.length,
+    mainThreads,
+    subThreads,
+    unresolvedSubThreads,
+    byType,
+  };
 };
 
 const getDocumentClassificationText = (doc: LinkedDocument): string =>
@@ -536,6 +644,7 @@ const FeatureModal = ({
     () => ({ ...DEFAULT_DOC_GROUP_EXPANDED })
   );
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
+  const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
 
   const refreshFeatureDetail = useCallback(async () => {
     try {
@@ -564,6 +673,7 @@ const FeatureModal = ({
     setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
     setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
     setShowSecondarySessions(false);
+    setExpandedSubthreadsBySessionId(new Set());
     setPhaseStatusFilter('all');
     setTaskStatusFilter('all');
     setViewingDoc(null);
@@ -670,30 +780,46 @@ const FeatureModal = ({
     });
   }, [linkedSessionLinks]);
 
-  const primarySessions = useMemo(
-    () => linkedSessions.filter(session => isPrimarySession(session)),
+  const allSessionRoots = useMemo(
+    () => buildSessionThreadForest(linkedSessions),
     [linkedSessions]
   );
 
-  const secondarySessions = useMemo(
-    () => linkedSessions.filter(session => !isPrimarySession(session)),
-    [linkedSessions]
+  const primarySessionRoots = useMemo(
+    () => allSessionRoots.filter(node => isPrimarySession(node.session)),
+    [allSessionRoots]
+  );
+
+  const secondarySessionRoots = useMemo(
+    () => sortThreadNodes(allSessionRoots.filter(node => !isPrimarySession(node.session)), compareSessionsByConfidenceAndTime),
+    [allSessionRoots]
+  );
+
+  const primarySessionCount = useMemo(
+    () => countThreadNodes(primarySessionRoots),
+    [primarySessionRoots]
+  );
+
+  const secondarySessionCount = useMemo(
+    () => countThreadNodes(secondarySessionRoots),
+    [secondarySessionRoots]
   );
 
   const coreSessionGroups = useMemo(() => {
-    const grouped: Record<CoreSessionGroupId, FeatureSessionLink[]> = {
+    const grouped: Record<CoreSessionGroupId, FeatureSessionTreeNode[]> = {
       plan: [],
       execution: [],
       other: [],
     };
-    primarySessions.forEach(session => {
-      grouped[getCoreSessionGroupId(session)].push(session);
+    primarySessionRoots.forEach(root => {
+      grouped[getCoreSessionGroupId(root.session)].push(root);
     });
     return CORE_SESSION_GROUPS.map(group => ({
       ...group,
-      sessions: sortSessionsWithinGroup(group.id, grouped[group.id]),
+      roots: sortThreadNodes(grouped[group.id], (a, b) => compareSessionsForGroup(group.id, a, b)),
+      totalSessions: countThreadNodes(grouped[group.id]),
     }));
-  }, [primarySessions]);
+  }, [primarySessionRoots]);
 
   const groupedDocs = useMemo(() => {
     const grouped: Record<DocGroupId, LinkedDocument[]> = {
@@ -725,6 +851,15 @@ const FeatureModal = ({
     setDocGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
   };
 
+  const toggleSubthreads = (sessionId: string) => {
+    setExpandedSubthreadsBySessionId(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Box },
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
@@ -748,7 +883,6 @@ const FeatureModal = ({
 
     return (
       <SessionCard
-        key={session.sessionId}
         sessionId={session.sessionId}
         title={displayTitle}
         status={session.status}
@@ -835,6 +969,41 @@ const FeatureModal = ({
           </div>
         )}
       </SessionCard>
+    );
+  };
+
+  const renderSessionTreeNode = (node: FeatureSessionTreeNode, depth = 0): React.ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedSubthreadsBySessionId.has(node.session.sessionId);
+
+    return (
+      <div key={node.session.sessionId} className="space-y-2">
+        {renderSessionCard(node.session)}
+        {hasChildren && (
+          <div className="mt-2 pt-2 border-t border-slate-800/60">
+            <button
+              onClick={() => toggleSubthreads(node.session.sessionId)}
+              className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
+            >
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                Expand to see Sub-Threads
+              </span>
+              <span className="text-[11px] text-slate-500">{countThreadNodes(node.children)}</span>
+            </button>
+            {isExpanded && (
+              <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                {node.children.map(child => (
+                  <div key={child.session.sessionId} className="relative pl-3">
+                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                    {renderSessionTreeNode(child, depth + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -1219,7 +1388,7 @@ const FeatureModal = ({
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Core Focus Sessions</div>
                       <div className="text-[11px] text-emerald-200/80">
-                        {primarySessions.length}
+                        {primarySessionCount}
                       </div>
                     </div>
                     <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary execution/planning sessions for this feature.</p>
@@ -1238,17 +1407,17 @@ const FeatureModal = ({
                           </div>
                           <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
                         </div>
-                        <span className="text-[11px] text-slate-500">{group.sessions.length}</span>
+                        <span className="text-[11px] text-slate-500">{group.totalSessions}</span>
                       </button>
 
                       {coreSessionGroupExpanded[group.id] && (
                         <div className="space-y-3">
-                          {group.sessions.length === 0 && (
+                          {group.roots.length === 0 && (
                             <div className="text-xs text-slate-600 italic px-1">
                               No sessions currently in this group.
                             </div>
                           )}
-                          {group.sessions.map(renderSessionCard)}
+                          {group.roots.map(node => renderSessionTreeNode(node))}
                         </div>
                       )}
                     </div>
@@ -1263,17 +1432,17 @@ const FeatureModal = ({
                         {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         Secondary Linkages
                       </div>
-                      <span className="text-[11px] text-slate-500">{secondarySessions.length}</span>
+                      <span className="text-[11px] text-slate-500">{secondarySessionCount}</span>
                     </button>
 
                     {showSecondarySessions && (
                       <div className="space-y-3">
-                        {secondarySessions.length === 0 && (
+                        {secondarySessionRoots.length === 0 && (
                           <div className="text-xs text-slate-600 italic px-1">
                             No secondary linked sessions.
                           </div>
                         )}
-                        {secondarySessions.map(renderSessionCard)}
+                        {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
                       </div>
                     )}
                   </div>
@@ -1301,8 +1470,71 @@ const FeatureModal = ({
 
 // ── Feature Card ───────────────────────────────────────────────────
 
+const FeatureSessionIndicator = ({
+  summary,
+  loading,
+}: {
+  summary?: FeatureSessionSummary;
+  loading: boolean;
+}) => {
+  const total = summary?.total ?? 0;
+  const typeRows = (summary?.byType || []).slice(0, 5);
+
+  return (
+    <div
+      className="relative group/session-indicator"
+      onClick={(e) => e.stopPropagation()}
+      title="Linked session summary"
+    >
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-700 bg-slate-900/80 text-slate-300">
+        <Terminal size={11} />
+        {loading ? <RefreshCw size={10} className="animate-spin" /> : total}
+      </span>
+
+      <div className="pointer-events-none absolute right-0 top-[calc(100%+8px)] w-60 rounded-lg border border-slate-700 bg-slate-950/95 shadow-2xl px-3 py-2 opacity-0 translate-y-1 group-hover/session-indicator:opacity-100 group-hover/session-indicator:translate-y-0 transition-all duration-150 z-20">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Linked Sessions</div>
+        <div className="space-y-1 text-[11px] text-slate-300">
+          <div className="flex items-center justify-between">
+            <span>Total</span>
+            <span className="font-mono">{total}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Main Threads</span>
+            <span className="font-mono">{summary?.mainThreads ?? 0}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Sub-Threads</span>
+            <span className="font-mono">{summary?.subThreads ?? 0}</span>
+          </div>
+          {(summary?.unresolvedSubThreads || 0) > 0 && (
+            <div className="flex items-center justify-between text-amber-300">
+              <span>Unresolved Sub-Threads</span>
+              <span className="font-mono">{summary?.unresolvedSubThreads ?? 0}</span>
+            </div>
+          )}
+        </div>
+        {typeRows.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-slate-800">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Types</div>
+            <div className="space-y-1">
+              {typeRows.map(row => (
+                <div key={row.type} className="flex items-center justify-between text-[11px] text-slate-300">
+                  <span className="truncate pr-2">{row.type}</span>
+                  <span className="font-mono text-slate-400">{row.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const FeatureCard = ({
   feature,
+  sessionSummary,
+  sessionSummaryLoading,
   onClick,
   onStatusChange,
   onDragStart,
@@ -1310,6 +1542,8 @@ const FeatureCard = ({
   isDragging,
 }: {
   feature: Feature;
+  sessionSummary?: FeatureSessionSummary;
+  sessionSummaryLoading: boolean;
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
   onDragStart: (featureId: string) => void;
@@ -1337,7 +1571,10 @@ const FeatureCard = ({
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
         <span className="font-mono text-[10px] text-slate-500 truncate max-w-[180px]">{feature.id}</span>
-        <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+        <div className="flex items-center gap-2">
+          <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
+          <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+        </div>
       </div>
 
       <h4 className="font-medium text-slate-200 mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
@@ -1390,10 +1627,14 @@ const FeatureCard = ({
 
 const FeatureListCard = ({
   feature,
+  sessionSummary,
+  sessionSummaryLoading,
   onClick,
   onStatusChange,
 }: {
   feature: Feature;
+  sessionSummary?: FeatureSessionSummary;
+  sessionSummaryLoading: boolean;
   onClick: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
@@ -1410,6 +1651,7 @@ const FeatureListCard = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
             <span className="font-mono text-xs text-slate-500 border border-slate-800 px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
+            <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
             <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
             {feature.category && (
               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 capitalize">{feature.category}</span>
@@ -1459,6 +1701,8 @@ const StatusColumn = ({
   title,
   status,
   features,
+  featureSessionSummaries,
+  loadingFeatureSessionSummaries,
   onFeatureClick,
   onStatusChange,
   onCardDragStart,
@@ -1472,6 +1716,8 @@ const StatusColumn = ({
   title: string;
   status: string;
   features: Feature[];
+  featureSessionSummaries: Record<string, FeatureSessionSummary>;
+  loadingFeatureSessionSummaries: Set<string>;
   onFeatureClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
   onCardDragStart: (featureId: string) => void;
@@ -1512,6 +1758,8 @@ const StatusColumn = ({
           <FeatureCard
             key={f.id}
             feature={f}
+            sessionSummary={featureSessionSummaries[f.id]}
+            sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
             onClick={() => onFeatureClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
             onDragStart={onCardDragStart}
@@ -1538,6 +1786,8 @@ export const ProjectBoard: React.FC = () => {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
+  const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
+  const [loadingFeatureSessionSummaries, setLoadingFeatureSessionSummaries] = useState<Set<string>>(new Set());
 
   // Auto-select feature from URL search params
   useEffect(() => {
@@ -1607,6 +1857,34 @@ export const ProjectBoard: React.FC = () => {
     await updateFeatureStatus(featureId, newStatus);
   }, [apiFeatures, updateFeatureStatus]);
 
+  const loadFeatureSessionSummary = useCallback(async (featureId: string) => {
+    if (!featureId || featureSessionSummaries[featureId] || loadingFeatureSessionSummaries.has(featureId)) return;
+
+    setLoadingFeatureSessionSummaries(prev => {
+      if (prev.has(featureId)) return prev;
+      const next = new Set(prev);
+      next.add(featureId);
+      return next;
+    });
+
+    try {
+      const res = await fetch(`/api/features/${encodeURIComponent(featureId)}/linked-sessions`);
+      if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
+      const data = await res.json();
+      const sessions = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
+      const summary = buildFeatureSessionSummary(sessions);
+      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: summary }));
+    } catch {
+      setFeatureSessionSummaries(prev => ({ ...prev, [featureId]: buildFeatureSessionSummary([]) }));
+    } finally {
+      setLoadingFeatureSessionSummaries(prev => {
+        const next = new Set(prev);
+        next.delete(featureId);
+        return next;
+      });
+    }
+  }, [featureSessionSummaries, loadingFeatureSessionSummaries]);
+
   const handleCardDragStart = useCallback((featureId: string) => {
     setDraggedFeatureId(featureId);
   }, []);
@@ -1631,6 +1909,12 @@ export const ProjectBoard: React.FC = () => {
     if (!featureId) return;
     await handleStatusChange(featureId, newStatus);
   }, [handleStatusChange]);
+
+  useEffect(() => {
+    filteredFeatures.forEach(feature => {
+      void loadFeatureSessionSummary(feature.id);
+    });
+  }, [filteredFeatures, loadFeatureSessionSummary]);
 
   // Keep selected feature in sync with API data
   useEffect(() => {
@@ -1758,6 +2042,8 @@ export const ProjectBoard: React.FC = () => {
               title="Backlog"
               status="backlog"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1772,6 +2058,8 @@ export const ProjectBoard: React.FC = () => {
               title="In Progress"
               status="in-progress"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1786,6 +2074,8 @@ export const ProjectBoard: React.FC = () => {
               title="Review"
               status="review"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1800,6 +2090,8 @@ export const ProjectBoard: React.FC = () => {
               title="Done"
               status="done"
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
+              featureSessionSummaries={featureSessionSummaries}
+              loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
               onFeatureClick={setSelectedFeature}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
@@ -1817,6 +2109,8 @@ export const ProjectBoard: React.FC = () => {
               <FeatureListCard
                 key={f.id}
                 feature={f}
+                sessionSummary={featureSessionSummaries[f.id]}
+                sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
                 onClick={() => setSelectedFeature(f)}
                 onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
               />

@@ -119,6 +119,8 @@ export interface AgentSession {
   modelFamily?: string;
   modelVersion?: string;
   durationSeconds: number;
+  sessionType?: string;
+  parentSessionId?: string | null;
   rootSessionId?: string;
   agentId?: string;
   tokensIn: number;
