@@ -171,6 +171,20 @@ Rebuild workflow:
 
 - Full forced rebuild from Python (`SyncEngine.sync_project(..., force=True)`) or API rescan route.
 
+Observability + control APIs:
+
+- `GET /api/cache/status`
+- `GET /api/cache/operations`
+- `GET /api/cache/operations/{operation_id}`
+- `POST /api/cache/sync`
+- `POST /api/cache/rebuild-links`
+- `POST /api/cache/sync-paths`
+- `GET /api/links/audit` (alias: `GET /api/cache/links/audit`)
+
+Detailed API usage doc:
+
+- `docs/sync-observability-and-audit.md`
+
 ## Tests
 
 Relevant test files:

@@ -101,6 +101,7 @@ Core/primary sessions are a subset of linked sessions with stronger evidence (ta
 ## Related Docs
 
 - Developer reference: `docs/entity-linking-developer-reference.md`
+- Sync/audit operations: `docs/sync-observability-and-audit.md`
 - Regression analysis: `docs/linking-regression-report-2026-02-18.md`
 - Review packs:
   - `docs/linking-tuning-review-2026-02-18.csv`

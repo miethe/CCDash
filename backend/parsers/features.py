@@ -19,11 +19,13 @@ from backend.models import (
 )
 from backend.document_linking import (
     alias_tokens_from_path,
+    canonical_project_path,
     canonical_slug,
     classify_doc_category,
     classify_doc_type,
     extract_frontmatter_references,
     feature_slug_from_path,
+    infer_project_root,
     is_generic_alias_token,
     is_feature_like_token,
     normalize_ref_path,
@@ -99,10 +101,7 @@ def _base_slug(slug: str) -> str:
 
 
 def _project_relative(path: Path, project_root: Path) -> str:
-    try:
-        return str(path.relative_to(project_root))
-    except ValueError:
-        return str(path)
+    return canonical_project_path(path, project_root)
 
 
 def _extract_doc_metadata(path: Path, project_root: Path, frontmatter: dict[str, Any]) -> dict[str, Any]:
@@ -589,7 +588,7 @@ def scan_features(docs_dir: Path, progress_dir: Path) -> list[Feature]:
 
     Priority: impl plans seed features, enriched with PRD + progress data.
     """
-    project_root = progress_dir.parent
+    project_root = infer_project_root(docs_dir, progress_dir)
     impl_plans = _scan_impl_plans(docs_dir, project_root)
     prds = _scan_prds(docs_dir, project_root)
     progress_data = _scan_progress_dirs(progress_dir, project_root)

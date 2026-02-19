@@ -144,10 +144,27 @@ export interface PlanDocument {
   id: string;
   title: string;
   filePath: string;
-  status: 'draft' | 'active' | 'archived' | 'deprecated' | 'completed';
+  canonicalPath?: string;
+  status: string;
+  statusNormalized?: string;
   lastModified: string;
   author: string;
   content?: string; // Raw markdown content
+  docType?: string;
+  docSubtype?: string;
+  rootKind?: 'project_plans' | 'progress' | 'document';
+  hasFrontmatter?: boolean;
+  frontmatterType?: string;
+  featureSlugHint?: string;
+  featureSlugCanonical?: string;
+  prdRef?: string;
+  phaseToken?: string;
+  phaseNumber?: number | null;
+  overallProgress?: number | null;
+  totalTasks?: number;
+  completedTasks?: number;
+  inProgressTasks?: number;
+  blockedTasks?: number;
   frontmatter: {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
@@ -164,10 +181,32 @@ export interface PlanDocument {
     fieldKeys?: string[];
     raw?: Record<string, any>;
   };
-  docType?: string;
   category?: string;
   pathSegments?: string[];
   featureCandidates?: string[];
+  metadata?: {
+    phase?: string;
+    phaseNumber?: number | null;
+    overallProgress?: number | null;
+    taskCounts?: {
+      total: number;
+      completed: number;
+      inProgress: number;
+      blocked: number;
+    };
+    owners?: string[];
+    contributors?: string[];
+    requestLogIds?: string[];
+    commitRefs?: string[];
+    featureSlugHint?: string;
+    canonicalPath?: string;
+  };
+  linkCounts?: {
+    features: number;
+    tasks: number;
+    sessions: number;
+    documents: number;
+  };
 }
 
 export interface AnalyticsMetric {

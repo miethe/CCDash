@@ -1,7 +1,7 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Any, Optional, Generic, TypeVar
+from typing import Any, Optional, Generic, TypeVar, Literal
 
 T = TypeVar("T")
 
@@ -147,6 +147,33 @@ class DocumentFrontmatter(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class DocumentTaskCounts(BaseModel):
+    total: int = 0
+    completed: int = 0
+    inProgress: int = 0
+    blocked: int = 0
+
+
+class DocumentMetadata(BaseModel):
+    phase: str = ""
+    phaseNumber: Optional[int] = None
+    overallProgress: Optional[float] = None
+    taskCounts: DocumentTaskCounts = Field(default_factory=DocumentTaskCounts)
+    owners: list[str] = Field(default_factory=list)
+    contributors: list[str] = Field(default_factory=list)
+    requestLogIds: list[str] = Field(default_factory=list)
+    commitRefs: list[str] = Field(default_factory=list)
+    featureSlugHint: str = ""
+    canonicalPath: str = ""
+
+
+class DocumentLinkCounts(BaseModel):
+    features: int = 0
+    tasks: int = 0
+    sessions: int = 0
+    documents: int = 0
+
+
 class PlanDocument(BaseModel):
     id: str
     title: str
@@ -156,9 +183,27 @@ class PlanDocument(BaseModel):
     author: str = ""
     docType: str = ""
     category: str = ""
+    docSubtype: str = ""
+    rootKind: Literal["project_plans", "progress", "document"] = "project_plans"
+    canonicalPath: str = ""
+    hasFrontmatter: bool = False
+    frontmatterType: str = ""
+    statusNormalized: str = ""
+    featureSlugHint: str = ""
+    featureSlugCanonical: str = ""
+    prdRef: str = ""
+    phaseToken: str = ""
+    phaseNumber: Optional[int] = None
+    overallProgress: Optional[float] = None
+    totalTasks: int = 0
+    completedTasks: int = 0
+    inProgressTasks: int = 0
+    blockedTasks: int = 0
     pathSegments: list[str] = Field(default_factory=list)
     featureCandidates: list[str] = Field(default_factory=list)
     frontmatter: DocumentFrontmatter = Field(default_factory=DocumentFrontmatter)
+    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+    linkCounts: DocumentLinkCounts = Field(default_factory=DocumentLinkCounts)
     content: Optional[str] = None  # markdown body, loaded on demand
 
 

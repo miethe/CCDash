@@ -1,10 +1,14 @@
 import unittest
+from pathlib import Path
 
 from backend.document_linking import (
     alias_tokens_from_path,
+    canonical_project_path,
     classify_doc_type,
+    classify_doc_subtype,
     extract_frontmatter_references,
     feature_slug_from_path,
+    infer_project_root,
     is_generic_phase_progress_slug,
 )
 
@@ -63,6 +67,46 @@ class DocumentLinkingTests(unittest.TestCase):
 
     def test_classify_doc_type_detects_progress(self) -> None:
         self.assertEqual(classify_doc_type("progress/collection-data-consistency/phase-1-progress.md"), "progress")
+
+    def test_infer_project_root_supports_docs_and_dot_claude_progress(self) -> None:
+        docs_dir = Path("/tmp/workspace/docs/project_plans")
+        progress_dir = Path("/tmp/workspace/.claude/progress")
+        root = infer_project_root(docs_dir, progress_dir)
+        self.assertTrue(str(root).endswith("/tmp/workspace"))
+
+    def test_canonical_project_path_returns_project_relative_path(self) -> None:
+        project_root = Path("/tmp/workspace")
+        full_path = Path("/tmp/workspace/.claude/progress/feature-a/phase-1-progress.md")
+        self.assertEqual(
+            canonical_project_path(full_path, project_root),
+            ".claude/progress/feature-a/phase-1-progress.md",
+        )
+
+    def test_classify_doc_subtype_detects_progress_phase(self) -> None:
+        self.assertEqual(
+            classify_doc_subtype(".claude/progress/feature-a/phase-2-progress.md"),
+            "progress_phase",
+        )
+
+    def test_extract_frontmatter_references_supports_additional_keys(self) -> None:
+        refs = extract_frontmatter_references(
+            {
+                "plan_ref": "docs/project_plans/implementation_plans/features/alpha-v1.md",
+                "prd_link": "alpha-v1",
+                "related_documents": ["docs/project_plans/reports/alpha-v1-report.md"],
+                "request_log_id": "REQ-20260101-alpha-1",
+                "git_commit_hashes": [{"hash": "abc1234"}],
+            }
+        )
+        feature_refs = refs.get("featureRefs", [])
+        request_refs = refs.get("requestRefs", [])
+        commit_refs = refs.get("commitRefs", [])
+        assert isinstance(feature_refs, list)
+        assert isinstance(request_refs, list)
+        assert isinstance(commit_refs, list)
+        self.assertIn("alpha-v1", feature_refs)
+        self.assertIn("REQ-20260101-alpha-1", request_refs)
+        self.assertIn("abc1234", commit_refs)
 
 
 if __name__ == "__main__":

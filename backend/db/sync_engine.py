@@ -5,11 +5,14 @@ existing parsers, and upserts the results into the DB cache.
 """
 from __future__ import annotations
 
+import asyncio
+import copy
 import hashlib
 import json
 import logging
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,22 +22,25 @@ import yaml
 
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
-from backend.parsers.documents import parse_document_file, scan_documents
-from backend.parsers.progress import parse_progress_file, scan_progress
+from backend.parsers.documents import parse_document_file
+from backend.parsers.progress import parse_progress_file
 from backend.parsers.features import scan_features
 from backend.document_linking import (
     alias_tokens_from_path,
+    canonical_project_path,
     canonical_slug,
     classify_doc_category,
     classify_doc_type,
     extract_frontmatter_references,
     feature_slug_from_path,
+    infer_project_root,
     is_generic_alias_token,
     is_generic_phase_progress_slug,
     is_feature_like_token,
     normalize_ref_path,
     slug_from_path,
 )
+from backend.link_audit import analyze_suspect_links, suspects_as_dicts
 
 from backend.db.factory import (
     get_session_repository,
@@ -75,10 +81,8 @@ def _file_hash(path: Path) -> str:
 
 def _canonical_task_source(path: Path, progress_dir: Path) -> str:
     """Store task source paths relative to project root for stable linking."""
-    try:
-        return str(path.relative_to(progress_dir.parent))
-    except ValueError:
-        return str(path)
+    project_root = infer_project_root(None, progress_dir)
+    return canonical_project_path(path, project_root)
 
 
 def _task_storage_id(task_id: str, source_file: str) -> str:
@@ -215,6 +219,176 @@ class SyncEngine:
         self.sync_repo = get_sync_state_repository(db)
         self.tag_repo = get_tag_repository(db)
         self.analytics_repo = get_analytics_repository(db)
+        self._ops_lock = asyncio.Lock()
+        self._operations: dict[str, dict[str, Any]] = {}
+        self._operation_order: list[str] = []
+        self._active_operation_ids: set[str] = set()
+        self._max_operation_history = 40
+
+    async def start_operation(
+        self,
+        kind: str,
+        project_id: str,
+        trigger: str = "api",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Create an observable operation and return its ID."""
+        return await self._start_operation(kind, project_id, trigger, metadata or {})
+
+    async def list_operations(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return latest operation snapshots, newest first."""
+        async with self._ops_lock:
+            op_ids = self._operation_order[: max(1, limit)]
+            return [copy.deepcopy(self._operations[op_id]) for op_id in op_ids if op_id in self._operations]
+
+    async def get_operation(self, operation_id: str) -> dict[str, Any] | None:
+        """Return a single operation snapshot."""
+        async with self._ops_lock:
+            op = self._operations.get(operation_id)
+            if not op:
+                return None
+            return copy.deepcopy(op)
+
+    async def get_observability_snapshot(self) -> dict[str, Any]:
+        """Return live sync/linking observability payload for API status."""
+        async with self._ops_lock:
+            active = [
+                copy.deepcopy(self._operations[op_id])
+                for op_id in self._operation_order
+                if op_id in self._active_operation_ids and op_id in self._operations
+            ]
+            latest = [
+                copy.deepcopy(self._operations[op_id])
+                for op_id in self._operation_order[:5]
+                if op_id in self._operations
+            ]
+            return {
+                "activeOperationCount": len(active),
+                "activeOperations": active,
+                "recentOperations": latest,
+                "trackedOperationCount": len(self._operations),
+            }
+
+    async def _start_operation(
+        self,
+        kind: str,
+        project_id: str,
+        trigger: str,
+        metadata: dict[str, Any],
+    ) -> str:
+        op_id = f"OP-{uuid.uuid4()}"
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "id": op_id,
+            "kind": kind,
+            "projectId": project_id,
+            "trigger": trigger,
+            "status": "running",
+            "phase": "queued",
+            "message": "",
+            "startedAt": now,
+            "updatedAt": now,
+            "finishedAt": "",
+            "durationMs": 0,
+            "progress": {},
+            "counters": {},
+            "stats": {},
+            "metadata": metadata,
+            "error": "",
+        }
+        async with self._ops_lock:
+            self._operations[op_id] = payload
+            self._operation_order.insert(0, op_id)
+            self._active_operation_ids.add(op_id)
+            if len(self._operation_order) > self._max_operation_history:
+                stale_ids = self._operation_order[self._max_operation_history :]
+                self._operation_order = self._operation_order[: self._max_operation_history]
+                for stale_id in stale_ids:
+                    self._operations.pop(stale_id, None)
+                    self._active_operation_ids.discard(stale_id)
+        logger.info("Operation started [%s] %s (project=%s trigger=%s)", op_id, kind, project_id, trigger)
+        return op_id
+
+    async def _update_operation(
+        self,
+        operation_id: str | None,
+        *,
+        phase: str | None = None,
+        message: str | None = None,
+        progress: dict[str, Any] | None = None,
+        counters: dict[str, Any] | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> None:
+        if not operation_id:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        log_needed = False
+        log_phase = ""
+        log_message = ""
+        async with self._ops_lock:
+            operation = self._operations.get(operation_id)
+            if not operation:
+                return
+            if phase and phase != operation.get("phase"):
+                operation["phase"] = phase
+                log_needed = True
+                log_phase = phase
+            if message is not None:
+                operation["message"] = message
+                if message:
+                    log_needed = True
+                    log_message = message
+            if progress:
+                operation.setdefault("progress", {}).update(progress)
+            if counters:
+                operation.setdefault("counters", {}).update(counters)
+            if stats:
+                operation.setdefault("stats", {}).update(stats)
+            operation["updatedAt"] = now
+
+        if log_needed:
+            if log_message:
+                logger.info("Operation update [%s] %s - %s", operation_id, log_phase or "progress", log_message)
+            else:
+                logger.info("Operation update [%s] %s", operation_id, log_phase)
+
+    async def _finish_operation(
+        self,
+        operation_id: str | None,
+        *,
+        status: str,
+        stats: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        if not operation_id:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._ops_lock:
+            operation = self._operations.get(operation_id)
+            if not operation:
+                return
+            operation["status"] = status
+            operation["updatedAt"] = now
+            operation["finishedAt"] = now
+            if stats:
+                operation.setdefault("stats", {}).update(stats)
+            if error:
+                operation["error"] = error
+            try:
+                started_at = datetime.fromisoformat(str(operation.get("startedAt") or "").replace("Z", "+00:00"))
+                finished_at = datetime.fromisoformat(now.replace("Z", "+00:00"))
+                operation["durationMs"] = max(
+                    0,
+                    int((finished_at - started_at).total_seconds() * 1000),
+                )
+            except Exception:
+                operation["durationMs"] = 0
+            self._active_operation_ids.discard(operation_id)
+
+        if status == "failed":
+            logger.error("Operation failed [%s]: %s", operation_id, error)
+        else:
+            logger.info("Operation finished [%s] status=%s", operation_id, status)
 
     async def sync_project(
         self,
@@ -223,6 +397,8 @@ class SyncEngine:
         docs_dir: Path,
         progress_dir: Path,
         force: bool = False,
+        operation_id: str | None = None,
+        trigger: str = "api",
     ) -> dict:
         """Full incremental sync for a project.
 
@@ -238,93 +414,434 @@ class SyncEngine:
             "features_synced": 0,
             "links_created": 0,
             "duration_ms": 0,
+            "operation_id": "",
         }
+        if not operation_id:
+            operation_id = await self._start_operation(
+                "full_sync",
+                project.id,
+                trigger,
+                {
+                    "force": bool(force),
+                    "sessionsDir": str(sessions_dir),
+                    "docsDir": str(docs_dir),
+                    "progressDir": str(progress_dir),
+                    "projectName": project.name,
+                },
+            )
+        should_finalize_operation = bool(operation_id)
+        stats["operation_id"] = operation_id
+
         t0 = time.monotonic()
-
-        # Phase 1: Sessions
-        s_stats = await self._sync_sessions(project.id, sessions_dir, force)
-        stats["sessions_synced"] = s_stats["synced"]
-        stats["sessions_skipped"] = s_stats["skipped"]
-
-        # Phase 2: Documents
-        d_stats = await self._sync_documents(project.id, docs_dir, force)
-        stats["documents_synced"] = d_stats["synced"]
-        stats["documents_skipped"] = d_stats["skipped"]
-
-        # Phase 3: Tasks (progress files)
-        t_stats = await self._sync_progress(project.id, progress_dir, force)
-        stats["tasks_synced"] = t_stats["synced"]
-        stats["tasks_skipped"] = t_stats["skipped"]
-
-        # Phase 4: Features (derived from docs + progress)
-        f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
-        stats["features_synced"] = f_stats["synced"]
-
-        # Phase 5: Auto-discover cross-references
-        l_stats = await self._rebuild_entity_links(project.id, docs_dir, progress_dir)
-        stats["links_created"] = l_stats["created"]
-
-        # Phase 6: Analytics Snapshot
-        await self._capture_analytics(project.id)
-
-        elapsed = int((time.monotonic() - t0) * 1000)
-        stats["duration_ms"] = elapsed
-        logger.info(
-            f"Sync complete for {project.name}: "
-            f"{stats['sessions_synced']} sessions, "
-            f"{stats['documents_synced']} docs, "
-            f"{stats['tasks_synced']} tasks, "
-            f"{stats['features_synced']} features, "
-            f"{stats['links_created']} links "
-            f"in {elapsed}ms"
+        await self._update_operation(
+            operation_id,
+            phase="sessions",
+            message="Syncing sessions",
         )
-        return stats
+
+        try:
+            # Phase 1: Sessions
+            s_stats = await self._sync_sessions(project.id, sessions_dir, force)
+            stats["sessions_synced"] = s_stats["synced"]
+            stats["sessions_skipped"] = s_stats["skipped"]
+            await self._update_operation(
+                operation_id,
+                phase="documents",
+                message="Syncing documents",
+                counters={
+                    "sessionsSynced": stats["sessions_synced"],
+                    "sessionsSkipped": stats["sessions_skipped"],
+                },
+            )
+
+            # Phase 2: Documents
+            d_stats = await self._sync_documents(project.id, docs_dir, progress_dir, force)
+            stats["documents_synced"] = d_stats["synced"]
+            stats["documents_skipped"] = d_stats["skipped"]
+            await self._update_operation(
+                operation_id,
+                phase="tasks",
+                message="Syncing progress tasks",
+                counters={
+                    "documentsSynced": stats["documents_synced"],
+                    "documentsSkipped": stats["documents_skipped"],
+                },
+            )
+
+            # Phase 3: Tasks (progress files)
+            t_stats = await self._sync_progress(project.id, progress_dir, force)
+            stats["tasks_synced"] = t_stats["synced"]
+            stats["tasks_skipped"] = t_stats["skipped"]
+            await self._update_operation(
+                operation_id,
+                phase="features",
+                message="Syncing derived features",
+                counters={
+                    "tasksSynced": stats["tasks_synced"],
+                    "tasksSkipped": stats["tasks_skipped"],
+                },
+            )
+
+            # Phase 4: Features (derived from docs + progress)
+            f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
+            stats["features_synced"] = f_stats["synced"]
+            await self._update_operation(
+                operation_id,
+                phase="links",
+                message="Rebuilding entity links",
+                counters={"featuresSynced": stats["features_synced"]},
+            )
+
+            # Phase 5: Auto-discover cross-references
+            l_stats = await self._rebuild_entity_links(
+                project.id,
+                docs_dir,
+                progress_dir,
+                operation_id=operation_id,
+            )
+            stats["links_created"] = l_stats["created"]
+            await self._update_operation(
+                operation_id,
+                phase="analytics",
+                message="Capturing analytics snapshot",
+                counters={"linksCreated": stats["links_created"]},
+            )
+
+            # Phase 6: Analytics Snapshot
+            await self._capture_analytics(project.id)
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            stats["duration_ms"] = elapsed
+            await self._update_operation(
+                operation_id,
+                phase="completed",
+                message="Sync completed",
+                stats=stats,
+            )
+            if should_finalize_operation:
+                await self._finish_operation(operation_id, status="completed", stats=stats)
+
+            logger.info(
+                f"Sync complete for {project.name}: "
+                f"{stats['sessions_synced']} sessions, "
+                f"{stats['documents_synced']} docs, "
+                f"{stats['tasks_synced']} tasks, "
+                f"{stats['features_synced']} features, "
+                f"{stats['links_created']} links "
+                f"in {elapsed}ms"
+            )
+            return stats
+        except Exception as exc:
+            if should_finalize_operation:
+                await self._finish_operation(
+                    operation_id,
+                    status="failed",
+                    stats=stats,
+                    error=str(exc),
+                )
+            raise
+
+    async def rebuild_links(
+        self,
+        project_id: str,
+        docs_dir: Path | None = None,
+        progress_dir: Path | None = None,
+        *,
+        operation_id: str | None = None,
+        trigger: str = "api",
+        capture_analytics: bool = False,
+    ) -> dict[str, Any]:
+        """Rebuild entity links only, with optional analytics capture."""
+        stats: dict[str, Any] = {"created": 0, "duration_ms": 0, "operation_id": ""}
+        if not operation_id:
+            operation_id = await self._start_operation(
+                "rebuild_links",
+                project_id,
+                trigger,
+                {
+                    "docsDir": str(docs_dir) if docs_dir else "",
+                    "progressDir": str(progress_dir) if progress_dir else "",
+                    "captureAnalytics": bool(capture_analytics),
+                },
+            )
+        should_finalize_operation = bool(operation_id)
+        stats["operation_id"] = operation_id
+        t0 = time.monotonic()
+        await self._update_operation(
+            operation_id,
+            phase="links",
+            message="Rebuilding entity links",
+        )
+        try:
+            l_stats = await self._rebuild_entity_links(
+                project_id,
+                docs_dir,
+                progress_dir,
+                operation_id=operation_id,
+            )
+            stats["created"] = int(l_stats.get("created", 0))
+            if capture_analytics:
+                await self._update_operation(
+                    operation_id,
+                    phase="analytics",
+                    message="Capturing analytics snapshot",
+                )
+                await self._capture_analytics(project_id)
+
+            stats["duration_ms"] = int((time.monotonic() - t0) * 1000)
+            await self._update_operation(
+                operation_id,
+                phase="completed",
+                message="Link rebuild completed",
+                stats=stats,
+            )
+            if should_finalize_operation:
+                await self._finish_operation(operation_id, status="completed", stats=stats)
+            return stats
+        except Exception as exc:
+            if should_finalize_operation:
+                await self._finish_operation(
+                    operation_id,
+                    status="failed",
+                    stats=stats,
+                    error=str(exc),
+                )
+            raise
+
+    async def run_link_audit(
+        self,
+        project_id: str,
+        *,
+        feature_id: str = "",
+        primary_floor: float = 0.55,
+        fanout_floor: int = 10,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Audit feature->session links and return likely suspect mappings."""
+        feature_id = feature_id.strip()
+
+        sqlite_rows_query = """
+            SELECT
+                el.source_id AS feature_id,
+                el.target_id AS session_id,
+                el.confidence AS confidence,
+                el.metadata_json AS metadata_json
+            FROM entity_links el
+            JOIN features f ON f.id = el.source_id
+            WHERE
+                el.source_type = 'feature'
+                AND el.target_type = 'session'
+                AND el.link_type = 'related'
+                AND (json_extract(el.metadata_json, '$.linkStrategy') = 'session_evidence' OR el.metadata_json LIKE '%session_evidence%')
+                AND f.project_id = ?
+        """
+        sqlite_fanout_query = """
+            SELECT el.target_id AS session_id, COUNT(*) AS feature_count
+            FROM entity_links el
+            JOIN features f ON f.id = el.source_id
+            WHERE
+                el.source_type = 'feature'
+                AND el.target_type = 'session'
+                AND el.link_type = 'related'
+                AND f.project_id = ?
+            GROUP BY el.target_id
+        """
+
+        pg_rows_query = """
+            SELECT
+                el.source_id AS feature_id,
+                el.target_id AS session_id,
+                el.confidence AS confidence,
+                el.metadata_json AS metadata_json
+            FROM entity_links el
+            JOIN features f ON f.id = el.source_id
+            WHERE
+                el.source_type = 'feature'
+                AND el.target_type = 'session'
+                AND el.link_type = 'related'
+                AND (el.metadata_json::jsonb->>'linkStrategy' = 'session_evidence' OR el.metadata_json LIKE '%session_evidence%')
+                AND f.project_id = $1
+        """
+        pg_fanout_query = """
+            SELECT el.target_id AS session_id, COUNT(*) AS feature_count
+            FROM entity_links el
+            JOIN features f ON f.id = el.source_id
+            WHERE
+                el.source_type = 'feature'
+                AND el.target_type = 'session'
+                AND el.link_type = 'related'
+                AND f.project_id = $1
+            GROUP BY el.target_id
+        """
+
+        rows: list[dict[str, Any]] = []
+        fanout_rows: list[dict[str, Any]] = []
+        if isinstance(self.db, aiosqlite.Connection):
+            row_params: list[Any] = [project_id]
+            fanout_params: list[Any] = [project_id]
+            rows_query = sqlite_rows_query
+            if feature_id:
+                rows_query += " AND el.source_id = ?"
+                row_params.append(feature_id)
+            async with self.db.execute(rows_query, tuple(row_params)) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+            async with self.db.execute(sqlite_fanout_query, tuple(fanout_params)) as cur:
+                fanout_rows = [dict(r) for r in await cur.fetchall()]
+        else:
+            rows_query = pg_rows_query
+            row_params: list[Any] = [project_id]
+            if feature_id:
+                rows_query += " AND el.source_id = $2"
+                row_params.append(feature_id)
+            raw_rows = await self.db.fetch(rows_query, *row_params)
+            rows = [dict(r) for r in raw_rows]
+
+            raw_fanout = await self.db.fetch(pg_fanout_query, project_id)
+            fanout_rows = [dict(r) for r in raw_fanout]
+
+        fanout_map = {str(row.get("session_id") or ""): int(row.get("feature_count") or 0) for row in fanout_rows}
+        parsed_rows: list[dict[str, Any]] = []
+        for row in rows:
+            metadata_raw = row.get("metadata_json")
+            metadata: dict[str, Any] = {}
+            if isinstance(metadata_raw, dict):
+                metadata = metadata_raw
+            elif isinstance(metadata_raw, str) and metadata_raw:
+                try:
+                    loaded = json.loads(metadata_raw)
+                    if isinstance(loaded, dict):
+                        metadata = loaded
+                except Exception:
+                    metadata = {}
+            parsed_rows.append({
+                "feature_id": str(row.get("feature_id") or ""),
+                "session_id": str(row.get("session_id") or ""),
+                "confidence": row.get("confidence"),
+                "metadata": metadata,
+            })
+
+        suspects = analyze_suspect_links(parsed_rows, fanout_map, primary_floor, fanout_floor)
+        suspects = suspects[: max(1, int(limit))]
+        return {
+            "project_id": project_id,
+            "feature_filter": feature_id or None,
+            "row_count": len(parsed_rows),
+            "suspect_count": len(suspects),
+            "primary_floor": float(primary_floor),
+            "fanout_floor": int(fanout_floor),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "suspects": suspects_as_dicts(suspects),
+        }
 
     async def sync_changed_files(
         self, project_id: str, changed_files: list[tuple[str, Path]],
         sessions_dir: Path, docs_dir: Path, progress_dir: Path,
+        operation_id: str | None = None,
+        trigger: str = "watcher",
     ) -> dict:
         """Sync only specific changed files. Used by file watcher.
 
         changed_files: list of (change_type, path) where change_type is 'modified'|'added'|'deleted'
         """
-        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0}
+        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0, "operation_id": ""}
+        if not operation_id and trigger != "watcher":
+            operation_id = await self._start_operation(
+                "sync_changed_files",
+                project_id,
+                trigger,
+                {"changedCount": len(changed_files)},
+            )
+        should_finalize_operation = bool(operation_id)
+        stats["operation_id"] = operation_id or ""
+
+        if operation_id:
+            await self._update_operation(
+                operation_id,
+                phase="changed-files",
+                message=f"Processing {len(changed_files)} changed file(s)",
+                counters={"changedFilesTotal": len(changed_files)},
+            )
+
         should_resync_features = False
 
-        for change_type, path in changed_files:
-            if change_type == "deleted":
-                # Remove sync state and associated entities
-                await self.sync_repo.delete_sync_state(str(path))
-                if path.suffix == ".jsonl":
-                    await self.session_repo.delete_by_source(str(path))
-                    stats["sessions"] += 1
-                elif path.suffix == ".md":
-                    await self.document_repo.delete_by_source(str(path))
-                    await self.task_repo.delete_by_source(str(path))
-                    stats["documents"] += 1
-                    if docs_dir in path.parents or progress_dir in path.parents:
-                        should_resync_features = True
-                continue
+        try:
+            for index, (change_type, path) in enumerate(changed_files, start=1):
+                if change_type == "deleted":
+                    # Remove sync state and associated entities
+                    await self.sync_repo.delete_sync_state(str(path))
+                    if path.suffix == ".jsonl":
+                        await self.session_repo.delete_by_source(str(path))
+                        stats["sessions"] += 1
+                    elif path.suffix == ".md":
+                        await self.document_repo.delete_by_source(str(path))
+                        await self.task_repo.delete_by_source(str(path))
+                        if progress_dir in path.parents:
+                            await self.task_repo.delete_by_source(_canonical_task_source(path, progress_dir))
+                        stats["documents"] += 1
+                        if docs_dir in path.parents or progress_dir in path.parents:
+                            should_resync_features = True
+                else:
+                    # Modified or added
+                    if path.suffix == ".jsonl" and sessions_dir in path.parents:
+                        await self._sync_single_session(project_id, path)
+                        stats["sessions"] += 1
+                    elif path.suffix == ".md":
+                        if docs_dir in path.parents:
+                            await self._sync_single_document(project_id, path, docs_dir, progress_dir)
+                            stats["documents"] += 1
+                            should_resync_features = True
+                        if progress_dir in path.parents:
+                            await self._sync_single_document(project_id, path, docs_dir, progress_dir)
+                            await self._sync_single_progress(project_id, path, progress_dir)
+                            stats["documents"] += 1
+                            stats["tasks"] += 1
+                            should_resync_features = True
 
-            # Modified or added
-            if path.suffix == ".jsonl" and sessions_dir in path.parents:
-                await self._sync_single_session(project_id, path)
-                stats["sessions"] += 1
-            elif path.suffix == ".md":
-                if docs_dir in path.parents:
-                    await self._sync_single_document(project_id, path, docs_dir)
-                    stats["documents"] += 1
-                    should_resync_features = True
-                if progress_dir in path.parents:
-                    await self._sync_single_progress(project_id, path, progress_dir)
-                    stats["tasks"] += 1
-                    should_resync_features = True
+                if operation_id and (index == len(changed_files) or index % 10 == 0):
+                    await self._update_operation(
+                        operation_id,
+                        phase="changed-files",
+                        message=f"Processed {index}/{len(changed_files)} changed file(s)",
+                        progress={
+                            "processedChangedFiles": index,
+                            "totalChangedFiles": len(changed_files),
+                        },
+                        counters={
+                            "sessionsSynced": stats["sessions"],
+                            "documentsSynced": stats["documents"],
+                            "tasksSynced": stats["tasks"],
+                        },
+                    )
 
-        if should_resync_features:
-            f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
-            stats["features"] = f_stats.get("synced", 0)
+            if should_resync_features:
+                if operation_id:
+                    await self._update_operation(
+                        operation_id,
+                        phase="features",
+                        message="Resyncing derived features after changed files",
+                    )
+                f_stats = await self._sync_features(project_id, docs_dir, progress_dir)
+                stats["features"] = f_stats.get("synced", 0)
 
-        return stats
+            if operation_id:
+                await self._update_operation(
+                    operation_id,
+                    phase="completed",
+                    message="Changed-file sync completed",
+                    stats=stats,
+                )
+            if should_finalize_operation:
+                await self._finish_operation(operation_id, status="completed", stats=stats)
+            return stats
+        except Exception as exc:
+            if should_finalize_operation:
+                await self._finish_operation(
+                    operation_id,
+                    status="failed",
+                    stats=stats,
+                    error=str(exc),
+                )
+            raise
 
     # ── Session Sync ────────────────────────────────────────────────
 
@@ -393,24 +910,35 @@ class SyncEngine:
 
     # ── Document Sync ───────────────────────────────────────────────
 
-    async def _sync_documents(self, project_id: str, docs_dir: Path, force: bool) -> dict:
+    async def _sync_documents(self, project_id: str, docs_dir: Path, progress_dir: Path, force: bool) -> dict:
         stats = {"synced": 0, "skipped": 0}
-        if not docs_dir.exists():
+        roots: list[Path] = []
+        if docs_dir.exists():
+            roots.append(docs_dir)
+        if progress_dir.exists():
+            roots.append(progress_dir)
+        if not roots:
             return stats
 
-        for md_file in sorted(docs_dir.rglob("*.md")):
-            if md_file.name.startswith("."):
-                continue
-            synced = await self._sync_single_document(project_id, md_file, docs_dir, force)
-            if synced:
-                stats["synced"] += 1
-            else:
-                stats["skipped"] += 1
+        for root in roots:
+            for md_file in sorted(root.rglob("*.md")):
+                if md_file.name.startswith("."):
+                    continue
+                synced = await self._sync_single_document(project_id, md_file, docs_dir, progress_dir, force)
+                if synced:
+                    stats["synced"] += 1
+                else:
+                    stats["skipped"] += 1
 
         return stats
 
     async def _sync_single_document(
-        self, project_id: str, path: Path, docs_dir: Path, force: bool = False,
+        self,
+        project_id: str,
+        path: Path,
+        docs_dir: Path,
+        progress_dir: Path,
+        force: bool = False,
     ) -> bool:
         file_path = str(path)
         mtime = path.stat().st_mtime
@@ -420,19 +948,18 @@ class SyncEngine:
             if cached and cached["file_mtime"] == mtime:
                 return False
 
+        project_root = infer_project_root(docs_dir, progress_dir)
+        base_dir = progress_dir if progress_dir in path.parents else docs_dir
         t0 = time.monotonic()
-        doc = parse_document_file(path, docs_dir)
+        doc = parse_document_file(path, base_dir, project_root=project_root)
         parse_ms = int((time.monotonic() - t0) * 1000)
 
         if doc:
             doc_dict = doc.model_dump()
             doc_dict["sourceFile"] = file_path
-            # Serialize frontmatter for storage
-            fm = doc_dict.pop("frontmatter", {})
-            doc_dict["frontmatter"] = fm
             await self.document_repo.upsert(doc_dict, project_id)
 
-            # Auto-tag from frontmatter tags
+            fm = doc_dict.get("frontmatter", {})
             fm_tags = fm.get("tags", []) if isinstance(fm, dict) else []
             for tag_name in fm_tags:
                 if tag_name:
@@ -571,9 +1098,15 @@ class SyncEngine:
         project_id: str,
         docs_dir: Path | None = None,
         progress_dir: Path | None = None,
+        operation_id: str | None = None,
     ) -> dict:
         """Auto-discover cross-references between entities."""
         stats = {"created": 0}
+        await self._update_operation(
+            operation_id,
+            phase="links:init",
+            message="Preparing link rebuild",
+        )
 
         path_pattern = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
         req_id_pattern = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
@@ -819,7 +1352,7 @@ class SyncEngine:
         async def _store_document_catalog_index() -> None:
             if not docs_dir or not progress_dir:
                 return
-            project_root = progress_dir.parent
+            project_root = infer_project_root(docs_dir, progress_dir)
             field_counts: dict[str, int] = {}
             type_counts: dict[str, int] = {}
             entries: list[dict[str, Any]] = []
@@ -837,7 +1370,7 @@ class SyncEngine:
                         continue
                     fm = _extract_frontmatter(text)
                     refs = extract_frontmatter_references(fm)
-                    rel_path = str(path.relative_to(project_root)) if project_root in path.parents else str(path)
+                    rel_path = canonical_project_path(path, project_root)
                     doc_type = classify_doc_type(rel_path, fm if isinstance(fm, dict) else {})
                     type_counts[doc_type] = type_counts.get(doc_type, 0) + 1
                     total += 1
@@ -893,6 +1426,12 @@ class SyncEngine:
                 )
 
         features = await self.feature_repo.list_all(project_id)
+        await self._update_operation(
+            operation_id,
+            phase="links:feature-prep",
+            message=f"Building feature evidence for {len(features)} feature(s)",
+            progress={"featureCount": len(features)},
+        )
         feature_ids = {str(row.get("id") or "") for row in features}
         feature_ids_by_base: dict[str, set[str]] = {}
         for feat_id in feature_ids:
@@ -911,7 +1450,7 @@ class SyncEngine:
         feature_slug_aliases: dict[str, set[str]] = {}
         task_bound_feature_sessions: set[tuple[str, str]] = set()
 
-        for f in features:
+        for feature_index, f in enumerate(features, start=1):
             feature_id = f["id"]
             await self.link_repo.delete_auto_links("feature", feature_id)
             feature_ref_paths[feature_id] = set()
@@ -1024,8 +1563,26 @@ class SyncEngine:
                     })
                     stats["created"] += 1
 
+            if operation_id and (feature_index == len(features) or feature_index % 20 == 0):
+                await self._update_operation(
+                    operation_id,
+                    phase="links:feature-prep",
+                    message=f"Prepared feature evidence {feature_index}/{len(features)}",
+                    progress={
+                        "featuresPrepared": feature_index,
+                        "featureCount": len(features),
+                    },
+                    counters={"linksCreated": stats["created"]},
+                )
+
         # Build feature ↔ session links from session evidence.
         total_sessions = await self.session_repo.count(project_id, {"include_subagents": True})
+        await self._update_operation(
+            operation_id,
+            phase="links:session-evidence",
+            message=f"Evaluating session evidence across {total_sessions} session(s)",
+            progress={"sessionCount": int(total_sessions)},
+        )
         sessions_data: list[dict[str, Any]] = []
         page_size = 250
         for offset in range(0, total_sessions, page_size):
@@ -1038,8 +1595,19 @@ class SyncEngine:
                 {"include_subagents": True},
             )
             sessions_data.extend(page)
+            if operation_id:
+                loaded = min(offset + page_size, total_sessions)
+                await self._update_operation(
+                    operation_id,
+                    phase="links:session-evidence",
+                    message=f"Loaded session page {loaded}/{total_sessions}",
+                    progress={
+                        "sessionPagesLoaded": loaded,
+                        "sessionCount": int(total_sessions),
+                    },
+                )
 
-        for s in sessions_data:
+        for session_index, s in enumerate(sessions_data, start=1):
             session_id = s["id"]
             file_updates = await self.session_repo.get_file_updates(session_id)
             artifacts = await self.session_repo.get_artifacts(session_id)
@@ -1333,36 +1901,91 @@ class SyncEngine:
                 })
                 stats["created"] += 1
 
-        # Link documents → features via frontmatter linkedFeatures
+            if operation_id and (session_index == len(sessions_data) or session_index % 25 == 0):
+                await self._update_operation(
+                    operation_id,
+                    phase="links:session-evidence",
+                    message=f"Processed sessions {session_index}/{len(sessions_data)}",
+                    progress={
+                        "sessionsProcessed": session_index,
+                        "sessionCount": len(sessions_data),
+                    },
+                    counters={"linksCreated": stats["created"]},
+                )
+
+        # Link documents ↔ features/tasks/sessions/documents from normalized metadata.
         docs = await self.document_repo.list_all(project_id)
-        for d in docs:
-            await self.link_repo.delete_auto_links("document", d["id"])
+        await self._update_operation(
+            operation_id,
+            phase="links:documents",
+            message=f"Linking documents ({len(docs)} total)",
+            progress={"documentCount": len(docs)},
+        )
+        tasks = await self.task_repo.list_all(project_id)
+        sessions_by_id = {str(row.get("id") or ""): row for row in sessions_data}
+
+        docs_by_path: dict[str, str] = {}
+        for doc_row in docs:
+            doc_path = normalize_ref_path(str(doc_row.get("file_path") or ""))
+            if doc_path:
+                docs_by_path[doc_path] = str(doc_row.get("id") or "")
+                docs_by_path[doc_path.lstrip("/")] = str(doc_row.get("id") or "")
+
+        tasks_by_source: dict[str, list[dict[str, Any]]] = {}
+        for task_row in tasks:
+            source_file = normalize_ref_path(str(task_row.get("source_file") or ""))
+            if not source_file:
+                continue
+            tasks_by_source.setdefault(source_file, []).append(task_row)
+
+        doc_feature_links: dict[str, set[str]] = {}
+        doc_doc_links: dict[str, set[str]] = {}
+
+        for doc_index, d in enumerate(docs, start=1):
+            doc_id = str(d.get("id") or "")
+            if not doc_id:
+                continue
+            await self.link_repo.delete_auto_links("document", doc_id)
             fm = d.get("frontmatter_json", "{}")
             try:
                 fm_dict = json.loads(fm) if isinstance(fm, str) else fm
             except Exception:
                 fm_dict = {}
+            if not isinstance(fm_dict, dict):
+                fm_dict = {}
 
-            refs = extract_frontmatter_references(fm_dict if isinstance(fm_dict, dict) else {})
-            linked_features = fm_dict.get("linkedFeatures", []) if isinstance(fm_dict, dict) else []
+            refs = extract_frontmatter_references(fm_dict)
+            explicit_feature_refs: set[str] = set()
+            linked_features = fm_dict.get("linkedFeatures", [])
             if isinstance(linked_features, str):
                 linked_features = [linked_features]
-            if not isinstance(linked_features, list):
-                linked_features = []
+            if isinstance(linked_features, list):
+                for raw in linked_features:
+                    if isinstance(raw, str) and raw.strip():
+                        explicit_feature_refs.add(raw.strip())
 
-            feature_refs: set[str] = set()
-            for raw in linked_features:
-                if isinstance(raw, str) and raw.strip():
-                    feature_refs.add(raw.strip())
             for raw in refs.get("featureRefs", []):
                 if isinstance(raw, str) and raw.strip():
-                    feature_refs.add(raw.strip())
+                    explicit_feature_refs.add(raw.strip())
             prd_ref = refs.get("prd")
             if isinstance(prd_ref, str) and prd_ref.strip():
-                feature_refs.add(prd_ref.strip())
+                explicit_feature_refs.add(prd_ref.strip())
+
+            path_hint_refs: set[str] = set()
+            for token in (
+                str(d.get("feature_slug_hint") or ""),
+                str(d.get("feature_slug_canonical") or ""),
+                feature_slug_from_path(str(d.get("file_path") or "")),
+            ):
+                if token:
+                    path_hint_refs.add(token)
 
             resolved_feature_ids: set[str] = set()
-            for raw_ref in feature_refs:
+            strategy = ""
+            confidence = 0.0
+
+            candidate_refs = list(explicit_feature_refs) if explicit_feature_refs else list(path_hint_refs)
+            for raw_ref in candidate_refs:
                 normalized = raw_ref.strip().lower()
                 if not normalized:
                     continue
@@ -1378,17 +2001,180 @@ class SyncEngine:
                 for resolved in feature_ids_by_base.get(base, set()):
                     resolved_feature_ids.add(resolved)
 
+            if resolved_feature_ids:
+                if explicit_feature_refs:
+                    strategy = "explicit_frontmatter_ref"
+                    confidence = 0.98
+                else:
+                    strategy = "path_feature_hint"
+                    confidence = 0.74
+
+            doc_feature_links[doc_id] = set()
             for feat_ref in sorted(resolved_feature_ids):
+                doc_feature_links[doc_id].add(str(feat_ref))
                 await self.link_repo.upsert({
                     "source_type": "document",
-                    "source_id": d["id"],
+                    "source_id": doc_id,
                     "target_type": "feature",
                     "target_id": str(feat_ref),
                     "link_type": "related",
                     "origin": "auto",
+                    "confidence": confidence or 0.7,
+                    "metadata_json": json.dumps({
+                        "linkStrategy": strategy or "feature_ref",
+                        "sourceFields": sorted(fm_dict.keys()),
+                    }),
                 })
                 stats["created"] += 1
+
+            # Document → Document links from path refs/file refs.
+            linked_doc_ids: set[str] = set()
+            for raw_ref in [*refs.get("pathRefs", []), *refs.get("fileRefs", [])]:
+                if not isinstance(raw_ref, str):
+                    continue
+                normalized_ref = normalize_ref_path(raw_ref).lstrip("/")
+                if not normalized_ref:
+                    continue
+                target_doc_id = docs_by_path.get(normalized_ref)
+                if not target_doc_id:
+                    # fallback: suffix match for mixed absolute vs relative references
+                    for candidate_path, candidate_doc_id in docs_by_path.items():
+                        if candidate_path.endswith(normalized_ref):
+                            target_doc_id = candidate_doc_id
+                            break
+                if not target_doc_id or target_doc_id == doc_id:
+                    continue
+                linked_doc_ids.add(target_doc_id)
+                await self.link_repo.upsert({
+                    "source_type": "document",
+                    "source_id": doc_id,
+                    "target_type": "document",
+                    "target_id": target_doc_id,
+                    "link_type": "related",
+                    "origin": "auto",
+                    "confidence": 0.9,
+                    "metadata_json": json.dumps({
+                        "linkStrategy": "document_ref_path",
+                        "refPath": normalized_ref,
+                    }),
+                })
+                stats["created"] += 1
+            doc_doc_links[doc_id] = linked_doc_ids
+
+            # Document → Task links (primarily progress documents).
+            doc_source_path = normalize_ref_path(str(d.get("file_path") or "")).lstrip("/")
+            for task_row in tasks_by_source.get(doc_source_path, []):
+                task_id = str(task_row.get("id") or "")
+                if not task_id:
+                    continue
+                await self.link_repo.upsert({
+                    "source_type": "document",
+                    "source_id": doc_id,
+                    "target_type": "task",
+                    "target_id": task_id,
+                    "link_type": "child",
+                    "origin": "auto",
+                    "confidence": 1.0,
+                    "metadata_json": json.dumps({
+                        "linkStrategy": "progress_source_task",
+                        "sourceFile": doc_source_path,
+                    }),
+                })
+                stats["created"] += 1
+
+                session_id = str(task_row.get("session_id") or "")
+                if session_id:
+                    await self.link_repo.upsert({
+                        "source_type": "document",
+                        "source_id": doc_id,
+                        "target_type": "session",
+                        "target_id": session_id,
+                        "link_type": "related",
+                        "origin": "auto",
+                        "confidence": 0.96,
+                        "metadata_json": json.dumps({
+                            "linkStrategy": "task_session_ref",
+                            "taskId": task_id,
+                        }),
+                    })
+                    stats["created"] += 1
+
+            # Explicit document → session refs.
+            explicit_session_refs: set[str] = set()
+            for raw in refs.get("sessionRefs", []):
+                if isinstance(raw, str) and raw.strip():
+                    explicit_session_refs.add(raw.strip())
+            raw_linked_sessions = fm_dict.get("linkedSessions")
+            if isinstance(raw_linked_sessions, str):
+                explicit_session_refs.add(raw_linked_sessions.strip())
+            elif isinstance(raw_linked_sessions, list):
+                for raw in raw_linked_sessions:
+                    if isinstance(raw, str) and raw.strip():
+                        explicit_session_refs.add(raw.strip())
+
+            for session_ref in sorted(explicit_session_refs):
+                if session_ref not in sessions_by_id:
+                    continue
+                await self.link_repo.upsert({
+                    "source_type": "document",
+                    "source_id": doc_id,
+                    "target_type": "session",
+                    "target_id": session_ref,
+                    "link_type": "related",
+                    "origin": "auto",
+                    "confidence": 1.0,
+                    "metadata_json": json.dumps({
+                        "linkStrategy": "explicit_session_ref",
+                    }),
+                })
+                stats["created"] += 1
+
+            if operation_id and (doc_index == len(docs) or doc_index % 25 == 0):
+                await self._update_operation(
+                    operation_id,
+                    phase="links:documents",
+                    message=f"Linked documents {doc_index}/{len(docs)}",
+                    progress={
+                        "documentsProcessed": doc_index,
+                        "documentCount": len(docs),
+                    },
+                    counters={"linksCreated": stats["created"]},
+                )
+
+        # Inherit feature links from referenced documents when direct refs are absent.
+        for doc_id, linked_doc_ids in doc_doc_links.items():
+            if doc_feature_links.get(doc_id):
+                continue
+            inherited: set[str] = set()
+            for linked_doc_id in linked_doc_ids:
+                inherited.update(doc_feature_links.get(linked_doc_id, set()))
+            for feature_id in sorted(inherited):
+                await self.link_repo.upsert({
+                    "source_type": "document",
+                    "source_id": doc_id,
+                    "target_type": "feature",
+                    "target_id": feature_id,
+                    "link_type": "related",
+                    "origin": "auto",
+                    "confidence": 0.64,
+                    "metadata_json": json.dumps({
+                        "linkStrategy": "referenced_document_inheritance",
+                    }),
+                })
+                stats["created"] += 1
+        await self._update_operation(
+            operation_id,
+            phase="links:catalog",
+            message="Refreshing document catalog index",
+            counters={"linksCreated": stats["created"]},
+        )
         await _store_document_catalog_index()
+        await self._update_operation(
+            operation_id,
+            phase="links:completed",
+            message=f"Link rebuild generated {stats['created']} link(s)",
+            stats={"links_created": stats["created"]},
+        )
         return stats
 
 

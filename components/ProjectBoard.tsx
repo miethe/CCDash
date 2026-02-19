@@ -12,6 +12,7 @@ import {
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
+import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -86,17 +87,7 @@ const isPrimarySession = (session: FeatureSessionLink): boolean => {
 };
 
 // ── Status helpers ─────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  'done': { label: 'Done', color: 'bg-emerald-500/10 text-emerald-500', dot: 'bg-emerald-500' },
-  'in-progress': { label: 'In Progress', color: 'bg-indigo-500/10 text-indigo-500', dot: 'bg-indigo-500' },
-  'review': { label: 'Review', color: 'bg-amber-500/10 text-amber-500', dot: 'bg-amber-500' },
-  'backlog': { label: 'Backlog', color: 'bg-slate-500/10 text-slate-500', dot: 'bg-slate-500' },
-};
-
-const STATUS_OPTIONS = ['backlog', 'in-progress', 'review', 'done'] as const;
-
-const getStatusStyle = (status: string) => STATUS_CONFIG[status] || STATUS_CONFIG['backlog'];
+const getStatusStyle = getFeatureStatusStyle;
 
 const ProgressBar = ({ completed, total }: { completed: number; total: number }) => {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -163,7 +154,7 @@ const StatusDropdown = ({
       className={`font-bold uppercase rounded cursor-pointer border-0 appearance-none ${sizeClasses} ${style.color} bg-transparent hover:ring-1 hover:ring-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all`}
       style={{ WebkitAppearance: 'none' }}
     >
-      {STATUS_OPTIONS.map(s => (
+      {FEATURE_STATUS_OPTIONS.map(s => (
         <option key={s} value={s} className="bg-slate-900 text-slate-300">
           {getStatusStyle(s).label}
         </option>
@@ -349,6 +340,7 @@ const FeatureModal = ({
     const docPath = normalizePath(doc.filePath);
     const matchedDoc = documents.find(candidate => (
       candidate.id === doc.id
+      || candidate.canonicalPath === docPath
       || normalizePath(candidate.filePath) === docPath
     ));
     if (matchedDoc) {
@@ -356,7 +348,7 @@ const FeatureModal = ({
       return;
     }
     setViewingDoc({
-      id: doc.id,
+      id: doc.id || `DOC-${docPath.replace(/\//g, '-').replace(/\.md$/i, '')}`,
       title: doc.title,
       filePath: doc.filePath,
       status: 'active',
