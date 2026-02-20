@@ -61,7 +61,7 @@ interface DataContextValue {
     // Status Update Actions
     updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
     updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
-    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string) => Promise<void>;
+    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string, previousStatus?: string) => Promise<void>;
     getSessionById: (sessionId: string) => Promise<AgentSession | null>;
 }
 
@@ -91,6 +91,42 @@ async function fetchJson<T>(path: string): Promise<T> {
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const FEATURE_POLL_INTERVAL_MS = 5_000; // 5 seconds
 const SESSIONS_PER_PAGE = 50;
+const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
+
+const matchesPhase = (phase: Feature['phases'][number], phaseId: string): boolean =>
+    phase.id === phaseId || phase.phase === phaseId;
+
+const aggregateFeatureFromPhases = (feature: Feature, phases: Feature['phases']): Feature => {
+    const totalTasks = phases.reduce((sum, phase) => sum + Math.max(phase.totalTasks || 0, 0), 0);
+    const completedTasks = phases.reduce((sum, phase) => {
+        const completed = Math.max(phase.completedTasks || 0, 0);
+        const deferred = Math.max(phase.deferredTasks || 0, 0);
+        return sum + Math.max(completed, deferred);
+    }, 0);
+    const deferredTasks = phases.reduce((sum, phase) => sum + Math.max(phase.deferredTasks || 0, 0), 0);
+    const allTerminal = phases.length > 0 && phases.every(phase => TERMINAL_PHASE_STATUSES.has(phase.status));
+    const anyInProgress = phases.some(phase => phase.status === 'in-progress');
+    const anyReview = phases.some(phase => phase.status === 'review');
+
+    const status = totalTasks > 0 && completedTasks >= totalTasks
+        ? 'done'
+        : allTerminal
+            ? 'done'
+            : anyInProgress
+                ? 'in-progress'
+                : anyReview
+                    ? 'review'
+                    : 'backlog';
+
+    return {
+        ...feature,
+        status,
+        totalTasks,
+        completedTasks,
+        deferredTasks,
+        phases,
+    };
+};
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
@@ -374,6 +410,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 throw new Error(`Failed to update feature status: ${res.status} ${res.statusText}`);
             }
             const updated = await res.json() as Feature;
+            if (updated.id !== featureId) {
+                setFeatures(prev => prev.filter(f => f.id !== featureId));
+            }
             setPendingFeatureStatusById(prev => {
                 const { [featureId]: _ignore, ...rest } = prev;
                 return rest;
@@ -395,6 +434,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [upsertFeatureInState]);
 
     const updatePhaseStatus = useCallback(async (featureId: string, phaseId: string, status: string) => {
+        let previousFeatureSnapshot: Feature | null = null;
+        setFeatures(prev => prev.map(feature => {
+            if (feature.id !== featureId) return feature;
+            previousFeatureSnapshot = feature;
+            const nextPhases = (feature.phases || []).map(phase => {
+                if (!matchesPhase(phase, phaseId)) return phase;
+                const totalTasks = Math.max(phase.totalTasks || 0, 0);
+                const doneFromTasks = (phase.tasks || []).filter(task => task.status === 'done').length;
+                const deferredFromTasks = (phase.tasks || []).filter(task => task.status === 'deferred').length;
+                let completedTasks = phase.tasks && phase.tasks.length > 0
+                    ? doneFromTasks + deferredFromTasks
+                    : Math.max(phase.completedTasks || 0, 0);
+                let deferredTasks = phase.tasks && phase.tasks.length > 0
+                    ? deferredFromTasks
+                    : Math.max(phase.deferredTasks || 0, 0);
+                if (status === 'deferred' && totalTasks > 0) {
+                    completedTasks = totalTasks;
+                    deferredTasks = totalTasks;
+                }
+                if (totalTasks > 0 && completedTasks > totalTasks) completedTasks = totalTasks;
+                if (deferredTasks > completedTasks) deferredTasks = completedTasks;
+                return { ...phase, status, completedTasks, deferredTasks };
+            });
+            return aggregateFeatureFromPhases(feature, nextPhases);
+        }));
+
         try {
             const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/status`, {
                 method: 'PATCH',
@@ -405,14 +470,78 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 throw new Error(`Failed to update phase status: ${res.status} ${res.statusText}`);
             }
             const updated = await res.json() as Feature;
+            if (updated.id !== featureId) {
+                setFeatures(prev => prev.filter(f => f.id !== featureId));
+            }
             upsertFeatureInState(updated);
         } catch (e) {
+            if (previousFeatureSnapshot) {
+                upsertFeatureInState(previousFeatureSnapshot);
+            }
             console.error('Failed to update phase status:', e);
             throw e;
         }
     }, [upsertFeatureInState]);
 
-    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: string) => {
+    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: string, previousStatus?: string) => {
+        let previousFeatureSnapshot: Feature | null = null;
+        setFeatures(prev => prev.map(feature => {
+            if (feature.id !== featureId) return feature;
+            previousFeatureSnapshot = feature;
+            const nextPhases = (feature.phases || []).map(phase => {
+                if (!matchesPhase(phase, phaseId)) return phase;
+                let tasks = phase.tasks || [];
+                let changed = false;
+                if (Array.isArray(phase.tasks) && phase.tasks.length > 0) {
+                    tasks = phase.tasks.map(task => {
+                        if (task.id !== taskId) return task;
+                        changed = true;
+                        return { ...task, status };
+                    });
+                } else if (previousStatus && previousStatus !== status) {
+                    changed = true;
+                }
+                if (!changed) return phase;
+
+                const totalTasks = Math.max(phase.totalTasks || 0, tasks.length);
+                let completedTasks = Math.max(phase.completedTasks || 0, 0);
+                let deferredTasks = Math.max(phase.deferredTasks || 0, 0);
+
+                if (tasks.length > 0) {
+                    const doneCount = tasks.filter(task => task.status === 'done').length;
+                    const deferredCount = tasks.filter(task => task.status === 'deferred').length;
+                    completedTasks = doneCount + deferredCount;
+                    deferredTasks = deferredCount;
+                } else if (previousStatus && previousStatus !== status) {
+                    if (previousStatus === 'done') completedTasks -= 1;
+                    if (previousStatus === 'deferred') {
+                        completedTasks -= 1;
+                        deferredTasks -= 1;
+                    }
+                    if (status === 'done') completedTasks += 1;
+                    if (status === 'deferred') {
+                        completedTasks += 1;
+                        deferredTasks += 1;
+                    }
+                }
+
+                if (phase.status === 'deferred' && totalTasks > 0) {
+                    completedTasks = totalTasks;
+                    deferredTasks = totalTasks;
+                }
+                if (completedTasks < 0) completedTasks = 0;
+                if (deferredTasks < 0) deferredTasks = 0;
+                if (totalTasks > 0 && completedTasks > totalTasks) completedTasks = totalTasks;
+                return {
+                    ...phase,
+                    tasks,
+                    completedTasks,
+                    deferredTasks: Math.min(deferredTasks, completedTasks),
+                };
+            });
+            return aggregateFeatureFromPhases(feature, nextPhases);
+        }));
+
         try {
             const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
                 method: 'PATCH',
@@ -423,8 +552,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 throw new Error(`Failed to update task status: ${res.status} ${res.statusText}`);
             }
             const updated = await res.json() as Feature;
+            if (updated.id !== featureId) {
+                setFeatures(prev => prev.filter(f => f.id !== featureId));
+            }
             upsertFeatureInState(updated);
         } catch (e) {
+            if (previousFeatureSnapshot) {
+                upsertFeatureInState(previousFeatureSnapshot);
+            }
             console.error('Failed to update task status:', e);
             throw e;
         }

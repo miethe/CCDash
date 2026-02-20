@@ -232,6 +232,14 @@ class SyncEngine:
         self._git_doc_dates_cache_dirty: set[str] = set()
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
 
+    async def _delete_tasks_for_feature(self, feature_id: str) -> None:
+        """Delete all task rows attached to a feature id."""
+        if config.DB_BACKEND == "postgres":
+            await self.db.execute("DELETE FROM tasks WHERE feature_id = $1", feature_id)
+            return
+        await self.db.execute("DELETE FROM tasks WHERE feature_id = ?", (feature_id,))
+        await self.db.commit()
+
     def _to_git_scope(self, project_root: Path, value: Path | str) -> str:
         raw = str(value)
         try:
@@ -1418,7 +1426,7 @@ class SyncEngine:
         dirty_paths: set[str] | None = None,
     ) -> dict:
         """Re-derive features from docs + progress and upsert all."""
-        stats = {"synced": 0}
+        stats = {"synced": 0, "pruned_aliases": 0}
 
         project_root = project_root or infer_project_root(docs_dir, progress_dir)
         resolved_dirty_paths = set(dirty_paths or set())
@@ -1482,6 +1490,29 @@ class SyncEngine:
             except Exception as e:
                 logger.error(f"Failed to sync feature {feature.id}: {e}")
 
+        # Remove stale alias rows that share a canonical slug with newly scanned
+        # features but are no longer emitted by scan_features().
+        scanned_ids = {str(feature.id or "") for feature in features if str(feature.id or "").strip()}
+        scanned_bases = {canonical_slug(feature_id) for feature_id in scanned_ids}
+        if scanned_bases:
+            existing_rows = await self.feature_repo.list_all(project_id)
+            stale_feature_ids = [
+                str(row.get("id") or "")
+                for row in existing_rows
+                if str(row.get("id") or "")
+                and str(row.get("id") or "") not in scanned_ids
+                and canonical_slug(str(row.get("id") or "")) in scanned_bases
+            ]
+            for stale_feature_id in stale_feature_ids:
+                stale_tasks = await self.task_repo.list_by_feature(stale_feature_id)
+                for task_row in stale_tasks:
+                    task_id = str(task_row.get("id") or "")
+                    if task_id:
+                        await self.link_repo.delete_auto_links("task", task_id)
+                await self._delete_tasks_for_feature(stale_feature_id)
+                await self.link_repo.delete_auto_links("feature", stale_feature_id)
+                await self.feature_repo.delete(stale_feature_id)
+                stats["pruned_aliases"] += 1
 
         return stats
 

@@ -27,6 +27,7 @@ from backend.parsers.features import (
 from backend.parsers.status_writer import update_frontmatter_field, update_task_in_frontmatter
 from backend.session_mappings import classify_session_key_metadata, load_session_mappings
 from backend.model_identity import derive_model_identity
+from backend.document_linking import canonical_slug
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
@@ -57,6 +58,42 @@ _REVERSE_STATUS = {
     "review": "review",
     "backlog": "draft",
 }
+_STATUS_RANK = {
+    "backlog": 0,
+    "in-progress": 1,
+    "review": 2,
+    "done": 3,
+    "deferred": 3,
+}
+
+
+def _feature_row_score(row: dict[str, Any]) -> tuple[int, int, int, str, int]:
+    status = str(row.get("status") or "backlog")
+    completed = _safe_int(row.get("completed_tasks"), 0)
+    total = _safe_int(row.get("total_tasks"), 0)
+    updated_at = str(row.get("updated_at") or "")
+    feature_id = str(row.get("id") or "")
+    return (
+        _STATUS_RANK.get(status, 0),
+        completed,
+        total,
+        updated_at,
+        len(feature_id),
+    )
+
+
+async def _resolve_feature_alias_id(repo, project_id: str, feature_id: str) -> str:
+    """Choose the best canonical feature row for a requested id alias."""
+    base = canonical_slug(feature_id)
+    candidates = await repo.list_all(project_id)
+    matches = [
+        row for row in candidates
+        if canonical_slug(str(row.get("id") or "")) == base
+    ]
+    if not matches:
+        return feature_id
+    matches.sort(key=_feature_row_score, reverse=True)
+    return str(matches[0].get("id") or feature_id)
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -765,29 +802,30 @@ async def update_feature_status(feature_id: str, req: StatusUpdateRequest, reque
         raise HTTPException(status_code=400, detail="No active project")
 
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
+    db = await connection.get_connection()
+    repo = get_feature_repository(db)
+    target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
 
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
     changed_files = []
 
-    top_level_file = resolve_file_for_feature(feature_id, docs_dir, progress_dir)
+    top_level_file = resolve_file_for_feature(target_feature_id, docs_dir, progress_dir)
     if top_level_file:
         update_frontmatter_field(top_level_file, "status", fm_status)
         changed_files.append(top_level_file)
 
     # Keep derived feature status consistent by updating any phase progress files.
-    db = await connection.get_connection()
-    repo = get_feature_repository(db)
-    phases = await repo.get_phases(feature_id)
+    phases = await repo.get_phases(target_feature_id)
     for phase in phases:
         phase_num = str(phase.get("phase", ""))
-        phase_file = resolve_file_for_phase(feature_id, phase_num, progress_dir)
+        phase_file = resolve_file_for_phase(target_feature_id, phase_num, progress_dir)
         if phase_file:
             update_frontmatter_field(phase_file, "status", fm_status)
             if phase_file not in changed_files:
                 changed_files.append(phase_file)
 
     if not changed_files:
-        raise HTTPException(status_code=404, detail=f"No source files found for feature '{feature_id}'")
+        raise HTTPException(status_code=404, detail=f"No source files found for feature '{target_feature_id}'")
 
     await _sync_changed_feature_files(
         request,
@@ -797,7 +835,7 @@ async def update_feature_status(feature_id: str, req: StatusUpdateRequest, reque
         docs_dir,
         progress_dir,
     )
-    return await get_feature(feature_id)
+    return await get_feature(target_feature_id)
 
 
 @features_router.patch("/{feature_id}/phases/{phase_id}/status", response_model=Feature)
@@ -808,12 +846,15 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
         raise HTTPException(status_code=400, detail="No active project")
 
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
+    db = await connection.get_connection()
+    repo = get_feature_repository(db)
+    target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
 
-    file_path = resolve_file_for_phase(feature_id, phase_id, progress_dir)
+    file_path = resolve_file_for_phase(target_feature_id, phase_id, progress_dir)
     if not file_path:
         raise HTTPException(
             status_code=404,
-            detail=f"No progress file found for feature '{feature_id}', phase '{phase_id}'",
+            detail=f"No progress file found for feature '{target_feature_id}', phase '{phase_id}'",
         )
 
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
@@ -826,7 +867,7 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
         docs_dir,
         progress_dir,
     )
-    return await get_feature(feature_id)
+    return await get_feature(target_feature_id)
 
 
 @features_router.patch("/{feature_id}/phases/{phase_id}/tasks/{task_id}/status", response_model=Feature)
@@ -837,12 +878,15 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
         raise HTTPException(status_code=400, detail="No active project")
 
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
+    db = await connection.get_connection()
+    repo = get_feature_repository(db)
+    target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
 
-    file_path = resolve_file_for_phase(feature_id, phase_id, progress_dir)
+    file_path = resolve_file_for_phase(target_feature_id, phase_id, progress_dir)
     if not file_path:
         raise HTTPException(
             status_code=404,
-            detail=f"No progress file found for feature '{feature_id}', phase '{phase_id}'",
+            detail=f"No progress file found for feature '{target_feature_id}', phase '{phase_id}'",
         )
 
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
@@ -861,4 +905,4 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
         docs_dir,
         progress_dir,
     )
-    return await get_feature(feature_id)
+    return await get_feature(target_feature_id)

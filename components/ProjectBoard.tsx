@@ -436,6 +436,7 @@ const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): Linke
 
 // ── Status helpers ─────────────────────────────────────────────────
 const getStatusStyle = getFeatureStatusStyle;
+const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 
 const getPhaseDeferredCount = (phase: FeaturePhase): number => Math.max(phase.deferredTasks || 0, 0);
 
@@ -457,10 +458,90 @@ const getFeatureCompletedCount = (feature: Feature): number => {
 const hasDeferredCaveat = (feature: Feature): boolean =>
   feature.status === 'deferred' || getFeatureDeferredCount(feature) > 0;
 
+const aggregateFeatureFromPhases = (feature: Feature, phases: FeaturePhase[]): Feature => {
+  const normalizedPhases = phases.map(phase => {
+    const total = Math.max(phase.totalTasks || 0, (phase.tasks || []).length);
+    let deferred = Math.max(phase.deferredTasks || 0, 0);
+    let completed = Math.max(phase.completedTasks || 0, 0);
+    if (phase.tasks && phase.tasks.length > 0) {
+      const doneCount = phase.tasks.filter(task => task.status === 'done').length;
+      deferred = phase.tasks.filter(task => task.status === 'deferred').length;
+      completed = doneCount + deferred;
+    }
+    if (phase.status === 'deferred' && total > 0) {
+      completed = total;
+      deferred = total;
+    }
+    if (total > 0 && completed > total) completed = total;
+    if (deferred > completed) deferred = completed;
+    return { ...phase, totalTasks: total, completedTasks: completed, deferredTasks: deferred };
+  });
+
+  const totalTasks = normalizedPhases.reduce((sum, phase) => sum + Math.max(phase.totalTasks || 0, 0), 0);
+  const completedTasks = normalizedPhases.reduce((sum, phase) => sum + getPhaseCompletedCount(phase), 0);
+  const deferredTasks = normalizedPhases.reduce((sum, phase) => sum + getPhaseDeferredCount(phase), 0);
+  const allTerminal = normalizedPhases.length > 0 && normalizedPhases.every(phase => TERMINAL_PHASE_STATUSES.has(phase.status));
+  const anyInProgress = normalizedPhases.some(phase => phase.status === 'in-progress');
+  const anyReview = normalizedPhases.some(phase => phase.status === 'review');
+
+  const status = totalTasks > 0 && completedTasks >= totalTasks
+    ? 'done'
+    : allTerminal
+      ? 'done'
+      : anyInProgress
+        ? 'in-progress'
+        : anyReview
+          ? 'review'
+          : 'backlog';
+
+  return {
+    ...feature,
+    status,
+    phases: normalizedPhases,
+    totalTasks,
+    completedTasks,
+    deferredTasks,
+  };
+};
+
+const syncDetailFeatureWithLiveFeature = (detail: Feature, liveFeature: Feature): Feature => {
+  const livePhasesByKey = new Map<string, FeaturePhase>();
+  (liveFeature.phases || []).forEach(phase => {
+    if (phase.id) livePhasesByKey.set(phase.id, phase);
+    livePhasesByKey.set(phase.phase, phase);
+  });
+
+  const phases = (detail.phases || []).map(phase => {
+    const live = (phase.id && livePhasesByKey.get(phase.id)) || livePhasesByKey.get(phase.phase);
+    if (!live) return phase;
+    return {
+      ...phase,
+      status: live.status,
+      progress: live.progress,
+      totalTasks: live.totalTasks,
+      completedTasks: live.completedTasks,
+      deferredTasks: live.deferredTasks,
+    };
+  });
+
+  return {
+    ...detail,
+    status: liveFeature.status,
+    totalTasks: liveFeature.totalTasks,
+    completedTasks: liveFeature.completedTasks,
+    deferredTasks: liveFeature.deferredTasks,
+    updatedAt: liveFeature.updatedAt,
+    phases,
+  };
+};
+
 const getFeatureBoardStage = (feature: Feature): string => {
   if (feature.status === 'deferred') return 'done';
   return feature.status;
 };
+
+const getFeatureBaseSlug = (featureId: string): string =>
+  featureId.toLowerCase().replace(/-v\d+(?:\.\d+)?$/, '');
 
 const toEpoch = (value?: string): number => {
   const parsed = Date.parse(value || '');
@@ -746,6 +827,14 @@ const FeatureModal = ({
     });
   };
 
+  useEffect(() => {
+    if (updatingStatus) return;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      return syncDetailFeatureWithLiveFeature(prev, feature);
+    });
+  }, [feature, updatingStatus]);
+
   const activeFeature = fullFeature || feature;
   const phases = activeFeature.phases || [];
   const featureDeferredTasks = getFeatureDeferredCount(activeFeature);
@@ -762,30 +851,81 @@ const FeatureModal = ({
   }, [phases, phaseStatusFilter, taskStatusFilter]);
 
   const handleFeatureStatusChange = async (newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id || prev.status === newStatus) return prev;
+      previousFeatureSnapshot = prev;
+      return { ...prev, status: newStatus };
+    });
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
-      await refreshFeatureDetail();
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const handlePhaseStatusChange = async (phaseId: string, newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      const hasPhase = (prev.phases || []).some(phase => phase.phase === phaseId || phase.id === phaseId);
+      if (!hasPhase) return prev;
+
+      previousFeatureSnapshot = prev;
+      const nextPhases = (prev.phases || []).map(phase => (
+        phase.phase === phaseId || phase.id === phaseId
+          ? { ...phase, status: newStatus }
+          : phase
+      ));
+      return aggregateFeatureFromPhases(prev, nextPhases);
+    });
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
-      await refreshFeatureDetail();
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const handleTaskStatusChange = async (phaseId: string, taskId: string, newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    let previousTaskStatus: string | undefined;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      let changed = false;
+      const nextPhases = (prev.phases || []).map(phase => {
+        if (phase.phase !== phaseId && phase.id !== phaseId) return phase;
+        const nextTasks = (phase.tasks || []).map(task => {
+          if (task.id !== taskId) return task;
+          changed = true;
+          previousTaskStatus = task.status;
+          return { ...task, status: newStatus };
+        });
+        return { ...phase, tasks: nextTasks };
+      });
+      if (!changed) return prev;
+      previousFeatureSnapshot = prev;
+      return aggregateFeatureFromPhases(prev, nextPhases);
+    });
     setUpdatingStatus(true);
     try {
-      await updateTaskStatus(feature.id, phaseId, taskId, newStatus);
-      await refreshFeatureDetail();
+      await updateTaskStatus(feature.id, phaseId, taskId, newStatus, previousTaskStatus);
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
@@ -1985,7 +2125,9 @@ export const ProjectBoard: React.FC = () => {
   useEffect(() => {
     const featureId = searchParams.get('feature');
     if (featureId && apiFeatures.length > 0) {
-      const feat = apiFeatures.find(f => f.id === featureId);
+      const featureBase = getFeatureBaseSlug(featureId);
+      const feat = apiFeatures.find(f => f.id === featureId)
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
       if (feat) {
         setSelectedFeature(feat);
         // Clear param to avoid re-triggering, or keep it for sharable URLs?
@@ -2147,12 +2289,16 @@ export const ProjectBoard: React.FC = () => {
   // Keep selected feature in sync with API data
   useEffect(() => {
     if (selectedFeature) {
-      const updated = apiFeatures.find(f => f.id === selectedFeature.id);
+      const selectedBase = getFeatureBaseSlug(selectedFeature.id);
+      const updated = apiFeatures.find(f => f.id === selectedFeature.id)
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase);
       if (updated) {
         setSelectedFeature(updated);
+      } else if (apiFeatures.length > 0) {
+        setSelectedFeature(null);
       }
     }
-  }, [apiFeatures]);
+  }, [apiFeatures, selectedFeature]);
 
   const sidebarPortal = document.getElementById('sidebar-portal');
 
