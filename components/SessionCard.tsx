@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Terminal } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
 
 export interface SessionCardMetadata {
   sessionTypeLabel?: string;
@@ -124,6 +124,12 @@ interface SessionCardProps {
   metadata?: SessionCardMetadata | null;
   headerRight?: React.ReactNode;
   infoBadges?: React.ReactNode;
+  threadToggle?: {
+    expanded: boolean;
+    childCount: number;
+    onToggle: () => void;
+    label?: string;
+  };
   className?: string;
   onClick?: () => void;
   children?: React.ReactNode;
@@ -141,6 +147,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   metadata,
   headerRight,
   infoBadges,
+  threadToggle,
   className = '',
   onClick,
   children,
@@ -155,81 +162,104 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   const primaryDateLabel = status === 'completed' ? 'Completed' : 'Started';
   const primaryDateValue = status === 'completed' ? (completedValue || startedValue) : startedValue;
   const primaryConfidence = status === 'completed' ? dates?.completedAt?.confidence : dates?.startedAt?.confidence;
+  const hasThreadToggle = Boolean(threadToggle);
+  const threadToggleLabel = (threadToggle?.label || 'Sub-Threads').trim() || 'Sub-Threads';
 
   return (
-    <div
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (!onClick) return;
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onClick();
-        }
-      }}
-      className={`bg-slate-900 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-colors ${onClick ? 'cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500/70' : ''} ${className}`.trim()}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`p-2 rounded-lg ${status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
-            <Terminal size={16} />
-          </div>
-          <div className="min-w-0">
-            {hasIndicators && (
-              <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-                {sessionTypeLabel && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 font-semibold uppercase tracking-wide">
-                    {sessionTypeLabel}
-                  </span>
-                )}
-                {relatedCommand && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/35 text-cyan-200 bg-cyan-500/10 font-mono">
-                    {relatedCommand}
-                  </span>
-                )}
-                {relatedPhases.map(phase => (
-                  <span key={`${sessionId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200 bg-amber-500/10 font-semibold">
-                    {formatPhaseIndicator(phase)}
-                  </span>
-                ))}
-                {relatedFileName && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-fuchsia-500/35 text-fuchsia-200 bg-fuchsia-500/10 font-mono"
-                    title={relatedFilePath}
-                  >
-                    {relatedFileName}
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="text-sm font-semibold text-slate-200 truncate">{title}</div>
-            <div className="font-mono text-[11px] text-slate-400 truncate">{sessionId}</div>
-            <div className="flex flex-wrap items-center gap-2 mt-1">
-              {primaryDateValue && (
-                <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                  <Calendar size={10} />
-                  {primaryDateLabel} {new Date(primaryDateValue).toLocaleDateString()}
-                  {primaryConfidence && (
-                    <span className="uppercase text-[9px] text-slate-600">({primaryConfidence})</span>
+    <div className="space-y-0">
+      <div
+        role={onClick ? 'button' : undefined}
+        tabIndex={onClick ? 0 : undefined}
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (!onClick) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onClick();
+          }
+        }}
+        className={`bg-slate-900 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-colors ${onClick ? 'cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500/70' : ''} ${className} ${hasThreadToggle ? 'rounded-b-none border-b-0' : ''}`.trim()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`p-2 rounded-lg ${status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-400'}`}>
+              <Terminal size={16} />
+            </div>
+            <div className="min-w-0">
+              {hasIndicators && (
+                <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                  {sessionTypeLabel && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 font-semibold uppercase tracking-wide">
+                      {sessionTypeLabel}
+                    </span>
                   )}
-                </span>
+                  {relatedCommand && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/35 text-cyan-200 bg-cyan-500/10 font-mono">
+                      {relatedCommand}
+                    </span>
+                  )}
+                  {relatedPhases.map(phase => (
+                    <span key={`${sessionId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200 bg-amber-500/10 font-semibold">
+                      {formatPhaseIndicator(phase)}
+                    </span>
+                  ))}
+                  {relatedFileName && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-fuchsia-500/35 text-fuchsia-200 bg-fuchsia-500/10 font-mono"
+                      title={relatedFilePath}
+                    >
+                      {relatedFileName}
+                    </span>
+                  )}
+                </div>
               )}
-              <span className="text-[10px] text-slate-500 font-mono truncate" title={model.raw || modelDisplay}>
-                {modelDisplay}
-              </span>
-              {updatedValue && (
-                <span className="text-[10px] text-slate-600">
-                  Updated {new Date(updatedValue).toLocaleDateString()}
+              <div className="text-sm font-semibold text-slate-200 truncate">{title}</div>
+              <div className="font-mono text-[11px] text-slate-400 truncate">{sessionId}</div>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                {primaryDateValue && (
+                  <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                    <Calendar size={10} />
+                    {primaryDateLabel} {new Date(primaryDateValue).toLocaleDateString()}
+                    {primaryConfidence && (
+                      <span className="uppercase text-[9px] text-slate-600">({primaryConfidence})</span>
+                    )}
+                  </span>
+                )}
+                <span className="text-[10px] text-slate-500 font-mono truncate" title={model.raw || modelDisplay}>
+                  {modelDisplay}
                 </span>
-              )}
-              {infoBadges}
+                {updatedValue && (
+                  <span className="text-[10px] text-slate-600">
+                    Updated {new Date(updatedValue).toLocaleDateString()}
+                  </span>
+                )}
+                {infoBadges}
+              </div>
             </div>
           </div>
+          {headerRight}
         </div>
-        {headerRight}
+        {children}
       </div>
-      {children}
+      {threadToggle && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            threadToggle.onToggle();
+          }}
+          className="w-full flex items-center justify-between text-left px-3 py-2 rounded-b-2xl border border-slate-800 bg-slate-900/95 hover:border-slate-700 transition-colors"
+          aria-expanded={threadToggle.expanded}
+          aria-label={`${threadToggle.expanded ? 'Collapse' : 'Expand'} ${threadToggleLabel}`}
+        >
+          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+            {threadToggle.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {threadToggle.expanded ? `Hide ${threadToggleLabel}` : `Expand ${threadToggleLabel}`}
+          </span>
+          <span className="text-[11px] text-slate-500">{threadToggle.childCount}</span>
+        </button>
+      )}
     </div>
   );
 };

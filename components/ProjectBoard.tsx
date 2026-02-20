@@ -1123,7 +1123,15 @@ const FeatureModal = ({
     { id: 'history', label: 'History', icon: Calendar },
   ];
 
-  const renderSessionCard = (session: FeatureSessionLink) => {
+  const renderSessionCard = (
+    session: FeatureSessionLink,
+    threadToggle?: {
+      expanded: boolean;
+      childCount: number;
+      onToggle: () => void;
+      label?: string;
+    }
+  ) => {
     const openSession = () => {
       onClose();
       navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`);
@@ -1152,6 +1160,7 @@ const FeatureModal = ({
         }}
         model={{ raw: session.model, displayName: session.modelDisplayName }}
         metadata={session.sessionMetadata || null}
+        threadToggle={threadToggle}
         onClick={openSession}
         className="rounded-lg"
         infoBadges={(
@@ -1241,29 +1250,20 @@ const FeatureModal = ({
 
     return (
       <div key={node.session.sessionId} className="space-y-2">
-        {renderSessionCard(node.session)}
-        {hasChildren && (
-          <div className="mt-2 pt-2 border-t border-slate-800/60">
-            <button
-              onClick={() => toggleSubthreads(node.session.sessionId)}
-              className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
-            >
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                Expand to see Sub-Threads
-              </span>
-              <span className="text-[11px] text-slate-500">{countThreadNodes(node.children)}</span>
-            </button>
-            {isExpanded && (
-              <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
-                {node.children.map(child => (
-                  <div key={child.session.sessionId} className="relative pl-3">
-                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
-                    {renderSessionTreeNode(child, depth + 1)}
-                  </div>
-                ))}
+        {renderSessionCard(node.session, hasChildren ? {
+          expanded: isExpanded,
+          childCount: countThreadNodes(node.children),
+          onToggle: () => toggleSubthreads(node.session.sessionId),
+          label: 'Sub-Threads',
+        } : undefined)}
+        {hasChildren && isExpanded && (
+          <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+            {node.children.map(child => (
+              <div key={child.session.sessionId} className="relative pl-3">
+                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                {renderSessionTreeNode(child, depth + 1)}
               </div>
-            )}
+            ))}
           </div>
         )}
       </div>

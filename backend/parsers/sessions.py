@@ -78,7 +78,7 @@ _CREATE_RESULT_MARKERS = (
 )
 
 # Treat recently modified session files without terminal metadata as in-flight.
-_ACTIVE_SESSION_WINDOW_SECONDS = 20 * 60
+_ACTIVE_SESSION_WINDOW_SECONDS = 10 * 60
 _TERMINAL_SYSTEM_SUBTYPES = {
     "turn_duration",
     "compact_boundary",

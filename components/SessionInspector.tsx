@@ -10,6 +10,7 @@ import { SessionCard, deriveSessionCardTitle, formatModelDisplayName } from './S
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
+const LIVE_IN_FLIGHT_WINDOW_MS = 10 * 60 * 1000;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 
@@ -45,6 +46,28 @@ const toEpoch = (timestamp?: string): number => {
     if (!timestamp) return 0;
     const ms = Date.parse(timestamp);
     return Number.isFinite(ms) ? ms : 0;
+};
+
+const sessionLastActivityEpoch = (session: AgentSession): number => {
+    const candidates = [
+        session.dates?.lastActivityAt?.value,
+        session.updatedAt,
+        session.endedAt,
+        session.startedAt,
+    ];
+    for (const candidate of candidates) {
+        const epoch = toEpoch(candidate);
+        if (epoch > 0) return epoch;
+    }
+    return 0;
+};
+
+const isSessionLiveInFlight = (session: AgentSession, nowMs: number): boolean => {
+    if ((session.status || '').toLowerCase() !== 'active') return false;
+    const activityEpoch = sessionLastActivityEpoch(session);
+    if (activityEpoch <= 0) return false;
+    const ageMs = Math.max(0, nowMs - activityEpoch);
+    return ageMs <= LIVE_IN_FLIGHT_WINDOW_MS;
 };
 
 const parseLogIndex = (logId?: string): number => {
@@ -226,6 +249,11 @@ interface SessionThreadNode {
     session: AgentSession;
     children: SessionThreadNode[];
 }
+
+const threadNodeHasLiveSession = (node: SessionThreadNode, nowMs: number): boolean => {
+    if (isSessionLiveInFlight(node.session, nowMs)) return true;
+    return node.children.some(child => threadNodeHasLiveSession(child, nowMs));
+};
 
 const isSubthread = (session: AgentSession): boolean => {
     if (session.parentSessionId) return true;
@@ -2825,18 +2853,25 @@ export const SessionInspector: React.FC = () => {
 
     const [sessionsViewMode, setSessionsViewMode] = useState<'threaded' | 'cards'>('threaded');
     const [expandedThreadSessionIds, setExpandedThreadSessionIds] = useState<Set<string>>(new Set());
+    const liveNowMs = Date.now();
 
-    const activeSessions = useMemo(() => sessions.filter(s => s.status === 'active'), [sessions]);
-    const pastSessions = useMemo(() => sessions.filter(s => s.status !== 'active'), [sessions]);
+    const activeSessions = useMemo(
+        () => sessions.filter(session => isSessionLiveInFlight(session, liveNowMs)),
+        [sessions, liveNowMs]
+    );
+    const pastSessions = useMemo(
+        () => sessions.filter(session => !isSessionLiveInFlight(session, liveNowMs)),
+        [sessions, liveNowMs]
+    );
 
     const sessionThreadRoots = useMemo(() => buildSessionThreadForest(sessions), [sessions]);
     const activeSessionThreadRoots = useMemo(
-        () => sessionThreadRoots.filter(node => node.session.status === 'active'),
-        [sessionThreadRoots]
+        () => sessionThreadRoots.filter(node => threadNodeHasLiveSession(node, liveNowMs)),
+        [sessionThreadRoots, liveNowMs]
     );
     const pastSessionThreadRoots = useMemo(
-        () => sessionThreadRoots.filter(node => node.session.status !== 'active'),
-        [sessionThreadRoots]
+        () => sessionThreadRoots.filter(node => !threadNodeHasLiveSession(node, liveNowMs)),
+        [sessionThreadRoots, liveNowMs]
     );
 
     const openSessionFromList = useCallback((session: AgentSession) => {
@@ -2856,42 +2891,35 @@ export const SessionInspector: React.FC = () => {
     const renderThreadNode = useCallback((node: SessionThreadNode, depth = 0): React.ReactNode => {
         const hasChildren = node.children.length > 0;
         const expanded = expandedThreadSessionIds.has(node.session.id);
+        const displayStatus = isSessionLiveInFlight(node.session, liveNowMs) ? 'active' : 'completed';
 
         return (
             <div key={node.session.id} className="space-y-2">
                 <SessionSummaryCard
                     session={node.session}
+                    statusOverride={displayStatus}
+                    threadToggle={hasChildren ? {
+                        expanded,
+                        childCount: countSessionThreadNodes(node.children),
+                        onToggle: () => toggleThreadChildren(node.session.id),
+                        label: 'Sub-Threads',
+                    } : undefined}
                     onClick={() => openSessionFromList(node.session)}
                 />
 
-                {hasChildren && (
-                    <div className="mt-2 pt-2 border-t border-slate-800/60">
-                        <button
-                            onClick={() => toggleThreadChildren(node.session.id)}
-                            className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
-                        >
-                            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                Expand to see Sub-Threads
-                            </span>
-                            <span className="text-[11px] text-slate-500">{countSessionThreadNodes(node.children)}</span>
-                        </button>
-
-                        {expanded && (
-                            <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
-                                {node.children.map(child => (
-                                    <div key={child.session.id} className="relative pl-3">
-                                        <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
-                                        {renderThreadNode(child, depth + 1)}
-                                    </div>
-                                ))}
+                {hasChildren && expanded && (
+                    <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                        {node.children.map(child => (
+                            <div key={child.session.id} className="relative pl-3">
+                                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                                {renderThreadNode(child, depth + 1)}
                             </div>
-                        )}
+                        ))}
                     </div>
                 )}
             </div>
         );
-    }, [expandedThreadSessionIds, openSessionFromList, toggleThreadChildren]);
+    }, [expandedThreadSessionIds, liveNowMs, openSessionFromList, toggleThreadChildren]);
 
     if (selectedSession) {
         return (
@@ -2938,6 +2966,9 @@ export const SessionInspector: React.FC = () => {
                     <h3 className="text-xs font-bold text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2">
                         <Activity size={16} /> Live In-Flight
                     </h3>
+                    <p className="text-[11px] text-emerald-300/70 -mt-2">
+                        Active sessions with updates in the last 10 minutes.
+                    </p>
                     {sessionsViewMode === 'threaded' ? (
                         <div className="space-y-4">
                             {activeSessionThreadRoots.map(node => renderThreadNode(node))}
@@ -2954,6 +2985,7 @@ export const SessionInspector: React.FC = () => {
                                 <SessionSummaryCard
                                     key={session.id}
                                     session={session}
+                                    statusOverride="active"
                                     onClick={() => openSessionFromList(session)}
                                 />
                             ))}
@@ -2989,6 +3021,7 @@ export const SessionInspector: React.FC = () => {
                                 <SessionSummaryCard
                                     key={session.id}
                                     session={session}
+                                    statusOverride="completed"
                                     onClick={() => openSessionFromList(session)}
                                 />
                             ))}
@@ -3013,20 +3046,33 @@ export const SessionInspector: React.FC = () => {
     );
 };
 
-const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void; className?: string }> = ({ session, onClick, className }) => {
+const SessionSummaryCard: React.FC<{
+    session: AgentSession;
+    onClick: () => void;
+    className?: string;
+    statusOverride?: AgentSession['status'];
+    threadToggle?: {
+        expanded: boolean;
+        childCount: number;
+        onToggle: () => void;
+        label?: string;
+    };
+}> = ({ session, onClick, className, statusOverride, threadToggle }) => {
     const displayTitle = deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null);
     const agentNames = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3);
+    const displayStatus = statusOverride || session.status;
     return (
         <SessionCard
             sessionId={session.id}
             title={displayTitle}
-            status={session.status}
+            status={displayStatus}
             startedAt={session.startedAt}
             endedAt={session.endedAt}
             updatedAt={session.updatedAt}
             dates={session.dates}
             model={{ raw: session.model, displayName: session.modelDisplayName }}
             metadata={session.sessionMetadata || null}
+            threadToggle={threadToggle}
             onClick={onClick}
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
@@ -3040,7 +3086,7 @@ const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void;
                 </span>
             )}
         >
-            {session.status === 'active' && (
+            {displayStatus === 'active' && (
                 <div className="absolute top-0 right-0 p-3">
                     <span className="flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
