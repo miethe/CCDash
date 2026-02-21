@@ -30,6 +30,8 @@ _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _ASYNC_TASK_AGENT_ID_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9_-]+)\b", re.IGNORECASE)
+_MODEL_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,}$")
+_MODEL_COMMAND_STOPWORDS = {"set", "to", "use", "default", "auto", "list", "show", "current", "model"}
 
 # Tools we treat as concrete file actions for session file tracking.
 _FILE_ACTION_BY_TOOL: dict[str, str] = {
@@ -279,6 +281,18 @@ def _parse_command_context(command_name: str, args_text: str) -> dict[str, Any]:
             parsed["phaseToken"] = phase_token
         if phase_values:
             parsed["phases"] = phase_values
+    if lowered_command in {"/model", "model"} and args:
+        for raw_token in re.split(r"[\s,;]+", args):
+            token = raw_token.strip("`'\"").strip()
+            if not token:
+                continue
+            if token.lower() in _MODEL_COMMAND_STOPWORDS:
+                continue
+            if token.startswith("-"):
+                continue
+            if _MODEL_TOKEN_PATTERN.match(token):
+                parsed["model"] = token
+                break
 
     return parsed
 
@@ -497,6 +511,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
     def append_log(**kwargs: Any) -> int:
         nonlocal log_idx
+        metadata = kwargs.get("metadata")
+        if metadata is None:
+            kwargs["metadata"] = {}
+        elif not isinstance(metadata, dict):
+            kwargs["metadata"] = {}
         log = SessionLog(id=f"log-{log_idx}", **kwargs)
         logs.append(log)
         log_idx += 1
@@ -942,11 +961,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
         speaker = "agent" if message_role == "assistant" else "user"
         agent_name = entry.get("agentName") if speaker == "agent" else None
+        current_message_model = ""
 
         if isinstance(message, dict) and speaker == "agent":
             msg_model = message.get("model")
-            if isinstance(msg_model, str) and msg_model and not model:
-                model = msg_model
+            if isinstance(msg_model, str) and msg_model.strip():
+                current_message_model = msg_model.strip()
+                if not model:
+                    model = current_message_model
             usage = message.get("usage", {})
             if isinstance(usage, dict):
                 tokens_in += int(usage.get("input_tokens", 0) or 0)
@@ -961,6 +983,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     type="message",
                     content=content[:4000],
                     agentName=agent_name,
+                    metadata={"model": current_message_model} if current_message_model else {},
                 )
                 if speaker == "user":
                     add_command_artifacts_from_text(content, logs[idx].id)
@@ -976,6 +999,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     type="message",
                     content=content[:4000],
                     agentName=agent_name,
+                    metadata={"model": current_message_model} if current_message_model else {},
                 )
                 if speaker == "user":
                     add_command_artifacts_from_text(content, logs[idx].id)
@@ -1170,6 +1194,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 type="message",
                 content=message_text[:8000],
                 agentName=agent_name,
+                metadata={"model": current_message_model} if current_message_model else {},
             )
             if speaker == "user":
                 add_command_artifacts_from_text(message_text, logs[idx].id)

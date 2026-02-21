@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.models import Feature, ProjectTask, FeaturePhase, LinkedDocument
+from backend.models import Feature, ProjectTask, FeaturePhase, LinkedDocument, SessionModelInfo
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
@@ -27,6 +27,7 @@ from backend.parsers.features import (
 from backend.parsers.status_writer import update_frontmatter_field, update_task_in_frontmatter
 from backend.session_mappings import classify_session_key_metadata, load_session_mappings
 from backend.model_identity import derive_model_identity
+from backend.session_badges import derive_session_badges
 from backend.document_linking import canonical_slug
 
 
@@ -165,6 +166,10 @@ class FeatureSessionLink(BaseModel):
     modelProvider: str = ""
     modelFamily: str = ""
     modelVersion: str = ""
+    modelsUsed: list[SessionModelInfo] = Field(default_factory=list)
+    agentsUsed: list[str] = Field(default_factory=list)
+    skillsUsed: list[str] = Field(default_factory=list)
+    toolSummary: list[str] = Field(default_factory=list)
     startedAt: str = ""
     endedAt: str = ""
     createdAt: str = ""
@@ -590,6 +595,11 @@ async def get_feature_linked_sessions(feature_id: str):
     ) -> FeatureSessionLink:
         session_id = str(session_row.get("id") or "").strip()
         logs = await session_repo.get_logs(session_id)
+        badge_data = derive_session_badges(
+            logs,
+            primary_model=str(session_row.get("model") or ""),
+            session_agent_id=session_row.get("agent_id"),
+        )
 
         reasons: list[str] = []
         strategy = str(metadata.get("linkStrategy") or "").strip()
@@ -665,6 +675,10 @@ async def get_feature_linked_sessions(feature_id: str):
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
             modelVersion=model_identity["modelVersion"],
+            modelsUsed=badge_data["modelsUsed"],
+            agentsUsed=badge_data["agentsUsed"],
+            skillsUsed=badge_data["skillsUsed"],
+            toolSummary=badge_data["toolSummary"],
             startedAt=str(session_row.get("started_at") or ""),
             endedAt=str(session_row.get("ended_at") or ""),
             createdAt=str(session_row.get("created_at") or ""),

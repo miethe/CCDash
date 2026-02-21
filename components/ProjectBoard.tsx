@@ -3,8 +3,8 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask } from '../types';
-import { SessionCard, deriveSessionCardTitle } from './SessionCard';
+import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
+import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
@@ -29,6 +29,10 @@ interface FeatureSessionLink {
   modelProvider?: string;
   modelFamily?: string;
   modelVersion?: string;
+  modelsUsed?: SessionModelInfo[];
+  agentsUsed?: string[];
+  skillsUsed?: string[];
+  toolSummary?: string[];
   startedAt: string;
   endedAt?: string;
   createdAt?: string;
@@ -1144,6 +1148,48 @@ const FeatureModal = ({
     const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
     const workflow = (session.workflowType || '').trim() || 'Related';
     const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
+    const modelBadges = (session.modelsUsed && session.modelsUsed.length > 0)
+      ? session.modelsUsed.map(modelInfo => ({
+        raw: modelInfo.raw,
+        displayName: modelInfo.modelDisplayName,
+        provider: modelInfo.modelProvider,
+        family: modelInfo.modelFamily,
+        version: modelInfo.modelVersion,
+      }))
+      : [{
+        raw: session.model,
+        displayName: session.modelDisplayName,
+        provider: session.modelProvider,
+        family: session.modelFamily,
+        version: session.modelVersion,
+      }];
+    const detailSections: SessionCardDetailSection[] = [];
+    const linkSignalItems = [
+      session.linkStrategy ? formatSessionReason(session.linkStrategy) : '',
+      ...session.reasons.map(reason => formatSessionReason(reason)),
+    ].filter(Boolean);
+    if (linkSignalItems.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-link-signals`,
+        label: 'Link Signals',
+        items: Array.from(new Set(linkSignalItems)),
+      });
+    }
+    if (session.commands.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-commands`,
+        label: 'Commands',
+        items: Array.from(new Set(session.commands)),
+      });
+    }
+    const toolSummary = Array.isArray(session.toolSummary) ? session.toolSummary.filter(Boolean) : [];
+    if (toolSummary.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-tools`,
+        label: 'Tools',
+        items: toolSummary,
+      });
+    }
 
     return (
       <SessionCard
@@ -1158,7 +1204,17 @@ const FeatureModal = ({
           completedAt: session.endedAt ? { value: session.endedAt, confidence: 'high' } : undefined,
           updatedAt: session.updatedAt ? { value: session.updatedAt, confidence: 'medium' } : undefined,
         }}
-        model={{ raw: session.model, displayName: session.modelDisplayName }}
+        model={{
+          raw: session.model,
+          displayName: session.modelDisplayName,
+          provider: session.modelProvider,
+          family: session.modelFamily,
+          version: session.modelVersion,
+        }}
+        models={modelBadges}
+        agentBadges={session.agentsUsed || []}
+        skillBadges={session.skillsUsed || []}
+        detailSections={detailSections}
         metadata={session.sessionMetadata || null}
         threadToggle={threadToggle}
         onClick={openSession}
@@ -1200,27 +1256,7 @@ const FeatureModal = ({
           <span className="px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10">
             {workflow}
           </span>
-          {session.linkStrategy && (
-            <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-400">
-              {formatSessionReason(session.linkStrategy)}
-            </span>
-          )}
         </div>
-
-        {(session.reasons.length > 0 || session.commands.length > 0) && (
-          <div className="mb-3 text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
-            {session.reasons.slice(0, 3).map(reason => (
-              <span key={`${session.sessionId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
-                {formatSessionReason(reason)}
-              </span>
-            ))}
-            {session.commands.slice(0, 2).map(command => (
-              <span key={`${session.sessionId}-${command}`} className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono">
-                {command}
-              </span>
-            ))}
-          </div>
-        )}
 
         {relatedTasks.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-800/60">

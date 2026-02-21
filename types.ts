@@ -110,6 +110,14 @@ export interface SessionMetadata {
   fields: SessionMetadataField[];
 }
 
+export interface SessionModelInfo {
+  raw: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
@@ -147,6 +155,10 @@ export interface AgentSession {
   modelProvider?: string;
   modelFamily?: string;
   modelVersion?: string;
+  modelsUsed?: SessionModelInfo[];
+  agentsUsed?: string[];
+  skillsUsed?: string[];
+  toolSummary?: string[];
   durationSeconds: number;
   sessionType?: string;
   parentSessionId?: string | null;

@@ -103,6 +103,14 @@ class ToolUsage(BaseModel):
     successRate: float = 1.0
 
 
+class SessionModelInfo(BaseModel):
+    raw: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
+
+
 class ImpactPoint(BaseModel):
     timestamp: str
     label: str
@@ -135,6 +143,10 @@ class AgentSession(BaseModel):
     modelProvider: str = ""
     modelFamily: str = ""
     modelVersion: str = ""
+    modelsUsed: list[SessionModelInfo] = Field(default_factory=list)
+    agentsUsed: list[str] = Field(default_factory=list)
+    skillsUsed: list[str] = Field(default_factory=list)
+    toolSummary: list[str] = Field(default_factory=list)
     sessionType: str = ""
     parentSessionId: Optional[str] = None
     rootSessionId: str = ""

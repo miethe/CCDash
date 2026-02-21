@@ -26,6 +26,7 @@ from backend.session_mappings import (
     load_session_mappings,
 )
 from backend.model_identity import derive_model_identity
+from backend.session_badges import derive_session_badges
 from backend.document_linking import (
     make_document_id,
     normalize_doc_status,
@@ -264,6 +265,11 @@ async def list_sessions(
     results = []
     for s in sessions_data:
         logs = await repo.get_logs(s["id"])
+        badge_data = derive_session_badges(
+            logs,
+            primary_model=str(s.get("model") or ""),
+            session_agent_id=s.get("agent_id"),
+        )
         command_events: list[dict] = []
         latest_summary = ""
         for log in logs:
@@ -292,6 +298,10 @@ async def list_sessions(
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
             modelVersion=model_identity["modelVersion"],
+            modelsUsed=badge_data["modelsUsed"],
+            agentsUsed=badge_data["agentsUsed"],
+            skillsUsed=badge_data["skillsUsed"],
+            toolSummary=badge_data["toolSummary"],
             sessionType=s["session_type"] or "",
             parentSessionId=s["parent_session_id"],
             rootSessionId=s.get("root_session_id") or s["id"],
@@ -341,6 +351,11 @@ async def get_session(session_id: str):
         
     # Fetch details
     logs = await repo.get_logs(session_id)
+    badge_data = derive_session_badges(
+        logs,
+        primary_model=str(s.get("model") or ""),
+        session_agent_id=s.get("agent_id"),
+    )
     tools = await repo.get_tool_usage(session_id)
     files = await repo.get_file_updates(session_id)
     artifacts = await repo.get_artifacts(session_id)
@@ -454,6 +469,10 @@ async def get_session(session_id: str):
         modelProvider=model_identity["modelProvider"],
         modelFamily=model_identity["modelFamily"],
         modelVersion=model_identity["modelVersion"],
+        modelsUsed=badge_data["modelsUsed"],
+        agentsUsed=badge_data["agentsUsed"],
+        skillsUsed=badge_data["skillsUsed"],
+        toolSummary=badge_data["toolSummary"],
         sessionType=s["session_type"] or "",
         parentSessionId=s["parent_session_id"],
         rootSessionId=s.get("root_session_id") or s["id"],

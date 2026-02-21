@@ -6,7 +6,7 @@ import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCom
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
-import { SessionCard, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -3060,6 +3060,33 @@ const SessionSummaryCard: React.FC<{
 }> = ({ session, onClick, className, statusOverride, threadToggle }) => {
     const displayTitle = deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null);
     const agentNames = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3);
+    const agentBadges = (session.agentsUsed && session.agentsUsed.length > 0)
+        ? session.agentsUsed
+        : Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent')));
+    const models = (session.modelsUsed && session.modelsUsed.length > 0)
+        ? session.modelsUsed.map(modelInfo => ({
+            raw: modelInfo.raw,
+            displayName: modelInfo.modelDisplayName,
+            provider: modelInfo.modelProvider,
+            family: modelInfo.modelFamily,
+            version: modelInfo.modelVersion,
+        }))
+        : [{
+            raw: session.model,
+            displayName: session.modelDisplayName,
+            provider: session.modelProvider,
+            family: session.modelFamily,
+            version: session.modelVersion,
+        }];
+    const detailSections: SessionCardDetailSection[] = [];
+    const toolSummary = Array.isArray(session.toolSummary) ? session.toolSummary.filter(Boolean) : [];
+    if (toolSummary.length > 0) {
+        detailSections.push({
+            id: `${session.id}-tools`,
+            label: 'Tools',
+            items: toolSummary,
+        });
+    }
     const displayStatus = statusOverride || session.status;
     return (
         <SessionCard
@@ -3070,7 +3097,17 @@ const SessionSummaryCard: React.FC<{
             endedAt={session.endedAt}
             updatedAt={session.updatedAt}
             dates={session.dates}
-            model={{ raw: session.model, displayName: session.modelDisplayName }}
+            model={{
+                raw: session.model,
+                displayName: session.modelDisplayName,
+                provider: session.modelProvider,
+                family: session.modelFamily,
+                version: session.modelVersion,
+            }}
+            models={models}
+            agentBadges={agentBadges}
+            skillBadges={session.skillsUsed || []}
+            detailSections={detailSections}
             metadata={session.sessionMetadata || null}
             threadToggle={threadToggle}
             onClick={onClick}
