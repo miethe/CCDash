@@ -70,6 +70,7 @@ _KEY_WORKFLOW_COMMANDS = (
     "/fix:debug",
 )
 _LINK_STATE_METADATA_KEY = "entity_link_state"
+_PULL_REQUEST_RE = re.compile(r"(?:/pull/|/pulls/|#)(\d+)")
 
 
 def _file_hash(path: Path) -> str:
@@ -205,6 +206,304 @@ def _pop_matching_tagged_command(
     return None
 
 
+def _safe_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _first_non_empty(payload: dict[str, Any], *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        raw = str(value).strip()
+        if raw:
+            return raw
+    return default
+
+
+def _first_phase(session_payload: dict[str, Any]) -> str:
+    metadata = session_payload.get("sessionMetadata")
+    if isinstance(metadata, dict):
+        related = metadata.get("relatedPhases")
+        if isinstance(related, list):
+            for phase in related:
+                raw = str(phase).strip()
+                if raw:
+                    return raw
+        raw_phase = metadata.get("phase")
+        if raw_phase is not None:
+            phase = str(raw_phase).strip()
+            if phase:
+                return phase
+    return _first_non_empty(session_payload, "phase")
+
+
+def _extract_pr_number_from_artifacts(artifacts: list[dict[str, Any]]) -> str:
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        for key in ("url", "source", "title"):
+            value = artifact.get(key)
+            if value is None:
+                continue
+            match = _PULL_REQUEST_RE.search(str(value))
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _build_session_telemetry_events(
+    project_id: str,
+    session_payload: dict[str, Any],
+    logs: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    files: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    *,
+    source: str,
+) -> list[dict[str, Any]]:
+    session_id = _first_non_empty(session_payload, "id")
+    if not session_id:
+        return []
+
+    root_session_id = _first_non_empty(
+        session_payload,
+        "rootSessionId",
+        "root_session_id",
+        default=session_id,
+    )
+    task_id = _first_non_empty(session_payload, "taskId", "task_id")
+    commit_hash = _first_non_empty(session_payload, "gitCommitHash", "git_commit_hash", "commit_hash")
+    model = _first_non_empty(session_payload, "model")
+    status = _first_non_empty(session_payload, "status")
+    occurred_at = _first_non_empty(
+        session_payload,
+        "startedAt",
+        "started_at",
+        "createdAt",
+        "created_at",
+        default=datetime.now(timezone.utc).isoformat(),
+    )
+    phase = _first_phase(session_payload)
+    pr_number = _first_non_empty(session_payload, "prNumber", "pr_number")
+    if not pr_number:
+        pr_number = _extract_pr_number_from_artifacts(artifacts)
+
+    common = {
+        "project_id": project_id,
+        "session_id": session_id,
+        "root_session_id": root_session_id,
+        "feature_id": _first_non_empty(session_payload, "featureId", "feature_id"),
+        "task_id": task_id,
+        "commit_hash": commit_hash,
+        "pr_number": pr_number,
+        "phase": phase,
+        "model": model,
+        "source": source,
+    }
+    events: list[dict[str, Any]] = []
+
+    def push(
+        *,
+        source_key: str,
+        event_type: str,
+        occurred: str,
+        payload: dict[str, Any],
+        seq: int,
+        tool_name: str = "",
+        agent: str = "",
+        skill: str = "",
+        event_status: str = "",
+        duration_ms: int = 0,
+        token_input: int = 0,
+        token_output: int = 0,
+        cost_usd: float = 0.0,
+    ) -> None:
+        events.append(
+            {
+                **common,
+                "event_type": event_type,
+                "tool_name": tool_name,
+                "agent": agent,
+                "skill": skill,
+                "status": event_status,
+                "duration_ms": max(0, duration_ms),
+                "token_input": max(0, token_input),
+                "token_output": max(0, token_output),
+                "cost_usd": max(0.0, cost_usd),
+                "occurred_at": occurred or occurred_at,
+                "sequence_no": max(0, seq),
+                "source_key": source_key,
+                "payload_json": json.dumps(payload or {}),
+            }
+        )
+
+    push(
+        source_key=f"session:{session_id}",
+        event_type="session.lifecycle",
+        occurred=occurred_at,
+        payload={
+            "durationSeconds": _coerce_int(session_payload.get("durationSeconds") or session_payload.get("duration_seconds")),
+            "tokensIn": _coerce_int(session_payload.get("tokensIn") or session_payload.get("tokens_in")),
+            "tokensOut": _coerce_int(session_payload.get("tokensOut") or session_payload.get("tokens_out")),
+            "totalCost": _coerce_float(session_payload.get("totalCost") or session_payload.get("total_cost")),
+            "sessionType": _first_non_empty(session_payload, "sessionType", "session_type"),
+        },
+        seq=0,
+        event_status=status,
+        token_input=_coerce_int(session_payload.get("tokensIn") or session_payload.get("tokens_in")),
+        token_output=_coerce_int(session_payload.get("tokensOut") or session_payload.get("tokens_out")),
+        cost_usd=_coerce_float(session_payload.get("totalCost") or session_payload.get("total_cost")),
+    )
+
+    for idx, log in enumerate(logs, start=1):
+        metadata = _safe_json_dict(log.get("metadata_json") or log.get("metadata"))
+        tool_call = log.get("toolCall") if isinstance(log.get("toolCall"), dict) else {}
+        log_type = _first_non_empty(log, "type", default="log")
+        tool_name = _first_non_empty(log, "tool_name", "toolName")
+        if not tool_name and isinstance(tool_call, dict):
+            tool_name = _first_non_empty(tool_call, "name")
+        agent = _first_non_empty(log, "agent_name", "agentName")
+        tool_status = _first_non_empty(log, "tool_status")
+        if not tool_status and isinstance(tool_call, dict):
+            tool_status = _first_non_empty(tool_call, "status")
+        skill = ""
+        if tool_name.lower() == "skill":
+            skill = _first_non_empty(metadata, "toolLabel", "skill")
+        input_tokens = _coerce_int(
+            metadata.get("inputTokens")
+            or metadata.get("input_tokens")
+            or metadata.get("promptTokens")
+            or metadata.get("prompt_tokens")
+        )
+        output_tokens = _coerce_int(
+            metadata.get("outputTokens")
+            or metadata.get("output_tokens")
+            or metadata.get("completionTokens")
+            or metadata.get("completion_tokens")
+        )
+        duration_ms = _coerce_int(
+            metadata.get("durationMs")
+            or metadata.get("duration_ms")
+            or (tool_call.get("durationMs") if isinstance(tool_call, dict) else 0)
+        )
+        source_index = log.get("log_index")
+        if source_index is None:
+            source_index = log.get("logIndex")
+        if source_index is None:
+            source_index = idx
+        timestamp = _first_non_empty(log, "timestamp", default=occurred_at)
+        push(
+            source_key=f"log:{session_id}:{source_index}",
+            event_type=f"log.{log_type}",
+            occurred=timestamp,
+            payload={
+                "speaker": _first_non_empty(log, "speaker"),
+                "content": _first_non_empty(log, "content"),
+                "metadata": metadata,
+            },
+            seq=idx,
+            tool_name=tool_name,
+            agent=agent,
+            skill=skill,
+            event_status=tool_status or _first_non_empty(log, "status"),
+            duration_ms=duration_ms,
+            token_input=input_tokens,
+            token_output=output_tokens,
+        )
+
+    seq_cursor = len(logs) + 1
+    for idx, tool in enumerate(tools, start=1):
+        tool_name = _first_non_empty(tool, "name", "tool_name", default="unknown")
+        count = _coerce_int(tool.get("count") or tool.get("call_count"))
+        success_count = _coerce_int(tool.get("success_count"))
+        success_rate = _coerce_float(tool.get("successRate"))
+        if count > 0 and success_count <= 0 and success_rate > 0:
+            success_count = int(round(count * (success_rate / 100 if success_rate > 1 else success_rate)))
+        total_ms = _coerce_int(tool.get("totalMs") or tool.get("total_ms"))
+        push(
+            source_key=f"tool:{session_id}:{tool_name}:{idx}",
+            event_type="tool.aggregate",
+            occurred=occurred_at,
+            payload={
+                "callCount": count,
+                "successCount": max(0, success_count),
+                "successRate": success_rate,
+                "totalMs": total_ms,
+            },
+            seq=seq_cursor,
+            tool_name=tool_name,
+            event_status="error" if count > 0 and success_count == 0 else "success",
+            duration_ms=total_ms,
+        )
+        seq_cursor += 1
+
+    for idx, update in enumerate(files, start=1):
+        file_path = _first_non_empty(update, "filePath", "file_path")
+        timestamp = _first_non_empty(update, "timestamp", "action_timestamp", default=occurred_at)
+        push(
+            source_key=f"file:{session_id}:{file_path}:{idx}",
+            event_type="file.update",
+            occurred=timestamp,
+            payload={
+                "filePath": file_path,
+                "action": _first_non_empty(update, "action", default="update"),
+                "fileType": _first_non_empty(update, "fileType", "file_type"),
+                "additions": _coerce_int(update.get("additions")),
+                "deletions": _coerce_int(update.get("deletions")),
+            },
+            seq=seq_cursor,
+            tool_name=_first_non_empty(update, "sourceToolName", "source_tool_name"),
+            agent=_first_non_empty(update, "agentName", "agent_name"),
+            event_status=_first_non_empty(update, "action", default="update"),
+        )
+        seq_cursor += 1
+
+    for idx, artifact in enumerate(artifacts, start=1):
+        artifact_id = _first_non_empty(artifact, "id", default=str(idx))
+        push(
+            source_key=f"artifact:{session_id}:{artifact_id}:{idx}",
+            event_type="artifact.linked",
+            occurred=occurred_at,
+            payload={
+                "title": _first_non_empty(artifact, "title"),
+                "type": _first_non_empty(artifact, "type", default="document"),
+                "source": _first_non_empty(artifact, "source"),
+                "url": _first_non_empty(artifact, "url"),
+            },
+            seq=seq_cursor,
+            tool_name=_first_non_empty(artifact, "sourceToolName", "source_tool_name"),
+            event_status=_first_non_empty(artifact, "type", default="document"),
+        )
+        seq_cursor += 1
+
+    return events
+
+
 class SyncEngine:
     """Incremental mtime-based file → DB synchronization.
 
@@ -231,6 +530,197 @@ class SyncEngine:
         self._git_doc_dates_cache_index: dict[str, dict[str, str]] = {}
         self._git_doc_dates_cache_dirty: set[str] = set()
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
+
+    async def _replace_session_telemetry_events(
+        self,
+        project_id: str,
+        session_payload: dict[str, Any],
+        logs: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        files: list[dict[str, Any]],
+        artifacts: list[dict[str, Any]],
+        *,
+        source: str,
+    ) -> int:
+        session_id = _first_non_empty(session_payload, "id")
+        if not session_id:
+            return 0
+
+        events = _build_session_telemetry_events(
+            project_id,
+            session_payload,
+            logs,
+            tools,
+            files,
+            artifacts,
+            source=source,
+        )
+
+        if isinstance(self.db, aiosqlite.Connection):
+            await self.db.execute(
+                "DELETE FROM telemetry_events WHERE project_id = ? AND session_id = ?",
+                (project_id, session_id),
+            )
+            insert_query = """
+                INSERT INTO telemetry_events (
+                    project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
+                    pr_number, phase, event_type, tool_name, model, agent, skill, status,
+                    duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
+                    source, source_key, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            for event in events:
+                await self.db.execute(
+                    insert_query,
+                    (
+                        event["project_id"],
+                        event["session_id"],
+                        event["root_session_id"],
+                        event["feature_id"],
+                        event["task_id"],
+                        event["commit_hash"],
+                        event["pr_number"],
+                        event["phase"],
+                        event["event_type"],
+                        event["tool_name"],
+                        event["model"],
+                        event["agent"],
+                        event["skill"],
+                        event["status"],
+                        event["duration_ms"],
+                        event["token_input"],
+                        event["token_output"],
+                        event["cost_usd"],
+                        event["occurred_at"],
+                        event["sequence_no"],
+                        event["source"],
+                        event["source_key"],
+                        event["payload_json"],
+                    ),
+                )
+            await self.db.commit()
+            return len(events)
+
+        await self.db.execute(
+            "DELETE FROM telemetry_events WHERE project_id = $1 AND session_id = $2",
+            project_id,
+            session_id,
+        )
+        insert_query = """
+            INSERT INTO telemetry_events (
+                project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
+                pr_number, phase, event_type, tool_name, model, agent, skill, status,
+                duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
+                source, source_key, payload_json
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20,
+                $21, $22, $23
+            )
+        """
+        for event in events:
+            await self.db.execute(
+                insert_query,
+                event["project_id"],
+                event["session_id"],
+                event["root_session_id"],
+                event["feature_id"],
+                event["task_id"],
+                event["commit_hash"],
+                event["pr_number"],
+                event["phase"],
+                event["event_type"],
+                event["tool_name"],
+                event["model"],
+                event["agent"],
+                event["skill"],
+                event["status"],
+                event["duration_ms"],
+                event["token_input"],
+                event["token_output"],
+                event["cost_usd"],
+                event["occurred_at"],
+                event["sequence_no"],
+                event["source"],
+                event["source_key"],
+                event["payload_json"],
+            )
+        return len(events)
+
+    async def _telemetry_event_count(self, project_id: str) -> int:
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM telemetry_events WHERE project_id = ?",
+                (project_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] or 0) if row else 0
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*) AS count FROM telemetry_events WHERE project_id = $1",
+            project_id,
+        )
+        return int(row["count"] or 0) if row else 0
+
+    async def _session_count(self, project_id: str) -> int:
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM sessions WHERE project_id = ?",
+                (project_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] or 0) if row else 0
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*) AS count FROM sessions WHERE project_id = $1",
+            project_id,
+        )
+        return int(row["count"] or 0) if row else 0
+
+    async def _backfill_telemetry_events_for_project(self, project_id: str, batch_size: int = 200) -> dict[str, int]:
+        offset = 0
+        sessions_backfilled = 0
+        events_written = 0
+
+        while True:
+            sessions = await self.session_repo.list_paginated(
+                offset,
+                batch_size,
+                project_id,
+                sort_by="started_at",
+                sort_order="desc",
+                filters={"include_subagents": True},
+            )
+            if not sessions:
+                break
+            for session in sessions:
+                session_id = _first_non_empty(session, "id")
+                if not session_id:
+                    continue
+                logs = await self.session_repo.get_logs(session_id)
+                tools = await self.session_repo.get_tool_usage(session_id)
+                files = await self.session_repo.get_file_updates(session_id)
+                artifacts = await self.session_repo.get_artifacts(session_id)
+                events_written += await self._replace_session_telemetry_events(
+                    project_id,
+                    session,
+                    logs,
+                    tools,
+                    files,
+                    artifacts,
+                    source="backfill",
+                )
+                sessions_backfilled += 1
+            offset += len(sessions)
+
+        return {"sessions": sessions_backfilled, "events": events_written}
+
+    async def _maybe_backfill_telemetry_events(self, project_id: str) -> dict[str, int]:
+        existing_events = await self._telemetry_event_count(project_id)
+        if existing_events > 0:
+            return {"sessions": 0, "events": 0}
+        if await self._session_count(project_id) == 0:
+            return {"sessions": 0, "events": 0}
+        return await self._backfill_telemetry_events_for_project(project_id)
 
     async def _delete_tasks_for_feature(self, feature_id: str) -> None:
         """Delete all task rows attached to a feature id."""
@@ -648,6 +1138,8 @@ class SyncEngine:
         stats = {
             "sessions_synced": 0,
             "sessions_skipped": 0,
+            "telemetry_backfilled_sessions": 0,
+            "telemetry_backfilled_events": 0,
             "documents_synced": 0,
             "documents_skipped": 0,
             "tasks_synced": 0,
@@ -685,6 +1177,9 @@ class SyncEngine:
             s_stats = await self._sync_sessions(project.id, sessions_dir, force)
             stats["sessions_synced"] = s_stats["synced"]
             stats["sessions_skipped"] = s_stats["skipped"]
+            backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
+            stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
+            stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
             await self._update_operation(
                 operation_id,
                 phase="documents",
@@ -692,6 +1187,7 @@ class SyncEngine:
                 counters={
                     "sessionsSynced": stats["sessions_synced"],
                     "sessionsSkipped": stats["sessions_skipped"],
+                    "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
                 },
             )
 
@@ -786,6 +1282,7 @@ class SyncEngine:
             logger.info(
                 f"Sync complete for {project.name}: "
                 f"{stats['sessions_synced']} sessions, "
+                f"{stats['telemetry_backfilled_sessions']} telemetry-backfilled sessions, "
                 f"{stats['documents_synced']} docs, "
                 f"{stats['tasks_synced']} tasks, "
                 f"{stats['features_synced']} features, "
@@ -1245,6 +1742,16 @@ class SyncEngine:
 
             artifacts = [a.model_dump() for a in session.linkedArtifacts]
             await self.session_repo.upsert_artifacts(session.id, artifacts)
+
+            await self._replace_session_telemetry_events(
+                project_id,
+                session_dict,
+                logs,
+                tools,
+                files,
+                artifacts,
+                source="sync",
+            )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({

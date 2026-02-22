@@ -6,7 +6,7 @@ import asyncpg
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -328,7 +328,51 @@ CREATE TABLE IF NOT EXISTS analytics_entity_links (
 CREATE INDEX IF NOT EXISTS idx_analytics_entity
     ON analytics_entity_links(entity_type, entity_id);
 
--- ── 9. App Metadata + Alert Configs ────────────────────────────────
+-- ── 9. Telemetry Events (Fact Layer) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    id              SERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    root_session_id TEXT DEFAULT '',
+    feature_id      TEXT DEFAULT '',
+    task_id         TEXT DEFAULT '',
+    commit_hash     TEXT DEFAULT '',
+    pr_number       TEXT DEFAULT '',
+    phase           TEXT DEFAULT '',
+    event_type      TEXT NOT NULL,
+    tool_name       TEXT DEFAULT '',
+    model           TEXT DEFAULT '',
+    agent           TEXT DEFAULT '',
+    skill           TEXT DEFAULT '',
+    status          TEXT DEFAULT '',
+    duration_ms     INTEGER DEFAULT 0,
+    token_input     INTEGER DEFAULT 0,
+    token_output    INTEGER DEFAULT 0,
+    cost_usd        DOUBLE PRECISION DEFAULT 0.0,
+    occurred_at     TEXT NOT NULL,
+    sequence_no     INTEGER DEFAULT 0,
+    source          TEXT DEFAULT 'sync',
+    source_key      TEXT NOT NULL,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_source_key
+    ON telemetry_events(project_id, source_key);
+CREATE INDEX IF NOT EXISTS idx_telemetry_project_time
+    ON telemetry_events(project_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_event_type
+    ON telemetry_events(project_id, event_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_tool
+    ON telemetry_events(project_id, tool_name, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_model
+    ON telemetry_events(project_id, model, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_feature
+    ON telemetry_events(project_id, feature_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_task
+    ON telemetry_events(project_id, task_id, occurred_at);
+
+-- ── 10. App Metadata + Alert Configs ───────────────────────────────
 CREATE TABLE IF NOT EXISTS app_metadata (
     entity_type  TEXT NOT NULL,
     entity_id    TEXT NOT NULL,
