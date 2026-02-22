@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+import aiosqlite
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
@@ -80,6 +81,11 @@ def _rollup_mode(metric: str) -> str:
     if lowered.endswith("_pct") or lowered.endswith("_rate") or "progress" in lowered or "duration" in lowered:
         return "avg"
     return "sum"
+
+
+def _prom_label(value: Any) -> str:
+    raw = str(value if value is not None else "")
+    return raw.replace("\\", "\\\\").replace("\"", "\\\"")
 
 
 class AlertConfigCreate(BaseModel):
@@ -555,9 +561,227 @@ async def export_prometheus():
     ]
     latest = await repo.get_latest_entries(project.id, types)
 
-    lines = []
+    lines: list[str] = []
     for metric, value in latest.items():
         safe_name = f"ccdash_{metric}"
         lines.append(f"# TYPE {safe_name} gauge")
-        lines.append(f'{safe_name}{{project="{project.id}"}} {value}')
+        lines.append(f'{safe_name}{{project="{_prom_label(project.id)}"}} {value}')
+
+    # Richer fallbacks from telemetry fact rows (labels by tool/model/status).
+    tool_rows: list[dict[str, Any]] = []
+    model_rows: list[dict[str, Any]] = []
+    try:
+        if isinstance(db, aiosqlite.Connection):
+            async with db.execute(
+                """
+                SELECT
+                    tool_name,
+                    status,
+                    SUM(CAST(COALESCE(json_extract(payload_json, '$.callCount'), 0) AS INTEGER)) AS calls,
+                    AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms
+                FROM telemetry_events
+                WHERE project_id = ? AND event_type = 'tool.aggregate'
+                GROUP BY tool_name, status
+                ORDER BY calls DESC
+                """,
+                (project.id,),
+            ) as cur:
+                tool_rows = [dict(row) for row in await cur.fetchall()]
+
+            async with db.execute(
+                """
+                SELECT
+                    model,
+                    SUM(COALESCE(token_input, 0)) AS input_tokens,
+                    SUM(COALESCE(token_output, 0)) AS output_tokens,
+                    SUM(COALESCE(cost_usd, 0)) AS total_cost
+                FROM telemetry_events
+                WHERE project_id = ? AND event_type = 'session.lifecycle'
+                GROUP BY model
+                ORDER BY (input_tokens + output_tokens) DESC
+                """,
+                (project.id,),
+            ) as cur:
+                model_rows = [dict(row) for row in await cur.fetchall()]
+        else:
+            tool_rows = [
+                dict(row)
+                for row in await db.fetch(
+                    """
+                    SELECT
+                        tool_name,
+                        status,
+                        SUM(COALESCE((payload_json::jsonb->>'callCount')::INTEGER, 0)) AS calls,
+                        AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms
+                    FROM telemetry_events
+                    WHERE project_id = $1 AND event_type = 'tool.aggregate'
+                    GROUP BY tool_name, status
+                    ORDER BY calls DESC
+                    """,
+                    project.id,
+                )
+            ]
+            model_rows = [
+                dict(row)
+                for row in await db.fetch(
+                    """
+                    SELECT
+                        model,
+                        SUM(COALESCE(token_input, 0)) AS input_tokens,
+                        SUM(COALESCE(token_output, 0)) AS output_tokens,
+                        SUM(COALESCE(cost_usd, 0)) AS total_cost
+                    FROM telemetry_events
+                    WHERE project_id = $1 AND event_type = 'session.lifecycle'
+                    GROUP BY model
+                    ORDER BY (SUM(COALESCE(token_input, 0)) + SUM(COALESCE(token_output, 0))) DESC
+                    """,
+                    project.id,
+                )
+            ]
+    except Exception:
+        tool_rows = []
+        model_rows = []
+
+    if tool_rows:
+        lines.append("# TYPE ccdash_tool_calls_total counter")
+        lines.append("# TYPE ccdash_tool_duration_ms gauge")
+    for row in tool_rows:
+        tool_name = _prom_label(row.get("tool_name") or "unknown")
+        status = _prom_label(row.get("status") or "unknown")
+        calls = int(row.get("calls") or 0)
+        avg_duration = float(row.get("avg_duration_ms") or 0.0)
+        lines.append(
+            f'ccdash_tool_calls_total{{project="{_prom_label(project.id)}",tool="{tool_name}",status="{status}"}} {calls}'
+        )
+        lines.append(
+            f'ccdash_tool_duration_ms{{project="{_prom_label(project.id)}",tool="{tool_name}"}} {avg_duration}'
+        )
+
+    if model_rows:
+        lines.append("# TYPE ccdash_tokens_total counter")
+        lines.append("# TYPE ccdash_cost_usd_total counter")
+    for row in model_rows:
+        model = _prom_label(row.get("model") or "unknown")
+        input_tokens = int(row.get("input_tokens") or 0)
+        output_tokens = int(row.get("output_tokens") or 0)
+        total_cost = float(row.get("total_cost") or 0.0)
+        lines.append(
+            f'ccdash_tokens_total{{project="{_prom_label(project.id)}",model="{model}",direction="input"}} {input_tokens}'
+        )
+        lines.append(
+            f'ccdash_tokens_total{{project="{_prom_label(project.id)}",model="{model}",direction="output"}} {output_tokens}'
+        )
+        lines.append(
+            f'ccdash_cost_usd_total{{project="{_prom_label(project.id)}",model="{model}"}} {total_cost}'
+        )
+
+    link_stats = {"avg_confidence": 0.0, "low_confidence": 0, "total_links": 0}
+    thread_stats = {"avg_fanout": 0.0, "max_fanout": 0}
+    try:
+        if isinstance(db, aiosqlite.Connection):
+            async with db.execute(
+                """
+                SELECT
+                    AVG(confidence) AS avg_confidence,
+                    SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS low_confidence,
+                    COUNT(*) AS total_links
+                FROM entity_links el
+                JOIN features f ON f.id = el.source_id
+                WHERE
+                    el.source_type = 'feature'
+                    AND el.target_type = 'session'
+                    AND el.link_type = 'related'
+                    AND f.project_id = ?
+                """,
+                (project.id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    link_stats = {
+                        "avg_confidence": float(row[0] or 0.0),
+                        "low_confidence": int(row[1] or 0),
+                        "total_links": int(row[2] or 0),
+                    }
+            async with db.execute(
+                """
+                SELECT
+                    AVG(child_count) AS avg_fanout,
+                    MAX(child_count) AS max_fanout
+                FROM (
+                    SELECT COUNT(*) AS child_count
+                    FROM sessions
+                    WHERE project_id = ?
+                    GROUP BY root_session_id
+                )
+                """,
+                (project.id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    thread_stats = {
+                        "avg_fanout": float(row[0] or 0.0),
+                        "max_fanout": int(row[1] or 0),
+                    }
+        else:
+            row = await db.fetchrow(
+                """
+                SELECT
+                    AVG(confidence) AS avg_confidence,
+                    SUM(CASE WHEN confidence < 0.6 THEN 1 ELSE 0 END) AS low_confidence,
+                    COUNT(*) AS total_links
+                FROM entity_links el
+                JOIN features f ON f.id = el.source_id
+                WHERE
+                    el.source_type = 'feature'
+                    AND el.target_type = 'session'
+                    AND el.link_type = 'related'
+                    AND f.project_id = $1
+                """,
+                project.id,
+            )
+            if row:
+                link_stats = {
+                    "avg_confidence": float(row["avg_confidence"] or 0.0),
+                    "low_confidence": int(row["low_confidence"] or 0),
+                    "total_links": int(row["total_links"] or 0),
+                }
+            row = await db.fetchrow(
+                """
+                SELECT
+                    AVG(child_count) AS avg_fanout,
+                    MAX(child_count) AS max_fanout
+                FROM (
+                    SELECT COUNT(*) AS child_count
+                    FROM sessions
+                    WHERE project_id = $1
+                    GROUP BY root_session_id
+                ) fanout
+                """,
+                project.id,
+            )
+            if row:
+                thread_stats = {
+                    "avg_fanout": float(row["avg_fanout"] or 0.0),
+                    "max_fanout": int(row["max_fanout"] or 0),
+                }
+    except Exception:
+        link_stats = {"avg_confidence": 0.0, "low_confidence": 0, "total_links": 0}
+        thread_stats = {"avg_fanout": 0.0, "max_fanout": 0}
+
+    lines.append("# TYPE ccdash_link_confidence_avg gauge")
+    lines.append("# TYPE ccdash_unresolved_entity_links gauge")
+    lines.append("# TYPE ccdash_session_thread_fanout_avg gauge")
+    lines.append("# TYPE ccdash_session_thread_fanout_max gauge")
+    lines.append(
+        f'ccdash_link_confidence_avg{{project="{_prom_label(project.id)}",source_type="feature",target_type="session"}} {link_stats["avg_confidence"]}'
+    )
+    lines.append(
+        f'ccdash_unresolved_entity_links{{project="{_prom_label(project.id)}"}} {link_stats["low_confidence"]}'
+    )
+    lines.append(
+        f'ccdash_session_thread_fanout_avg{{project="{_prom_label(project.id)}"}} {thread_stats["avg_fanout"]}'
+    )
+    lines.append(
+        f'ccdash_session_thread_fanout_max{{project="{_prom_label(project.id)}"}} {thread_stats["max_fanout"]}'
+    )
     return Response("\n".join(lines) + "\n", media_type="text/plain")

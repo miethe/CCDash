@@ -21,7 +21,7 @@ from typing import Any
 import aiosqlite
 import yaml
 
-from backend import config
+from backend import config, observability
 from backend.models import Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file
@@ -1173,100 +1173,112 @@ class SyncEngine:
         )
 
         try:
-            # Phase 1: Sessions
-            s_stats = await self._sync_sessions(project.id, sessions_dir, force)
-            stats["sessions_synced"] = s_stats["synced"]
-            stats["sessions_skipped"] = s_stats["skipped"]
-            backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
-            stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
-            stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
-            await self._update_operation(
-                operation_id,
-                phase="documents",
-                message="Syncing documents",
-                counters={
-                    "sessionsSynced": stats["sessions_synced"],
-                    "sessionsSkipped": stats["sessions_skipped"],
-                    "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
+            with observability.start_span(
+                "ccdash.sync.project",
+                {
+                    "ccdash.project_id": project.id,
+                    "ccdash.trigger": trigger,
+                    "ccdash.force": bool(force),
                 },
-            )
-
-            # Phase 2: Documents
-            d_stats = await self._sync_documents(project.id, docs_dir, progress_dir, force)
-            stats["documents_synced"] = d_stats["synced"]
-            stats["documents_skipped"] = d_stats["skipped"]
-            await self._update_operation(
-                operation_id,
-                phase="tasks",
-                message="Syncing progress tasks",
-                counters={
-                    "documentsSynced": stats["documents_synced"],
-                    "documentsSkipped": stats["documents_skipped"],
-                },
-            )
-
-            # Phase 3: Tasks (progress files)
-            t_stats = await self._sync_progress(project.id, progress_dir, force)
-            stats["tasks_synced"] = t_stats["synced"]
-            stats["tasks_skipped"] = t_stats["skipped"]
-            await self._update_operation(
-                operation_id,
-                phase="features",
-                message="Syncing derived features",
-                counters={
-                    "tasksSynced": stats["tasks_synced"],
-                    "tasksSkipped": stats["tasks_skipped"],
-                },
-            )
-
-            # Phase 4: Features (derived from docs + progress)
-            f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
-            stats["features_synced"] = f_stats["synced"]
-            link_state = await self._load_link_state(project.id)
-            should_rebuild_links, rebuild_reason = self._should_rebuild_links_after_full_sync(
-                force=force,
-                link_state=link_state,
-                stats=stats,
-            )
-            if should_rebuild_links:
+            ):
+                # Phase 1: Sessions
+                s_stats = await self._sync_sessions(project.id, sessions_dir, force)
+                stats["sessions_synced"] = s_stats["synced"]
+                stats["sessions_skipped"] = s_stats["skipped"]
+                backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
+                stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
+                stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
                 await self._update_operation(
                     operation_id,
-                    phase="links",
-                    message="Rebuilding entity links",
-                    counters={"featuresSynced": stats["features_synced"]},
+                    phase="documents",
+                    message="Syncing documents",
+                    counters={
+                        "sessionsSynced": stats["sessions_synced"],
+                        "sessionsSkipped": stats["sessions_skipped"],
+                        "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
+                    },
                 )
 
-                # Phase 5: Auto-discover cross-references
-                l_stats = await self._rebuild_entity_links(
-                    project.id,
-                    docs_dir,
-                    progress_dir,
-                    operation_id=operation_id,
-                )
-                stats["links_created"] = l_stats["created"]
-                await self._save_link_state(
-                    project.id,
-                    trigger=trigger,
-                    reason=rebuild_reason,
-                    links_created=stats["links_created"],
-                )
-            else:
+                # Phase 2: Documents
+                d_stats = await self._sync_documents(project.id, docs_dir, progress_dir, force)
+                stats["documents_synced"] = d_stats["synced"]
+                stats["documents_skipped"] = d_stats["skipped"]
                 await self._update_operation(
                     operation_id,
-                    phase="links",
-                    message="Skipping entity link rebuild (no relevant changes)",
-                    counters={"featuresSynced": stats["features_synced"]},
-                    stats={"links_created": 0},
+                    phase="tasks",
+                    message="Syncing progress tasks",
+                    counters={
+                        "documentsSynced": stats["documents_synced"],
+                        "documentsSkipped": stats["documents_skipped"],
+                    },
                 )
-            await self._update_operation(
-                operation_id,
-                phase="analytics",
-                message="Capturing analytics snapshot",
-                counters={"linksCreated": stats["links_created"]},
-            )
 
-            # Phase 6: Analytics Snapshot
-            await self._capture_analytics(project.id)
+                # Phase 3: Tasks (progress files)
+                t_stats = await self._sync_progress(project.id, progress_dir, force)
+                stats["tasks_synced"] = t_stats["synced"]
+                stats["tasks_skipped"] = t_stats["skipped"]
+                await self._update_operation(
+                    operation_id,
+                    phase="features",
+                    message="Syncing derived features",
+                    counters={
+                        "tasksSynced": stats["tasks_synced"],
+                        "tasksSkipped": stats["tasks_skipped"],
+                    },
+                )
+
+                # Phase 4: Features (derived from docs + progress)
+                f_stats = await self._sync_features(project.id, docs_dir, progress_dir)
+                stats["features_synced"] = f_stats["synced"]
+                link_state = await self._load_link_state(project.id)
+                should_rebuild_links, rebuild_reason = self._should_rebuild_links_after_full_sync(
+                    force=force,
+                    link_state=link_state,
+                    stats=stats,
+                )
+                if should_rebuild_links:
+                    await self._update_operation(
+                        operation_id,
+                        phase="links",
+                        message="Rebuilding entity links",
+                        counters={"featuresSynced": stats["features_synced"]},
+                    )
+
+                    # Phase 5: Auto-discover cross-references
+                    with observability.start_span(
+                        "ccdash.sync.rebuild_links",
+                        {"ccdash.project_id": project.id},
+                    ):
+                        l_stats = await self._rebuild_entity_links(
+                            project.id,
+                            docs_dir,
+                            progress_dir,
+                            operation_id=operation_id,
+                        )
+                    stats["links_created"] = l_stats["created"]
+                    await self._save_link_state(
+                        project.id,
+                        trigger=trigger,
+                        reason=rebuild_reason,
+                        links_created=stats["links_created"],
+                    )
+                else:
+                    await self._update_operation(
+                        operation_id,
+                        phase="links",
+                        message="Skipping entity link rebuild (no relevant changes)",
+                        counters={"featuresSynced": stats["features_synced"]},
+                        stats={"links_created": 0},
+                    )
+                await self._update_operation(
+                    operation_id,
+                    phase="analytics",
+                    message="Capturing analytics snapshot",
+                    counters={"linksCreated": stats["links_created"]},
+                )
+
+                # Phase 6: Analytics Snapshot
+                await self._capture_analytics(project.id)
 
             elapsed = int((time.monotonic() - t0) * 1000)
             stats["duration_ms"] = elapsed
@@ -1332,12 +1344,16 @@ class SyncEngine:
             message="Rebuilding entity links",
         )
         try:
-            l_stats = await self._rebuild_entity_links(
-                project_id,
-                docs_dir,
-                progress_dir,
-                operation_id=operation_id,
-            )
+            with observability.start_span(
+                "ccdash.sync.rebuild_links",
+                {"ccdash.project_id": project_id},
+            ):
+                l_stats = await self._rebuild_entity_links(
+                    project_id,
+                    docs_dir,
+                    progress_dir,
+                    operation_id=operation_id,
+                )
             stats["created"] = int(l_stats.get("created", 0))
             await self._save_link_state(
                 project_id,
@@ -1717,41 +1733,100 @@ class SyncEngine:
             if cached and cached["file_mtime"] == mtime:
                 return False  # unchanged
 
-        t0 = time.monotonic()
-        session = parse_session_file(path)
-        parse_ms = int((time.monotonic() - t0) * 1000)
+        overall_t0 = time.monotonic()
+        try:
+            with observability.start_span(
+                "ccdash.sync.session.parse",
+                {
+                    "ccdash.project_id": project_id,
+                    "ccdash.file_path": file_path,
+                },
+            ):
+                t0 = time.monotonic()
+                session = parse_session_file(path)
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("sessions", project_id=project_id)
+            raise
 
         # Always clear existing rows for this source file before re-inserting.
         # This prevents stale duplicates when session ID derivation changes.
-        await self.session_repo.delete_by_source(file_path)
+        with observability.start_span(
+            "ccdash.sync.session.persist",
+            {
+                "ccdash.project_id": project_id,
+                "ccdash.file_path": file_path,
+            },
+        ):
+            await self.session_repo.delete_by_source(file_path)
 
-        if session:
-            session_dict = session.model_dump()
-            session_dict["sourceFile"] = file_path
-            await self.session_repo.upsert(session_dict, project_id)
+            if session:
+                session_dict = session.model_dump()
+                session_dict["sourceFile"] = file_path
+                await self.session_repo.upsert(session_dict, project_id)
 
-            # Detail tables
-            logs = [log.model_dump() for log in session.logs]
-            await self.session_repo.upsert_logs(session.id, logs)
+                # Detail tables
+                logs = [log.model_dump() for log in session.logs]
+                await self.session_repo.upsert_logs(session.id, logs)
 
-            tools = [t.model_dump() for t in session.toolsUsed]
-            await self.session_repo.upsert_tool_usage(session.id, tools)
+                tools = [t.model_dump() for t in session.toolsUsed]
+                await self.session_repo.upsert_tool_usage(session.id, tools)
 
-            files = [f.model_dump() for f in session.updatedFiles]
-            await self.session_repo.upsert_file_updates(session.id, files)
+                files = [f.model_dump() for f in session.updatedFiles]
+                await self.session_repo.upsert_file_updates(session.id, files)
 
-            artifacts = [a.model_dump() for a in session.linkedArtifacts]
-            await self.session_repo.upsert_artifacts(session.id, artifacts)
+                artifacts = [a.model_dump() for a in session.linkedArtifacts]
+                await self.session_repo.upsert_artifacts(session.id, artifacts)
 
-            await self._replace_session_telemetry_events(
-                project_id,
-                session_dict,
-                logs,
-                tools,
-                files,
-                artifacts,
-                source="sync",
-            )
+                await self._replace_session_telemetry_events(
+                    project_id,
+                    session_dict,
+                    logs,
+                    tools,
+                    files,
+                    artifacts,
+                    source="sync",
+                )
+
+                model = _first_non_empty(session_dict, "model")
+                feature_id = _first_non_empty(session_dict, "featureId", "feature_id")
+                observability.record_token_cost(
+                    project_id=project_id,
+                    model=model,
+                    feature_id=feature_id,
+                    token_input=_coerce_int(session_dict.get("tokensIn") or session_dict.get("tokens_in")),
+                    token_output=_coerce_int(session_dict.get("tokensOut") or session_dict.get("tokens_out")),
+                    cost_usd=_coerce_float(session_dict.get("totalCost") or session_dict.get("total_cost")),
+                )
+                for tool in tools:
+                    tool_name = _first_non_empty(tool, "name", "tool_name", default="unknown")
+                    call_count = _coerce_int(tool.get("count") or tool.get("call_count"))
+                    if call_count <= 0:
+                        continue
+                    success_count = _coerce_int(tool.get("success_count"))
+                    success_rate = _coerce_float(tool.get("successRate"))
+                    if success_count <= 0 and success_rate > 0:
+                        ratio = success_rate / 100.0 if success_rate > 1 else success_rate
+                        success_count = int(round(call_count * max(0.0, min(1.0, ratio))))
+                    success_count = max(0, min(call_count, success_count))
+                    failure_count = max(0, call_count - success_count)
+                    duration_ms = _coerce_float(tool.get("totalMs") or tool.get("total_ms"))
+                    if success_count > 0:
+                        observability.record_tool_result(
+                            tool_name,
+                            "success",
+                            project_id=project_id,
+                            count=success_count,
+                            duration_ms=duration_ms,
+                        )
+                    if failure_count > 0:
+                        observability.record_tool_result(
+                            tool_name,
+                            "failure",
+                            project_id=project_id,
+                            count=failure_count,
+                            duration_ms=duration_ms,
+                        )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({
@@ -1763,6 +1838,13 @@ class SyncEngine:
             "last_synced": datetime.now(timezone.utc).isoformat(),
             "parse_ms": parse_ms,
         })
+
+        observability.record_ingestion(
+            "session",
+            "success" if session else "empty",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=project_id,
+        )
 
         return True
 
@@ -1823,15 +1905,27 @@ class SyncEngine:
 
         project_root = project_root or infer_project_root(docs_dir, progress_dir)
         base_dir = progress_dir if progress_dir in path.parents else docs_dir
-        t0 = time.monotonic()
-        doc = parse_document_file(
-            path,
-            base_dir,
-            project_root=project_root,
-            git_date_index=git_date_index,
-            dirty_paths=dirty_paths,
-        )
-        parse_ms = int((time.monotonic() - t0) * 1000)
+        overall_t0 = time.monotonic()
+        try:
+            with observability.start_span(
+                "ccdash.sync.document.parse",
+                {
+                    "ccdash.project_id": project_id,
+                    "ccdash.file_path": file_path,
+                },
+            ):
+                t0 = time.monotonic()
+                doc = parse_document_file(
+                    path,
+                    base_dir,
+                    project_root=project_root,
+                    git_date_index=git_date_index,
+                    dirty_paths=dirty_paths,
+                )
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("documents", project_id=project_id)
+            raise
 
         if doc:
             doc_dict = doc.model_dump()
@@ -1854,6 +1948,13 @@ class SyncEngine:
             "last_synced": datetime.now(timezone.utc).isoformat(),
             "parse_ms": parse_ms,
         })
+
+        observability.record_ingestion(
+            "document",
+            "success" if doc else "empty",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=project_id,
+        )
 
         return True
 
@@ -1887,9 +1988,21 @@ class SyncEngine:
             if cached and cached["file_mtime"] == mtime:
                 return False
 
-        t0 = time.monotonic()
-        tasks = parse_progress_file(path, progress_dir)
-        parse_ms = int((time.monotonic() - t0) * 1000)
+        overall_t0 = time.monotonic()
+        try:
+            with observability.start_span(
+                "ccdash.sync.progress.parse",
+                {
+                    "ccdash.project_id": project_id,
+                    "ccdash.file_path": file_path,
+                },
+            ):
+                t0 = time.monotonic()
+                tasks = parse_progress_file(path, progress_dir)
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("progress", project_id=project_id)
+            raise
 
         # Delete old tasks from this source first (legacy absolute + canonical relative)
         await self.task_repo.delete_by_source(file_path)
@@ -1917,6 +2030,13 @@ class SyncEngine:
             "last_synced": datetime.now(timezone.utc).isoformat(),
             "parse_ms": parse_ms,
         })
+
+        observability.record_ingestion(
+            "progress",
+            "success",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=project_id,
+        )
 
         return True
 
@@ -3114,56 +3234,60 @@ class SyncEngine:
 
     async def _capture_analytics(self, project_id: str) -> None:
         """Capture a point-in-time snapshot of project metrics."""
-        now = datetime.now(timezone.utc).isoformat()
-        
-        async def insert_metric(
-            metric_type: str,
-            value: float | int,
-            *,
-            metadata: dict[str, Any] | None = None,
-            entity_links: list[tuple[str, str]] | None = None,
-        ) -> None:
-            analytics_id = await self.analytics_repo.insert_entry({
-                "project_id": project_id,
-                "metric_type": metric_type,
-                "value": value,
-                "captured_at": now,
-                "metadata_json": metadata or {},
-            })
-            links = entity_links or [("project", project_id)]
-            for entity_type, entity_id in links:
-                if entity_type and entity_id:
-                    await self.analytics_repo.link_to_entity(analytics_id, entity_type, entity_id)
+        with observability.start_span(
+            "ccdash.sync.analytics_snapshot",
+            {"ccdash.project_id": project_id},
+        ):
+            now = datetime.now(timezone.utc).isoformat()
 
-        # 1. Session Metrics
-        s_stats = await self.session_repo.get_project_stats(project_id)
-        
-        await insert_metric("session_count", s_stats.get("count", 0), metadata={"scope": "project"})
-        await insert_metric("session_cost", s_stats.get("cost", 0.0), metadata={"scope": "project", "unit": "usd"})
-        await insert_metric("session_tokens", s_stats.get("tokens", 0), metadata={"scope": "project", "unit": "tokens"})
-        await insert_metric("session_duration", s_stats.get("duration", 0.0), metadata={"scope": "project", "unit": "seconds"})
+            async def insert_metric(
+                metric_type: str,
+                value: float | int,
+                *,
+                metadata: dict[str, Any] | None = None,
+                entity_links: list[tuple[str, str]] | None = None,
+            ) -> None:
+                analytics_id = await self.analytics_repo.insert_entry({
+                    "project_id": project_id,
+                    "metric_type": metric_type,
+                    "value": value,
+                    "captured_at": now,
+                    "metadata_json": metadata or {},
+                })
+                links = entity_links or [("project", project_id)]
+                for entity_type, entity_id in links:
+                    if entity_type and entity_id:
+                        await self.analytics_repo.link_to_entity(analytics_id, entity_type, entity_id)
 
-        # 2. Task Metrics
-        t_stats = await self.task_repo.get_project_stats(project_id)
+            # 1. Session Metrics
+            s_stats = await self.session_repo.get_project_stats(project_id)
 
-        await insert_metric(
-            "task_velocity",
-            t_stats.get("completed", 0),
-            metadata={"scope": "project", "terminalStatuses": ["done", "deferred", "completed"]},
-        )
-        await insert_metric(
-            "task_completion_pct",
-            t_stats.get("completion_pct", 0.0),
-            metadata={"scope": "project", "unit": "percent"},
-        )
+            await insert_metric("session_count", s_stats.get("count", 0), metadata={"scope": "project"})
+            await insert_metric("session_cost", s_stats.get("cost", 0.0), metadata={"scope": "project", "unit": "usd"})
+            await insert_metric("session_tokens", s_stats.get("tokens", 0), metadata={"scope": "project", "unit": "tokens"})
+            await insert_metric("session_duration", s_stats.get("duration", 0.0), metadata={"scope": "project", "unit": "seconds"})
 
-        # 3. Feature Progress
-        f_stats = await self.feature_repo.get_project_stats(project_id)
-        
-        await insert_metric("feature_progress", f_stats.get("avg_progress", 0.0), metadata={"scope": "project", "unit": "percent"})
+            # 2. Task Metrics
+            t_stats = await self.task_repo.get_project_stats(project_id)
 
-        # 4. Tool Usage
-        tool_stats = await self.session_repo.get_tool_stats(project_id)
-        
-        await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
-        await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})
+            await insert_metric(
+                "task_velocity",
+                t_stats.get("completed", 0),
+                metadata={"scope": "project", "terminalStatuses": ["done", "deferred", "completed"]},
+            )
+            await insert_metric(
+                "task_completion_pct",
+                t_stats.get("completion_pct", 0.0),
+                metadata={"scope": "project", "unit": "percent"},
+            )
+
+            # 3. Feature Progress
+            f_stats = await self.feature_repo.get_project_stats(project_id)
+
+            await insert_metric("feature_progress", f_stats.get("avg_progress", 0.0), metadata={"scope": "project", "unit": "percent"})
+
+            # 4. Tool Usage
+            tool_stats = await self.session_repo.get_tool_stats(project_id)
+
+            await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
+            await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})

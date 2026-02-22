@@ -25,6 +25,7 @@ from backend.routers.session_mappings import session_mappings_router
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
 from backend.project_manager import project_manager
+from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ccdash")
@@ -34,6 +35,7 @@ logger = logging.getLogger("ccdash")
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("CCDash backend starting up")
+    initialize_observability(app)
     
     # 1. Initialize DB connection
     db = await connection.get_connection()
@@ -75,6 +77,7 @@ async def lifespan(app: FastAPI):
             pass
             
     await file_watcher.stop()
+    shutdown_observability(app)
     await connection.close_connection()
 
 
