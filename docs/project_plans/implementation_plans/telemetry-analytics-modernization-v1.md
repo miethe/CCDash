@@ -416,3 +416,52 @@ Key risks and mitigations:
 2. Entity-linked correlations are queryable for feature/task/session/commit/PR workflows.
 3. OTel export is operational and Grafana dashboards are usable with provided deploy assets.
 4. Correctness defects (especially task completion) are resolved and covered by tests.
+
+---
+
+## Track B Completed Tasks (2026-02-22)
+
+### B1. Event fact model and backfill
+
+- [x] Implemented `telemetry_events` schema in SQLite and Postgres migrations.
+- [x] Added deterministic session-level event generation across lifecycle/log/tool/file/artifact facts.
+- [x] Added incremental ingestion path in sync pipeline (`_sync_single_session`) to refresh telemetry events per session.
+- [x] Added one-time automatic backfill trigger for existing projects with zero telemetry facts.
+- [x] Added manual backfill job script: `backend/scripts/telemetry_backfill.py`.
+- [x] Added unit coverage for telemetry event generation:
+  - `backend/tests/test_sync_engine_telemetry.py`
+
+### B2. OTel instrumentation
+
+- [x] Added OTel + FastAPI instrumentation module:
+  - `backend/observability/otel.py`
+  - `backend/observability/__init__.py`
+- [x] Added env-driven configuration:
+  - `CCDASH_OTEL_ENABLED`
+  - `CCDASH_OTEL_ENDPOINT`
+  - `CCDASH_OTEL_SERVICE_NAME`
+  - `CCDASH_PROM_PORT`
+- [x] Added startup/shutdown wiring in `backend/main.py`.
+- [x] Added parser/sync/rebuild/analytics spans and metrics hooks in `backend/db/sync_engine.py`.
+- [x] Added tool/token/cost counters and parser failure metrics.
+- [x] Expanded Prometheus export surface in `backend/routers/analytics.py` with labeled tool/model/link/thread metrics.
+
+### B3. Self-hosted observability stack
+
+- [x] Added compose stack:
+  - `deploy/observability/docker-compose.yml`
+- [x] Added OTel Collector config:
+  - `deploy/observability/otel-collector-config.yaml`
+- [x] Added Prometheus config:
+  - `deploy/observability/prometheus/prometheus.yml`
+- [x] Added Tempo config:
+  - `deploy/observability/tempo.yaml`
+- [x] Added Grafana provisioning:
+  - `deploy/observability/grafana/provisioning/datasources/datasources.yml`
+  - `deploy/observability/grafana/provisioning/dashboards/dashboards.yml`
+- [x] Added default Grafana dashboards:
+  - `deploy/observability/grafana/dashboards/ingestion-health-lag.json`
+  - `deploy/observability/grafana/dashboards/token-cost-efficiency.json`
+  - `deploy/observability/grafana/dashboards/tool-reliability-retry-burden.json`
+  - `deploy/observability/grafana/dashboards/session-thread-complexity-latency.json`
+  - `deploy/observability/grafana/dashboards/link-confidence-ambiguity.json`

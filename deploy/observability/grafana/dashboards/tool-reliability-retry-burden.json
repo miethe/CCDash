@@ -1,0 +1,73 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Tool Calls by Status",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum by (tool, status) (rate(ccdash_tool_calls_total{project=~\"$project\"}[5m]))",
+          "legendFormat": "{{tool}} {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool Failure Ratio",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum by (tool) (rate(ccdash_tool_calls_total{project=~\"$project\",status=\"failure\"}[10m])) / clamp_min(sum by (tool) (rate(ccdash_tool_calls_total{project=~\"$project\"}[10m])), 1)",
+          "legendFormat": "{{tool}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Average Tool Duration (ms)",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "avg by (tool) (ccdash_tool_duration_ms{project=~\"$project\"})",
+          "legendFormat": "{{tool}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["ccdash", "tools", "reliability"],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "Project",
+        "datasource": "Prometheus",
+        "query": "label_values(ccdash_session_count, project)",
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": ["$__all"]}
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "CCDash Tool Reliability and Retry Burden",
+  "uid": "ccdash-tool-reliability",
+  "version": 1,
+  "weekStart": ""
+}

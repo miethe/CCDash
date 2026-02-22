@@ -1,0 +1,88 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Average Session Duration (s)",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "avg(ccdash_session_duration{project=~\"$project\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Average Thread Fanout",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "targets": [
+        {
+          "expr": "avg(ccdash_session_thread_fanout_avg{project=~\"$project\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Max Thread Fanout",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "targets": [
+        {
+          "expr": "max(ccdash_session_thread_fanout_max{project=~\"$project\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Session Volume and Task Velocity",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "avg(ccdash_session_count{project=~\"$project\"})",
+          "legendFormat": "sessions",
+          "refId": "A"
+        },
+        {
+          "expr": "avg(ccdash_task_velocity{project=~\"$project\"})",
+          "legendFormat": "task velocity",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["ccdash", "sessions", "threads"],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "Project",
+        "datasource": "Prometheus",
+        "query": "label_values(ccdash_session_count, project)",
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": ["$__all"]}
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "CCDash Session and Thread Complexity vs Delivery Latency",
+  "uid": "ccdash-session-thread-complexity",
+  "version": 1,
+  "weekStart": ""
+}
