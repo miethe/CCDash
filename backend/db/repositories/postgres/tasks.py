@@ -95,14 +95,15 @@ class PostgresTaskRepository:
 
     async def get_project_stats(self, project_id: str) -> dict:
         completed = await self.db.fetchval(
-            "SELECT COUNT(*) FROM tasks WHERE project_id = $1 AND status = 'completed'",
+            "SELECT COUNT(*) FROM tasks WHERE project_id = $1 AND lower(status) IN ('done', 'deferred', 'completed')",
             project_id
         ) or 0
 
         pct = await self.db.fetchval(
             """
             SELECT
-                CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / NULLIF(COUNT(*), 0) * 100
+                CAST(SUM(CASE WHEN lower(status) IN ('done', 'deferred', 'completed') THEN 1 ELSE 0 END) AS DOUBLE PRECISION)
+                / NULLIF(COUNT(*), 0) * 100
             FROM tasks
             WHERE project_id = $1
             """,

@@ -64,6 +64,34 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(tools[0].toolCall.id, "toolu_1")
         self.assertEqual(tools[0].toolCall.output, "Read output")
         self.assertEqual(tools[0].toolCall.status, "success")
+        self.assertGreaterEqual(session.toolsUsed[0].totalMs, 1000)
+
+    def test_agent_message_usage_is_persisted_on_message_log_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "usage": {"input_tokens": 12, "output_tokens": 34},
+                        "content": [
+                            {"type": "text", "text": "Working on it."},
+                        ],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        message_logs = [log for log in session.logs if log.type == "message"]
+        self.assertEqual(len(message_logs), 1)
+        self.assertEqual(message_logs[0].metadata.get("inputTokens"), 12)
+        self.assertEqual(message_logs[0].metadata.get("outputTokens"), 34)
+        self.assertEqual(message_logs[0].metadata.get("totalTokens"), 46)
 
     def test_unmatched_tool_result_becomes_system_log(self) -> None:
         path = self._write_jsonl(

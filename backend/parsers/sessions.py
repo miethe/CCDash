@@ -129,6 +129,16 @@ def _estimate_cost(tokens_in: int, tokens_out: int, model: str) -> float:
     return (tokens_in / 1_000_000 * in_rate) + (tokens_out / 1_000_000 * out_rate)
 
 
+def _parse_iso_ts(value: str) -> datetime | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _normalize_path(raw: str) -> str:
     path = raw.strip().strip('"\'`<>[](),;')
     if not path:
@@ -498,12 +508,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_counter: Counter[str] = Counter()
     tool_success: Counter[str] = Counter()
     tool_total: Counter[str] = Counter()
+    tool_duration_ms: Counter[str] = Counter()
     impacts: list[ImpactPoint] = []
 
     file_changes: list[SessionFileUpdate] = []
     artifacts: dict[str, SessionArtifact] = {}
 
     tool_logs_by_id: dict[str, int] = {}
+    tool_started_at_by_id: dict[str, str] = {}
     subagent_link_by_parent_tool: dict[str, str] = {}
     emitted_subagent_starts: set[tuple[str, str]] = set()
 
@@ -962,6 +974,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         speaker = "agent" if message_role == "assistant" else "user"
         agent_name = entry.get("agentName") if speaker == "agent" else None
         current_message_model = ""
+        message_usage_in = 0
+        message_usage_out = 0
 
         if isinstance(message, dict) and speaker == "agent":
             msg_model = message.get("model")
@@ -971,19 +985,28 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     model = current_message_model
             usage = message.get("usage", {})
             if isinstance(usage, dict):
-                tokens_in += int(usage.get("input_tokens", 0) or 0)
-                tokens_out += int(usage.get("output_tokens", 0) or 0)
+                message_usage_in = int(usage.get("input_tokens", 0) or 0)
+                message_usage_out = int(usage.get("output_tokens", 0) or 0)
+                tokens_in += message_usage_in
+                tokens_out += message_usage_out
 
         if isinstance(message, str):
             content = message.strip()
             if content:
+                message_metadata: dict[str, Any] = {}
+                if current_message_model:
+                    message_metadata["model"] = current_message_model
+                if speaker == "agent" and (message_usage_in or message_usage_out):
+                    message_metadata["inputTokens"] = message_usage_in
+                    message_metadata["outputTokens"] = message_usage_out
+                    message_metadata["totalTokens"] = message_usage_in + message_usage_out
                 idx = append_log(
                     timestamp=current_ts,
                     speaker=speaker,
                     type="message",
                     content=content[:4000],
                     agentName=agent_name,
-                    metadata={"model": current_message_model} if current_message_model else {},
+                    metadata=message_metadata,
                 )
                 if speaker == "user":
                     add_command_artifacts_from_text(content, logs[idx].id)
@@ -993,13 +1016,20 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if isinstance(content_blocks, str):
             content = content_blocks.strip()
             if content:
+                message_metadata: dict[str, Any] = {}
+                if current_message_model:
+                    message_metadata["model"] = current_message_model
+                if speaker == "agent" and (message_usage_in or message_usage_out):
+                    message_metadata["inputTokens"] = message_usage_in
+                    message_metadata["outputTokens"] = message_usage_out
+                    message_metadata["totalTokens"] = message_usage_in + message_usage_out
                 idx = append_log(
                     timestamp=current_ts,
                     speaker=speaker,
                     type="message",
                     content=content[:4000],
                     agentName=agent_name,
-                    metadata={"model": current_message_model} if current_message_model else {},
+                    metadata=message_metadata,
                 )
                 if speaker == "user":
                     add_command_artifacts_from_text(content, logs[idx].id)
@@ -1061,6 +1091,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 tool_log = logs[idx]
                 if isinstance(tool_id, str):
                     tool_logs_by_id[tool_id] = idx
+                    tool_started_at_by_id[tool_id] = current_ts
 
                 tool_counter[tool_name] += 1
                 tool_total[tool_name] += 1
@@ -1135,6 +1166,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_success[related_log.toolCall.name] -= 1
 
                     tool_name = related_log.toolCall.name if related_log.toolCall else None
+                    if tool_name and isinstance(related_id, str):
+                        started_at = tool_started_at_by_id.get(related_id, "")
+                        started_ts = _parse_iso_ts(started_at)
+                        finished_ts = _parse_iso_ts(current_ts)
+                        if started_ts and finished_ts:
+                            elapsed_ms = max(0, int((finished_ts - started_ts).total_seconds() * 1000))
+                            tool_duration_ms[tool_name] += elapsed_ms
+                            if isinstance(related_log.metadata, dict):
+                                related_log.metadata["durationMs"] = elapsed_ms
                     if tool_name in _FILE_ACTION_BY_TOOL and is_error:
                         file_changes = [f for f in file_changes if f.sourceLogId != related_log.id]
                     elif tool_name in {"Write", "WriteFile"} and _result_indicates_create(output_text):
@@ -1188,13 +1228,20 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
         message_text = "\n".join(part for part in text_parts if part and part.strip()).strip()
         if message_text:
+            message_metadata: dict[str, Any] = {}
+            if current_message_model:
+                message_metadata["model"] = current_message_model
+            if speaker == "agent" and (message_usage_in or message_usage_out):
+                message_metadata["inputTokens"] = message_usage_in
+                message_metadata["outputTokens"] = message_usage_out
+                message_metadata["totalTokens"] = message_usage_in + message_usage_out
             idx = append_log(
                 timestamp=current_ts,
                 speaker=speaker,
                 type="message",
                 content=message_text[:8000],
                 agentName=agent_name,
-                metadata={"model": current_message_model} if current_message_model else {},
+                metadata=message_metadata,
             )
             if speaker == "user":
                 add_command_artifacts_from_text(message_text, logs[idx].id)
@@ -1213,7 +1260,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
         total = tool_total.get(name, count)
         success = max(0, tool_success.get(name, count))
         rate = success / total if total > 0 else 1.0
-        tools_used.append(ToolUsage(name=name, count=count, successRate=round(rate, 2)))
+        tools_used.append(ToolUsage(
+            name=name,
+            count=count,
+            successRate=round(rate, 2),
+            totalMs=max(0, int(tool_duration_ms.get(name, 0))),
+        ))
 
     cost = _estimate_cost(tokens_in, tokens_out, model)
     if git_commit:

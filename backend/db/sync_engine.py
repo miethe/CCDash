@@ -2608,73 +2608,55 @@ class SyncEngine:
     async def _capture_analytics(self, project_id: str) -> None:
         """Capture a point-in-time snapshot of project metrics."""
         now = datetime.now(timezone.utc).isoformat()
+        
+        async def insert_metric(
+            metric_type: str,
+            value: float | int,
+            *,
+            metadata: dict[str, Any] | None = None,
+            entity_links: list[tuple[str, str]] | None = None,
+        ) -> None:
+            analytics_id = await self.analytics_repo.insert_entry({
+                "project_id": project_id,
+                "metric_type": metric_type,
+                "value": value,
+                "captured_at": now,
+                "metadata_json": metadata or {},
+            })
+            links = entity_links or [("project", project_id)]
+            for entity_type, entity_id in links:
+                if entity_type and entity_id:
+                    await self.analytics_repo.link_to_entity(analytics_id, entity_type, entity_id)
 
         # 1. Session Metrics
         s_stats = await self.session_repo.get_project_stats(project_id)
         
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "session_count",
-            "value": s_stats.get("count", 0),
-            "captured_at": now,
-        })
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "session_cost",
-            "value": s_stats.get("cost", 0.0),
-            "captured_at": now,
-        })
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "session_tokens",
-            "value": s_stats.get("tokens", 0),
-            "captured_at": now,
-        })
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "session_duration",
-            "value": s_stats.get("duration", 0.0),
-            "captured_at": now,
-        })
+        await insert_metric("session_count", s_stats.get("count", 0), metadata={"scope": "project"})
+        await insert_metric("session_cost", s_stats.get("cost", 0.0), metadata={"scope": "project", "unit": "usd"})
+        await insert_metric("session_tokens", s_stats.get("tokens", 0), metadata={"scope": "project", "unit": "tokens"})
+        await insert_metric("session_duration", s_stats.get("duration", 0.0), metadata={"scope": "project", "unit": "seconds"})
 
         # 2. Task Metrics
         t_stats = await self.task_repo.get_project_stats(project_id)
 
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "task_velocity",  # Total completed tasks for now
-            "value": t_stats.get("completed", 0),
-            "captured_at": now,
-        })
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "task_completion_pct",
-            "value": t_stats.get("completion_pct", 0.0),
-            "captured_at": now,
-        })
+        await insert_metric(
+            "task_velocity",
+            t_stats.get("completed", 0),
+            metadata={"scope": "project", "terminalStatuses": ["done", "deferred", "completed"]},
+        )
+        await insert_metric(
+            "task_completion_pct",
+            t_stats.get("completion_pct", 0.0),
+            metadata={"scope": "project", "unit": "percent"},
+        )
 
         # 3. Feature Progress
         f_stats = await self.feature_repo.get_project_stats(project_id)
         
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "feature_progress",
-            "value": f_stats.get("avg_progress", 0.0),
-            "captured_at": now,
-        })
+        await insert_metric("feature_progress", f_stats.get("avg_progress", 0.0), metadata={"scope": "project", "unit": "percent"})
 
         # 4. Tool Usage
         tool_stats = await self.session_repo.get_tool_stats(project_id)
         
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "tool_call_count",
-            "value": tool_stats.get("calls", 0),
-            "captured_at": now,
-        })
-        await self.analytics_repo.insert_entry({
-            "project_id": project_id,
-            "metric_type": "tool_success_rate",
-            "value": tool_stats.get("success_rate", 0.0),
-            "captured_at": now,
-        })
+        await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
+        await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})

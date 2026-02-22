@@ -101,6 +101,7 @@ class ToolUsage(BaseModel):
     name: str
     count: int = 0
     successRate: float = 1.0
+    totalMs: int = 0
 
 
 class SessionModelInfo(BaseModel):

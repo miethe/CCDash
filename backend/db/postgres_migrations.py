@@ -6,7 +6,7 @@ import asyncpg
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -101,7 +101,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at         TEXT DEFAULT '',
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL,
-    source_file      TEXT NOT NULL
+    source_file      TEXT NOT NULL,
+    dates_json       TEXT DEFAULT '{}',
+    timeline_json    TEXT DEFAULT '[]',
+    impact_history_json TEXT DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
@@ -414,12 +417,16 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "agent_id", "TEXT")
     await _ensure_column(db, "sessions", "git_commit_hashes_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "dates_json", "TEXT DEFAULT '{}'")
+    await _ensure_column(db, "sessions", "timeline_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "impact_history_json", "TEXT DEFAULT '[]'")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "linked_session_id", "TEXT")
     await _ensure_column(db, "session_logs", "metadata_json", "TEXT")
+    await _ensure_column(db, "session_tool_usage", "total_ms", "INTEGER DEFAULT 0")
 
     await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
     await _ensure_column(db, "session_file_updates", "source_tool_name", "TEXT")

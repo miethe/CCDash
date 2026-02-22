@@ -26,8 +26,9 @@ class PostgresSessionRepository:
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
-                started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                started_at, ended_at, created_at, updated_at, source_file,
+                dates_json, timeline_json, impact_history_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 duration_seconds=EXCLUDED.duration_seconds,
@@ -43,7 +44,10 @@ class PostgresSessionRepository:
                 root_session_id=EXCLUDED.root_session_id,
                 agent_id=EXCLUDED.agent_id,
                 started_at=EXCLUDED.started_at, ended_at=EXCLUDED.ended_at,
-                updated_at=EXCLUDED.updated_at, source_file=EXCLUDED.source_file
+                updated_at=EXCLUDED.updated_at, source_file=EXCLUDED.source_file,
+                dates_json=EXCLUDED.dates_json,
+                timeline_json=EXCLUDED.timeline_json,
+                impact_history_json=EXCLUDED.impact_history_json
         """
         await self.db.execute(
             query,
@@ -69,6 +73,9 @@ class PostgresSessionRepository:
             session_data.get("endedAt", ""),
             created_at, updated_at,
             session_data.get("sourceFile", ""),
+            json.dumps(session_data.get("dates", {}) or {}),
+            json.dumps(session_data.get("timeline", []) or []),
+            json.dumps(session_data.get("impactHistory", []) or []),
         )
 
     async def get_by_id(self, session_id: str) -> dict | None:
@@ -335,12 +342,13 @@ class PostgresSessionRepository:
             for t in tools:
                 records.append((
                     session_id, t.get("name", ""), t.get("count", 0),
-                    int(t.get("count", 0) * t.get("successRate", 1.0))
+                    int(t.get("count", 0) * t.get("successRate", 1.0)),
+                    max(0, int(t.get("totalMs", 0) or 0)),
                 ))
                 
             await self.db.executemany(
-                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count)
-                   VALUES ($1, $2, $3, $4)""",
+                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
+                   VALUES ($1, $2, $3, $4, $5)""",
                 records
             )
 

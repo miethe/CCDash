@@ -147,6 +147,10 @@ def _phase_label(phase_token: str) -> str:
 
 
 def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
+    row_dates = _safe_json(row.get("dates_json"))
+    if isinstance(row_dates, dict) and row_dates:
+        return row_dates
+
     dates: dict[str, Any] = {}
     for key, candidate in (
         ("createdAt", make_date_value(row.get("created_at"), "medium", "repository", "session_record_created")),
@@ -327,6 +331,7 @@ async def list_sessions(
             logs=[],
             sessionMetadata=session_metadata,
             dates=_session_dates_payload(s),
+            timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
         ))
         
     return PaginatedResponse(
@@ -426,6 +431,7 @@ async def get_session(session_id: str):
             "name": t["tool_name"],
             "count": t["call_count"],
             "successRate": t["success_count"] / t["call_count"] if t["call_count"] > 0 else 0.0,
+            "totalMs": int(t.get("total_ms") or 0),
         })
         
     # Files
@@ -494,15 +500,14 @@ async def get_session(session_id: str):
         updatedFiles=file_updates,
         linkedArtifacts=linked_artifacts,
         toolsUsed=tool_usage,
-        impactHistory=[], # We didn't persist impact history separately in DB schema plan? 
-                          # Ah, impacts logic was in parser but not in schema?
-                          # Checking schema... no impact_history table.
-                          # We can store it as JSON in metadata or add a table later.
-                          # For now, return empty list.
+        impactHistory=[event for event in _safe_json_list(s.get("impact_history_json")) if isinstance(event, dict)],
         logs=session_logs,
         sessionMetadata=session_metadata,
         dates=_session_dates_payload(s),
         timeline=[
+            event for event in _safe_json_list(s.get("timeline_json"))
+            if isinstance(event, dict)
+        ] or [
             *(
                 [{
                     "id": "session-started",

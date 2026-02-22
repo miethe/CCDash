@@ -25,8 +25,9 @@ class SqliteSessionRepository:
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
-                started_at, ended_at, created_at, updated_at, source_file
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                started_at, ended_at, created_at, updated_at, source_file,
+                dates_json, timeline_json, impact_history_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 duration_seconds=excluded.duration_seconds,
@@ -42,7 +43,10 @@ class SqliteSessionRepository:
                 root_session_id=excluded.root_session_id,
                 agent_id=excluded.agent_id,
                 started_at=excluded.started_at, ended_at=excluded.ended_at,
-                updated_at=excluded.updated_at, source_file=excluded.source_file
+                updated_at=excluded.updated_at, source_file=excluded.source_file,
+                dates_json=excluded.dates_json,
+                timeline_json=excluded.timeline_json,
+                impact_history_json=excluded.impact_history_json
             """,
             (
                 session_data["id"], project_id,
@@ -67,6 +71,9 @@ class SqliteSessionRepository:
                 session_data.get("endedAt", ""),
                 created_at, updated_at,
                 session_data.get("sourceFile", ""),
+                json.dumps(session_data.get("dates", {}) or {}),
+                json.dumps(session_data.get("timeline", []) or []),
+                json.dumps(session_data.get("impactHistory", []) or []),
             ),
         )
         await self.db.commit()
@@ -319,10 +326,11 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM session_tool_usage WHERE session_id = ?", (session_id,))
         for t in tools:
             await self.db.execute(
-                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count)
-                   VALUES (?, ?, ?, ?)""",
+                """INSERT INTO session_tool_usage (session_id, tool_name, call_count, success_count, total_ms)
+                   VALUES (?, ?, ?, ?, ?)""",
                 (session_id, t.get("name", ""), t.get("count", 0),
-                 int(t.get("count", 0) * t.get("successRate", 1.0))),
+                 int(t.get("count", 0) * t.get("successRate", 1.0)),
+                 max(0, int(t.get("totalMs", 0) or 0))),
             )
         await self.db.commit()
 
