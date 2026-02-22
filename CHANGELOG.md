@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-02-22
+
+### Added
+
+- Track A analytics API surface:
+  - `GET /api/analytics/overview`
+  - `GET /api/analytics/series`
+  - `GET /api/analytics/breakdown`
+  - `GET /api/analytics/correlation`
+  - `POST /api/analytics/alerts`
+  - `PATCH /api/analytics/alerts/{id}`
+  - `DELETE /api/analytics/alerts/{id}`
+- Token timeline series support sourced from persisted session log usage metadata.
+- New documentation:
+  - `docs/telemetry-analytics-track-a-implementation-reference-2026-02-22.md`
+- New tests:
+  - `backend/tests/test_tasks_repository.py`
+  - `backend/tests/test_analytics_router.py`
+
+### Changed
+
+- Task analytics correctness:
+  - completion metrics now count `done`, `deferred`, and `completed` for compatibility.
+- Session telemetry persistence:
+  - session `dates`, `timeline`, and `impactHistory` are now persisted and rehydrated.
+- Tool usage telemetry:
+  - `session_tool_usage.total_ms` now populated from tool use/result timing.
+- Analytics capture:
+  - writes `analytics_entries.metadata_json` context and `analytics_entity_links` associations.
+- Dashboard analytics:
+  - KPI/model/series cards now sourced from backend analytics endpoints (removed hardcoded display values for core KPIs).
+- Session Inspector analytics:
+  - token timeline now uses backend series endpoint instead of simulated data.
+- Settings alerts:
+  - alerts tab now uses persisted backend CRUD operations.
+
+### Migrations
+
+- SQLite schema version bumped to `8`.
+- Postgres schema version bumped to `6`.
+- Added `sessions` columns:
+  - `dates_json`
+  - `timeline_json`
+  - `impact_history_json`
+- Added/ensured `session_tool_usage.total_ms`.
+
 ## 2026-02-19
 
 ### Added

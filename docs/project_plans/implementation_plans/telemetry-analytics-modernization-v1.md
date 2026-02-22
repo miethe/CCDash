@@ -8,7 +8,7 @@ updated: 2026-02-22
 category: "implementation-plan"
 complexity: "High"
 track: "Two-track (Quick Wins + Platform)"
-status: "draft"
+status: "in-progress"
 ---
 
 # Implementation Plan: Telemetry + Analytics Modernization
@@ -214,6 +214,29 @@ Compatibility:
 ## Two-track implementation roadmap
 
 ## Track A (2-4 weeks): correctness + complete in-product analytics
+
+### Track A implementation status (2026-02-22)
+
+Implemented in codebase:
+
+1. A1 correctness and persistence parity:
+   - task completion semantics fixed (`done`/`deferred`/`completed`)
+   - `session_tool_usage.total_ms` populated
+   - session date/timeline/impact fields persisted + rehydrated
+   - `analytics_entries.metadata_json` populated
+   - `analytics_entity_links` populated for captured metrics
+2. A2 query layer expansion:
+   - `overview`, `series`, `breakdown`, `correlation` endpoints implemented
+   - rollup support in `/series` for `point|hourly|daily|weekly`
+   - alert CRUD implemented
+3. A3 UI wiring:
+   - main dashboard wired to backend analytics endpoints
+   - Session Inspector token timeline wired to backend `/series`
+   - Settings alerts tab wired to backend CRUD persistence
+
+Reference:
+
+- `docs/telemetry-analytics-track-a-implementation-reference-2026-02-22.md`
 
 ### A1. Correctness and persistence parity
 

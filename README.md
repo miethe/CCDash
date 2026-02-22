@@ -30,11 +30,11 @@
 *   **Theme**: Deep "Slate" dark mode optimized for long engineering sessions.
 
 ### 2. Dashboard (Overview)
-*   **KPI Cards**: High-level metrics for Total Spend, Average Session Quality, Hallucination Rate, and Shipping Velocity.
+*   **KPI Cards**: Backend-derived KPIs from `GET /api/analytics/overview` (cost, tokens, session count, completion, tool reliability, velocity).
 *   **AI Insights**: Integrated **Google Gemini** analysis that reads current metrics/tasks and generates executive summaries on project health.
 *   **Visualizations**:
-    *   **Cost vs. Quality Area Chart**: Tracks spending against code quality over time.
-    *   **Model Usage Bar Chart**: Breakdown of underlying LLM usage (Claude vs. Gemini).
+    *   **Cost vs. Velocity Area Chart**: Tracks spending against task velocity over time (`GET /api/analytics/series`).
+    *   **Model Usage Bar Chart**: Model usage breakdown from overview payload.
 
 ### 3. Feature Board (Aggregate Delivery View)
 *   **Feature-Centric View**: Redesigned board that groups work into **Features** discovered from project documentation (PRDs and Implementation Plans).
@@ -83,15 +83,15 @@ The core debugging loop for AI interactions.
         *   **Test Stability Chart**: Area chart visualizing Test Pass vs. Fail counts over time.
     5.  **Analytics (Advanced)**: 
         *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
-        *   **Token Timeline**: Switch between summary bar charts and a detailed cumulative area chart overlaying discrete events (Tool Executions, File Edits).
+        *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Agents**: 
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
 
 ### 7. Settings
-*   **Alert Rules Engine**: Configure thresholds for active monitoring (e.g., "Alert if Session Cost > $5.00").
-*   **Toggle System**: Activate/Deactivate specific rules.
+*   **Alert Rules Engine**: Persisted alert CRUD (`POST/PATCH/DELETE /api/analytics/alerts`) for threshold-based monitoring.
+*   **Toggle System**: Activate/Deactivate alerts with backend persistence.
 
 ---
 
@@ -107,9 +107,10 @@ The primary unit of delivery. Aggregates:
 ### AgentSession
 The atomic unit of work. Contains:
 *   `logs`: The conversation and tool execution stream.
-*   `impactHistory`: Time-series data of code/test changes.
+*   `impactHistory`: Persisted time-series impact data (rehydrated from cache DB).
 *   `updatedFiles`: List of file modifications.
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
+*   `dates` / `timeline`: Persisted date metadata and event timeline.
 
 ### ProjectTask
 Represents a specific unit of implementation.
