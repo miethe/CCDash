@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { AlertConfig, Project } from '../types';
+import { analyticsService } from '../services/analytics';
 
 type SettingsTab = 'general' | 'projects' | 'alerts';
 
@@ -353,19 +354,64 @@ const ProjectsTab: React.FC = () => {
 // ── Alerts Tab ─────────────────────────────────────────────────────
 
 const AlertsTab: React.FC = () => {
-  const { alerts: apiAlerts } = useData();
+  const { alerts: apiAlerts, refreshAll } = useData();
   const [alerts, setAlerts] = useState<AlertConfig[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setAlerts(apiAlerts);
   }, [apiAlerts]);
 
-  const toggleAlert = (id: string) => {
-    setAlerts(alerts.map(a => a.id === id ? { ...a, isActive: !a.isActive } : a));
+  const toggleAlert = async (id: string) => {
+    const target = alerts.find(a => a.id === id);
+    if (!target) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await analyticsService.updateAlert(id, { isActive: !target.isActive });
+      setAlerts(alerts.map(a => a.id === id ? updated : a));
+      await refreshAll();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update alert');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const deleteAlert = (id: string) => {
-    setAlerts(alerts.filter(a => a.id !== id));
+  const deleteAlert = async (id: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await analyticsService.deleteAlert(id);
+      setAlerts(alerts.filter(a => a.id !== id));
+      await refreshAll();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete alert');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createAlert = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await analyticsService.createAlert({
+        name: `Alert ${alerts.length + 1}`,
+        metric: 'total_tokens',
+        operator: '>',
+        threshold: 1000,
+        isActive: true,
+        scope: 'session',
+      });
+      setAlerts([created, ...alerts]);
+      await refreshAll();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create alert');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -381,11 +427,21 @@ const AlertsTab: React.FC = () => {
               <p className="text-sm text-slate-400">Define conditions for system notifications.</p>
             </div>
           </div>
-          <button className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">
+          <button
+            onClick={createAlert}
+            disabled={saving}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+          >
             <Plus size={16} />
             New Alert
           </button>
         </div>
+
+        {error && (
+          <div className="px-6 py-3 bg-red-900/30 border-b border-red-700/50 text-red-300 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="divide-y divide-slate-800">
           {alerts.map((alert) => (
@@ -417,13 +473,13 @@ const AlertsTab: React.FC = () => {
                       type="checkbox"
                       className="sr-only peer"
                       checked={alert.isActive}
-                      onChange={() => toggleAlert(alert.id)}
+                      onChange={() => void toggleAlert(alert.id)}
                     />
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                   </label>
                 </div>
                 <button
-                  onClick={() => deleteAlert(alert.id)}
+                  onClick={() => void deleteAlert(alert.id)}
                   className="p-2 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
                 >
                   <Trash2 size={18} />

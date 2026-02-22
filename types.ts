@@ -54,7 +54,8 @@ export interface ToolUsage {
   name: string;
   count: number;
   successRate: number;
-  category: 'search' | 'edit' | 'test' | 'system';
+  category?: 'search' | 'edit' | 'test' | 'system';
+  totalMs?: number;
 }
 
 export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
@@ -278,8 +279,48 @@ export interface AnalyticsTrendPoint {
   metadata?: any;
 }
 
+export interface AnalyticsOverview {
+  kpis: {
+    sessionCost: number;
+    sessionTokens: number;
+    sessionCount: number;
+    sessionDurationAvg: number;
+    taskVelocity: number;
+    taskCompletionPct: number;
+    featureProgress: number;
+    toolCallCount: number;
+    toolSuccessRate: number;
+  };
+  topModels: Array<{ name: string; usage: number }>;
+  generatedAt: string;
+  range: {
+    start: string;
+    end: string;
+  };
+}
+
+export interface AnalyticsBreakdownItem {
+  name: string;
+  count: number;
+  tokens?: number;
+  cost?: number;
+}
+
+export interface AnalyticsCorrelationItem {
+  sessionId: string;
+  featureId: string;
+  featureName: string;
+  confidence: number;
+  linkStrategy?: string;
+  commitHash: string;
+  model: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+}
+
 // Alert System
-export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold';
+export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold' | string;
 export type AlertOperator = '>' | '<';
 
 export interface AlertConfig {

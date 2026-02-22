@@ -3,10 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw, LayoutGrid } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { analyticsService } from '../services/analytics';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -1868,33 +1869,55 @@ const AnalyticsDetailsModal: React.FC<{
 };
 
 const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
-    // Transform logs into cumulative timeline data
-    const timelineData = useMemo(() => {
-        let cumulativeTokens = 0;
-        return session.logs.map((log, index) => {
-            // Mock token estimation per step
-            const stepTokens = (log.content.length / 4) + (log.toolCall ? 100 : 0);
-            cumulativeTokens += stepTokens;
+    const [timelineData, setTimelineData] = useState<Array<{
+        index: number;
+        time: string;
+        tokens: number;
+        stepTokens: number;
+        agent?: string;
+    }>>([]);
 
-            // Map file edits to this timestamp if they exist
-            const fileUpdates = session.updatedFiles?.filter(f => {
-                // Approximate matching by index or timestamp string would be better in real app
-                // For mock, we'll just check if speaker is agent and index matches roughly
-                return log.speaker === 'agent' && Math.random() > 0.9;
-            });
-
-            return {
-                index,
-                time: log.timestamp,
-                tokens: Math.round(cumulativeTokens),
-                stepTokens: Math.round(stepTokens),
-                agent: log.agentName,
-                tool: log.toolCall ? log.toolCall.name : null,
-                fileCount: fileUpdates?.length || 0,
-                speaker: log.speaker
-            };
-        });
-    }, [session]);
+    useEffect(() => {
+        let mounted = true;
+        const loadSeries = async () => {
+            try {
+                const res = await analyticsService.getSeries({
+                    metric: 'session_tokens',
+                    period: 'point',
+                    sessionId: session.id,
+                    limit: 2000,
+                });
+                if (!mounted) return;
+                const points = (res.items || []).map((point, index) => ({
+                    index,
+                    time: String(point.captured_at || ''),
+                    tokens: Math.round(Number(point.value || 0)),
+                    stepTokens: Math.round(Number(point.metadata?.stepTokens || 0)),
+                    agent: String(point.metadata?.agent || ''),
+                }));
+                setTimelineData(points);
+            } catch (err) {
+                console.error('Failed to fetch token timeline:', err);
+                let cumulative = 0;
+                const fallback = (session.logs || []).map((log, index) => {
+                    const step = Number(log.metadata?.totalTokens || 0);
+                    cumulative += step;
+                    return {
+                        index,
+                        time: log.timestamp,
+                        tokens: cumulative,
+                        stepTokens: step,
+                        agent: log.agentName || '',
+                    };
+                }).filter(item => item.stepTokens > 0);
+                setTimelineData(fallback);
+            }
+        };
+        loadSeries();
+        return () => {
+            mounted = false;
+        };
+    }, [session.id, session.logs]);
 
     return (
         <div className="h-80 w-full relative">
@@ -1917,24 +1940,8 @@ const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
 
                     {/* Token Area */}
                     <Area type="monotone" dataKey="tokens" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTokens)" name="Cumulative Tokens" />
-
-                    {/* Tool Usage Scatter */}
-                    <Scatter name="Tool Used" dataKey="tool" fill="#f59e0b" shape="circle" />
-
-                    {/* File Edit Scatter (Using dummy value 1 for y-placement normalization, but ideally should be on timeline) */}
-                    {/* Note: Recharts scatter on composed chart is tricky with categorical data, simulating via customized dots on line if needed, 
-                        but for now relying on toolTip to show details */}
                 </ComposedChart>
             </ResponsiveContainer>
-
-            {/* Overlay Event Markers (Custom HTML overlay for better control than SVG scatter sometimes) */}
-            <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden">
-                {timelineData.filter(d => d.tool).map((d, i) => (
-                    <div key={`tool-${i}`} className="absolute bottom-2" style={{ left: `${(i / timelineData.length) * 100}%` }}>
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`Tool: ${d.tool}`} />
-                    </div>
-                ))}
-            </div>
         </div>
     );
 };
