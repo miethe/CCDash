@@ -1,1 +1,13 @@
-deployed = []
+[[deployed]]
+artifact_name = "add-animation"
+artifact_type = "command"
+from_collection = "default"
+deployed_at = "2026-02-22T12:19:57.507496"
+artifact_path = "commands/add-animation.md"
+content_hash = "5c0a200ddc01b3afe14bcd5f4ea20522efb479309c9fe761b94ad0455ecf4a0d"
+local_modifications = false
+merge_base_snapshot = "5c0a200ddc01b3afe14bcd5f4ea20522efb479309c9fe761b94ad0455ecf4a0d"
+deployment_profile_id = "claude"
+platform = "claude_code"
+profile_root_dir = ".claude"
+collection_sha = "5c0a200ddc01b3afe14bcd5f4ea20522efb479309c9fe761b94ad0455ecf4a0d"

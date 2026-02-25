@@ -17,6 +17,10 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "taskId": "",
             "status": "completed",
             "model": "claude-sonnet",
+            "platformType": "Claude Code",
+            "platformVersion": "2.1.52",
+            "platformVersions": ["2.1.52"],
+            "platformVersionTransitions": [],
             "durationSeconds": 1,
             "tokensIn": 1,
             "tokensOut": 1,
@@ -58,6 +62,14 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 **base,
                 "id": "S-opus-45",
                 "model": "claude-opus-4-5-20251101",
+                "platformVersions": ["2.1.51", "2.1.52"],
+                "platformVersionTransitions": [
+                    {
+                        "timestamp": "2026-02-16T00:00:00Z",
+                        "fromVersion": "2.1.51",
+                        "toVersion": "2.1.52",
+                    }
+                ],
                 "sessionType": "session",
                 "parentSessionId": None,
                 "rootSessionId": "S-opus-45",
@@ -126,6 +138,20 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "model_provider": "Claude",
                 "model_family": "Opus",
                 "model_version": "Opus 4.5",
+            },
+        )
+        self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
+
+    async def test_platform_filters_match_type_and_any_seen_version(self) -> None:
+        rows = await self.repo.list_paginated(
+            0,
+            50,
+            "project-1",
+            "started_at",
+            "desc",
+            {
+                "platform_type": "Claude Code",
+                "platform_version": "2.1.51",
             },
         )
         self.assertEqual([r["id"] for r in rows], ["S-opus-45"])

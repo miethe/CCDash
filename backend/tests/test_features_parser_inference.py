@@ -156,6 +156,50 @@ PRD body
             self.assertEqual(_frontmatter_status(plan_file), "completed")
             self.assertEqual(_frontmatter_status(prd_file), "inferred_complete")
 
+    def test_invalid_prd_frontmatter_skips_inferred_write_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            plan_file = docs_dir / "implementation_plans" / "features" / "feature-c-v1.md"
+            plan_file.write_text(
+                """---
+title: "Implementation Plan: Feature C"
+status: completed
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+
+            prd_file = docs_dir / "PRDs" / "features" / "feature-c-v1.md"
+            prd_file.write_text(
+                """---
+<<<<<<< ours
+schema_version: '1.1'
+=======
+schema_version: "1.1"
+>>>>>>> theirs
+status: draft
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("ccdash", level="WARNING") as captured:
+                features = scan_features(docs_dir, progress_dir)
+
+            self.assertEqual(len(features), 1)
+            self.assertEqual(features[0].status, "done")
+            self.assertTrue(any("Skipping inferred status write for" in line for line in captured.output))
+            self.assertTrue(any("Invalid YAML frontmatter" in line for line in captured.output))
+            self.assertIn("<<<<<<< ours", prd_file.read_text(encoding="utf-8"))
+
     def test_related_refs_do_not_cause_cross_feature_inferred_completion(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -219,6 +263,93 @@ PRD body
             self.assertEqual(_frontmatter_status(infra_prd), "inferred_complete")
             self.assertEqual(_frontmatter_status(ux_plan), "draft")
             self.assertEqual(_frontmatter_status(ux_prd), "draft")
+
+    def test_versioned_features_do_not_inherit_owned_docs_or_progress_from_base_slug(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features" / "agent-context-entities-v1").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            (progress_dir / "agent-context-entities").mkdir(parents=True, exist_ok=True)
+
+            plan_v1 = docs_dir / "implementation_plans" / "features" / "agent-context-entities-v1.md"
+            plan_v1.write_text(
+                """---
+title: "Implementation Plan: Agent Context Entities v1"
+status: in-progress
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            plan_v2 = docs_dir / "implementation_plans" / "features" / "agent-context-entities-v2.md"
+            plan_v2.write_text(
+                """---
+title: "Implementation Plan: Agent Context Entities v2"
+status: draft
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            phase_plan_v1 = docs_dir / "implementation_plans" / "features" / "agent-context-entities-v1" / "phase-1-core.md"
+            phase_plan_v1.write_text(
+                """---
+title: "Phase 1: Core"
+status: in-progress
+---
+Phase body
+""",
+                encoding="utf-8",
+            )
+            prd_v1 = docs_dir / "PRDs" / "features" / "agent-context-entities-v1.md"
+            prd_v1.write_text(
+                """---
+title: "PRD: Agent Context Entities v1"
+status: in-progress
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+            progress_v1 = progress_dir / "agent-context-entities" / "phase-1-progress.md"
+            progress_v1.write_text(
+                """---
+title: "Phase 1 Progress"
+status: in-progress
+phase: 1
+total_tasks: 1
+completed_tasks: 0
+tasks:
+  - id: TASK-1
+    title: "Implement route"
+    status: in-progress
+---
+Progress body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            by_id = {feature.id: feature for feature in features}
+            self.assertIn("agent-context-entities-v1", by_id)
+            self.assertIn("agent-context-entities-v2", by_id)
+
+            v1 = by_id["agent-context-entities-v1"]
+            v2 = by_id["agent-context-entities-v2"]
+
+            self.assertGreaterEqual(len(v1.phases), 1)
+            self.assertEqual(len(v2.phases), 0)
+
+            v2_impl_paths = {doc.filePath for doc in v2.linkedDocs if doc.docType == "implementation_plan"}
+            self.assertEqual(
+                v2_impl_paths,
+                {"docs/project_plans/implementation_plans/features/agent-context-entities-v2.md"},
+            )
+            self.assertFalse(any(doc.docType == "phase_plan" for doc in v2.linkedDocs))
+            self.assertFalse(any(doc.docType == "progress" for doc in v2.linkedDocs))
+            self.assertFalse(any(doc.docType == "prd" for doc in v2.linkedDocs))
 
     def test_lineage_parent_builds_related_feature_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

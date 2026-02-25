@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useData } from '../contexts/DataContext';
+import { useData, type SessionFilters } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw, LayoutGrid } from 'lucide-react';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 import { analyticsService } from '../services/analytics';
+import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -858,6 +859,22 @@ const TranscriptView: React.FC<{
     const commitHashes = useMemo(() => collectSessionCommitHashes(session), [session]);
     const displayedCommitHashes = commitHashes.slice(0, 6);
     const hiddenCommitCount = Math.max(0, commitHashes.length - displayedCommitHashes.length);
+    const platformType = (session.platformType || '').trim() || 'Claude Code';
+    const platformVersions = useMemo(() => {
+        const values: string[] = [];
+        (session.platformVersions || []).forEach(value => {
+            const normalized = String(value || '').trim();
+            if (normalized && !values.includes(normalized)) values.push(normalized);
+        });
+        const primary = (session.platformVersion || '').trim();
+        if (primary && !values.includes(primary)) values.push(primary);
+        return values;
+    }, [session.platformVersion, session.platformVersions]);
+    const latestPlatformVersion = platformVersions[platformVersions.length - 1] || '';
+    const platformVersionTransitions = useMemo(() => (
+        (session.platformVersionTransitions || [])
+            .filter(event => event && event.fromVersion && event.toVersion)
+    ), [session.platformVersionTransitions]);
 
     return (
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
@@ -985,6 +1002,31 @@ const TranscriptView: React.FC<{
                                 {formatModelDisplayName(session.model, session.modelDisplayName)}
                             </span>
                         </div>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Cpu size={14} /> Platform</div>
+                            <span
+                                className="text-[10px] font-mono text-amber-300 truncate max-w-[140px]"
+                                title={`${platformType}${latestPlatformVersion ? ` ${latestPlatformVersion}` : ''}`}
+                            >
+                                {latestPlatformVersion ? `${platformType} ${latestPlatformVersion}` : platformType}
+                            </span>
+                        </div>
+                        {platformVersions.length > 1 && (
+                            <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
+                                {platformVersions.length} versions seen in this session
+                            </div>
+                        )}
+                        {platformVersionTransitions.length > 0 && (
+                            <div className="pt-2 border-t border-slate-800/60 space-y-1.5">
+                                <div className="text-[9px] uppercase tracking-wider text-slate-500">Version Changes</div>
+                                {platformVersionTransitions.map((transition, idx) => (
+                                    <div key={`${transition.timestamp}-${idx}`} className="text-[10px] font-mono text-slate-300">
+                                        <span className="text-slate-500">{formatTimeAgo(transition.timestamp)}:</span>{' '}
+                                        {transition.fromVersion} {'->'} {transition.toVersion}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -2324,26 +2366,494 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
 
 // --- Main Container ---
 
+interface SessionModelFacet {
+    raw: string;
+    modelDisplayName: string;
+    modelProvider: string;
+    modelFamily: string;
+    modelVersion: string;
+    count: number;
+}
+
+interface SessionPlatformFacet {
+    platformType: string;
+    platformVersion: string;
+    count: number;
+}
+
+const MODEL_PROVIDER_ORDER = ['Claude', 'OpenAI', 'Gemini', 'Codex'];
+const MODEL_FAMILY_ORDER = ['Opus', 'Sonnet', 'Haiku', 'Codex'];
+
+const titleCaseToken = (value: string): string =>
+    value
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(token => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(' ');
+
+const inferProviderFromRawModel = (rawModel: string): string => {
+    const raw = (rawModel || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('claude')) return 'Claude';
+    if (raw.includes('gpt') || raw.includes('openai')) return 'OpenAI';
+    if (raw.includes('gemini')) return 'Gemini';
+    if (raw.includes('codex')) return 'Codex';
+    const token = raw.split(/[-_\s]+/).filter(Boolean)[0] || '';
+    return titleCaseToken(token);
+};
+
+const inferFamilyFromRawModel = (rawModel: string): string => {
+    const raw = (rawModel || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('opus')) return 'Opus';
+    if (raw.includes('sonnet')) return 'Sonnet';
+    if (raw.includes('haiku')) return 'Haiku';
+    if (raw.includes('codex')) return 'Codex';
+    const parts = raw.split(/[-_\s]+/).filter(Boolean);
+    return parts[1] ? titleCaseToken(parts[1]) : '';
+};
+
+const inferVersionFromRawModel = (rawModel: string, family: string): string => {
+    const tokens = (rawModel || '').toLowerCase().split(/[-_\s]+/).filter(Boolean);
+    const numericTokens = tokens.filter(token => /^\d+$/.test(token));
+    let numeric = '';
+    if (numericTokens.length >= 2) numeric = `${numericTokens[0]}.${numericTokens[1]}`;
+    else if (numericTokens.length === 1) numeric = numericTokens[0];
+
+    if (family && numeric) return `${family} ${numeric}`;
+    if (family) return family;
+    return numeric;
+};
+
+const normalizeModelFacet = (facet: SessionModelFacet): SessionModelFacet => {
+    const raw = (facet.raw || '').trim();
+    const provider = (facet.modelProvider || '').trim() || inferProviderFromRawModel(raw);
+    const family = (facet.modelFamily || '').trim() || inferFamilyFromRawModel(raw);
+    const version = (facet.modelVersion || '').trim() || inferVersionFromRawModel(raw, family);
+    const displayName = (facet.modelDisplayName || '').trim() || formatModelDisplayName(raw, '');
+    return {
+        raw,
+        modelDisplayName: displayName,
+        modelProvider: provider,
+        modelFamily: family,
+        modelVersion: version,
+        count: facet.count || 0,
+    };
+};
+
+const stripFamilyPrefix = (version: string, family: string): string => {
+    const normalizedVersion = (version || '').trim();
+    const normalizedFamily = (family || '').trim();
+    if (!normalizedVersion || !normalizedFamily) return normalizedVersion;
+    const prefixPattern = new RegExp(`^${normalizedFamily}\\s+`, 'i');
+    return normalizedVersion.replace(prefixPattern, '').trim() || normalizedVersion;
+};
+
+const compareByPreferredOrder = (left: string, right: string, preferred: string[]): number => {
+    const leftIdx = preferred.findIndex(value => value.toLowerCase() === left.toLowerCase());
+    const rightIdx = preferred.findIndex(value => value.toLowerCase() === right.toLowerCase());
+    const leftRank = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
+    const rightRank = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.localeCompare(right);
+};
+
+const versionParts = (value: string): number[] => {
+    const matches = (value || '').match(/\d+/g);
+    if (!matches) return [];
+    return matches.map(token => Number.parseInt(token, 10)).filter(num => Number.isFinite(num));
+};
+
+const compareVersionLabelsDesc = (left: string, right: string): number => {
+    const leftParts = versionParts(left);
+    const rightParts = versionParts(right);
+    const maxLength = Math.max(leftParts.length, rightParts.length);
+    for (let idx = 0; idx < maxLength; idx += 1) {
+        const leftPart = leftParts[idx] ?? -1;
+        const rightPart = rightParts[idx] ?? -1;
+        if (leftPart !== rightPart) return rightPart - leftPart;
+    }
+    return right.localeCompare(left);
+};
+
+const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFilters => {
+    const payload: SessionFilters = {
+        include_subagents: filters.include_subagents ?? true,
+    };
+
+    const stringKeys: Array<keyof SessionFilters> = [
+        'status',
+        'model',
+        'model_provider',
+        'model_family',
+        'model_version',
+        'platform_type',
+        'platform_version',
+        'root_session_id',
+        'start_date',
+        'end_date',
+        'created_start',
+        'created_end',
+        'completed_start',
+        'completed_end',
+        'updated_start',
+        'updated_end',
+    ];
+    stringKeys.forEach(key => {
+        const rawValue = filters[key];
+        const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+        if (value) payload[key] = value as any;
+    });
+
+    if (typeof filters.min_duration === 'number' && Number.isFinite(filters.min_duration)) {
+        payload.min_duration = filters.min_duration;
+    }
+    if (typeof filters.max_duration === 'number' && Number.isFinite(filters.max_duration)) {
+        payload.max_duration = filters.max_duration;
+    }
+
+    return payload;
+};
+
+const areSessionFiltersEqual = (left: Partial<SessionFilters>, right: Partial<SessionFilters>): boolean =>
+    JSON.stringify(buildSessionFilterPayload(left)) === JSON.stringify(buildSessionFilterPayload(right));
+
 const SessionFilterBar: React.FC = () => {
-    const { sessionFilters, setSessionFilters } = useData();
-    const [localFilters, setLocalFilters] = useState({ ...sessionFilters, include_subagents: sessionFilters.include_subagents ?? true });
+    const { sessionFilters, setSessionFilters, sessions } = useData();
+    const [localFilters, setLocalFilters] = useState<SessionFilters>(() => buildSessionFilterPayload(sessionFilters));
+    const [modelFacets, setModelFacets] = useState<SessionModelFacet[]>([]);
+    const [modelFacetsLoading, setModelFacetsLoading] = useState(false);
+    const [platformFacets, setPlatformFacets] = useState<SessionPlatformFacet[]>([]);
+    const [platformFacetsLoading, setPlatformFacetsLoading] = useState(false);
+    const [collapsedSections, setCollapsedSections] = useState({
+        general: true,
+        models: true,
+        dates: true,
+    });
 
-    // Debounce triggers
     useEffect(() => {
-        const timer = setTimeout(() => {
-            if (JSON.stringify(localFilters) !== JSON.stringify(sessionFilters)) {
-                setSessionFilters(localFilters);
-            }
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [localFilters, sessionFilters, setSessionFilters]);
+        setLocalFilters(prev => {
+            const next = buildSessionFilterPayload(sessionFilters);
+            return areSessionFiltersEqual(prev, next) ? prev : next;
+        });
+    }, [sessionFilters]);
 
-    const handleChange = (key: keyof typeof sessionFilters, value: any) => {
+    const handleChange = (key: keyof SessionFilters, value: any) => {
         setLocalFilters(prev => ({
             ...prev,
             [key]: typeof value === 'boolean' ? value : (value || undefined),
         }));
     };
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadModelFacets = async () => {
+            try {
+                setModelFacetsLoading(true);
+                const params = new URLSearchParams({
+                    include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
+                });
+                const response = await fetch(`/api/sessions/facets/models?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load session model facets (${response.status})`);
+                }
+                const payload = await response.json();
+                if (cancelled) return;
+                if (!Array.isArray(payload)) {
+                    setModelFacets([]);
+                    return;
+                }
+                setModelFacets(payload.map((item: any) => ({
+                    raw: String(item?.raw || ''),
+                    modelDisplayName: String(item?.modelDisplayName || ''),
+                    modelProvider: String(item?.modelProvider || ''),
+                    modelFamily: String(item?.modelFamily || ''),
+                    modelVersion: String(item?.modelVersion || ''),
+                    count: Number(item?.count || 0),
+                })));
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Failed to load session model facets', error);
+                    setModelFacets([]);
+                }
+            } finally {
+                if (!cancelled) setModelFacetsLoading(false);
+            }
+        };
+        void loadModelFacets();
+        return () => {
+            cancelled = true;
+        };
+    }, [localFilters.include_subagents]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadPlatformFacets = async () => {
+            try {
+                setPlatformFacetsLoading(true);
+                const params = new URLSearchParams({
+                    include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
+                });
+                const response = await fetch(`/api/sessions/facets/platforms?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load session platform facets (${response.status})`);
+                }
+                const payload = await response.json();
+                if (cancelled) return;
+                if (!Array.isArray(payload)) {
+                    setPlatformFacets([]);
+                    return;
+                }
+                setPlatformFacets(payload.map((item: any) => ({
+                    platformType: String(item?.platformType || 'Claude Code'),
+                    platformVersion: String(item?.platformVersion || ''),
+                    count: Number(item?.count || 0),
+                })));
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Failed to load session platform facets', error);
+                    setPlatformFacets([]);
+                }
+            } finally {
+                if (!cancelled) setPlatformFacetsLoading(false);
+            }
+        };
+        void loadPlatformFacets();
+        return () => {
+            cancelled = true;
+        };
+    }, [localFilters.include_subagents]);
+
+    const fallbackFacets = useMemo<SessionModelFacet[]>(() => {
+        const byRawModel = new Map<string, SessionModelFacet>();
+        sessions.forEach(session => {
+            const raw = (session.model || '').trim();
+            if (!raw) return;
+            const existing = byRawModel.get(raw);
+            if (existing) {
+                existing.count += 1;
+                return;
+            }
+            byRawModel.set(raw, {
+                raw,
+                modelDisplayName: session.modelDisplayName || '',
+                modelProvider: session.modelProvider || '',
+                modelFamily: session.modelFamily || '',
+                modelVersion: session.modelVersion || '',
+                count: 1,
+            });
+        });
+        return Array.from(byRawModel.values());
+    }, [sessions]);
+
+    const normalizedModelFacets = useMemo(() => {
+        const source = modelFacets.length > 0 ? modelFacets : fallbackFacets;
+        const byRaw = new Map<string, SessionModelFacet>();
+        source.forEach(item => {
+            const normalized = normalizeModelFacet(item);
+            if (!normalized.raw) return;
+            const existing = byRaw.get(normalized.raw);
+            if (existing) {
+                existing.count += normalized.count || 0;
+                return;
+            }
+            byRaw.set(normalized.raw, normalized);
+        });
+        return Array.from(byRaw.values());
+    }, [fallbackFacets, modelFacets]);
+
+    const fallbackPlatformFacets = useMemo<SessionPlatformFacet[]>(() => {
+        const byFacet = new Map<string, SessionPlatformFacet>();
+        sessions.forEach(session => {
+            const platformType = (session.platformType || '').trim() || 'Claude Code';
+            const versions: string[] = [];
+            (session.platformVersions || []).forEach(value => {
+                const normalized = String(value || '').trim();
+                if (normalized && !versions.includes(normalized)) versions.push(normalized);
+            });
+            const primaryVersion = (session.platformVersion || '').trim();
+            if (primaryVersion && !versions.includes(primaryVersion)) versions.unshift(primaryVersion);
+            versions.forEach(version => {
+                const key = `${platformType}::${version}`;
+                const existing = byFacet.get(key);
+                if (existing) {
+                    existing.count += 1;
+                    return;
+                }
+                byFacet.set(key, { platformType, platformVersion: version, count: 1 });
+            });
+        });
+        return Array.from(byFacet.values());
+    }, [sessions]);
+
+    const normalizedPlatformFacets = useMemo<SessionPlatformFacet[]>(() => {
+        const source = platformFacets.length > 0 ? platformFacets : fallbackPlatformFacets;
+        const byFacet = new Map<string, SessionPlatformFacet>();
+        source.forEach(facet => {
+            const platformType = (facet.platformType || '').trim() || 'Claude Code';
+            const platformVersion = (facet.platformVersion || '').trim();
+            if (!platformVersion) return;
+            const key = `${platformType}::${platformVersion}`;
+            const existing = byFacet.get(key);
+            if (existing) {
+                existing.count += facet.count || 0;
+                return;
+            }
+            byFacet.set(key, {
+                platformType,
+                platformVersion,
+                count: facet.count || 0,
+            });
+        });
+        return Array.from(byFacet.values());
+    }, [fallbackPlatformFacets, platformFacets]);
+
+    const platformTypeOptions = useMemo(() => {
+        const types = Array.from(new Set(
+            normalizedPlatformFacets
+                .map(facet => facet.platformType)
+                .filter(Boolean),
+        ));
+        return types.sort((left, right) => left.localeCompare(right));
+    }, [normalizedPlatformFacets]);
+
+    const platformVersionOptions = useMemo(() => {
+        const selectedPlatformType = (localFilters.platform_type || '').trim();
+        if (!selectedPlatformType) return [];
+        const values = Array.from(new Set(
+            normalizedPlatformFacets
+                .filter(facet => facet.platformType === selectedPlatformType)
+                .map(facet => facet.platformVersion)
+                .filter(Boolean),
+        ));
+        return values.sort(compareVersionLabelsDesc);
+    }, [localFilters.platform_type, normalizedPlatformFacets]);
+
+    const providerOptions = useMemo(() => {
+        const providers = Array.from(new Set(
+            normalizedModelFacets
+                .map(facet => facet.modelProvider)
+                .filter(Boolean),
+        ));
+        return providers.sort((left, right) => compareByPreferredOrder(left, right, MODEL_PROVIDER_ORDER));
+    }, [normalizedModelFacets]);
+
+    const familyOptions = useMemo(() => {
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        const families = Array.from(new Set(
+            normalizedModelFacets
+                .filter(facet => !selectedProvider || facet.modelProvider === selectedProvider)
+                .map(facet => facet.modelFamily)
+                .filter(Boolean),
+        ));
+        return families.sort((left, right) => compareByPreferredOrder(left, right, MODEL_FAMILY_ORDER));
+    }, [localFilters.model_provider, normalizedModelFacets]);
+
+    const versionOptions = useMemo(() => {
+        const selectedFamily = (localFilters.model_family || '').trim();
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        if (!selectedFamily) return [];
+
+        const byValue = new Map<string, { value: string; label: string }>();
+        normalizedModelFacets.forEach(facet => {
+            if (selectedProvider && facet.modelProvider !== selectedProvider) return;
+            if (facet.modelFamily !== selectedFamily) return;
+            const version = (facet.modelVersion || '').trim();
+            if (!version) return;
+            if (!byValue.has(version)) {
+                byValue.set(version, {
+                    value: version,
+                    label: stripFamilyPrefix(version, selectedFamily),
+                });
+            }
+        });
+
+        return Array.from(byValue.values()).sort((left, right) => compareVersionLabelsDesc(left.label, right.label));
+    }, [localFilters.model_family, localFilters.model_provider, normalizedModelFacets]);
+
+    const modelOptions = useMemo(() => {
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        const selectedFamily = (localFilters.model_family || '').trim();
+        const selectedVersion = (localFilters.model_version || '').trim();
+        if (!selectedFamily || !selectedVersion) return [];
+
+        const byRaw = new Map<string, { value: string; label: string }>();
+        normalizedModelFacets.forEach(facet => {
+            if (selectedProvider && facet.modelProvider !== selectedProvider) return;
+            if (facet.modelFamily !== selectedFamily) return;
+            if (facet.modelVersion !== selectedVersion) return;
+            if (!facet.raw) return;
+            if (!byRaw.has(facet.raw)) {
+                byRaw.set(facet.raw, {
+                    value: facet.raw,
+                    label: facet.modelDisplayName || facet.modelVersion || facet.raw,
+                });
+            }
+        });
+
+        return Array.from(byRaw.values()).sort((left, right) => left.label.localeCompare(right.label));
+    }, [localFilters.model_family, localFilters.model_provider, localFilters.model_version, normalizedModelFacets]);
+
+    const handlePlatformTypeChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            platform_type: value || undefined,
+            platform_version: undefined,
+        }));
+    };
+
+    const handlePlatformVersionChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            platform_version: value || undefined,
+        }));
+    };
+
+    const handleProviderChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_provider: value || undefined,
+            model_family: undefined,
+            model_version: undefined,
+            model: undefined,
+        }));
+    };
+
+    const handleFamilyChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_family: value || undefined,
+            model_version: undefined,
+            model: undefined,
+        }));
+    };
+
+    const handleVersionChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_version: value || undefined,
+            model: undefined,
+        }));
+    };
+
+    const toggleSection = (key: keyof typeof collapsedSections) => {
+        setCollapsedSections(prev => ({
+            ...prev,
+            [key]: !prev[key],
+        }));
+    };
+
+    const applyFilters = () => {
+        setSessionFilters(buildSessionFilterPayload(localFilters));
+    };
+
+    const clearFilters = () => {
+        const cleared: SessionFilters = { include_subagents: true };
+        setLocalFilters(cleared);
+        setSessionFilters(cleared);
+    };
+
+    const hasPendingChanges = !areSessionFiltersEqual(localFilters, sessionFilters);
 
     const hasActiveFilters = Boolean(
         localFilters.status
@@ -2351,6 +2861,8 @@ const SessionFilterBar: React.FC = () => {
         || localFilters.model_provider
         || localFilters.model_family
         || localFilters.model_version
+        || localFilters.platform_type
+        || localFilters.platform_version
         || localFilters.start_date
         || localFilters.end_date
         || localFilters.created_start
@@ -2362,177 +2874,240 @@ const SessionFilterBar: React.FC = () => {
         || localFilters.include_subagents === false
     );
 
+    const renderDateRangeControl = (label: string, startKey: keyof SessionFilters, endKey: keyof SessionFilters) => (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
+            <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                <input
+                    type="date"
+                    value={String(localFilters[startKey] || '')}
+                    onChange={e => handleChange(startKey, e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                />
+            </div>
+            <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                <input
+                    type="date"
+                    value={String(localFilters[endKey] || '')}
+                    onChange={e => handleChange(endKey, e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                />
+            </div>
+        </div>
+    );
+
     return (
-        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-4 items-center mb-6">
-            <div className="flex items-center gap-2 text-slate-400 text-sm font-bold uppercase tracking-wider">
-                <Filter size={14} /> Filters
-            </div>
+        <SidebarFiltersPortal>
+            <SidebarFiltersSection title="Filter Sessions">
+                <div className="space-y-2">
+                    <button
+                        onClick={() => toggleSection('general')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>General</span>
+                        {collapsedSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.general && (
+                        <div className="pl-1 space-y-2">
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Status</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.status || ''}
+                                    onChange={e => handleChange('status', e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    <option value="active">Active</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Activity size={12} className="text-slate-500" />
-                <select
-                    className="bg-transparent border-none text-xs text-slate-300 focus:ring-0 cursor-pointer outline-none"
-                    value={localFilters.status || ''}
-                    onChange={e => handleChange('status', e.target.value)}
-                >
-                    <option value="">All Statuses</option>
-                    <option value="active">Active</option>
-                    <option value="completed">Completed</option>
-                    <option value="failed">Failed</option>
-                </select>
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Platform</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.platform_type || ''}
+                                    onChange={e => handlePlatformTypeChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {platformTypeOptions.map(platformType => (
+                                        <option key={platformType} value={platformType}>{platformType}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Cpu size={12} className="text-slate-500" />
-                <input
-                    type="text"
-                    placeholder="Model..."
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-24"
-                    value={localFilters.model || ''}
-                    onChange={e => handleChange('model', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">CLI Ver</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.platform_version || ''}
+                                    onChange={e => handlePlatformVersionChange(e.target.value)}
+                                    disabled={!localFilters.platform_type}
+                                >
+                                    <option value="">
+                                        {localFilters.platform_type ? 'All' : 'Select platform first'}
+                                    </option>
+                                    {platformVersionOptions.map(version => (
+                                        <option key={version} value={version}>{version}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Provider (e.g. Claude)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
-                    value={localFilters.model_provider || ''}
-                    onChange={e => handleChange('model_provider', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Threads</label>
+                                <label className="inline-flex items-center gap-2 text-[11px] text-slate-300">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!localFilters.include_subagents}
+                                        onChange={e => handleChange('include_subagents', e.target.checked)}
+                                        className="accent-indigo-500"
+                                    />
+                                    Include subagents
+                                </label>
+                            </div>
+                        </div>
+                    )}
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Family (e.g. Opus)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-32"
-                    value={localFilters.model_family || ''}
-                    onChange={e => handleChange('model_family', e.target.value)}
-                />
-            </div>
+                    <button
+                        onClick={() => toggleSection('models')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>Model Fields</span>
+                        {collapsedSections.models ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.models && (
+                        <div className="pl-1 space-y-2">
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Provider</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.model_provider || ''}
+                                    onChange={e => handleProviderChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {providerOptions.map(provider => (
+                                        <option key={provider} value={provider}>{provider}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Version (e.g. Opus 4.5)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
-                    value={localFilters.model_version || ''}
-                    onChange={e => handleChange('model_version', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Family</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.model_family || ''}
+                                    onChange={e => handleFamilyChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {familyOptions.map(family => (
+                                        <option key={family} value={family}>{family}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <label className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
-                <input
-                    type="checkbox"
-                    checked={!!localFilters.include_subagents}
-                    onChange={e => handleChange('include_subagents', e.target.checked)}
-                    className="accent-indigo-500"
-                />
-                Show Sub-agents
-            </label>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Version</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.model_version || ''}
+                                    onChange={e => handleVersionChange(e.target.value)}
+                                    disabled={!localFilters.model_family}
+                                >
+                                    <option value="">
+                                        {localFilters.model_family ? 'All' : 'Select family first'}
+                                    </option>
+                                    {versionOptions.map(version => (
+                                        <option key={version.value} value={version.value}>{version.label}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Calendar size={12} className="text-slate-500" />
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.start_date || ''}
-                    onChange={e => handleChange('start_date', e.target.value)}
-                />
-                <span className="text-slate-600">-</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.end_date || ''}
-                    onChange={e => handleChange('end_date', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Model</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.model || ''}
+                                    onChange={e => handleChange('model', e.target.value)}
+                                    disabled={!localFilters.model_version}
+                                >
+                                    <option value="">
+                                        {localFilters.model_version ? 'All' : 'Select version first'}
+                                    </option>
+                                    {modelOptions.map(model => (
+                                        <option key={model.value} value={model.value}>{model.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    )}
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Created</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.created_start || ''}
-                    onChange={e => handleChange('created_start', e.target.value)}
-                />
-                <span className="text-slate-600">-</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.created_end || ''}
-                    onChange={e => handleChange('created_end', e.target.value)}
-                />
-            </div>
+                    <button
+                        onClick={() => toggleSection('dates')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>Date Ranges</span>
+                        {collapsedSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.dates && (
+                        <div className="pl-1 space-y-2">
+                            {renderDateRangeControl('Started', 'start_date', 'end_date')}
+                            {renderDateRangeControl('Created', 'created_start', 'created_end')}
+                            {renderDateRangeControl('Completed', 'completed_start', 'completed_end')}
+                            {renderDateRangeControl('Updated', 'updated_start', 'updated_end')}
+                        </div>
+                    )}
+                </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Completed</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.completed_start || ''}
-                    onChange={e => handleChange('completed_start', e.target.value)}
-                />
-                <span className="text-slate-600">-</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.completed_end || ''}
-                    onChange={e => handleChange('completed_end', e.target.value)}
-                />
-            </div>
+                <div className="mt-3 space-y-2">
+                    <p className="text-[10px] text-slate-500 leading-snug break-words">
+                        {modelFacetsLoading || platformFacetsLoading
+                            ? 'Loading model/platform history…'
+                            : `${normalizedModelFacets.length} model variants · ${normalizedPlatformFacets.length} platform versions`}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={clearFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-200 hover:bg-rose-500/25 hover:border-rose-400/50 disabled:opacity-40 disabled:hover:bg-rose-500/15 disabled:hover:border-rose-500/30"
+                            disabled={!hasActiveFilters}
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={applyFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/25 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-100 hover:bg-indigo-500/35 hover:border-indigo-400/60 disabled:opacity-40 disabled:hover:bg-indigo-500/25 disabled:hover:border-indigo-500/40"
+                            disabled={!hasPendingChanges}
+                        >
+                            Apply
+                        </button>
+                    </div>
+                </div>
+            </SidebarFiltersSection>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">Updated</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.updated_start || ''}
-                    onChange={e => handleChange('updated_start', e.target.value)}
-                />
-                <span className="text-slate-600">-</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.updated_end || ''}
-                    onChange={e => handleChange('updated_end', e.target.value)}
-                />
-            </div>
-
-            {hasActiveFilters && (
-                <button
-                    onClick={() => setLocalFilters({ include_subagents: true })}
-                    className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
-                >
-                    Clear
-                </button>
-            )}
-
-            <div className="ml-auto pl-4 border-l border-slate-800">
+            <SidebarFiltersSection title="Data Sync" icon={RefreshCw}>
                 <button
                     onClick={async () => {
                         try {
                             const btn = document.getElementById('force-sync-btn');
                             if (btn) btn.classList.add('animate-spin');
                             await fetch('/api/cache/rescan', { method: 'POST' });
-                            // Wait a bit for background task to start/finish some work
                             setTimeout(() => {
                                 window.location.reload();
                             }, 2000);
                         } catch (e) {
-                            console.error("Sync failed", e);
+                            console.error('Sync failed', e);
                         }
                     }}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
                     title="Force full project re-scan"
                 >
                     <RefreshCw size={14} id="force-sync-btn" />
-                    <span className="hidden sm:inline">Force Sync</span>
+                    <span>Force Sync</span>
                 </button>
-            </div>
-        </div>
+            </SidebarFiltersSection>
+        </SidebarFiltersPortal>
     );
 };
 

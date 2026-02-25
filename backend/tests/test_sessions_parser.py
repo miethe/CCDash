@@ -93,6 +93,80 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(message_logs[0].metadata.get("outputTokens"), 34)
         self.assertEqual(message_logs[0].metadata.get("totalTokens"), 46)
 
+    def test_platform_version_is_captured_and_transition_is_logged(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "version": "2.1.51",
+                    "message": {"role": "user", "content": "Start"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:01Z",
+                    "version": "2.1.51",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "content": [{"type": "text", "text": "Working"}],
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:02Z",
+                    "version": "2.1.52",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "content": [{"type": "text", "text": "Upgraded"}],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.platformType, "Claude Code")
+        self.assertEqual(session.platformVersion, "2.1.52")
+        self.assertEqual(session.platformVersions, ["2.1.51", "2.1.52"])
+        self.assertEqual(len(session.platformVersionTransitions), 1)
+        self.assertEqual(session.platformVersionTransitions[0].fromVersion, "2.1.51")
+        self.assertEqual(session.platformVersionTransitions[0].toVersion, "2.1.52")
+        self.assertTrue(session.platformVersionTransitions[0].sourceLogId)
+
+        transition_logs = [
+            log for log in session.logs
+            if log.type == "system" and log.metadata.get("eventType") == "platform-version-change"
+        ]
+        self.assertEqual(len(transition_logs), 1)
+
+    def test_platform_defaults_to_claude_code_when_unavailable(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "content": [{"type": "text", "text": "hello"}],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.platformType, "Claude Code")
+        self.assertEqual(session.platformVersion, "")
+        self.assertEqual(session.platformVersions, [])
+        self.assertEqual(session.platformVersionTransitions, [])
+
     def test_unmatched_tool_result_becomes_system_log(self) -> None:
         path = self._write_jsonl(
             [

@@ -119,6 +119,13 @@ export interface SessionModelInfo {
   modelVersion?: string;
 }
 
+export interface SessionPlatformTransition {
+  timestamp: string;
+  fromVersion: string;
+  toVersion: string;
+  sourceLogId?: string;
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
@@ -157,6 +164,10 @@ export interface AgentSession {
   modelFamily?: string;
   modelVersion?: string;
   modelsUsed?: SessionModelInfo[];
+  platformType?: string;
+  platformVersion?: string;
+  platformVersions?: string[];
+  platformVersionTransitions?: SessionPlatformTransition[];
   agentsUsed?: string[];
   skillsUsed?: string[];
   toolSummary?: string[];

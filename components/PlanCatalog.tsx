@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { PlanDocument } from '../types';
-import { FileText, Folder, LayoutGrid, List, Search, Filter, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
+import { FileText, Folder, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
+import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -383,21 +383,13 @@ export const PlanCatalog: React.FC = () => {
         return tree;
     }, [filteredDocs]);
 
-    // Sidebar Portal
-    const sidebarPortal = document.getElementById('sidebar-portal');
-
     // Handle tree Selection
     const activeDoc = activeFilePath ? filteredDocs.find(d => d.filePath === activeFilePath) : null;
 
     return (
         <div className="h-full flex flex-col relative">
-            {/* Sidebar Filters */}
-            {sidebarPortal && createPortal(
-                <div className="space-y-6 animate-in slide-in-from-left-4 duration-300">
-                    <div>
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                            <Filter size={12} /> Filter Documents
-                        </h3>
+            <SidebarFiltersPortal>
+                <SidebarFiltersSection title="Filter Documents">
                         <div className="relative">
                             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                             <input
@@ -446,63 +438,76 @@ export const PlanCatalog: React.FC = () => {
                             </div>
                             <div className="grid grid-cols-[56px_1fr] items-center gap-2">
                                 <label className="text-[10px] text-slate-500 uppercase tracking-wider">Created</label>
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        type="date"
-                                        value={createdFrom}
-                                        onChange={(e) => setCreatedFrom(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
-                                    <span className="text-slate-600 text-[10px]">-</span>
-                                    <input
-                                        type="date"
-                                        value={createdTo}
-                                        onChange={(e) => setCreatedTo(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
+                                <div className="space-y-1">
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                                        <input
+                                            type="date"
+                                            value={createdFrom}
+                                            onChange={(e) => setCreatedFrom(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                                        <input
+                                            type="date"
+                                            value={createdTo}
+                                            onChange={(e) => setCreatedTo(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                             <div className="grid grid-cols-[56px_1fr] items-center gap-2">
                                 <label className="text-[10px] text-slate-500 uppercase tracking-wider">Updated</label>
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        type="date"
-                                        value={updatedFrom}
-                                        onChange={(e) => setUpdatedFrom(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
-                                    <span className="text-slate-600 text-[10px]">-</span>
-                                    <input
-                                        type="date"
-                                        value={updatedTo}
-                                        onChange={(e) => setUpdatedTo(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
+                                <div className="space-y-1">
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                                        <input
+                                            type="date"
+                                            value={updatedFrom}
+                                            onChange={(e) => setUpdatedFrom(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                                        <input
+                                            type="date"
+                                            value={updatedTo}
+                                            onChange={(e) => setUpdatedTo(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                             <div className="grid grid-cols-[56px_1fr] items-center gap-2">
                                 <label className="text-[10px] text-slate-500 uppercase tracking-wider">Completed</label>
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        type="date"
-                                        value={completedFrom}
-                                        onChange={(e) => setCompletedFrom(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
-                                    <span className="text-slate-600 text-[10px]">-</span>
-                                    <input
-                                        type="date"
-                                        value={completedTo}
-                                        onChange={(e) => setCompletedTo(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                    />
+                                <div className="space-y-1">
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                                        <input
+                                            type="date"
+                                            value={completedFrom}
+                                            onChange={(e) => setCompletedFrom(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                                        <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                                        <input
+                                            type="date"
+                                            value={completedTo}
+                                            onChange={(e) => setCompletedTo(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>,
-                sidebarPortal
-            )}
+                </SidebarFiltersSection>
+            </SidebarFiltersPortal>
 
             {/* Page Header */}
             <div className="mb-6 flex justify-between items-center">

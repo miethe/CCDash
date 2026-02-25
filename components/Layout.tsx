@@ -32,7 +32,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     <div className="flex h-screen bg-slate-950 overflow-hidden">
       {/* Sidebar */}
       <aside
-        className={`border-r border-slate-800 bg-slate-900 flex flex-col shrink-0 transition-all duration-300 ease-in-out relative ${isCollapsed ? 'w-20' : 'w-64'
+        className={`border-r border-slate-800 bg-slate-900 flex flex-col shrink-0 transition-all duration-300 ease-in-out relative overflow-x-hidden ${isCollapsed ? 'w-20' : 'w-64'
           }`}
       >
         <div className="p-6 border-b border-slate-800 flex items-center justify-between overflow-hidden">
@@ -52,7 +52,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           <NavItem to="/" icon={LayoutDashboard} label="Overview" active={location.pathname === '/'} isCollapsed={isCollapsed} />
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
           <NavItem to="/plans" icon={FileText} label="Documents" active={location.pathname === '/plans'} isCollapsed={isCollapsed} />
@@ -62,7 +62,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <NavItem to="/analytics" icon={LineChart} label="Analytics" active={location.pathname === '/analytics'} isCollapsed={isCollapsed} />
           <NavItem to="/skills" icon={Database} label="SkillMeat Context" active={location.pathname === '/skills'} isCollapsed={isCollapsed} />
 
-          <div id="sidebar-portal" className={`mt-6 pt-6 border-t border-slate-800 empty:hidden ${isCollapsed ? 'hidden' : ''}`}></div>
+          <div id="sidebar-portal" className={`mt-6 pt-6 border-t border-slate-800 empty:hidden w-full min-w-0 overflow-x-hidden ${isCollapsed ? 'hidden' : ''}`}></div>
         </nav>
 
         <div className="p-4 border-t border-slate-800 space-y-1">

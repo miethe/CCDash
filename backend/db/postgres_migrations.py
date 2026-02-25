@@ -6,7 +6,7 @@ import asyncpg
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     task_id          TEXT DEFAULT '',
     status           TEXT DEFAULT 'completed',
     model            TEXT DEFAULT '',
+    platform_type    TEXT DEFAULT 'Claude Code',
+    platform_version TEXT DEFAULT '',
+    platform_versions_json TEXT DEFAULT '[]',
+    platform_version_transitions_json TEXT DEFAULT '[]',
     duration_seconds INTEGER DEFAULT 0,
     tokens_in        INTEGER DEFAULT 0,
     tokens_out       INTEGER DEFAULT 0,
@@ -464,6 +468,10 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "dates_json", "TEXT DEFAULT '{}'")
     await _ensure_column(db, "sessions", "timeline_json", "TEXT DEFAULT '[]'")
     await _ensure_column(db, "sessions", "impact_history_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
+    await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "platform_version_transitions_json", "TEXT DEFAULT '[]'")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")

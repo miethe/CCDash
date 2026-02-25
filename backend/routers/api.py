@@ -201,6 +201,22 @@ class SessionFeatureLink(BaseModel):
     commitHashes: list[str] = Field(default_factory=list)
     ambiguityShare: float = 0.0
 
+
+class SessionModelFacet(BaseModel):
+    raw: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
+    count: int = 0
+
+
+class SessionPlatformFacet(BaseModel):
+    platformType: str = "Claude Code"
+    platformVersion: str = ""
+    count: int = 0
+
+
 # ── Sessions router ─────────────────────────────────────────────────
 
 sessions_router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -217,6 +233,8 @@ async def list_sessions(
     model_provider: str | None = Query(None, description="Filter by model provider"),
     model_family: str | None = Query(None, description="Filter by model family"),
     model_version: str | None = Query(None, description="Filter by model version"),
+    platform_type: str | None = Query(None, description="Filter by agent platform type"),
+    platform_version: str | None = Query(None, description="Filter by agent platform version"),
     include_subagents: bool = Query(False, description="Include subagent sessions in list results"),
     root_session_id: str | None = Query(None, description="Filter to a specific root thread family"),
     start_date: str | None = Query(None, description="ISO timestamp for start range"),
@@ -246,6 +264,8 @@ async def list_sessions(
     if model_provider: filters["model_provider"] = model_provider
     if model_family: filters["model_family"] = model_family
     if model_version: filters["model_version"] = model_version
+    if platform_type: filters["platform_type"] = platform_type
+    if platform_version: filters["platform_version"] = platform_version
     filters["include_subagents"] = include_subagents
     if root_session_id: filters["root_session_id"] = root_session_id
     if start_date: filters["start_date"] = start_date
@@ -291,6 +311,20 @@ async def list_sessions(
         session_metadata = classify_session_key_metadata(command_events, mappings)
         model_identity = derive_model_identity(s.get("model"))
         session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+        platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+        platform_version_value = str(s.get("platform_version") or "").strip()
+        raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
+        platform_versions: list[str] = []
+        for value in raw_platform_versions:
+            raw = str(value or "").strip()
+            if raw and raw not in platform_versions:
+                platform_versions.append(raw)
+        if platform_version_value and platform_version_value not in platform_versions:
+            platform_versions.insert(0, platform_version_value)
+        platform_version_transitions = [
+            event for event in _safe_json_list(s.get("platform_version_transitions_json"))
+            if isinstance(event, dict)
+        ]
 
         results.append(AgentSession(
             id=s["id"],
@@ -303,6 +337,10 @@ async def list_sessions(
             modelFamily=model_identity["modelFamily"],
             modelVersion=model_identity["modelVersion"],
             modelsUsed=badge_data["modelsUsed"],
+            platformType=platform_type_value,
+            platformVersion=platform_version_value,
+            platformVersions=platform_versions,
+            platformVersionTransitions=platform_version_transitions,
             agentsUsed=badge_data["agentsUsed"],
             skillsUsed=badge_data["skillsUsed"],
             toolSummary=badge_data["toolSummary"],
@@ -340,6 +378,59 @@ async def list_sessions(
         offset=offset,
         limit=limit
     )
+
+
+@sessions_router.get("/facets/models", response_model=list[SessionModelFacet])
+async def get_session_model_facets(
+    include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+):
+    """Return normalized model facets for Session Forensics filters."""
+    project = project_manager.get_active_project()
+    if not project:
+        return []
+
+    db = await connection.get_connection()
+    repo = get_session_repository(db)
+    rows = await repo.get_model_facets(project.id, include_subagents=include_subagents)
+
+    items: list[SessionModelFacet] = []
+    for row in rows:
+        raw_model = str(row.get("model") or "")
+        identity = derive_model_identity(raw_model)
+        items.append(
+            SessionModelFacet(
+                raw=raw_model,
+                modelDisplayName=identity["modelDisplayName"],
+                modelProvider=identity["modelProvider"],
+                modelFamily=identity["modelFamily"],
+                modelVersion=identity["modelVersion"],
+                count=int(row.get("count") or 0),
+            )
+        )
+    return items
+
+
+@sessions_router.get("/facets/platforms", response_model=list[SessionPlatformFacet])
+async def get_session_platform_facets(
+    include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+):
+    """Return platform facets for Session Forensics platform filters."""
+    project = project_manager.get_active_project()
+    if not project:
+        return []
+
+    db = await connection.get_connection()
+    repo = get_session_repository(db)
+    rows = await repo.get_platform_facets(project.id, include_subagents=include_subagents)
+
+    return [
+        SessionPlatformFacet(
+            platformType=str(row.get("platform_type") or "Claude Code").strip() or "Claude Code",
+            platformVersion=str(row.get("platform_version") or "").strip(),
+            count=int(row.get("count") or 0),
+        )
+        for row in rows
+    ]
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)
@@ -423,6 +514,20 @@ async def get_session(session_id: str):
     session_metadata = classify_session_key_metadata(command_events, mappings)
     model_identity = derive_model_identity(s.get("model"))
     session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+    platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+    platform_version_value = str(s.get("platform_version") or "").strip()
+    raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
+    platform_versions: list[str] = []
+    for value in raw_platform_versions:
+        raw = str(value or "").strip()
+        if raw and raw not in platform_versions:
+            platform_versions.append(raw)
+    if platform_version_value and platform_version_value not in platform_versions:
+        platform_versions.insert(0, platform_version_value)
+    platform_version_transitions = [
+        event for event in _safe_json_list(s.get("platform_version_transitions_json"))
+        if isinstance(event, dict)
+    ]
         
     # Tools
     tool_usage = []
@@ -476,6 +581,10 @@ async def get_session(session_id: str):
         modelFamily=model_identity["modelFamily"],
         modelVersion=model_identity["modelVersion"],
         modelsUsed=badge_data["modelsUsed"],
+        platformType=platform_type_value,
+        platformVersion=platform_version_value,
+        platformVersions=platform_versions,
+        platformVersionTransitions=platform_version_transitions,
         agentsUsed=badge_data["agentsUsed"],
         skillsUsed=badge_data["skillsUsed"],
         toolSummary=badge_data["toolSummary"],

@@ -16,6 +16,7 @@ from backend.models import (
     SessionArtifact,
     SessionFileUpdate,
     SessionLog,
+    SessionPlatformTransition,
     ToolCallInfo,
     ToolUsage,
 )
@@ -410,6 +411,14 @@ def _parse_task_notification(raw_text: str) -> dict[str, str]:
     return details
 
 
+def _detect_platform_type(entry: dict[str, Any]) -> str:
+    for key in ("platformType", "platform", "clientName", "client", "agentPlatform"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "Claude Code"
+
+
 def _classify_file_type(path: str) -> str:
     lowered = path.lower()
     basename = lowered.rsplit("/", 1)[-1]
@@ -495,6 +504,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
     task_id = ""
     model = ""
+    platform_type = "Claude Code"
+    platform_version = ""
+    platform_versions: list[str] = []
+    platform_versions_seen: set[str] = set()
+    platform_version_transitions: list[SessionPlatformTransition] = []
     git_branch = ""
     git_author = ""
     git_commit = ""
@@ -677,6 +691,42 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     source_tool_name=None,
                 )
 
+    def record_platform_version(version_value: str, timestamp: str) -> None:
+        nonlocal platform_version
+        normalized = str(version_value or "").strip()
+        if not normalized:
+            return
+        if normalized not in platform_versions_seen:
+            platform_versions_seen.add(normalized)
+            platform_versions.append(normalized)
+        if not platform_version:
+            platform_version = normalized
+            return
+        if normalized == platform_version:
+            return
+
+        transition_timestamp = timestamp or last_ts or first_ts or ""
+        transition = SessionPlatformTransition(
+            timestamp=transition_timestamp,
+            fromVersion=platform_version,
+            toVersion=normalized,
+        )
+        transition_log_idx = append_log(
+            timestamp=transition_timestamp,
+            speaker="system",
+            type="system",
+            content=f"Platform version changed: {platform_version} -> {normalized}",
+            metadata={
+                "eventType": "platform-version-change",
+                "platformType": platform_type,
+                "fromVersion": platform_version,
+                "toVersion": normalized,
+            },
+        )
+        transition.sourceLogId = logs[transition_log_idx].id
+        platform_version_transitions.append(transition)
+        platform_version = normalized
+
     def extract_async_task_agent_id(tool_use_result: Any, output_text: str) -> str:
         if isinstance(tool_use_result, dict):
             raw_agent_id = tool_use_result.get("agentId")
@@ -735,6 +785,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
     for entry in entries:
         entry_type = entry.get("type", "")
         current_ts = entry.get("timestamp", "")
+        platform_type = _detect_platform_type(entry) or platform_type
+        record_platform_version(str(entry.get("version") or ""), current_ts)
         if current_ts and not first_ts:
             first_ts = current_ts
         if current_ts:
@@ -1304,12 +1356,28 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "source": "session",
             "description": "Last session log event",
         })
+    for index, transition in enumerate(platform_version_transitions):
+        if not transition.timestamp:
+            continue
+        timeline.append({
+            "id": f"platform-version-change-{index + 1}",
+            "timestamp": transition.timestamp,
+            "label": f"Platform Version Changed ({transition.fromVersion} -> {transition.toVersion})",
+            "kind": "platform-version-change",
+            "confidence": "high",
+            "source": "session",
+            "description": "Session event stream reported a platform version change",
+        })
 
     return AgentSession(
         id=session_id,
         taskId=task_id,
         status=session_status,
         model=model,
+        platformType=platform_type,
+        platformVersion=platform_version,
+        platformVersions=platform_versions,
+        platformVersionTransitions=platform_version_transitions,
         sessionType=session_type,
         parentSessionId=parent_session_id or None,
         rootSessionId=root_session_id,

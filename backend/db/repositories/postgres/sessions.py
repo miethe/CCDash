@@ -22,15 +22,20 @@ class PostgresSessionRepository:
         query = """
             INSERT INTO sessions (
                 id, project_id, task_id, status, model,
+                platform_type, platform_version, platform_versions_json, platform_version_transitions_json,
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
+                platform_type=EXCLUDED.platform_type,
+                platform_version=EXCLUDED.platform_version,
+                platform_versions_json=EXCLUDED.platform_versions_json,
+                platform_version_transitions_json=EXCLUDED.platform_version_transitions_json,
                 duration_seconds=EXCLUDED.duration_seconds,
                 tokens_in=EXCLUDED.tokens_in, tokens_out=EXCLUDED.tokens_out,
                 total_cost=EXCLUDED.total_cost,
@@ -55,6 +60,10 @@ class PostgresSessionRepository:
             session_data.get("taskId", ""),
             session_data.get("status", "completed"),
             session_data.get("model", ""),
+            session_data.get("platformType", "Claude Code"),
+            session_data.get("platformVersion", ""),
+            json.dumps(session_data.get("platformVersions", []) or []),
+            json.dumps(session_data.get("platformVersionTransitions", []) or []),
             session_data.get("durationSeconds", 0),
             session_data.get("tokensIn", 0),
             session_data.get("tokensOut", 0),
@@ -133,6 +142,17 @@ class PostgresSessionRepository:
                     where_parts.append(f"model ILIKE ${idx}")
                     params.append(f"%{token}%")
                     idx += 1
+        if filters.get("platform_type"):
+            where_parts.append(f"LOWER(COALESCE(NULLIF(TRIM(platform_type), ''), 'Claude Code')) = LOWER(${idx})")
+            params.append(str(filters["platform_type"]))
+            idx += 1
+        if filters.get("platform_version"):
+            version = str(filters["platform_version"]).strip()
+            if version:
+                where_parts.append(f"(platform_version = ${idx} OR platform_versions_json ILIKE ${idx + 1})")
+                params.append(version)
+                params.append(f'%"{version}"%')
+                idx += 2
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -230,6 +250,17 @@ class PostgresSessionRepository:
                     where_parts.append(f"model ILIKE ${idx}")
                     params.append(f"%{token}%")
                     idx += 1
+        if filters.get("platform_type"):
+            where_parts.append(f"LOWER(COALESCE(NULLIF(TRIM(platform_type), ''), 'Claude Code')) = LOWER(${idx})")
+            params.append(str(filters["platform_type"]))
+            idx += 1
+        if filters.get("platform_version"):
+            version = str(filters["platform_version"]).strip()
+            if version:
+                where_parts.append(f"(platform_version = ${idx} OR platform_versions_json ILIKE ${idx + 1})")
+                params.append(version)
+                params.append(f'%"{version}"%')
+                idx += 2
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -282,6 +313,89 @@ class PostgresSessionRepository:
             where = " WHERE " + " AND ".join(where_parts)
         val = await self.db.fetchval(f"SELECT COUNT(*) FROM sessions{where}", *params)
         return val or 0
+
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+        where_parts: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
+        params: list[Any] = []
+        idx = 1
+
+        if project_id:
+            where_parts.append(f"project_id = ${idx}")
+            params.append(project_id)
+            idx += 1
+        if not include_subagents:
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        where = ""
+        if where_parts:
+            where = " WHERE " + " AND ".join(where_parts)
+
+        rows = await self.db.fetch(
+            f"""
+            SELECT model, COUNT(*)::int AS count
+            FROM sessions
+            {where}
+            GROUP BY model
+            ORDER BY count DESC, model ASC
+            """,
+            *params,
+        )
+        return [dict(row) for row in rows]
+
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        idx = 1
+
+        if project_id:
+            where_parts.append(f"project_id = ${idx}")
+            params.append(project_id)
+            idx += 1
+        if not include_subagents:
+            where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        where = ""
+        if where_parts:
+            where = " WHERE " + " AND ".join(where_parts)
+
+        rows = await self.db.fetch(
+            f"""
+            SELECT platform_type, platform_version, platform_versions_json
+            FROM sessions
+            {where}
+            """,
+            *params,
+        )
+
+        counts: dict[tuple[str, str], int] = {}
+        for row in rows:
+            row_dict = dict(row)
+            platform_type = str(row_dict.get("platform_type") or "").strip() or "Claude Code"
+            versions: set[str] = set()
+            primary = str(row_dict.get("platform_version") or "").strip()
+            if primary:
+                versions.add(primary)
+            raw_versions = row_dict.get("platform_versions_json")
+            if isinstance(raw_versions, str) and raw_versions.strip():
+                try:
+                    parsed = json.loads(raw_versions)
+                except Exception:
+                    parsed = []
+                if isinstance(parsed, list):
+                    for value in parsed:
+                        version = str(value or "").strip()
+                        if version:
+                            versions.add(version)
+            for version in versions:
+                key = (platform_type, version)
+                counts[key] = counts.get(key, 0) + 1
+
+        items = [
+            {"platform_type": key[0], "platform_version": key[1], "count": count}
+            for key, count in counts.items()
+        ]
+        items.sort(key=lambda item: (-item["count"], item["platform_type"].lower(), item["platform_version"].lower()))
+        return items
 
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = $1", source_file)

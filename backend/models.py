@@ -112,6 +112,13 @@ class SessionModelInfo(BaseModel):
     modelVersion: str = ""
 
 
+class SessionPlatformTransition(BaseModel):
+    timestamp: str = ""
+    fromVersion: str = ""
+    toVersion: str = ""
+    sourceLogId: Optional[str] = None
+
+
 class ImpactPoint(BaseModel):
     timestamp: str
     label: str
@@ -145,6 +152,10 @@ class AgentSession(BaseModel):
     modelFamily: str = ""
     modelVersion: str = ""
     modelsUsed: list[SessionModelInfo] = Field(default_factory=list)
+    platformType: str = "Claude Code"
+    platformVersion: str = ""
+    platformVersions: list[str] = Field(default_factory=list)
+    platformVersionTransitions: list[SessionPlatformTransition] = Field(default_factory=list)
     agentsUsed: list[str] = Field(default_factory=list)
     skillsUsed: list[str] = Field(default_factory=list)
     toolSummary: list[str] = Field(default_factory=list)

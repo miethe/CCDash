@@ -1,11 +1,11 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
+import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, ArrowUpDown, CheckCircle2, Circle, CircleDashed, Layers, Box,
@@ -2336,18 +2336,11 @@ export const ProjectBoard: React.FC = () => {
     }
   }, [apiFeatures, selectedFeature]);
 
-  const sidebarPortal = document.getElementById('sidebar-portal');
-
   return (
     <div className="h-full flex flex-col relative">
 
-      {/* Sidebar Filters */}
-      {sidebarPortal && createPortal(
-        <div className="space-y-6 animate-in slide-in-from-left-4 duration-300">
-          <div>
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Filter size={12} /> Filters
-            </h3>
+      <SidebarFiltersPortal>
+          <SidebarFiltersSection title="Filters" icon={Filter}>
             <div className="space-y-3">
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -2393,84 +2386,101 @@ export const ProjectBoard: React.FC = () => {
               <div className="space-y-2 pt-1 border-t border-slate-800/60">
                 <div>
                   <label className="text-[10px] text-slate-500 mb-1 block">Planned</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={plannedFrom}
-                      onChange={e => setPlannedFrom(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                    <span className="text-slate-600 text-[10px]">-</span>
-                    <input
-                      type="date"
-                      value={plannedTo}
-                      onChange={e => setPlannedTo(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={plannedFrom}
+                        onChange={e => setPlannedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={plannedTo}
+                        onChange={e => setPlannedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <label className="text-[10px] text-slate-500 mb-1 block">Started</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={startedFrom}
-                      onChange={e => setStartedFrom(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                    <span className="text-slate-600 text-[10px]">-</span>
-                    <input
-                      type="date"
-                      value={startedTo}
-                      onChange={e => setStartedTo(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={startedFrom}
+                        onChange={e => setStartedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={startedTo}
+                        onChange={e => setStartedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <label className="text-[10px] text-slate-500 mb-1 block">Completed</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={completedFrom}
-                      onChange={e => setCompletedFrom(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                    <span className="text-slate-600 text-[10px]">-</span>
-                    <input
-                      type="date"
-                      value={completedTo}
-                      onChange={e => setCompletedTo(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={completedFrom}
+                        onChange={e => setCompletedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={completedTo}
+                        onChange={e => setCompletedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <label className="text-[10px] text-slate-500 mb-1 block">Updated</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={updatedFrom}
-                      onChange={e => setUpdatedFrom(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                    <span className="text-slate-600 text-[10px]">-</span>
-                    <input
-                      type="date"
-                      value={updatedTo}
-                      onChange={e => setUpdatedTo(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={updatedFrom}
+                        onChange={e => setUpdatedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={updatedTo}
+                        onChange={e => setUpdatedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </SidebarFiltersSection>
 
-          <div>
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <ArrowUpDown size={12} /> Sort
-            </h3>
+          <SidebarFiltersSection title="Sort" icon={ArrowUpDown}>
             <div className="flex flex-col gap-1.5">
               {[
                 { key: 'date', label: 'Recent' },
@@ -2486,10 +2496,8 @@ export const ProjectBoard: React.FC = () => {
                 </button>
               ))}
             </div>
-          </div>
-        </div>,
-        sidebarPortal,
-      )}
+          </SidebarFiltersSection>
+      </SidebarFiltersPortal>
 
       {/* Page Header */}
       <div className="mb-6 flex justify-between items-center">

@@ -21,15 +21,20 @@ class SqliteSessionRepository:
         await self.db.execute(
             """INSERT INTO sessions (
                 id, project_id, task_id, status, model,
+                platform_type, platform_version, platform_versions_json, platform_version_transitions_json,
                 duration_seconds, tokens_in, tokens_out, total_cost,
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
+                platform_type=excluded.platform_type,
+                platform_version=excluded.platform_version,
+                platform_versions_json=excluded.platform_versions_json,
+                platform_version_transitions_json=excluded.platform_version_transitions_json,
                 duration_seconds=excluded.duration_seconds,
                 tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out,
                 total_cost=excluded.total_cost,
@@ -53,6 +58,10 @@ class SqliteSessionRepository:
                 session_data.get("taskId", ""),
                 session_data.get("status", "completed"),
                 session_data.get("model", ""),
+                session_data.get("platformType", "Claude Code"),
+                session_data.get("platformVersion", ""),
+                json.dumps(session_data.get("platformVersions", []) or []),
+                json.dumps(session_data.get("platformVersionTransitions", []) or []),
                 session_data.get("durationSeconds", 0),
                 session_data.get("tokensIn", 0),
                 session_data.get("tokensOut", 0),
@@ -136,6 +145,15 @@ class SqliteSessionRepository:
                 for token in tokens:
                     where_clauses.append("model LIKE ?")
                     params.append(f"%{token}%")
+        if filters.get("platform_type"):
+            where_clauses.append("LOWER(COALESCE(NULLIF(TRIM(platform_type), ''), 'Claude Code')) = LOWER(?)")
+            params.append(str(filters["platform_type"]))
+        if filters.get("platform_version"):
+            version = str(filters["platform_version"]).strip()
+            if version:
+                where_clauses.append("(platform_version = ? OR platform_versions_json LIKE ?)")
+                params.append(version)
+                params.append(f'%"{version}"%')
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -224,6 +242,15 @@ class SqliteSessionRepository:
                 for token in tokens:
                     where_clauses.append("model LIKE ?")
                     params.append(f"%{token}%")
+        if filters.get("platform_type"):
+            where_clauses.append("LOWER(COALESCE(NULLIF(TRIM(platform_type), ''), 'Claude Code')) = LOWER(?)")
+            params.append(str(filters["platform_type"]))
+        if filters.get("platform_version"):
+            version = str(filters["platform_version"]).strip()
+            if version:
+                where_clauses.append("(platform_version = ? OR platform_versions_json LIKE ?)")
+                params.append(version)
+                params.append(f'%"{version}"%')
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
         if filters.get("root_session_id"):
@@ -268,6 +295,79 @@ class SqliteSessionRepository:
         async with self.db.execute(query, tuple(params)) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
+
+    async def get_model_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+        query_parts = [
+            "SELECT model, COUNT(*) AS count",
+            "FROM sessions",
+        ]
+        params: list[str] = []
+        where_clauses: list[str] = ["TRIM(COALESCE(model, '')) != ''"]
+
+        if project_id:
+            where_clauses.append("project_id = ?")
+            params.append(project_id)
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        if where_clauses:
+            query_parts.append("WHERE " + " AND ".join(where_clauses))
+        query_parts.append("GROUP BY model")
+        query_parts.append("ORDER BY count DESC, model ASC")
+
+        query = " ".join(query_parts)
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            return [{"model": row[0], "count": int(row[1] or 0)} for row in rows]
+
+    async def get_platform_facets(self, project_id: str | None = None, include_subagents: bool = True) -> list[dict]:
+        query_parts = [
+            "SELECT platform_type, platform_version, platform_versions_json",
+            "FROM sessions",
+        ]
+        params: list[str] = []
+        where_clauses: list[str] = []
+
+        if project_id:
+            where_clauses.append("project_id = ?")
+            params.append(project_id)
+        if not include_subagents:
+            where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+
+        if where_clauses:
+            query_parts.append("WHERE " + " AND ".join(where_clauses))
+
+        query = " ".join(query_parts)
+        counts: dict[tuple[str, str], int] = {}
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            for row in rows:
+                platform_type = str(row[0] or "").strip() or "Claude Code"
+                versions: set[str] = set()
+                primary = str(row[1] or "").strip()
+                if primary:
+                    versions.add(primary)
+                raw_versions = row[2]
+                if isinstance(raw_versions, str) and raw_versions.strip():
+                    try:
+                        parsed = json.loads(raw_versions)
+                    except Exception:
+                        parsed = []
+                    if isinstance(parsed, list):
+                        for value in parsed:
+                            version = str(value or "").strip()
+                            if version:
+                                versions.add(version)
+                for version in versions:
+                    key = (platform_type, version)
+                    counts[key] = counts.get(key, 0) + 1
+
+        items = [
+            {"platform_type": key[0], "platform_version": key[1], "count": count}
+            for key, count in counts.items()
+        ]
+        items.sort(key=lambda item: (-item["count"], item["platform_type"].lower(), item["platform_version"].lower()))
+        return items
 
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = ?", (source_file,))

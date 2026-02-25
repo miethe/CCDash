@@ -33,7 +33,7 @@ from backend.document_linking import (
     normalize_doc_status,
     normalize_ref_path,
 )
-from backend.parsers.status_writer import update_frontmatter_field
+from backend.parsers.status_writer import FrontmatterParseError, update_frontmatter_field
 from backend.date_utils import (
     choose_earliest,
     choose_first,
@@ -861,14 +861,18 @@ def _feature_aliases(feature: Feature) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
-def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool:
+def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str], feature_id: str) -> bool:
     feature_bases = {_base_slug(alias) for alias in feature_aliases if alias}
+    feature_token = (feature_id or "").strip().lower()
     doc_type = str(doc.get("docType") or "").strip().lower()
+    is_owned_doc = doc_type in _DOC_WRITE_THROUGH_TYPES or doc_type == "progress"
 
     def _matches_feature(candidate: str) -> bool:
         value = (candidate or "").strip().lower()
         if not value:
             return False
+        if is_owned_doc:
+            return bool(feature_token) and value == feature_token
         return value in feature_aliases or _base_slug(value) in feature_bases
 
     doc_path = str(doc.get("filePath") or "")
@@ -892,18 +896,16 @@ def _doc_matches_feature(doc: dict[str, Any], feature_aliases: set[str]) -> bool
 
 
 def _doc_owned_by_feature(doc: LinkedDocument, feature_id: str) -> bool:
-    feature_base = _base_slug(feature_id)
+    feature_token = (feature_id or "").strip().lower()
+    if not feature_token:
+        return False
 
     path_feature_slug = feature_slug_from_path(str(doc.filePath or ""))
     if path_feature_slug:
-        return _base_slug(path_feature_slug) == feature_base
+        return path_feature_slug == feature_token
 
     doc_slug = (doc.slug or Path(doc.filePath).stem).strip().lower()
-    if doc_slug and _base_slug(doc_slug) == feature_base:
-        return True
-
-    canonical = str(doc.canonicalSlug or "").strip().lower()
-    if canonical and _base_slug(canonical) == feature_base:
+    if doc_slug and doc_slug == feature_token:
         return True
 
     return False
@@ -1165,6 +1167,8 @@ def _reconcile_completion_equivalence(features: list[Feature], project_root: Pat
                 update_frontmatter_field(absolute_path, "status", _INFERRED_COMPLETE_STATUS)
                 status_cache[normalized] = _INFERRED_COMPLETE_STATUS
                 write_updates += 1
+            except FrontmatterParseError as exc:
+                logger.warning("Skipping inferred status write for %s: %s", absolute_path, exc)
             except Exception:
                 logger.exception("Failed to write inferred status for %s", absolute_path)
 
@@ -1460,7 +1464,7 @@ def scan_features(
             file_path = str(doc.get("filePath") or "")
             if not file_path or file_path in existing_paths:
                 continue
-            if not _doc_matches_feature(doc, aliases):
+            if not _doc_matches_feature(doc, aliases, feat.id):
                 continue
             feat.linkedDocs.append(LinkedDocument(
                 id=str(doc.get("id") or _linked_doc_id_from_path(file_path)),
