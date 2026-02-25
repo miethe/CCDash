@@ -1,8 +1,27 @@
 # Sync Observability and Link Audit
 
-Last updated: 2026-02-19
+Last updated: 2026-02-25
 
 This document describes the new sync/rebuild observability and link-audit APIs.
+
+## Startup behavior
+
+Startup now uses a staggered sync pipeline by default:
+
+1. Light startup sync runs first (`trigger=startup`):
+   - sessions/documents/tasks/features are synced
+   - link rebuild and analytics capture are skipped
+2. Deferred rebuild runs later (`trigger=startup_deferred`):
+   - entity links are rebuilt
+   - analytics capture is optional
+
+Tuning env vars:
+
+- `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`)
+- `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`)
+- `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` (default `true`)
+- `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` (default `45`)
+- `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` (default `false`)
 
 ## Why this exists
 
@@ -71,6 +90,15 @@ Every sync/rebuild operation tracks:
 3. Run `GET /api/links/audit` to review suspect mappings.
 4. If only links changed, use `POST /api/cache/rebuild-links` instead of full sync.
 5. For specific files, run `POST /api/cache/sync-paths`.
+
+## Sync mode details
+
+`SyncEngine.sync_project(...)` now accepts:
+
+- `rebuild_links` (default `true`)
+- `capture_analytics` (default `true`)
+
+Startup light mode sets both to `false` for initial responsiveness, then runs deferred `rebuild_links(...)`.
 
 ## Date Metadata Notes
 

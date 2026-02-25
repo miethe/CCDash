@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 
 title: "Implementation Plan: Session Activity/Files Split + Codebase Explorer V1"
@@ -170,3 +170,24 @@ Deliver two distinct outcomes:
 4. `.gitignore` and built-in exclusions are respected.
 5. Backend tests for new router pass and frontend build succeeds.
 
+## Implementation Status (2026-02-25)
+
+Completed:
+
+1. Session tab split implemented:
+   - `Activity` (chronological merged line items)
+   - aggregated `Files` (one row per file with multi-action chips)
+2. New codebase explorer route implemented:
+   - `/codebase` 3-pane UI and cross-entity navigation
+3. Backend explorer APIs implemented:
+   - `/api/codebase/tree`
+   - `/api/codebase/files`
+   - `/api/codebase/files/{file_path:path}`
+4. Feature involvement scoring and thresholds implemented.
+5. Path traversal and root safety guards implemented.
+6. Backend test suite added for codebase router behavior.
+7. Scanner hardening added:
+   - missing/dangling symlink entries are skipped safely.
+8. Performance tuning added:
+   - codebase snapshot mode split (`touched` vs `full`)
+   - startup sync staggering with deferred heavy rebuild.

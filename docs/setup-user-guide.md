@@ -23,6 +23,11 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_API_PROXY_TARGET` (default `http://127.0.0.1:8000`)
 - `CCDASH_PYTHON` (optional explicit Python path)
 - `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
+- `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`; startup runs a light sync first)
+- `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`; delay before startup sync begins)
+- `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS` (default `true`; deferred heavier rebuild after startup)
+- `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` (default `45`)
+- `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` (default `false`)
 
 ## 3) Install Backend Dependencies
 
@@ -43,7 +48,10 @@ What this does:
 - Starts backend first and waits for `GET /api/health` to become healthy
 - Starts Vite frontend only after backend is ready
 - Shuts both down together on Ctrl+C
-- Startup sync reuses cached links when synced entities are unchanged; full relink runs on force sync, entity changes, explicit rebuild, or linking-logic version bump
+- Startup sync uses light mode by default:
+  - first pass syncs sessions/docs/tasks/features
+  - link rebuild and analytics snapshot are deferred
+  - deferred heavy rebuild can be tuned via `CCDASH_STARTUP_DEFERRED_*` vars
 
 ## Optional: Run Services Separately
 

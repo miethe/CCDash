@@ -30,7 +30,9 @@ ACTION_WEIGHTS = {
 def clear_codebase_cache(project_id: str | None = None) -> None:
     """Clear in-memory codebase snapshot cache."""
     if project_id:
-        _CACHE.pop(project_id, None)
+        keys = [key for key in _CACHE.keys() if key[0] == project_id]
+        for key in keys:
+            _CACHE.pop(key, None)
         return
     _CACHE.clear()
 
@@ -294,7 +296,7 @@ class _CacheEntry:
     snapshot: Snapshot
 
 
-_CACHE: dict[str, _CacheEntry] = {}
+_CACHE: dict[tuple[str, str], _CacheEntry] = {}
 
 
 class CodebaseExplorerService:
@@ -312,7 +314,7 @@ class CodebaseExplorerService:
         include_untouched: bool = False,
         search: str = "",
     ) -> dict[str, Any]:
-        snapshot = await self._get_snapshot()
+        snapshot = await self._get_snapshot(include_untouched=include_untouched)
         normalized_prefix = _normalize_rel_path(prefix) if prefix else ""
         max_depth = max(1, int(depth))
         needle = (search or "").strip().lower()
@@ -455,7 +457,7 @@ class CodebaseExplorerService:
         offset: int = 0,
         limit: int = 200,
     ) -> dict[str, Any]:
-        snapshot = await self._get_snapshot()
+        snapshot = await self._get_snapshot(include_untouched=include_untouched)
         normalized_prefix = _normalize_rel_path(prefix) if prefix else ""
         needle = (search or "").strip().lower()
         action_filter = (action or "").strip().lower()
@@ -491,8 +493,12 @@ class CodebaseExplorerService:
 
     async def get_file_detail(self, file_path: str, activity_limit: int = 100) -> dict[str, Any]:
         rel_path, absolute_path = _resolve_safe_path(self.project_root, file_path)
-        snapshot = await self._get_snapshot()
+        snapshot = await self._get_snapshot(include_untouched=False)
         summary = snapshot.summaries.get(rel_path)
+        if summary is None:
+            # Fallback to full snapshot for untouched files when requested directly.
+            snapshot = await self._get_snapshot(include_untouched=True)
+            summary = snapshot.summaries.get(rel_path)
         if summary is None:
             raise FileNotFoundError(f"File not tracked in codebase explorer: {rel_path}")
 
@@ -611,19 +617,22 @@ class CodebaseExplorerService:
             "activity": activity_entries,
         }
 
-    async def _get_snapshot(self) -> Snapshot:
+    async def _get_snapshot(self, *, include_untouched: bool = False) -> Snapshot:
         project_id = str(self.project.id)
+        mode = "full" if include_untouched else "touched"
+        cache_key = (project_id, mode)
         now = time.time()
-        cached = _CACHE.get(project_id)
+        cached = _CACHE.get(cache_key)
         if cached and cached.expires_at > now:
             return cached.snapshot
 
-        snapshot = await self._build_snapshot()
-        _CACHE[project_id] = _CacheEntry(expires_at=now + CACHE_TTL_SECONDS, snapshot=snapshot)
+        snapshot = await self._build_snapshot(include_untouched=include_untouched)
+        _CACHE[cache_key] = _CacheEntry(expires_at=now + CACHE_TTL_SECONDS, snapshot=snapshot)
         return snapshot
 
-    async def _build_snapshot(self) -> Snapshot:
-        summaries = self._scan_filesystem(self.project_root)
+    async def _build_snapshot(self, *, include_untouched: bool = False) -> Snapshot:
+        # Full filesystem walk is only needed when untouched files are requested.
+        summaries = self._scan_filesystem(self.project_root) if include_untouched else {}
         events_by_file: dict[str, list[FileEvent]] = {}
         sessions_by_id: dict[str, dict[str, Any]] = {}
 

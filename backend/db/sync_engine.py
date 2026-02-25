@@ -1135,6 +1135,9 @@ class SyncEngine:
         force: bool = False,
         operation_id: str | None = None,
         trigger: str = "api",
+        *,
+        rebuild_links: bool = True,
+        capture_analytics: bool = True,
     ) -> dict:
         """Full incremental sync for a project.
 
@@ -1161,6 +1164,8 @@ class SyncEngine:
                 trigger,
                 {
                     "force": bool(force),
+                    "rebuildLinks": bool(rebuild_links),
+                    "captureAnalytics": bool(capture_analytics),
                     "sessionsDir": str(sessions_dir),
                     "docsDir": str(docs_dir),
                     "progressDir": str(progress_dir),
@@ -1184,6 +1189,8 @@ class SyncEngine:
                     "ccdash.project_id": project.id,
                     "ccdash.trigger": trigger,
                     "ccdash.force": bool(force),
+                    "ccdash.rebuild_links": bool(rebuild_links),
+                    "ccdash.capture_analytics": bool(capture_analytics),
                 },
             ):
                 # Phase 1: Sessions
@@ -1241,7 +1248,7 @@ class SyncEngine:
                     link_state=link_state,
                     stats=stats,
                 )
-                if should_rebuild_links:
+                if rebuild_links and should_rebuild_links:
                     await self._update_operation(
                         operation_id,
                         phase="links",
@@ -1268,22 +1275,35 @@ class SyncEngine:
                         links_created=stats["links_created"],
                     )
                 else:
+                    message = (
+                        "Skipping entity link rebuild (startup light mode)"
+                        if not rebuild_links
+                        else "Skipping entity link rebuild (no relevant changes)"
+                    )
                     await self._update_operation(
                         operation_id,
                         phase="links",
-                        message="Skipping entity link rebuild (no relevant changes)",
+                        message=message,
                         counters={"featuresSynced": stats["features_synced"]},
                         stats={"links_created": 0},
                     )
-                await self._update_operation(
-                    operation_id,
-                    phase="analytics",
-                    message="Capturing analytics snapshot",
-                    counters={"linksCreated": stats["links_created"]},
-                )
+                if capture_analytics:
+                    await self._update_operation(
+                        operation_id,
+                        phase="analytics",
+                        message="Capturing analytics snapshot",
+                        counters={"linksCreated": stats["links_created"]},
+                    )
 
-                # Phase 6: Analytics Snapshot
-                await self._capture_analytics(project.id)
+                    # Phase 6: Analytics Snapshot
+                    await self._capture_analytics(project.id)
+                else:
+                    await self._update_operation(
+                        operation_id,
+                        phase="analytics",
+                        message="Skipping analytics snapshot (startup light mode)",
+                        counters={"linksCreated": stats["links_created"]},
+                    )
 
             elapsed = int((time.monotonic() - t0) * 1000)
             stats["duration_ms"] = elapsed

@@ -1,6 +1,6 @@
 # Operations Panel Developer Reference
 
-Last updated: 2026-02-19
+Last updated: 2026-02-25
 
 This reference documents the Ops page implementation and backend endpoints it uses.
 
@@ -51,6 +51,12 @@ Key methods:
 - `sync_project(..., operation_id=...)`
 - `rebuild_links(..., operation_id=...)`
 - `sync_changed_files(..., operation_id=...)`
+
+Startup orchestration:
+
+- `backend/main.py` now runs a staggered startup pipeline:
+  - light `sync_project(..., rebuild_links=False, capture_analytics=False)` first
+  - deferred `rebuild_links(...)` later (config-driven)
 
 Stored operation fields include:
 
