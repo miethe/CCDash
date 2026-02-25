@@ -163,6 +163,34 @@ const takeString = (...values: unknown[]): string | null => {
     return null;
 };
 
+const asRecord = (value: unknown): Record<string, any> => (
+    value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, any>
+        : {}
+);
+
+const asStringArray = (value: unknown): string[] => (
+    Array.isArray(value)
+        ? value
+            .map(item => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
+            .filter(Boolean)
+        : []
+);
+
+const asNumber = (value: unknown, fallback = 0): number => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+};
+
+const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: number }> => {
+    const record = asRecord(value);
+    return Object.entries(record)
+        .map(([key, rawCount]) => ({ key, count: asNumber(rawCount, 0) }))
+        .filter(item => item.key.trim() && item.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+};
+
 const extractTaskSubagentName = (toolArgs: string | undefined): string | null => {
     const args = parseToolArgs(toolArgs);
     if (!args) {
@@ -808,7 +836,8 @@ const TranscriptView: React.FC<{
     onShowLinked: (tab: 'files' | 'artifacts', sourceLogId: string) => void;
     primaryFeatureLink?: SessionFeatureLink | null;
     onOpenFeature?: (featureId: string) => void;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature }) => {
+    onOpenForensics?: () => void;
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature, onOpenForensics }) => {
 
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
@@ -875,6 +904,35 @@ const TranscriptView: React.FC<{
         (session.platformVersionTransitions || [])
             .filter(event => event && event.fromVersion && event.toVersion)
     ), [session.platformVersionTransitions]);
+    const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const forensicsThinking = useMemo(() => asRecord(sessionForensics.thinking), [sessionForensics]);
+    const forensicsEntryContext = useMemo(() => asRecord(sessionForensics.entryContext), [sessionForensics]);
+    const forensicsSidecars = useMemo(() => asRecord(sessionForensics.sidecars), [sessionForensics]);
+    const thinkingLevel = takeString(forensicsThinking.level, session.thinkingLevel)?.toUpperCase() || 'Unknown';
+    const permissionModes = useMemo(
+        () => asStringArray(forensicsEntryContext.permissionModes),
+        [forensicsEntryContext]
+    );
+    const requestIds = useMemo(
+        () => asStringArray(forensicsEntryContext.requestIds),
+        [forensicsEntryContext]
+    );
+    const queueOperations = useMemo(
+        () => (Array.isArray(forensicsEntryContext.queueOperations) ? forensicsEntryContext.queueOperations : []),
+        [forensicsEntryContext]
+    );
+    const apiErrors = useMemo(
+        () => (Array.isArray(forensicsEntryContext.apiErrors) ? forensicsEntryContext.apiErrors : []),
+        [forensicsEntryContext]
+    );
+    const todosSidecar = useMemo(() => asRecord(forensicsSidecars.todos), [forensicsSidecars]);
+    const tasksSidecar = useMemo(() => asRecord(forensicsSidecars.tasks), [forensicsSidecars]);
+    const teamsSidecar = useMemo(() => asRecord(forensicsSidecars.teams), [forensicsSidecars]);
+    const todosCount = asNumber(todosSidecar.totalItems, 0);
+    const tasksCount = Array.isArray(tasksSidecar.tasks) ? tasksSidecar.tasks.length : asNumber(tasksSidecar.taskFileCount, 0);
+    const teamMessagesCount = asNumber(teamsSidecar.totalMessages, 0);
+    const teamUnreadCount = asNumber(teamsSidecar.unreadMessages, 0);
+    const hasDetailedForensics = Object.keys(sessionForensics).length > 0;
 
     return (
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
@@ -1027,6 +1085,57 @@ const TranscriptView: React.FC<{
                                 ))}
                             </div>
                         )}
+                        <div className="pt-2 border-t border-slate-800/60 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Bot size={14} /> Thinking</div>
+                                <span className="text-[10px] font-mono text-fuchsia-300">{thinkingLevel}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Terminal size={14} /> Request IDs</div>
+                                <span className="text-[10px] font-mono text-slate-200">{requestIds.length}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Scroll size={14} /> Queue Ops</div>
+                                <span className="text-[10px] font-mono text-slate-200">{queueOperations.length}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><HardDrive size={14} /> Sidecars</div>
+                                <span className="text-[10px] font-mono text-slate-200" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount}`}>
+                                    {todosCount}/{tasksCount}/{teamMessagesCount}
+                                </span>
+                            </div>
+                            {teamUnreadCount > 0 && (
+                                <div className="text-[10px] text-amber-300 font-mono">Team unread: {teamUnreadCount}</div>
+                            )}
+                            {permissionModes.length > 0 && (
+                                <div className="pt-1">
+                                    <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-1">Permission Modes</div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {permissionModes.slice(0, 3).map(mode => (
+                                            <span key={mode} className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">
+                                                {mode}
+                                            </span>
+                                        ))}
+                                        {permissionModes.length > 3 && (
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-500">
+                                                +{permissionModes.length - 3}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                            {apiErrors.length > 0 && (
+                                <div className="text-[10px] text-rose-300 font-mono">API errors captured: {apiErrors.length}</div>
+                            )}
+                            {hasDetailedForensics && onOpenForensics && (
+                                <button
+                                    onClick={onOpenForensics}
+                                    className="w-full mt-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20 transition-colors"
+                                >
+                                    Open Full Forensics
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -2364,6 +2473,216 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
     );
 };
 
+const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) => {
+    const forensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const thinking = useMemo(() => asRecord(forensics.thinking), [forensics]);
+    const entryContext = useMemo(() => asRecord(forensics.entryContext), [forensics]);
+    const sidecars = useMemo(() => asRecord(forensics.sidecars), [forensics]);
+    const todosSidecar = useMemo(() => asRecord(sidecars.todos), [sidecars]);
+    const tasksSidecar = useMemo(() => asRecord(sidecars.tasks), [sidecars]);
+    const teamsSidecar = useMemo(() => asRecord(sidecars.teams), [sidecars]);
+    const sessionEnvSidecar = useMemo(() => asRecord(sidecars.sessionEnv), [sidecars]);
+
+    const permissionModes = asStringArray(entryContext.permissionModes);
+    const workingDirectories = asStringArray(entryContext.workingDirectories);
+    const versions = asStringArray(entryContext.versions);
+    const requestIds = asStringArray(entryContext.requestIds);
+    const queueOperations = Array.isArray(entryContext.queueOperations) ? entryContext.queueOperations : [];
+    const apiErrors = Array.isArray(entryContext.apiErrors) ? entryContext.apiErrors : [];
+    const entryTypeCounts = asCountEntries(entryContext.entryTypeCounts, 12);
+    const contentBlockTypeCounts = asCountEntries(entryContext.contentBlockTypeCounts, 12);
+    const progressTypeCounts = asCountEntries(entryContext.progressTypeCounts, 12);
+
+    if (Object.keys(forensics).length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <Database size={48} className="mb-4 opacity-20" />
+                <p>No forensic payload available for this session.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6 h-full overflow-y-auto pb-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
+                    <div className="space-y-2 text-xs">
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Platform</span><span className="text-slate-200 font-mono">{String(forensics.platform || 'claude_code')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Schema Version</span><span className="text-slate-200 font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Raw Session ID</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
+                        <div className="text-slate-500">Session File</div>
+                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.sessionFile || '')}</div>
+                        <div className="text-slate-500">Claude Root</div>
+                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.claudeRoot || '')}</div>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Bot size={16} /> Thinking</h3>
+                    <div className="space-y-2 text-xs">
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Level</span><span className="text-fuchsia-300 font-mono uppercase">{String(thinking.level || session.thinkingLevel || 'unknown')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Source</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(thinking.source || '')}>{String(thinking.source || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Max Thinking Tokens</span><span className="text-slate-200 font-mono">{asNumber(thinking.maxThinkingTokens, 0).toLocaleString()}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Disabled</span><span className={`font-mono ${thinking.disabled ? 'text-amber-300' : 'text-slate-300'}`}>{String(Boolean(thinking.disabled))}</span></div>
+                        {thinking.explicitLevel && (
+                            <div className="flex justify-between gap-4"><span className="text-slate-500">Explicit Level</span><span className="text-slate-300 font-mono uppercase">{String(thinking.explicitLevel)}</span></div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><HardDrive size={16} /> Sidecars</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Todos</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(todosSidecar.fileCount, 0)} files · {asNumber(todosSidecar.totalItems, 0)} items</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Tasks</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(tasksSidecar.taskFileCount, 0)} files · HWM {String(tasksSidecar.highWatermark || '0')}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Teams</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(teamsSidecar.totalMessages, 0)} msgs · {asNumber(teamsSidecar.unreadMessages, 0)} unread</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Env</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(sessionEnvSidecar.fileCount, 0)} files</div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Terminal size={16} /> Entry Context</h3>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Session Context</div>
+                        <div className="space-y-1.5 text-xs">
+                            <div className="flex justify-between"><span className="text-slate-500">Request IDs</span><span className="text-slate-200 font-mono">{requestIds.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">Queue Ops</span><span className="text-slate-200 font-mono">{queueOperations.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">API Errors</span><span className={`font-mono ${apiErrors.length > 0 ? 'text-rose-300' : 'text-slate-200'}`}>{apiErrors.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">Snapshots</span><span className="text-slate-200 font-mono">{asNumber(entryContext.snapshotCount, 0)}</span></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Permission Modes</div>
+                        <div className="flex flex-wrap gap-1">
+                            {permissionModes.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {permissionModes.map(mode => (
+                                <span key={mode} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">{mode}</span>
+                            ))}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 mt-4">Working Directories</div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                            {workingDirectories.length === 0 && <div className="text-xs text-slate-500">None captured</div>}
+                            {workingDirectories.map(dir => (
+                                <div key={dir} className="text-[10px] text-slate-300 font-mono break-all">{dir}</div>
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Versions Seen</div>
+                        <div className="flex flex-wrap gap-1 mb-4">
+                            {versions.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {versions.map(version => (
+                                <span key={version} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-amber-300 font-mono">{version}</span>
+                            ))}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Entry Types</div>
+                        <div className="space-y-1">
+                            {entryTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                            {entryTypeCounts.map(item => (
+                                <div key={item.key} className="flex justify-between text-[10px]">
+                                    <span className="text-slate-400 font-mono">{item.key}</span>
+                                    <span className="text-slate-200 font-mono">{item.count}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Queue Operations</h3>
+                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        {queueOperations.length === 0 && <div className="text-xs text-slate-500">No queue operations recorded.</div>}
+                        {queueOperations.slice(0, 40).map((operation, idx) => {
+                            const op = asRecord(operation);
+                            return (
+                                <div key={`${String(op.timestamp || idx)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                    <div className="text-[10px] text-slate-500 font-mono">{String(op.timestamp || '')}</div>
+                                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[11px]">
+                                        <span className="text-indigo-300 font-mono">{String(op.operation || 'event')}</span>
+                                        {op.taskId && <span className="text-slate-300 font-mono">Task {String(op.taskId)}</span>}
+                                        {op.status && <span className="text-amber-300 font-mono">{String(op.status)}</span>}
+                                    </div>
+                                    {op.summary && <div className="text-[11px] text-slate-300 mt-1 break-words">{String(op.summary)}</div>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Additional Event Mix</h3>
+                    <div className="space-y-3 text-[11px]">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Content Block Types</div>
+                            <div className="space-y-1">
+                                {contentBlockTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {contentBlockTypeCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Progress Types</div>
+                            <div className="space-y-1">
+                                {progressTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {progressTypeCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-slate-300 mb-3">API Errors</h3>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {apiErrors.length === 0 && <div className="text-xs text-slate-500">No API errors captured.</div>}
+                    {apiErrors.slice(0, 30).map((error, idx) => {
+                        const row = asRecord(error);
+                        return (
+                            <div key={`${String(row.timestamp || idx)}-${idx}`} className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2">
+                                <div className="text-[10px] text-rose-300/80 font-mono">{String(row.timestamp || '')}</div>
+                                <div className="text-[11px] text-rose-100 mt-1 break-words">{String(row.message || '')}</div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-slate-300 mb-3">Raw Forensics Payload</h3>
+                <pre className="text-[10px] leading-4 font-mono bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-x-auto text-slate-300">
+                    {JSON.stringify(forensics, null, 2)}
+                </pre>
+            </div>
+        </div>
+    );
+};
+
 // --- Main Container ---
 
 interface SessionModelFacet {
@@ -3115,7 +3434,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
     const { getSessionById } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
+    const [activeTab, setActiveTab] = useState<'transcript' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
@@ -3297,6 +3616,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                 <div className="flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
                     {[
                         { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+                        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
                         { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
                         { id: 'files', icon: FileText, label: 'Files' },
                         { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
@@ -3340,6 +3660,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         onShowLinked={handleShowLinked}
                         primaryFeatureLink={primaryFeatureLink}
                         onOpenFeature={handleOpenFeature}
+                        onOpenForensics={() => setActiveTab('forensics')}
                     />
                 )}
                 {activeTab === 'features' && (
@@ -3348,6 +3669,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         onOpenFeature={handleOpenFeature}
                     />
                 )}
+                {activeTab === 'forensics' && <SessionForensicsView session={session} />}
                 {activeTab === 'files' && (
                     <FilesView
                         session={session}
