@@ -490,13 +490,18 @@ def _build_session_telemetry_events(
             event_type="artifact.linked",
             occurred=occurred_at,
             payload={
+                "id": artifact_id,
                 "title": _first_non_empty(artifact, "title"),
                 "type": _first_non_empty(artifact, "type", default="document"),
+                "description": _first_non_empty(artifact, "description"),
                 "source": _first_non_empty(artifact, "source"),
                 "url": _first_non_empty(artifact, "url"),
+                "sourceLogId": _first_non_empty(artifact, "sourceLogId", "source_log_id"),
+                "sourceToolName": _first_non_empty(artifact, "sourceToolName", "source_tool_name"),
             },
             seq=seq_cursor,
             tool_name=_first_non_empty(artifact, "sourceToolName", "source_tool_name"),
+            agent=_first_non_empty(artifact, "agentName", "agent_name"),
             event_status=_first_non_empty(artifact, "type", default="document"),
         )
         seq_cursor += 1

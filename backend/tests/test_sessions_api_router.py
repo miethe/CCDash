@@ -40,6 +40,8 @@ class _FakeRepo:
                 "git_commit_hash": None,
                 "git_author": None,
                 "git_branch": None,
+                "thinking_level": "high",
+                "session_forensics_json": "{\"platform\":\"claude_code\",\"sidecars\":{\"teams\":{\"totalMessages\":2}}}",
             }
         ]
 
@@ -127,6 +129,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.total, 1)
         self.assertFalse(repo.last_filters["include_subagents"])
         self.assertEqual(response.items[0].rootSessionId, "S-main")
+        self.assertEqual(response.items[0].thinkingLevel, "high")
+        self.assertEqual(response.items[0].sessionForensics.get("platform"), "claude_code")
 
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()

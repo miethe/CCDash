@@ -66,6 +66,7 @@ interface FeatureSessionLink {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
+type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
 
 interface CoreSessionGroupDefinition {
   id: CoreSessionGroupId;
@@ -592,6 +593,80 @@ const getFeaturePrimaryDate = (feature: Feature): { label: string; value: string
   return { label: 'Updated', ...updated };
 };
 
+const DOC_TYPE_LABELS: Record<string, string> = {
+  prd: 'PRD',
+  implementation_plan: 'Plan',
+  phase_plan: 'Phase',
+  progress: 'Progress',
+  report: 'Report',
+  spec: 'Spec',
+};
+
+const getDocTypeLabel = (docType: string): string => DOC_TYPE_LABELS[docType] || docType;
+
+const toDateDayIndex = (value: string): number | null => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()) / 86_400_000;
+};
+
+const getDaysBetween = (startValue: string, endValue: string): number | null => {
+  const startDay = toDateDayIndex(startValue);
+  const endDay = toDateDayIndex(endValue);
+  if (startDay === null || endDay === null || endDay < startDay) return null;
+  return endDay - startDay;
+};
+
+const formatFeatureDate = (value?: string): string => {
+  if (!value) return 'Unavailable';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Unavailable';
+  return parsed.toLocaleDateString();
+};
+
+const formatFeatureDateCompact = (value?: string): string => {
+  if (!value) return '--';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '--';
+  return parsed.toLocaleDateString(undefined, {
+    month: 'numeric',
+    day: 'numeric',
+    year: '2-digit',
+  });
+};
+
+const buildLinkedDocTypeCounts = (docs: LinkedDocument[]): Array<{ docType: string; count: number }> => {
+  const counts = new Map<string, number>();
+  docs.forEach((doc) => {
+    const key = (doc.docType || 'document').toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([docType, count]) => ({ docType, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return getDocTypeLabel(a.docType).localeCompare(getDocTypeLabel(b.docType));
+    });
+};
+
+const getFeatureDateModule = (feature: Feature): {
+  first: { label: 'Planned' | 'Started'; value: string; confidence?: string };
+  completed: { label: 'Completed'; value: string; confidence?: string };
+  daysBetween: number | null;
+} => {
+  const planned = getFeatureDateValue(feature, 'plannedAt');
+  const started = getFeatureDateValue(feature, 'startedAt');
+  const completed = getFeatureDateValue(feature, 'completedAt');
+  const first = planned.value
+    ? { label: 'Planned' as const, value: planned.value, confidence: planned.confidence }
+    : { label: 'Started' as const, value: started.value, confidence: started.confidence };
+  return {
+    first,
+    completed: { label: 'Completed', value: completed.value, confidence: completed.confidence },
+    daysBetween: first.value && completed.value ? getDaysBetween(first.value, completed.value) : null,
+  };
+};
+
 const ProgressBar = ({
   completed,
   deferred = 0,
@@ -639,15 +714,92 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
 };
 
 const DocTypeBadge = ({ docType }: { docType: string }) => {
-  const labels: Record<string, string> = {
-    prd: 'PRD',
-    implementation_plan: 'Plan',
-    phase_plan: 'Phase',
-    progress: 'Progress',
-    report: 'Report',
-    spec: 'Spec',
-  };
-  return <span className="text-[9px] uppercase font-bold">{labels[docType] || docType}</span>;
+  return <span className="text-[9px] uppercase font-bold">{getDocTypeLabel(docType)}</span>;
+};
+
+const LinkedDocsSummaryBadge = ({
+  docs,
+  onClick,
+  compact = false,
+}: {
+  docs: LinkedDocument[];
+  onClick: () => void;
+  compact?: boolean;
+}) => {
+  if (docs.length === 0) return null;
+  const typeCounts = buildLinkedDocTypeCounts(docs);
+  return (
+    <button
+      type="button"
+      draggable={false}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="relative group/doc-badge inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/85 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
+      title="Open linked documents"
+    >
+      <FileText size={compact ? 10 : 11} />
+      <span className="uppercase tracking-wide">Docs</span>
+      <span className="font-mono">{docs.length}</span>
+
+      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[180px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/doc-badge:opacity-100 group-hover/doc-badge:translate-y-0">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Linked Documents</div>
+        <div className="space-y-1">
+          {typeCounts.map(row => (
+            <div key={row.docType} className="flex items-center justify-between gap-3 text-[11px] text-slate-300">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <DocTypeIcon docType={row.docType} />
+                <span className="truncate">{getDocTypeLabel(row.docType)}</span>
+              </span>
+              <span className="font-mono text-slate-400">{row.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+};
+
+const FeatureDateStack = ({ feature }: { feature: Feature }) => {
+  const dateModule = getFeatureDateModule(feature);
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2">
+      <div className="text-[10px] text-slate-500">
+        <span className="uppercase tracking-wider">{dateModule.first.label}</span>
+        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.first.value)}</span>
+      </div>
+      <div className="mt-1 text-[10px] text-slate-500">
+        <span className="uppercase tracking-wider">Completed</span>
+        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.completed.value)}</span>
+      </div>
+    </div>
+  );
+};
+
+const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
+  const dateModule = getFeatureDateModule(feature);
+  const firstLabel = dateModule.first.label === 'Planned' ? 'P' : 'S';
+  const firstDate = formatFeatureDateCompact(dateModule.first.value);
+  const completedDate = formatFeatureDateCompact(dateModule.completed.value);
+  return (
+    <div className="ml-auto mt-1 w-[52%] max-w-[170px] min-w-[124px]">
+      <div className="mb-0.5 text-center text-[8px] font-semibold uppercase tracking-wide text-indigo-300">
+        {dateModule.daysBetween !== null ? `${dateModule.daysBetween}d` : '--'}
+      </div>
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1">
+        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+          {firstLabel} {firstDate}
+        </span>
+        <span className="relative h-px bg-gradient-to-r from-slate-600 to-indigo-400">
+          <ChevronRight size={10} className="absolute -right-0.5 top-1/2 -translate-y-1/2 text-indigo-400" />
+        </span>
+        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+          C {completedDate}
+        </span>
+      </div>
+    </div>
+  );
 };
 
 // ── Status Dropdown ────────────────────────────────────────────────
@@ -755,13 +907,15 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
 const FeatureModal = ({
   feature,
   onClose,
+  initialTab = 'overview',
 }: {
   feature: Feature;
   onClose: () => void;
+  initialTab?: FeatureModalTab;
 }) => {
   const navigate = useNavigate();
   const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
-  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions' | 'history'>('overview');
+  const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
@@ -813,6 +967,10 @@ const FeatureModal = ({
     refreshFeatureDetail();
     refreshLinkedSessions();
   }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [feature.id, initialTab]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1892,6 +2050,7 @@ const FeatureCard = ({
   sessionSummary,
   sessionSummaryLoading,
   onClick,
+  onOpenDocs,
   onStatusChange,
   onDragStart,
   onDragEnd,
@@ -1901,17 +2060,15 @@ const FeatureCard = ({
   sessionSummary?: FeatureSessionSummary;
   sessionSummaryLoading: boolean;
   onClick: () => void;
+  onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
   onDragStart: (featureId: string) => void;
   onDragEnd: () => void;
   isDragging: boolean;
 }) => {
-  const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
-  const planDoc = feature.linkedDocs.find(d => d.docType === 'implementation_plan');
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
-  const primaryDate = getFeaturePrimaryDate(feature);
 
   return (
     <div
@@ -1948,18 +2105,9 @@ const FeatureCard = ({
         <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
-      {/* Linked Doc chips */}
+      {/* Linked doc summary */}
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {prdDoc && (
-          <span className="text-[9px] flex items-center gap-1 bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20">
-            <ClipboardList size={10} /> PRD
-          </span>
-        )}
-        {planDoc && (
-          <span className="text-[9px] flex items-center gap-1 bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">
-            <Layers size={10} /> Plan
-          </span>
-        )}
+        <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} compact />
         {feature.phases.length > 0 && (
           <span className="text-[9px] flex items-center gap-1 bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
             {feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}
@@ -1968,20 +2116,18 @@ const FeatureCard = ({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-        <div className="flex flex-col min-w-0">
-          {feature.category ? (
-            <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
-          ) : <span />}
-          {primaryDate.value && (
-            <span className="text-[10px] text-slate-600 truncate">
-              {primaryDate.label}: {new Date(primaryDate.value).toLocaleDateString()}
-            </span>
-          )}
+      <div className="pt-2 border-t border-slate-800">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col min-w-0">
+            {feature.category ? (
+              <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
+            ) : <span />}
+          </div>
+          <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
+            Details <ChevronRight size={10} />
+          </span>
         </div>
-        <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
-          Details <ChevronRight size={10} />
-        </span>
+        <FeatureKanbanDateModule feature={feature} />
       </div>
     </div>
   );
@@ -1994,18 +2140,19 @@ const FeatureListCard = ({
   sessionSummary,
   sessionSummaryLoading,
   onClick,
+  onOpenDocs,
   onStatusChange,
 }: {
   feature: Feature;
   sessionSummary?: FeatureSessionSummary;
   sessionSummaryLoading: boolean;
   onClick: () => void;
+  onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
-  const primaryDate = getFeaturePrimaryDate(feature);
 
   return (
     <div
@@ -2026,12 +2173,6 @@ const FeatureListCard = ({
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
-          {primaryDate.value && (
-            <div className="text-[10px] text-slate-500">
-              {primaryDate.label}: {new Date(primaryDate.value).toLocaleDateString()}
-              {primaryDate.confidence ? ` (${primaryDate.confidence})` : ''}
-            </div>
-          )}
         </div>
       </div>
       {featureHasDeferred && (
@@ -2046,14 +2187,13 @@ const FeatureListCard = ({
         <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
+      <div className="mb-3">
+        <FeatureDateStack feature={feature} />
+      </div>
+
       <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
         <div className="flex gap-2">
-          {feature.linkedDocs.map(doc => (
-            <span key={doc.id} className="text-[10px] flex items-center gap-1 bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
-              <DocTypeIcon docType={doc.docType} />
-              <DocTypeBadge docType={doc.docType} />
-            </span>
-          ))}
+          <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} />
         </div>
         {feature.phases.length > 0 && (
           <span className="text-xs text-slate-500">{feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}</span>
@@ -2072,6 +2212,7 @@ const StatusColumn = ({
   featureSessionSummaries,
   loadingFeatureSessionSummaries,
   onFeatureClick,
+  onFeatureDocsClick,
   onStatusChange,
   onCardDragStart,
   onCardDragEnd,
@@ -2087,6 +2228,7 @@ const StatusColumn = ({
   featureSessionSummaries: Record<string, FeatureSessionSummary>;
   loadingFeatureSessionSummaries: Set<string>;
   onFeatureClick: (f: Feature) => void;
+  onFeatureDocsClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
   onCardDragStart: (featureId: string) => void;
   onCardDragEnd: () => void;
@@ -2129,6 +2271,7 @@ const StatusColumn = ({
             sessionSummary={featureSessionSummaries[f.id]}
             sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
             onClick={() => onFeatureClick(f)}
+            onOpenDocs={() => onFeatureDocsClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
             onDragStart={onCardDragStart}
             onDragEnd={onCardDragEnd}
@@ -2152,6 +2295,7 @@ export const ProjectBoard: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
+  const [selectedFeatureTab, setSelectedFeatureTab] = useState<FeatureModalTab>('overview');
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
@@ -2166,6 +2310,7 @@ export const ProjectBoard: React.FC = () => {
         || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
       if (feat) {
         setSelectedFeature(feat);
+        setSelectedFeatureTab('overview');
         // Clear param to avoid re-triggering, or keep it for sharable URLs?
         // Let's clear it to keep URL clean after opening, similar to PlanCatalog
         setSearchParams({}, { replace: true });
@@ -2352,6 +2497,11 @@ export const ProjectBoard: React.FC = () => {
       }
     }
   }, [apiFeatures, selectedFeature]);
+
+  const openFeatureModal = useCallback((feature: Feature, initialTab: FeatureModalTab = 'overview') => {
+    setSelectedFeatureTab(initialTab);
+    setSelectedFeature(feature);
+  }, []);
 
   const hasPendingFilterChanges = (
     draftSearchQuery !== searchQuery
@@ -2666,7 +2816,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2682,7 +2833,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2698,7 +2850,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2714,7 +2867,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2733,7 +2887,8 @@ export const ProjectBoard: React.FC = () => {
                 feature={f}
                 sessionSummary={featureSessionSummaries[f.id]}
                 sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
-                onClick={() => setSelectedFeature(f)}
+                onClick={() => openFeatureModal(f, 'overview')}
+                onOpenDocs={() => openFeatureModal(f, 'docs')}
                 onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
               />
             ))}
@@ -2750,6 +2905,7 @@ export const ProjectBoard: React.FC = () => {
       {selectedFeature && (
         <FeatureModal
           feature={selectedFeature}
+          initialTab={selectedFeatureTab}
           onClose={() => setSelectedFeature(null)}
         />
       )}

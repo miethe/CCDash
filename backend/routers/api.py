@@ -368,6 +368,8 @@ async def list_sessions(
             impactHistory=[],
             logs=[],
             sessionMetadata=session_metadata,
+            thinkingLevel=str(s.get("thinking_level") or ""),
+            sessionForensics=_safe_json(s.get("session_forensics_json")),
             dates=_session_dates_payload(s),
             timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
         ))
@@ -612,6 +614,8 @@ async def get_session(session_id: str):
         impactHistory=[event for event in _safe_json_list(s.get("impact_history_json")) if isinstance(event, dict)],
         logs=session_logs,
         sessionMetadata=session_metadata,
+        thinkingLevel=str(s.get("thinking_level") or ""),
+        sessionForensics=_safe_json(s.get("session_forensics_json")),
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

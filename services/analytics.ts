@@ -6,6 +6,7 @@ import {
     AnalyticsOverview,
     AnalyticsBreakdownItem,
     AnalyticsCorrelationItem,
+    AnalyticsArtifactsResponse,
 } from '../types';
 
 const API_BASE = 'http://localhost:8000/api/analytics';
@@ -83,6 +84,31 @@ export const analyticsService = {
     async getCorrelation(): Promise<{ items: AnalyticsCorrelationItem[]; total: number; offset: number; limit: number }> {
         const res = await fetch(`${API_BASE}/correlation`);
         if (!res.ok) throw new Error('Failed to fetch analytics correlation');
+        return res.json();
+    },
+
+    async getArtifacts(params?: {
+        start?: string;
+        end?: string;
+        artifactType?: string;
+        model?: string;
+        modelFamily?: string;
+        tool?: string;
+        featureId?: string;
+        limit?: number;
+    }): Promise<AnalyticsArtifactsResponse> {
+        const search = new URLSearchParams();
+        if (params?.start) search.append('start', params.start);
+        if (params?.end) search.append('end', params.end);
+        if (params?.artifactType) search.append('artifact_type', params.artifactType);
+        if (params?.model) search.append('model', params.model);
+        if (params?.modelFamily) search.append('model_family', params.modelFamily);
+        if (params?.tool) search.append('tool', params.tool);
+        if (params?.featureId) search.append('feature_id', params.featureId);
+        if (params?.limit) search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch artifact analytics');
         return res.json();
     },
 

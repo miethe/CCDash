@@ -1,6 +1,11 @@
 import unittest
 
-from backend.model_identity import derive_model_identity, model_filter_tokens
+from backend.model_identity import (
+    canonical_model_name,
+    derive_model_identity,
+    model_family_name,
+    model_filter_tokens,
+)
 
 
 class ModelIdentityTests(unittest.TestCase):
@@ -15,6 +20,20 @@ class ModelIdentityTests(unittest.TestCase):
         tokens = model_filter_tokens("Opus 4.5")
         self.assertIn("opus", tokens)
         self.assertIn("4-5", tokens)
+
+    def test_canonical_model_strips_trailing_date_suffixes(self) -> None:
+        self.assertEqual(
+            canonical_model_name("claude-opus-4-5-20251101"),
+            "claude-opus-4-5",
+        )
+        self.assertEqual(
+            canonical_model_name("gpt-5-mini-2026-01-15"),
+            "gpt-5-mini",
+        )
+
+    def test_model_family_name_uses_family_token(self) -> None:
+        self.assertEqual(model_family_name("claude-opus-4-5-20251101"), "Opus")
+        self.assertEqual(model_family_name(""), "Unknown")
 
 
 if __name__ == "__main__":

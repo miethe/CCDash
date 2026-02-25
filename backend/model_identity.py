@@ -6,6 +6,7 @@ from typing import Any
 
 
 _VERSION_TOKEN_PATTERN = re.compile(r"^\d+$")
+_DATE_SUFFIX_PATTERN = re.compile(r"(?:-\d{8}|-\d{4}-\d{2}-\d{2})+$")
 
 
 def _title_case(value: str) -> str:
@@ -79,6 +80,36 @@ def derive_model_identity(raw_model: str | None) -> dict[str, str]:
         "modelFamily": family,
         "modelVersion": model_version,
     }
+
+
+def canonical_model_name(raw_model: str | None) -> str:
+    """Return a canonical model identifier with build/date suffixes removed.
+
+    Example:
+      claude-opus-4-5-20251101 -> claude-opus-4-5
+    """
+    raw = (raw_model or "").strip().lower()
+    if not raw:
+        return ""
+    normalized = re.sub(r"[\s_]+", "-", raw)
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    stripped = _DATE_SUFFIX_PATTERN.sub("", normalized).strip("-")
+    return stripped or normalized
+
+
+def model_family_name(raw_model: str | None) -> str:
+    """Return a human-friendly model family label (e.g., Opus, Sonnet)."""
+    identity = derive_model_identity(raw_model)
+    family = (identity.get("modelFamily") or "").strip()
+    if family:
+        return family
+    canonical = canonical_model_name(raw_model)
+    if not canonical:
+        return "Unknown"
+    parts = [part for part in canonical.split("-") if part]
+    if len(parts) >= 2:
+        return _title_case(parts[1])
+    return _title_case(parts[0]) or "Unknown"
 
 
 def model_filter_tokens(value: str | None) -> list[str]:

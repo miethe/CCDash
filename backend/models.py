@@ -183,6 +183,8 @@ class AgentSession(BaseModel):
     impactHistory: list[ImpactPoint] = Field(default_factory=list)
     logs: list[SessionLog] = Field(default_factory=list)
     sessionMetadata: Optional[SessionMetadata] = None
+    thinkingLevel: str = ""
+    sessionForensics: dict[str, Any] = Field(default_factory=dict)
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 

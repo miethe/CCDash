@@ -27,8 +27,9 @@ class SqliteSessionRepository:
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file,
-                dates_json, timeline_json, impact_history_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                dates_json, timeline_json, impact_history_json,
+                thinking_level, session_forensics_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -51,7 +52,9 @@ class SqliteSessionRepository:
                 updated_at=excluded.updated_at, source_file=excluded.source_file,
                 dates_json=excluded.dates_json,
                 timeline_json=excluded.timeline_json,
-                impact_history_json=excluded.impact_history_json
+                impact_history_json=excluded.impact_history_json,
+                thinking_level=excluded.thinking_level,
+                session_forensics_json=excluded.session_forensics_json
             """,
             (
                 session_data["id"], project_id,
@@ -83,6 +86,8 @@ class SqliteSessionRepository:
                 json.dumps(session_data.get("dates", {}) or {}),
                 json.dumps(session_data.get("timeline", []) or []),
                 json.dumps(session_data.get("impactHistory", []) or []),
+                str(session_data.get("thinkingLevel", "") or ""),
+                json.dumps(session_data.get("sessionForensics", {}) or {}),
             ),
         )
         await self.db.commit()

@@ -28,8 +28,9 @@ class PostgresSessionRepository:
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
                 started_at, ended_at, created_at, updated_at, source_file,
-                dates_json, timeline_json, impact_history_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+                dates_json, timeline_json, impact_history_json,
+                thinking_level, session_forensics_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -52,7 +53,9 @@ class PostgresSessionRepository:
                 updated_at=EXCLUDED.updated_at, source_file=EXCLUDED.source_file,
                 dates_json=EXCLUDED.dates_json,
                 timeline_json=EXCLUDED.timeline_json,
-                impact_history_json=EXCLUDED.impact_history_json
+                impact_history_json=EXCLUDED.impact_history_json,
+                thinking_level=EXCLUDED.thinking_level,
+                session_forensics_json=EXCLUDED.session_forensics_json
         """
         await self.db.execute(
             query,
@@ -85,6 +88,8 @@ class PostgresSessionRepository:
             json.dumps(session_data.get("dates", {}) or {}),
             json.dumps(session_data.get("timeline", []) or []),
             json.dumps(session_data.get("impactHistory", []) or []),
+            str(session_data.get("thinkingLevel", "") or ""),
+            json.dumps(session_data.get("sessionForensics", {}) or {}),
         )
 
     async def get_by_id(self, session_id: str) -> dict | None:

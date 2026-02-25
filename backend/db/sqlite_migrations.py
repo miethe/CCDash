@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -114,7 +114,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     source_file      TEXT NOT NULL,
     dates_json       TEXT DEFAULT '{}',
     timeline_json    TEXT DEFAULT '[]',
-    impact_history_json TEXT DEFAULT '[]'
+    impact_history_json TEXT DEFAULT '[]',
+    thinking_level   TEXT DEFAULT '',
+    session_forensics_json TEXT DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
@@ -468,6 +470,8 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "sessions", "dates_json", "TEXT DEFAULT '{}'")
     await _ensure_column(db, "sessions", "timeline_json", "TEXT DEFAULT '[]'")
     await _ensure_column(db, "sessions", "impact_history_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "thinking_level", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "session_forensics_json", "TEXT DEFAULT '{}'")
     await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
     await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")

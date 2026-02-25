@@ -648,6 +648,156 @@ class SessionParserTests(unittest.TestCase):
         assert session is not None
         self.assertEqual(session.status, "completed")
 
+    def test_thinking_level_from_explicit_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T15:00:00Z",
+                    "thinkingMetadata": {"level": "High", "maxThinkingTokens": 32000},
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "done"}],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.thinkingLevel, "high")
+        self.assertEqual(session.sessionForensics.get("thinking", {}).get("source"), "thinkingMetadata.level")
+
+    def test_thinking_level_from_max_tokens(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T15:05:00Z",
+                    "thinkingMetadata": {"maxThinkingTokens": 12000},
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "done"}],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertEqual(session.thinkingLevel, "medium")
+        self.assertEqual(
+            session.sessionForensics.get("thinking", {}).get("source"),
+            "thinkingMetadata.maxThinkingTokens",
+        )
+
+    def test_sidecar_data_is_linked_for_todos_tasks_teams_and_session_env(self) -> None:
+        raw_session_id = "11111111-2222-3333-4444-555555555555"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T16:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "working"}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+        claude_root = path.parents[2]
+
+        todo_dir = claude_root / "todos"
+        todo_dir.mkdir(parents=True, exist_ok=True)
+        (todo_dir / f"{raw_session_id}-agent-ui-agent.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "content": "Implement feature",
+                        "status": "in_progress",
+                        "activeForm": "Implementing feature",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        task_dir = claude_root / "tasks" / raw_session_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        (task_dir / ".highwatermark").write_text("2", encoding="utf-8")
+        (task_dir / ".lock").write_text("", encoding="utf-8")
+        (task_dir / "1.json").write_text(
+            json.dumps(
+                {
+                    "id": "1",
+                    "subject": "Implement parser enhancement",
+                    "description": "Add session sidecar parsing",
+                    "activeForm": "Implementing parser enhancement",
+                    "status": "completed",
+                    "blocks": [],
+                    "blockedBy": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        team_inbox_dir = claude_root / "teams" / raw_session_id / "inboxes"
+        team_inbox_dir.mkdir(parents=True, exist_ok=True)
+        (team_inbox_dir / "ui-engineer.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "from": "team-lead",
+                        "text": json.dumps(
+                            {
+                                "type": "task_assignment",
+                                "taskId": "1",
+                                "subject": "Build dashboard",
+                                "description": "Create dashboard UI",
+                                "assignedBy": "team-lead",
+                            }
+                        ),
+                        "timestamp": "2026-02-16T16:00:01Z",
+                        "read": False,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        session_env_dir = claude_root / "session-env" / raw_session_id
+        session_env_dir.mkdir(parents=True, exist_ok=True)
+        (session_env_dir / "env.txt").write_text("FOO=bar\n", encoding="utf-8")
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        sidecars = session.sessionForensics.get("sidecars", {})
+        todos = sidecars.get("todos", {})
+        tasks = sidecars.get("tasks", {})
+        teams = sidecars.get("teams", {})
+        session_env = sidecars.get("sessionEnv", {})
+
+        self.assertEqual(todos.get("totalItems"), 1)
+        self.assertEqual(tasks.get("highWatermarkValue"), 2)
+        self.assertTrue(tasks.get("lockPresent"))
+        self.assertEqual(tasks.get("tasks", [])[0].get("description"), "Add session sidecar parsing")
+        self.assertEqual(teams.get("totalMessages"), 1)
+        self.assertIn("ui-engineer", teams.get("teamMembers", []))
+        self.assertEqual(teams.get("inboxes", [])[0].get("messages", [])[0].get("assignedBy"), "team-lead")
+        self.assertTrue(session_env.get("exists"))
+        self.assertEqual(session_env.get("fileCount"), 1)
+
+        artifact_types = {artifact.type for artifact in session.linkedArtifacts}
+        self.assertIn("todo_file", artifact_types)
+        self.assertIn("task_dir", artifact_types)
+        self.assertIn("team_inbox", artifact_types)
+        self.assertIn("session_env", artifact_types)
+
 
 if __name__ == "__main__":
     unittest.main()

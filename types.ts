@@ -191,6 +191,8 @@ export interface AgentSession {
   updatedFiles?: SessionFileUpdate[];
   linkedArtifacts?: SessionArtifact[];
   sessionMetadata?: SessionMetadata | null;
+  thinkingLevel?: 'low' | 'medium' | 'high' | string;
+  sessionForensics?: Record<string, any>;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];
@@ -325,9 +327,219 @@ export interface AnalyticsCorrelationItem {
   linkStrategy?: string;
   commitHash: string;
   model: string;
+  modelRaw?: string;
+  modelFamily?: string;
   status: string;
   startedAt: string;
   endedAt: string;
+}
+
+export interface AnalyticsArtifactTypePoint {
+  artifactType: string;
+  count: number;
+}
+
+export interface AnalyticsArtifactTypeBreakdownItem {
+  artifactType: string;
+  count: number;
+  sessions: number;
+  features: number;
+  models: string[];
+  tools: string[];
+  sources: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactSourceBreakdownItem {
+  source: string;
+  count: number;
+  sessions: number;
+  artifactTypes: string[];
+}
+
+export interface AnalyticsArtifactToolBreakdownItem {
+  toolName: string;
+  count: number;
+  sessions: number;
+  artifactTypes: string[];
+  models: string[];
+}
+
+export interface AnalyticsArtifactSessionItem {
+  sessionId: string;
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  status: string;
+  startedAt: string;
+  artifactCount: number;
+  artifactTypes: AnalyticsArtifactTypePoint[];
+  toolNames: string[];
+  sources: string[];
+  featureIds: string[];
+  featureNames: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactFeatureItem {
+  featureId: string;
+  featureName: string;
+  artifactCount: number;
+  sessions: number;
+  models: string[];
+  tools: string[];
+  artifactTypes: AnalyticsArtifactTypePoint[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsModelArtifactItem {
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  artifactType: string;
+  count: number;
+  sessions: number;
+  tools: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactToolRelationItem {
+  artifactType: string;
+  toolName: string;
+  count: number;
+  sessions: number;
+  models: string[];
+}
+
+export interface AnalyticsModelArtifactToolItem {
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  artifactType: string;
+  toolName: string;
+  count: number;
+  sessions: number;
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactsResponse {
+  generatedAt: string;
+  range: {
+    start: string;
+    end: string;
+  };
+  totals: {
+    artifactCount: number;
+    artifactTypes: number;
+    sessions: number;
+    features: number;
+    models: number;
+    modelFamilies: number;
+    tools: number;
+    sources: number;
+    agents: number;
+    skills: number;
+    commands: number;
+    kindTotals: {
+      agents: number;
+      skills: number;
+      commands: number;
+      manifests: number;
+      requests: number;
+    };
+  };
+  byType: AnalyticsArtifactTypeBreakdownItem[];
+  bySource: AnalyticsArtifactSourceBreakdownItem[];
+  byTool: AnalyticsArtifactToolBreakdownItem[];
+  bySession: AnalyticsArtifactSessionItem[];
+  byFeature: AnalyticsArtifactFeatureItem[];
+  modelArtifact: AnalyticsModelArtifactItem[];
+  modelFamilies: Array<{
+    modelFamily: string;
+    artifactCount: number;
+    sessions: number;
+    models: string[];
+    artifactTypes: string[];
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  artifactTool: AnalyticsArtifactToolRelationItem[];
+  modelArtifactTool: AnalyticsModelArtifactToolItem[];
+  commandModel: Array<{
+    command: string;
+    model: string;
+    modelRaw?: string;
+    modelFamily?: string;
+    count: number;
+    sessions: number;
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  agentModel: Array<{
+    agent: string;
+    model: string;
+    modelRaw?: string;
+    modelFamily?: string;
+    count: number;
+    sessions: number;
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  tokenUsage: {
+    byArtifactType: Array<{
+      artifactType: string;
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+    byModel: Array<{
+      model: string;
+      modelRaw?: string;
+      modelFamily?: string;
+      artifactCount: number;
+      sessions: number;
+      artifactTypes: string[];
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+    byModelArtifact: AnalyticsModelArtifactItem[];
+    byModelFamily: Array<{
+      modelFamily: string;
+      artifactCount: number;
+      sessions: number;
+      models: string[];
+      artifactTypes: string[];
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+  };
+  detailLimit: number;
 }
 
 // Alert System
