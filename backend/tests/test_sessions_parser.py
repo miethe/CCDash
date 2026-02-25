@@ -563,6 +563,12 @@ class SessionParserTests(unittest.TestCase):
 
         file_paths = [f.filePath for f in session.updatedFiles]
         self.assertEqual(file_paths, [])
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("command", artifact_types)
+        self.assertNotIn("command_path", artifact_types)
+        self.assertNotIn("feature_slug", artifact_types)
+        self.assertNotIn("command_phase", artifact_types)
+        self.assertNotIn("request", artifact_types)
 
     def test_file_actions_include_read_update_and_delete_with_metadata(self) -> None:
         path = self._write_jsonl(

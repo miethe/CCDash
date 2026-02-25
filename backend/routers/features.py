@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -151,6 +152,15 @@ class TaskSourceResponse(BaseModel):
     content: str
 
 
+class FeatureSessionTaskRef(BaseModel):
+    taskId: str
+    taskTitle: str = ""
+    phaseId: str = ""
+    phase: str = ""
+    matchedBy: str = ""
+    linkedSessionId: str = ""
+
+
 class FeatureSessionLink(BaseModel):
     sessionId: str
     title: str = ""
@@ -186,7 +196,15 @@ class FeatureSessionLink(BaseModel):
     isPrimaryLink: bool = False
     linkStrategy: str = ""
     workflowType: str = ""
+    relatedPhases: list[str] = Field(default_factory=list)
+    relatedTasks: list[FeatureSessionTaskRef] = Field(default_factory=list)
     sessionMetadata: dict[str, Any] | None = None
+
+
+_TASK_ID_TOKEN_PATTERN = re.compile(r"\b([A-Za-z]+-\d+(?:\.\d+)?)\b")
+_PHASE_FROM_TEXT_PATTERN = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
+_PHASE_RANGE_PATTERN = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+_TITLE_TOKEN_SANITIZER_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 def _safe_json(raw: str | None) -> dict:
@@ -274,6 +292,81 @@ def _phase_label(phase_token: str) -> str:
     if token.replace(" ", "").replace("&", "").replace("-", "").isdigit():
         return f"Phase {token}"
     return f"Phase {token}"
+
+
+def _normalize_title_token(value: str) -> str:
+    lowered = (value or "").strip().lower()
+    if not lowered:
+        return ""
+    return _TITLE_TOKEN_SANITIZER_PATTERN.sub(" ", lowered).strip()
+
+
+def _extract_task_id_from_text(value: str) -> str:
+    match = _TASK_ID_TOKEN_PATTERN.search(value or "")
+    return match.group(1) if match else ""
+
+
+def _extract_phase_token_from_text(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return text
+    match = _PHASE_FROM_TEXT_PATTERN.search(text)
+    return match.group(1) if match else ""
+
+
+def _normalize_feature_phase_values(raw_values: list[str], available_phase_tokens: list[str]) -> list[str]:
+    available_tokens = [str(value).strip() for value in available_phase_tokens if str(value).strip()]
+    available_numeric = sorted({int(value) for value in available_tokens if value.isdigit()})
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add_token(token: str) -> None:
+        clean = str(token or "").strip()
+        if not clean or clean in seen:
+            return
+        seen.add(clean)
+        ordered.append(clean)
+
+    for raw in raw_values:
+        token = str(raw or "").strip()
+        if not token:
+            continue
+        normalized = token.lower()
+        if normalized == "all":
+            if available_tokens:
+                for phase_token in available_tokens:
+                    add_token(phase_token)
+            else:
+                add_token("all")
+            continue
+
+        range_match = _PHASE_RANGE_PATTERN.match(token)
+        if range_match:
+            start, end = int(range_match.group(1)), int(range_match.group(2))
+            if start > end:
+                start, end = end, start
+            if available_numeric:
+                for numeric in available_numeric:
+                    if start <= numeric <= end:
+                        add_token(str(numeric))
+            else:
+                for numeric in range(start, end + 1):
+                    add_token(str(numeric))
+            continue
+
+        if "," in token or "&" in token:
+            split_values = [part.strip() for part in re.split(r"[,&]", token) if part.strip()]
+            for split_value in split_values:
+                phase_token = _extract_phase_token_from_text(split_value) or split_value
+                add_token(phase_token)
+            continue
+
+        phase_token = _extract_phase_token_from_text(token) or token
+        add_token(phase_token)
+
+    return ordered
 
 
 def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
@@ -585,7 +678,46 @@ async def get_feature_linked_sessions(feature_id: str):
 
     link_repo = get_entity_link_repository(db)
     session_repo = get_session_repository(db)
+    task_repo = get_task_repository(db)
     links = await link_repo.get_links_for("feature", feature_id, "related")
+
+    feature_phases = await feature_repo.get_phases(feature_id)
+    phase_token_by_phase_id: dict[str, str] = {}
+    available_phase_tokens: list[str] = []
+    for phase_row in feature_phases:
+        phase_id = str(phase_row.get("id") or "").strip()
+        phase_token = str(phase_row.get("phase") or "").strip()
+        if phase_id and phase_token:
+            phase_token_by_phase_id[phase_id] = phase_token
+        if phase_token and phase_token not in available_phase_tokens:
+            available_phase_tokens.append(phase_token)
+
+    feature_task_rows = await task_repo.list_by_feature(feature_id, None)
+    tasks_by_identifier: dict[str, list[dict[str, str]]] = {}
+    tasks_by_title: dict[str, list[dict[str, str]]] = {}
+    for task_row in feature_task_rows:
+        row_data = _safe_json(task_row.get("data_json"))
+        task_id = str(task_row.get("id") or "").strip()
+        raw_task_id = str(row_data.get("rawTaskId") or task_id).strip()
+        task_title = str(task_row.get("title") or "").strip()
+        phase_id = str(task_row.get("phase_id") or "").strip()
+        phase_token = phase_token_by_phase_id.get(phase_id, "")
+        record = {
+            "taskId": raw_task_id or task_id,
+            "taskTitle": task_title,
+            "phaseId": phase_id,
+            "phase": phase_token,
+            "canonicalTaskId": task_id,
+        }
+        for raw_identifier in {task_id, raw_task_id}:
+            identifier = raw_identifier.lower().strip()
+            if not identifier:
+                continue
+            tasks_by_identifier.setdefault(identifier, []).append(record)
+
+        title_token = _normalize_title_token(task_title)
+        if title_token:
+            tasks_by_title.setdefault(title_token, []).append(record)
 
     async def build_session_link_item(
         session_row: dict[str, Any],
@@ -656,7 +788,100 @@ async def get_feature_linked_sessions(feature_id: str):
                 "parsedCommand": parsed_metadata.get("parsedCommand") if isinstance(parsed_metadata.get("parsedCommand"), dict) else {},
             })
 
+        phase_candidates: list[str] = []
+        for command_event in command_events:
+            parsed_command = command_event.get("parsedCommand") if isinstance(command_event.get("parsedCommand"), dict) else {}
+            parsed_phases = parsed_command.get("phases")
+            if isinstance(parsed_phases, list):
+                phase_candidates.extend(str(value) for value in parsed_phases if str(value).strip())
+            parsed_phase_token = str(parsed_command.get("phaseToken") or "").strip()
+            if parsed_phase_token:
+                phase_candidates.append(parsed_phase_token)
+        if isinstance(signals, list):
+            for signal in signals:
+                if not isinstance(signal, dict):
+                    continue
+                signal_phase = str(signal.get("phaseToken") or "").strip()
+                if signal_phase:
+                    phase_candidates.append(signal_phase)
+
+        related_tasks_by_key: dict[str, FeatureSessionTaskRef] = {}
+        for log in logs:
+            if str(log.get("type") or "") != "tool":
+                continue
+            if str(log.get("tool_name") or "").strip() != "Task":
+                continue
+
+            raw_metadata = log.get("metadata_json")
+            parsed_metadata: dict[str, Any] = {}
+            if isinstance(raw_metadata, str) and raw_metadata:
+                parsed_metadata = _safe_json(raw_metadata)
+            elif isinstance(raw_metadata, dict):
+                parsed_metadata = raw_metadata
+
+            parsed_tool_args = _safe_json(log.get("tool_args")) if isinstance(log.get("tool_args"), str) else {}
+            task_name = str(parsed_metadata.get("taskName") or "").strip()
+            if not task_name:
+                task_name = str(parsed_tool_args.get("name") or "").strip()
+            task_id = str(parsed_metadata.get("taskId") or "").strip()
+            if not task_id and task_name:
+                task_id = _extract_task_id_from_text(task_name)
+            linked_session_id = str(log.get("linked_session_id") or "").strip()
+
+            matched_records: list[tuple[dict[str, str], str]] = []
+            if task_id:
+                for match in tasks_by_identifier.get(task_id.lower(), []):
+                    matched_records.append((match, "task_id_exact"))
+
+            if not matched_records and task_name:
+                task_name_token = _normalize_title_token(task_name)
+                for match in tasks_by_title.get(task_name_token, []):
+                    matched_records.append((match, "task_title_exact"))
+
+                if not matched_records and task_name_token:
+                    for candidate_token, task_matches in tasks_by_title.items():
+                        if task_name_token in candidate_token or candidate_token in task_name_token:
+                            for match in task_matches:
+                                matched_records.append((match, "task_title_fuzzy"))
+                            if matched_records:
+                                break
+
+            for matched_record, matched_by in matched_records:
+                task_token = str(matched_record.get("taskId") or "").strip()
+                if not task_token:
+                    continue
+                related_task = FeatureSessionTaskRef(
+                    taskId=task_token,
+                    taskTitle=str(matched_record.get("taskTitle") or ""),
+                    phaseId=str(matched_record.get("phaseId") or ""),
+                    phase=str(matched_record.get("phase") or ""),
+                    matchedBy=matched_by,
+                    linkedSessionId=linked_session_id,
+                )
+                unique_key = f"{related_task.taskId}::{related_task.linkedSessionId}::{related_task.phaseId}"
+                related_tasks_by_key.setdefault(unique_key, related_task)
+                if related_task.phase:
+                    phase_candidates.append(related_task.phase)
+
         session_metadata = classify_session_key_metadata(command_events, mappings)
+        if session_metadata and isinstance(session_metadata.get("relatedPhases"), list):
+            phase_candidates.extend(str(value) for value in session_metadata.get("relatedPhases", []) if str(value).strip())
+
+        normalized_related_phases = _normalize_feature_phase_values(phase_candidates, available_phase_tokens)
+        if session_metadata:
+            session_metadata = {
+                **session_metadata,
+                "relatedPhases": normalized_related_phases,
+            }
+
+        related_tasks = sorted(
+            related_tasks_by_key.values(),
+            key=lambda item: (
+                _safe_int(item.phase, 0) if item.phase.isdigit() else 0,
+                item.taskId,
+                item.linkedSessionId,
+            ),
+        )
         session_title = _derive_session_title(session_metadata, latest_summary, session_id)
         reasons = list(dict.fromkeys(reasons))
 
@@ -695,6 +920,8 @@ async def get_feature_linked_sessions(feature_id: str):
             isPrimaryLink=is_primary_link,
             linkStrategy=strategy,
             workflowType=workflow_type,
+            relatedPhases=normalized_related_phases,
+            relatedTasks=related_tasks,
             sessionMetadata=session_metadata,
         )
 

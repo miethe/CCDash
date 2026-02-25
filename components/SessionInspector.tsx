@@ -1895,9 +1895,15 @@ const ArtifactsView: React.FC<{
     highlightedSourceLogId?: string | null;
 }> = ({ session, threadSessions, subagentNameBySessionId, onOpenThread, highlightedSourceLogId }) => {
     const [selectedGroup, setSelectedGroup] = useState<ArtifactGroup | null>(null);
+    const [activeSubTab, setActiveSubTab] = useState<'commands' | 'skills' | 'agents' | 'tools'>('commands');
+    const commandTagArtifactTypes = useMemo(
+        () => new Set(['command_path', 'feature_slug', 'command_phase', 'request']),
+        []
+    );
 
     const groupedArtifacts = useMemo(() => {
-        if (!session.linkedArtifacts || session.linkedArtifacts.length === 0) {
+        const artifacts = session.linkedArtifacts || [];
+        if (artifacts.length === 0) {
             return [];
         }
 
@@ -1955,7 +1961,10 @@ const ArtifactsView: React.FC<{
             }
         };
 
-        for (const artifact of session.linkedArtifacts) {
+        for (const artifact of artifacts) {
+            if (commandTagArtifactTypes.has((artifact.type || '').trim().toLowerCase())) {
+                continue;
+            }
             const group = ensureGroup(artifact);
             group.artifacts.push(artifact);
             if (!group.artifactIds.includes(artifact.id)) {
@@ -2033,9 +2042,81 @@ const ArtifactsView: React.FC<{
                 }
                 return a.title.localeCompare(b.title);
             });
-    }, [session.linkedArtifacts, session.logs, subagentNameBySessionId, threadSessions]);
+    }, [commandTagArtifactTypes, session.linkedArtifacts, session.logs, subagentNameBySessionId, threadSessions]);
 
-    if (groupedArtifacts.length === 0) {
+    const commandEntries = useMemo(() => {
+        const artifactsByLogId = new Map<string, SessionArtifact[]>();
+        for (const artifact of session.linkedArtifacts || []) {
+            if (!artifact.sourceLogId) continue;
+            const existing = artifactsByLogId.get(artifact.sourceLogId) || [];
+            existing.push(artifact);
+            artifactsByLogId.set(artifact.sourceLogId, existing);
+        }
+
+        return session.logs
+            .filter(log => log.type === 'command')
+            .map(log => {
+                const metadata = asRecord(log.metadata);
+                const parsedCommand = asRecord(metadata.parsedCommand);
+                const phaseValues = asStringArray(parsedCommand.phases);
+                const phaseToken = takeString(parsedCommand.phaseToken);
+                if (phaseToken && !phaseValues.includes(phaseToken)) {
+                    phaseValues.push(phaseToken);
+                }
+
+                const taggedArtifacts = (artifactsByLogId.get(log.id) || [])
+                    .filter(artifact => commandTagArtifactTypes.has((artifact.type || '').trim().toLowerCase()));
+                for (const artifact of taggedArtifacts) {
+                    if (artifact.type === 'command_phase' && artifact.title && !phaseValues.includes(artifact.title)) {
+                        phaseValues.push(artifact.title);
+                    }
+                }
+
+                return {
+                    logId: log.id,
+                    timestamp: log.timestamp,
+                    commandName: log.content,
+                    args: takeString(metadata.args),
+                    phases: phaseValues,
+                    featurePath: takeString(parsedCommand.featurePath),
+                    featureSlug: takeString(parsedCommand.featureSlug),
+                    requestId: takeString(parsedCommand.requestId),
+                    taggedArtifactsCount: taggedArtifacts.length,
+                };
+            })
+            .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
+    }, [commandTagArtifactTypes, session.linkedArtifacts, session.logs]);
+
+    const skillGroups = useMemo(
+        () => groupedArtifacts.filter(group => (group.type || '').trim().toLowerCase() === 'skill'),
+        [groupedArtifacts]
+    );
+    const agentGroups = useMemo(
+        () => groupedArtifacts.filter(group => {
+            const type = (group.type || '').trim().toLowerCase();
+            return type === 'agent' || type === 'task';
+        }),
+        [groupedArtifacts]
+    );
+    const toolGroups = useMemo(
+        () => groupedArtifacts.filter(group => {
+            const type = (group.type || '').trim().toLowerCase();
+            if (type === 'skill' || type === 'agent' || type === 'task' || type === 'command') return false;
+            return group.relatedToolLogs.length > 0 || group.sourceToolNames.length > 0;
+        }),
+        [groupedArtifacts]
+    );
+
+    const visibleGroups = useMemo(() => {
+        if (activeSubTab === 'skills') return skillGroups;
+        if (activeSubTab === 'agents') return agentGroups;
+        if (activeSubTab === 'tools') return toolGroups;
+        return [];
+    }, [activeSubTab, agentGroups, skillGroups, toolGroups]);
+
+    const hasAnyData = commandEntries.length > 0 || skillGroups.length > 0 || agentGroups.length > 0 || toolGroups.length > 0;
+
+    if (!hasAnyData) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <LinkIcon size={48} className="mb-4 opacity-20" />
@@ -2046,51 +2127,135 @@ const ArtifactsView: React.FC<{
 
     return (
         <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {groupedArtifacts.map(group => (
+            <div className="mb-4 flex items-center gap-2 border border-slate-800 rounded-lg bg-slate-900 p-1 w-fit">
+                {[
+                    { id: 'commands', label: `Commands (${commandEntries.length})` },
+                    { id: 'skills', label: `Skills (${skillGroups.length})` },
+                    { id: 'agents', label: `Agents (${agentGroups.length})` },
+                    { id: 'tools', label: `Tools (${toolGroups.length})` },
+                ].map(tab => (
                     <button
-                        key={group.key}
-                        onClick={() => setSelectedGroup(group)}
-                        className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+                        key={tab.id}
+                        onClick={() => setActiveSubTab(tab.id as 'commands' | 'skills' | 'agents' | 'tools')}
+                        className={`px-3 py-1.5 text-xs rounded-md transition-colors ${activeSubTab === tab.id
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-slate-400 hover:text-slate-200'
+                            }`}
                     >
-                        <div className="flex justify-between items-start mb-4">
-                            <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                                group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                                    'bg-blue-500/10 text-blue-400'
-                                }`}>
-                                {group.type === 'memory' ? <HardDrive size={20} /> :
-                                    group.type === 'request_log' ? <Scroll size={20} /> :
-                                        <Database size={20} />}
-                            </div>
-                            <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                                {group.source}
-                            </span>
-                        </div>
-
-                        <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
-                        <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
-
-                        <div className="flex flex-wrap gap-2 mb-4">
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.artifacts.length} merged
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.relatedToolLogs.length} tool calls
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.linkedThreads.length} sub-threads
-                            </span>
-                        </div>
-
-                        <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                            <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
-                            <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
-                                View Details <ChevronRight size={12} />
-                            </span>
-                        </div>
+                        {tab.label}
                     </button>
                 ))}
             </div>
+
+            {activeSubTab === 'commands' && (
+                <div className="space-y-3">
+                    {commandEntries.length === 0 && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                            No command activity found.
+                        </div>
+                    )}
+                    {commandEntries.map(entry => (
+                        <div
+                            key={entry.logId}
+                            className={`rounded-xl border p-4 ${highlightedSourceLogId && entry.logId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800 bg-slate-900/40'}`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-emerald-300/90 font-semibold mb-1 flex items-center gap-1.5">
+                                        <Terminal size={11} /> Command
+                                    </div>
+                                    <p className="font-mono text-sm text-slate-200 break-all">{entry.commandName}</p>
+                                    {entry.args && (
+                                        <p className="mt-2 text-xs text-slate-400 whitespace-pre-wrap break-words">{entry.args}</p>
+                                    )}
+                                </div>
+                                <div className="text-[10px] text-slate-500">{new Date(entry.timestamp).toLocaleString()}</div>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {entry.phases.map(phase => (
+                                    <span key={`${entry.logId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                                        Phase {phase}
+                                    </span>
+                                ))}
+                                {entry.featureSlug && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-300">
+                                        Feature {entry.featureSlug}
+                                    </span>
+                                )}
+                                {entry.requestId && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 font-mono">
+                                        {entry.requestId}
+                                    </span>
+                                )}
+                                {entry.featurePath && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-400 font-mono">
+                                        {fileNameFromPath(entry.featurePath)}
+                                    </span>
+                                )}
+                                {entry.taggedArtifactsCount > 0 && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                                        {entry.taggedArtifactsCount} normalized tags
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {activeSubTab !== 'commands' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {visibleGroups.length === 0 && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
+                            No {activeSubTab} artifacts found.
+                        </div>
+                    )}
+                    {visibleGroups.map(group => (
+                        <button
+                            key={group.key}
+                            onClick={() => setSelectedGroup(group)}
+                            className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+                        >
+                            <div className="flex justify-between items-start mb-4">
+                                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+                                    group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+                                        'bg-blue-500/10 text-blue-400'
+                                    }`}>
+                                    {group.type === 'memory' ? <HardDrive size={20} /> :
+                                        group.type === 'request_log' ? <Scroll size={20} /> :
+                                            <Database size={20} />}
+                                </div>
+                                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
+                                    {group.source}
+                                </span>
+                            </div>
+
+                            <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
+                            <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
+
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.artifacts.length} merged
+                                </span>
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.relatedToolLogs.length} tool calls
+                                </span>
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.linkedThreads.length} sub-threads
+                                </span>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                                <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
+                                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
+                                    View Details <ChevronRight size={12} />
+                                </span>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {selectedGroup && (
                 <ArtifactDetailsModal

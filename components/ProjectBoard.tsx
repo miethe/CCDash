@@ -49,6 +49,15 @@ interface FeatureSessionLink {
   isPrimaryLink?: boolean;
   linkStrategy?: string;
   workflowType?: string;
+  relatedPhases?: string[];
+  relatedTasks?: Array<{
+    taskId: string;
+    taskTitle?: string;
+    phaseId?: string;
+    phase?: string;
+    matchedBy?: string;
+    linkedSessionId?: string;
+  }>;
   sessionMetadata?: {
     sessionTypeId: string;
     sessionTypeLabel: string;
@@ -1129,6 +1138,107 @@ const FeatureModal = ({
       return bTime - aTime;
     });
   }, [linkedSessionLinks]);
+
+  const phaseSessionLinks = useMemo(() => {
+    const byPhase = new Map<string, FeatureSessionLink[]>();
+    const add = (phaseToken: string, session: FeatureSessionLink) => {
+      const key = (phaseToken || '').trim();
+      if (!key) return;
+      const existing = byPhase.get(key) || [];
+      if (!existing.some(item => item.sessionId === session.sessionId)) {
+        byPhase.set(key, [...existing, session]);
+      }
+    };
+
+    linkedSessions.forEach(session => {
+      const related = Array.isArray(session.relatedPhases) ? session.relatedPhases : [];
+      related.forEach(phaseToken => {
+        const normalized = String(phaseToken || '').trim();
+        if (!normalized) return;
+        if (normalized.toLowerCase() === 'all') {
+          phases.forEach(phase => add(String(phase.phase || '').trim(), session));
+          return;
+        }
+        add(normalized, session);
+      });
+    });
+
+    return byPhase;
+  }, [linkedSessions, phases]);
+
+  const taskSessionLinksByTaskId = useMemo(() => {
+    const byTask = new Map<string, Array<{
+      sessionId: string;
+      isSubthread: boolean;
+      confidence: number;
+      matchedBy: string;
+      source: 'task_frontmatter' | 'task_tool';
+    }>>();
+    const taskIdLookup = new Map<string, string>();
+
+    phases.forEach(phase => {
+      (phase.tasks || []).forEach(task => {
+        const taskId = String(task.id || '').trim();
+        if (!taskId) return;
+        taskIdLookup.set(taskId.toLowerCase(), taskId);
+      });
+    });
+
+    const addTaskSession = (
+      taskId: string,
+      value: {
+        sessionId: string;
+        isSubthread: boolean;
+        confidence: number;
+        matchedBy: string;
+        source: 'task_frontmatter' | 'task_tool';
+      }
+    ) => {
+      const existing = byTask.get(taskId) || [];
+      if (existing.some(item => item.sessionId === value.sessionId && item.source === value.source)) {
+        return;
+      }
+      byTask.set(taskId, [...existing, value]);
+    };
+
+    phases.forEach(phase => {
+      (phase.tasks || []).forEach(task => {
+        const taskId = String(task.id || '').trim();
+        const sessionId = String(task.sessionId || '').trim();
+        if (!taskId || !sessionId) return;
+        addTaskSession(taskId, {
+          sessionId,
+          isSubthread: false,
+          confidence: 1,
+          matchedBy: 'task_frontmatter',
+          source: 'task_frontmatter',
+        });
+      });
+    });
+
+    linkedSessions.forEach(session => {
+      const relatedTasks = Array.isArray(session.relatedTasks) ? session.relatedTasks : [];
+      relatedTasks.forEach(taskRef => {
+        const rawTaskId = String(taskRef.taskId || '').trim().toLowerCase();
+        if (!rawTaskId) return;
+        const resolvedTaskId = taskIdLookup.get(rawTaskId);
+        if (!resolvedTaskId) return;
+
+        const targetSessionId = String(taskRef.linkedSessionId || session.sessionId || '').trim();
+        if (!targetSessionId) return;
+
+        addTaskSession(resolvedTaskId, {
+          sessionId: targetSessionId,
+          isSubthread: Boolean(taskRef.linkedSessionId) || Boolean(session.isSubthread),
+          confidence: session.confidence || 0,
+          matchedBy: String(taskRef.matchedBy || ''),
+          source: 'task_tool',
+        });
+      });
+    });
+
+    return byTask;
+  }, [linkedSessions, phases]);
   const primaryFeatureDate = getFeaturePrimaryDate(activeFeature);
   const featureHistoryEvents = useMemo(() => {
     const events: Array<{
@@ -1674,6 +1784,7 @@ const FeatureModal = ({
                 const isExpanded = expandedPhases.has(phaseKey);
                 const phaseCompletedTasks = getPhaseCompletedCount(phase);
                 const phaseDeferredTasks = getPhaseDeferredCount(phase);
+                const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                 const visibleTasks = taskStatusFilter === 'all'
                   ? phase.tasks
                   : phase.tasks.filter(task => task.status === taskStatusFilter);
@@ -1701,6 +1812,22 @@ const FeatureModal = ({
                           <div className="mt-1">
                             <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phase.totalTasks} />
                           </div>
+                          {phaseRelatedSessions.length > 0 && (
+                            <div className="mt-2 flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
+                              {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
+                                <span
+                                  key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 font-mono"
+                                >
+                                  {sessionLink.sessionId}
+                                </span>
+                              ))}
+                              {phaseRelatedSessions.length > 3 && (
+                                <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 3} more</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </button>
                       <StatusDropdown
@@ -1719,6 +1846,7 @@ const FeatureModal = ({
                           const taskDeferred = normalizedStatus === 'deferred';
                           const nextStatus = taskDone ? 'deferred' : taskDeferred ? 'backlog' : 'done';
                           const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
+                          const taskSessionLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                           const taskTextClass = taskDone
                             ? 'text-slate-500 line-through'
                             : taskDeferred
@@ -1759,15 +1887,26 @@ const FeatureModal = ({
                                   {task.commitHash.slice(0, 7)}
                                 </span>
                               )}
-                              {task.sessionId && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(task.sessionId!)}`); }}
-                                  className="flex items-center gap-1 text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/30 font-mono hover:bg-indigo-500/20 transition-colors flex-shrink-0"
-                                  title="Go to session"
-                                >
-                                  <Terminal size={10} />
-                                  {task.sessionId}
-                                </button>
+                              {taskSessionLinks.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {taskSessionLinks.slice(0, 3).map(link => (
+                                    <button
+                                      key={`${task.id}-session-${link.sessionId}-${link.source}`}
+                                      onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(link.sessionId)}`); }}
+                                      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono transition-colors flex-shrink-0 ${link.isSubthread
+                                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
+                                        }`}
+                                      title={link.isSubthread ? 'Go to linked sub-thread session' : 'Go to linked session'}
+                                    >
+                                      <Terminal size={10} />
+                                      {link.sessionId}
+                                    </button>
+                                  ))}
+                                  {taskSessionLinks.length > 3 && (
+                                    <span className="text-[10px] text-slate-500">+{taskSessionLinks.length - 3} more</span>
+                                  )}
+                                </div>
                               )}
                               {task.owner && (
                                 <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>

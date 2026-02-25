@@ -1186,48 +1186,6 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_tool_name=None,
             )
 
-            command_log_id = logs[command_log_idx].id
-            if parsed.get("featurePath"):
-                feature_path = str(parsed.get("featurePath"))
-                add_artifact(
-                    kind="command_path",
-                    title=feature_path,
-                    description=f"Path referenced by {command_name}",
-                    source="command-tag",
-                    source_log_id=command_log_id,
-                    source_tool_name=None,
-                )
-            if parsed.get("featureSlug"):
-                feature_slug = str(parsed.get("featureSlug"))
-                add_artifact(
-                    kind="feature_slug",
-                    title=feature_slug,
-                    description=f"Feature slug inferred from {command_name}",
-                    source="command-tag",
-                    source_log_id=command_log_id,
-                    source_tool_name=None,
-                )
-            if parsed.get("phaseToken"):
-                phase_token = str(parsed.get("phaseToken"))
-                add_artifact(
-                    kind="command_phase",
-                    title=phase_token,
-                    description=f"Phase token parsed from {command_name}",
-                    source="command-tag",
-                    source_log_id=command_log_id,
-                    source_tool_name=None,
-                )
-            if parsed.get("requestId"):
-                request_id = str(parsed.get("requestId"))
-                add_artifact(
-                    kind="request",
-                    title=request_id,
-                    description=f"Request ID referenced by {command_name}",
-                    source="command-tag",
-                    source_log_id=command_log_id,
-                    source_tool_name=None,
-                )
-
     def process_skill_payload_from_message(text: str, source_log_id: str, source_tool_use_id: str) -> None:
         payload = _extract_skill_payload(text)
         if not payload:
