@@ -133,6 +133,10 @@ def derive_session_badges(
         if isinstance(metadata_model, str) and metadata_model.strip():
             _add_unique(models_raw, models_seen, metadata_model)
 
+        metadata_skill = metadata.get("skill")
+        if isinstance(metadata_skill, str) and metadata_skill.strip():
+            _add_unique(skills, skills_seen, metadata_skill)
+
         if log_type == "command":
             command_name = str(log.get("content") or "").strip()
             command_args = str(metadata.get("args") or "")
@@ -141,6 +145,10 @@ def derive_session_badges(
             command_model = _extract_model_from_command(command_name, command_args, parsed)
             if command_model:
                 _add_unique(models_raw, models_seen, command_model)
+            if bool(metadata.get("skillFormat")):
+                skill_name = str(metadata.get("skill") or command_name).strip()
+                if skill_name and not skill_name.startswith("/"):
+                    _add_unique(skills, skills_seen, skill_name)
 
         if log_type == "tool":
             tool_name = _normalize_space(str(log.get("tool_name") or ""))

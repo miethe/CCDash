@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import time
 from collections import Counter
 from datetime import datetime
@@ -26,12 +27,17 @@ from backend.date_utils import file_metadata_dates, make_date_value
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
+_SKILL_FORMAT_PATTERN = re.compile(r"<skill-format>\s*true\s*</skill-format>", re.IGNORECASE)
+_SKILL_BASE_DIR_PATTERN = re.compile(r"^\s*Base directory for this skill:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 _COMMIT_BRACKET_PATTERN = re.compile(r"\[[^\]\n]*\s([0-9a-f]{7,40})\]", re.IGNORECASE)
 _COMMIT_PATTERN = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _ASYNC_TASK_AGENT_ID_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9_-]+)\b", re.IGNORECASE)
+_TASK_ID_PATTERN = re.compile(r"\b([A-Z]{2,10}-[A-Z0-9]+-\d{1,4})\b")
+_BATCH_HEADER_PATTERN = re.compile(r"(?:\*\*)?\s*Batch\s+([A-Za-z0-9_-]+)\s*(?:\*\*)?", re.IGNORECASE)
+_BATCH_BULLET_PATTERN = re.compile(r"^\s*-\s*\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$")
 _MODEL_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,}$")
 _MODEL_COMMAND_STOPWORDS = {"set", "to", "use", "default", "auto", "list", "show", "current", "model"}
 
@@ -715,6 +721,143 @@ def _classify_bash_result(output_text: str, is_error: bool) -> str:
     return "unknown"
 
 
+def _extract_skill_payload(text: str) -> dict[str, str]:
+    if not text:
+        return {}
+
+    payload: dict[str, str] = {}
+    if not _SKILL_FORMAT_PATTERN.search(text) and "base directory for this skill:" not in text.lower():
+        return payload
+
+    command_names = [m.group(1).strip() for m in _COMMAND_NAME_PATTERN.finditer(text) if m.group(1).strip()]
+    base_dir_match = _SKILL_BASE_DIR_PATTERN.search(text)
+    if base_dir_match:
+        base_dir = _normalize_path(base_dir_match.group(1).strip())
+        if base_dir:
+            payload["baseDirectory"] = base_dir
+            payload["skill"] = Path(base_dir).name
+
+        # Capture a concise skill synopsis from the first non-empty line after base-dir.
+        tail = text[base_dir_match.end():].strip()
+        summary = ""
+        for line in tail.splitlines():
+            stripped = line.strip().strip("#").strip()
+            if not stripped:
+                continue
+            if stripped.startswith("-") or stripped.startswith("|") or stripped.startswith("```"):
+                continue
+            summary = stripped
+            break
+        if summary:
+            payload["summary"] = summary[:500]
+
+    if command_names:
+        payload["commandName"] = command_names[0]
+        if "skill" not in payload:
+            candidate = command_names[0].strip()
+            if candidate and not candidate.startswith("/"):
+                payload["skill"] = candidate
+
+    return payload
+
+
+def _parse_manage_plan_status_command(command: str) -> dict[str, str]:
+    if "manage-plan-status.py" not in command:
+        return {}
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    details: dict[str, str] = {"script": "manage-plan-status.py"}
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        next_token = tokens[idx + 1] if idx + 1 < len(tokens) else ""
+
+        if token in {"--file", "-f"} and next_token:
+            details["file"] = _normalize_path(next_token)
+            idx += 2
+            continue
+        if token == "--status" and next_token:
+            details["status"] = next_token.strip().lower()
+            idx += 2
+            continue
+        if token == "--field" and next_token:
+            details["field"] = next_token.strip()
+            idx += 2
+            continue
+        if token == "--value" and next_token:
+            details["value"] = next_token.strip()
+            idx += 2
+            continue
+        if token == "--read" and next_token:
+            details["readFile"] = _normalize_path(next_token)
+            idx += 2
+            continue
+        if token == "--query":
+            details["query"] = "true"
+        idx += 1
+
+    if details.get("status") or details.get("field"):
+        details["operation"] = "update"
+    elif details.get("readFile"):
+        details["operation"] = "read"
+    elif details.get("query") == "true":
+        details["operation"] = "query"
+    else:
+        details["operation"] = "run"
+
+    return details
+
+
+def _parse_batch_execution_message(text: str) -> dict[str, Any]:
+    if "batch" not in text.lower():
+        return {}
+
+    header_match = _BATCH_HEADER_PATTERN.search(text)
+    if not header_match:
+        return {}
+
+    batch_id = header_match.group(1).strip()
+    if not batch_id:
+        return {}
+
+    tasks: list[dict[str, str]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("-"):
+            continue
+        match = _BATCH_BULLET_PATTERN.match(line)
+        if not match:
+            continue
+
+        task_id = match.group(1).strip()
+        if not task_id:
+            continue
+        body = match.group(2).strip()
+        task_agent = ""
+        agent_match = re.search(r"\(([^)]+)\)\s*$", body)
+        if agent_match:
+            task_agent = agent_match.group(1).strip().strip("`").strip()
+            body = body[:agent_match.start()].strip()
+        tasks.append({
+            "taskId": task_id,
+            "name": body[:240],
+            "agent": task_agent[:120],
+        })
+
+    if not tasks:
+        return {}
+
+    return {
+        "batchId": batch_id,
+        "taskCount": len(tasks),
+        "tasks": tasks[:20],
+    }
+
+
 def _derive_session_status(entries: list[dict[str, Any]], path: Path) -> str:
     """Infer session status from terminal metadata + file recency."""
     if not entries:
@@ -901,11 +1044,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "snapshotCount": 0,
         "apiErrors": [],
         "queueOperations": [],
+        "skillLoads": [],
+        "planStatusUpdates": [],
+        "batchExecutions": [],
     }
 
     tool_logs_by_id: dict[str, int] = {}
     tool_started_at_by_id: dict[str, str] = {}
     subagent_link_by_parent_tool: dict[str, str] = {}
+    skill_invocations_by_tool_use_id: dict[str, dict[str, Any]] = {}
     emitted_subagent_starts: set[tuple[str, str]] = set()
 
     log_idx = 0
@@ -978,12 +1125,19 @@ def parse_session_file(path: Path) -> AgentSession | None:
         source_log_id: str | None,
         source_tool_name: str | None,
         url: str | None = None,
-    ) -> None:
+    ) -> str | None:
         if not title:
-            return
+            return None
         artifact_id = _hash_artifact_id(session_id, kind, title, source_log_id)
         if artifact_id in artifacts:
-            return
+            existing = artifacts[artifact_id]
+            if url and not existing.url:
+                existing.url = url
+            if description and (not existing.description or existing.description == "Skill invocation in transcript"):
+                existing.description = description
+            if source_tool_name and not existing.sourceToolName:
+                existing.sourceToolName = source_tool_name
+            return artifact_id
         artifacts[artifact_id] = SessionArtifact(
             id=artifact_id,
             title=title,
@@ -994,10 +1148,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
             sourceLogId=source_log_id,
             sourceToolName=source_tool_name,
         )
+        return artifact_id
 
     def add_command_artifacts_from_text(text: str, source_log_id: str) -> None:
         command_names = [m.group(1).strip() for m in _COMMAND_NAME_PATTERN.finditer(text) if m.group(1).strip()]
         command_args = [m.group(1).strip() for m in _COMMAND_ARGS_PATTERN.finditer(text)]
+        has_skill_format = bool(_SKILL_FORMAT_PATTERN.search(text))
+        parsed_skill_payload = _extract_skill_payload(text) if has_skill_format else {}
 
         for idx, command_name in enumerate(command_names):
             args_text = command_args[idx] if idx < len(command_args) else ""
@@ -1007,6 +1164,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
             parsed = _parse_command_context(command_name, args_text)
             if parsed:
                 metadata["parsedCommand"] = parsed
+            if has_skill_format:
+                metadata["skillFormat"] = True
+                skill_name = str(parsed_skill_payload.get("skill") or command_name).strip()
+                if skill_name and not skill_name.startswith("/"):
+                    metadata["skill"] = skill_name
 
             command_log_idx = append_log(
                 timestamp=current_ts,
@@ -1065,6 +1227,115 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     source_log_id=command_log_id,
                     source_tool_name=None,
                 )
+
+    def process_skill_payload_from_message(text: str, source_log_id: str, source_tool_use_id: str) -> None:
+        payload = _extract_skill_payload(text)
+        if not payload:
+            return
+
+        linked_skill = skill_invocations_by_tool_use_id.get(source_tool_use_id, {}) if source_tool_use_id else {}
+        skill_name = str(payload.get("skill") or linked_skill.get("skill") or "").strip()
+        if not skill_name or skill_name.startswith("/"):
+            return
+
+        skill_summary = str(payload.get("summary") or "Skill loaded into context").strip()[:500]
+        base_directory = str(payload.get("baseDirectory") or "").strip()
+
+        source_log_for_artifact = str(linked_skill.get("sourceLogId") or source_log_id)
+        source_tool_name = "Skill" if linked_skill else None
+        linked_artifact_id = str(linked_skill.get("artifactId") or "")
+        artifact_id = linked_artifact_id or add_artifact(
+            kind="skill",
+            title=skill_name,
+            description=skill_summary,
+            source="skill-load",
+            source_log_id=source_log_for_artifact,
+            source_tool_name=source_tool_name,
+            url=base_directory or None,
+        )
+
+        if artifact_id and artifact_id in artifacts:
+            existing = artifacts[artifact_id]
+            if base_directory and not existing.url:
+                existing.url = base_directory
+            if skill_summary and (
+                not existing.description
+                or existing.description == "Skill invocation in transcript"
+                or existing.source == "tool"
+            ):
+                existing.description = skill_summary
+            if existing.source == "tool":
+                existing.source = "tool+skill-load"
+
+        session_context["skillLoads"].append({
+            "timestamp": current_ts,
+            "skill": skill_name,
+            "baseDirectory": base_directory,
+            "sourceToolUseId": source_tool_use_id,
+            "sourceLogId": source_log_id,
+        })
+
+    def process_batch_metadata_for_message(log_index: int, text: str) -> None:
+        parsed_batch = _parse_batch_execution_message(text)
+        if not parsed_batch:
+            return
+
+        batch_id = str(parsed_batch.get("batchId") or "").strip()
+        tasks = parsed_batch.get("tasks") if isinstance(parsed_batch.get("tasks"), list) else []
+        if not batch_id or not tasks:
+            return
+
+        message_log = logs[log_index]
+        message_log.metadata["batchExecution"] = {
+            "batchId": batch_id,
+            "taskCount": len(tasks),
+            "tasks": tasks[:20],
+        }
+        session_context["batchExecutions"].append({
+            "timestamp": current_ts,
+            "batchId": batch_id,
+            "taskCount": len(tasks),
+            "tasks": tasks[:20],
+            "sourceLogId": message_log.id,
+        })
+
+        add_artifact(
+            kind="task_batch",
+            title=f"Batch {batch_id}",
+            description=f"Batch execution announced with {len(tasks)} task(s)",
+            source="message",
+            source_log_id=message_log.id,
+            source_tool_name=None,
+        )
+        for task in tasks:
+            task_id = str(task.get("taskId") or "").strip()
+            task_name = str(task.get("name") or "").strip()
+            task_agent = str(task.get("agent") or "").strip()
+            if not task_id:
+                continue
+            description = task_name or "Batch task assignment"
+            if task_agent:
+                description = f"{description} ({task_agent})"
+            add_artifact(
+                kind="batch_task",
+                title=task_id,
+                description=description[:500],
+                source="message",
+                source_log_id=message_log.id,
+                source_tool_name=None,
+            )
+
+    def postprocess_message_log(log_index: int, message_text: str, speaker_value: str, entry_payload: dict[str, Any]) -> None:
+        source_log_id = logs[log_index].id
+        if speaker_value == "user":
+            add_command_artifacts_from_text(message_text, source_log_id)
+
+        raw_source_tool_use_id = entry_payload.get("sourceToolUseID")
+        source_tool_use_id = raw_source_tool_use_id.strip() if isinstance(raw_source_tool_use_id, str) else ""
+        process_skill_payload_from_message(message_text, source_log_id, source_tool_use_id)
+
+        if speaker_value == "agent":
+            process_batch_metadata_for_message(log_index, message_text)
 
     def record_platform_version(version_value: str, timestamp: str) -> None:
         nonlocal platform_version
@@ -1663,8 +1934,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     agentName=agent_name,
                     metadata=message_metadata,
                 )
-                if speaker == "user":
-                    add_command_artifacts_from_text(content, logs[idx].id)
+                postprocess_message_log(idx, content, speaker, entry)
             continue
 
         content_blocks = message.get("content", []) if isinstance(message, dict) else []
@@ -1696,8 +1966,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     agentName=agent_name,
                     metadata=message_metadata,
                 )
-                if speaker == "user":
-                    add_command_artifacts_from_text(content, logs[idx].id)
+                postprocess_message_log(idx, content, speaker, entry)
             continue
 
         if not isinstance(content_blocks, list):
@@ -1778,6 +2047,42 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_log.metadata["bashCommand"] = command_text[:4000]
                         tool_log.metadata["toolCategory"] = category
                         tool_log.metadata["toolLabel"] = label
+                        plan_status_details = _parse_manage_plan_status_command(command_text)
+                        if plan_status_details:
+                            tool_log.metadata["planStatus"] = plan_status_details
+                            plan_file = str(plan_status_details.get("file") or plan_status_details.get("readFile") or "").strip()
+                            status_value = str(plan_status_details.get("status") or "").strip()
+                            operation = str(plan_status_details.get("operation") or "run").strip()
+
+                            session_context["planStatusUpdates"].append({
+                                "timestamp": current_ts,
+                                "operation": operation,
+                                "status": status_value,
+                                "file": plan_file,
+                                "sourceLogId": tool_log.id,
+                            })
+                            summary = f"{operation} plan status"
+                            if status_value:
+                                summary = f"{summary}: {status_value}"
+                            if plan_file:
+                                summary = f"{summary} ({Path(plan_file).name})"
+                            add_artifact(
+                                kind="plan_status_update",
+                                title=summary,
+                                description="manage-plan-status.py command observed in Bash tool call",
+                                source="tool",
+                                source_log_id=tool_log.id,
+                                source_tool_name=tool_name,
+                            )
+                            if plan_file:
+                                add_artifact(
+                                    kind="plan_file",
+                                    title=plan_file,
+                                    description="Plan/progress file targeted by manage-plan-status.py",
+                                    source="tool",
+                                    source_log_id=tool_log.id,
+                                    source_tool_name=tool_name,
+                                )
 
                 file_action = _FILE_ACTION_BY_TOOL.get(tool_name)
                 if file_action:
@@ -1793,7 +2098,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 if tool_name == "Skill" and isinstance(tool_input, dict):
                     skill_name = tool_input.get("skill")
                     if isinstance(skill_name, str) and skill_name:
-                        add_artifact(
+                        tool_log.metadata["toolCategory"] = "skill"
+                        tool_log.metadata["toolLabel"] = skill_name
+                        artifact_id = add_artifact(
                             kind="skill",
                             title=skill_name,
                             description="Skill invocation in transcript",
@@ -1801,6 +2108,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             source_log_id=tool_log.id,
                             source_tool_name=tool_name,
                         )
+                        if isinstance(tool_id, str):
+                            skill_invocations_by_tool_use_id[tool_id] = {
+                                "skill": skill_name,
+                                "sourceLogId": tool_log.id,
+                                "artifactId": artifact_id or "",
+                            }
                 if tool_name == "Task" and isinstance(tool_input, dict):
                     sub_type = tool_input.get("subagent_type")
                     title = str(sub_type) if isinstance(sub_type, str) and sub_type else "Task subagent"
@@ -1812,6 +2125,23 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         source_log_id=tool_log.id,
                         source_tool_name=tool_name,
                     )
+                    task_name = str(tool_input.get("name") or "").strip()
+                    if task_name:
+                        task_id_match = _TASK_ID_PATTERN.search(task_name)
+                        if task_id_match:
+                            task_id = task_id_match.group(1)
+                            tool_log.metadata["taskId"] = task_id
+                            add_artifact(
+                                kind="task",
+                                title=task_id,
+                                description=task_name[:500],
+                                source="tool",
+                                source_log_id=tool_log.id,
+                                source_tool_name=tool_name,
+                            )
+                        tool_log.metadata["taskName"] = task_name[:240]
+                    if isinstance(sub_type, str) and sub_type.strip():
+                        tool_log.metadata["taskSubagentType"] = sub_type.strip()
 
             elif block_type == "tool_result":
                 related_id = block.get("tool_use_id")
@@ -1943,8 +2273,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 agentName=agent_name,
                 metadata=message_metadata,
             )
-            if speaker == "user":
-                add_command_artifacts_from_text(message_text, logs[idx].id)
+            postprocess_message_log(idx, message_text, speaker, entry)
 
     duration = 0
     if first_ts and last_ts:
@@ -2138,6 +2467,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "snapshotCount": int(session_context.get("snapshotCount", 0)),
             "apiErrors": list(session_context.get("apiErrors", []))[:50],
             "queueOperations": list(session_context.get("queueOperations", []))[:200],
+            "skillLoads": list(session_context.get("skillLoads", []))[:200],
+            "planStatusUpdates": list(session_context.get("planStatusUpdates", []))[:400],
+            "batchExecutions": list(session_context.get("batchExecutions", []))[:200],
         },
         "sidecars": {
             "todos": todo_sidecar,

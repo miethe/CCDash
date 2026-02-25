@@ -61,6 +61,18 @@ class SessionBadgesTests(unittest.TestCase):
         badges = derive_session_badges(logs, primary_model="")
         self.assertEqual(badges["modelsUsed"], [])
 
+    def test_command_skill_format_contributes_skill_badge(self) -> None:
+        logs = [
+            {
+                "type": "command",
+                "content": "artifact-tracking",
+                "metadata_json": '{"skillFormat":true,"skill":"artifact-tracking"}',
+            }
+        ]
+
+        badges = derive_session_badges(logs, primary_model="")
+        self.assertEqual(badges["skillsUsed"], ["artifact-tracking"])
+
 
 if __name__ == "__main__":
     unittest.main()

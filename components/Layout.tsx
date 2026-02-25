@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { ProjectSelector } from './ProjectSelector';
@@ -57,6 +57,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
           <NavItem to="/plans" icon={FileText} label="Documents" active={location.pathname === '/plans'} isCollapsed={isCollapsed} />
           <NavItem to="/sessions" icon={Terminal} label="Session Forensics" active={location.pathname === '/sessions'} isCollapsed={isCollapsed} />
+          <NavItem to="/codebase" icon={FolderTree} label="Codebase Explorer" active={location.pathname === '/codebase'} isCollapsed={isCollapsed} />
           <NavItem to="/session-mappings" icon={SlidersHorizontal} label="Session Mappings" active={location.pathname === '/session-mappings'} isCollapsed={isCollapsed} />
           <NavItem to="/ops" icon={Activity} label="Operations" active={location.pathname === '/ops'} isCollapsed={isCollapsed} />
           <NavItem to="/analytics" icon={LineChart} label="Analytics" active={location.pathname === '/analytics'} isCollapsed={isCollapsed} />

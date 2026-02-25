@@ -202,6 +202,149 @@ export interface AgentSession {
   timeline?: TimelineEvent[];
 }
 
+export interface SessionActivityItem {
+  id: string;
+  kind: 'log' | 'file' | 'artifact' | string;
+  timestamp: string;
+  sourceLogId?: string;
+  sessionId: string;
+  threadName?: string;
+  label: string;
+  detail?: string;
+  action?: 'read' | 'create' | 'update' | 'delete' | string;
+  filePath?: string;
+  fileType?: string;
+  artifactType?: string;
+  artifactUrl?: string;
+  linkedSessionId?: string;
+  localPath?: string;
+  documentId?: string;
+  githubUrl?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface SessionFileAggregateRow {
+  key: string;
+  fileName: string;
+  filePath: string;
+  actions: Array<'read' | 'create' | 'update' | 'delete' | string>;
+  touchCount: number;
+  uniqueSessions: number;
+  uniqueAgents: number;
+  lastTouchedAt: string;
+  netDiff: number;
+  additions: number;
+  deletions: number;
+  sourceLogIds: string[];
+  localPath: string;
+  documentId?: string;
+  fileType?: string;
+}
+
+export interface CodebaseFeatureInvolvement {
+  featureId: string;
+  featureName: string;
+  featureStatus?: string;
+  featureCategory?: string;
+  score: number;
+  confidence: number;
+  involvementLevel: 'primary' | 'supporting' | 'peripheral';
+  sessionCount: number;
+  actions: string[];
+}
+
+export interface CodebaseTreeNode {
+  path: string;
+  name: string;
+  nodeType: 'folder' | 'file';
+  depth: number;
+  parentPath: string;
+  touchCount: number;
+  isTouched: boolean;
+  sessionCount: number;
+  featureCount: number;
+  lastTouchedAt: string;
+  actions: string[];
+  hasChildren: boolean;
+  sizeBytes?: number;
+  exists?: boolean;
+  children?: CodebaseTreeNode[];
+}
+
+export interface CodebaseFileSummary {
+  filePath: string;
+  fileName: string;
+  directory: string;
+  exists: boolean;
+  sizeBytes: number;
+  lastModified: string;
+  actions: string[];
+  touchCount: number;
+  sessionCount: number;
+  agentCount: number;
+  lastTouchedAt: string;
+  additions: number;
+  deletions: number;
+  netDiff: number;
+  actionCounts: Record<string, number>;
+  featureCount: number;
+  features: CodebaseFeatureInvolvement[];
+  sourceLogIds: string[];
+}
+
+export interface CodebaseFileSessionSummary {
+  sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  totalCost: number;
+  touchCount: number;
+  actions: string[];
+  lastTouchedAt: string;
+  agentNames: string[];
+}
+
+export interface CodebaseLinkedDocument {
+  documentId: string;
+  title: string;
+  filePath: string;
+  docType?: string;
+  category?: string;
+  status?: string;
+  relation: 'source' | 'reference' | string;
+}
+
+export interface CodebaseFileActivityEntry {
+  id: string;
+  kind: string;
+  timestamp: string;
+  action?: string;
+  filePath?: string;
+  fileType?: string;
+  sessionId?: string;
+  rootSessionId?: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
+  additions?: number;
+  deletions?: number;
+  agentName?: string;
+  logType?: string;
+  logContent?: string;
+  linkedSessionId?: string;
+  artifactCount?: number;
+  artifactIds?: string[];
+}
+
+export interface CodebaseFileDetail extends CodebaseFileSummary {
+  absolutePath: string;
+  sessions: CodebaseFileSessionSummary[];
+  documents: CodebaseLinkedDocument[];
+  activity: CodebaseFileActivityEntry[];
+}
+
 export interface PlanDocument {
   id: string;
   title: string;

@@ -344,6 +344,202 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("skill", artifact_types)
         self.assertIn("manifest", artifact_types)
 
+    def test_skill_load_message_is_linked_to_skill_tool_call(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_skill_1",
+                                "name": "Skill",
+                                "input": {"skill": "dev-execution"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:01Z",
+                    "sourceToolUseID": "toolu_skill_1",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "<command-name>dev-execution</command-name>\n<skill-format>true</skill-format>",
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Base directory for this skill: "
+                                    "/Users/miethe/dev/homelab/development/skillmeat/.claude/skills/dev-execution\n\n"
+                                    "Dev execution orchestration guidance."
+                                ),
+                            },
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        skill_artifacts = [a for a in session.linkedArtifacts if a.type == "skill" and a.title == "dev-execution"]
+        self.assertEqual(len(skill_artifacts), 1)
+        self.assertEqual(
+            skill_artifacts[0].url,
+            "/Users/miethe/dev/homelab/development/skillmeat/.claude/skills/dev-execution",
+        )
+        self.assertEqual(skill_artifacts[0].source, "tool+skill-load")
+
+        command_logs = [l for l in session.logs if l.type == "command" and l.content == "dev-execution"]
+        self.assertEqual(len(command_logs), 1)
+        self.assertTrue(command_logs[0].metadata.get("skillFormat"))
+        self.assertEqual(command_logs[0].metadata.get("skill"), "dev-execution")
+
+        skill_loads = session.sessionForensics.get("entryContext", {}).get("skillLoads", [])
+        self.assertEqual(len(skill_loads), 1)
+        self.assertEqual(skill_loads[0].get("skill"), "dev-execution")
+
+    def test_skill_format_message_without_skill_tool_still_creates_skill_artifact(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T11:00:00Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "<command-name>artifact-tracking</command-name>\n<skill-format>true</skill-format>",
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Base directory for this skill: "
+                                    "/Users/miethe/dev/homelab/development/skillmeat/.claude/skills/artifact-tracking\n\n"
+                                    "Token-efficient artifact tracking skill."
+                                ),
+                            },
+                        ],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        skill_artifacts = [a for a in session.linkedArtifacts if a.type == "skill" and a.title == "artifact-tracking"]
+        self.assertEqual(len(skill_artifacts), 1)
+        self.assertEqual(
+            skill_artifacts[0].url,
+            "/Users/miethe/dev/homelab/development/skillmeat/.claude/skills/artifact-tracking",
+        )
+        self.assertEqual(skill_artifacts[0].source, "skill-load")
+
+    def test_manage_plan_status_bash_command_is_extracted(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T12:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_bash_1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": (
+                                        "python .claude/skills/artifact-tracking/scripts/manage-plan-status.py "
+                                        "--file docs/project_plans/implementation_plans/features/similar-artifacts-v1.md "
+                                        "--status in-progress"
+                                    )
+                                },
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("plan_status_update", artifact_types)
+        self.assertIn("plan_file", artifact_types)
+
+        bash_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Bash"]
+        self.assertEqual(len(bash_logs), 1)
+        plan_status = bash_logs[0].metadata.get("planStatus", {})
+        self.assertEqual(plan_status.get("operation"), "update")
+        self.assertEqual(plan_status.get("status"), "in-progress")
+        self.assertEqual(
+            plan_status.get("file"),
+            "docs/project_plans/implementation_plans/features/similar-artifacts-v1.md",
+        )
+
+        plan_updates = session.sessionForensics.get("entryContext", {}).get("planStatusUpdates", [])
+        self.assertEqual(len(plan_updates), 1)
+        self.assertEqual(plan_updates[0].get("status"), "in-progress")
+
+    def test_batch_message_is_parsed_into_batch_artifacts(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T13:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Statuses updated. Now executing **Batch 1** — two independent tasks in parallel:\n"
+                                    "- **SA-P1-001**: DuplicatePair.ignored migration (`data-layer-expert`)\n"
+                                    "- **SA-P1-002**: SimilarityResult dataclass (`python-backend-engineer`)"
+                                ),
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        batch_logs = [l for l in session.logs if l.type == "message" and "batchExecution" in l.metadata]
+        self.assertEqual(len(batch_logs), 1)
+        batch = batch_logs[0].metadata.get("batchExecution", {})
+        self.assertEqual(batch.get("batchId"), "1")
+        self.assertEqual(batch.get("taskCount"), 2)
+
+        task_ids = {str(task.get("taskId")) for task in batch.get("tasks", [])}
+        self.assertEqual(task_ids, {"SA-P1-001", "SA-P1-002"})
+
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("task_batch", artifact_types)
+        self.assertIn("batch_task", artifact_types)
+
+        batch_events = session.sessionForensics.get("entryContext", {}).get("batchExecutions", [])
+        self.assertEqual(len(batch_events), 1)
+        self.assertEqual(batch_events[0].get("batchId"), "1")
+
     def test_command_args_paths_are_not_tracked_as_file_actions(self) -> None:
         path = self._write_jsonl(
             [
