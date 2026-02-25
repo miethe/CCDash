@@ -8,7 +8,7 @@ import { DocumentModal } from './DocumentModal';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
-  Search, Filter, ArrowUpDown, CheckCircle2, Circle, CircleDashed, Layers, Box,
+  Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
@@ -2186,6 +2186,23 @@ export const ProjectBoard: React.FC = () => {
   const [completedTo, setCompletedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
   const [updatedTo, setUpdatedTo] = useState('');
+  const [draftSearchQuery, setDraftSearchQuery] = useState('');
+  const [draftStatusFilter, setDraftStatusFilter] = useState<string>('all');
+  const [draftCategoryFilter, setDraftCategoryFilter] = useState<string>('all');
+  const [draftSortBy, setDraftSortBy] = useState<'date' | 'progress' | 'tasks'>('date');
+  const [draftPlannedFrom, setDraftPlannedFrom] = useState('');
+  const [draftPlannedTo, setDraftPlannedTo] = useState('');
+  const [draftStartedFrom, setDraftStartedFrom] = useState('');
+  const [draftStartedTo, setDraftStartedTo] = useState('');
+  const [draftCompletedFrom, setDraftCompletedFrom] = useState('');
+  const [draftCompletedTo, setDraftCompletedTo] = useState('');
+  const [draftUpdatedFrom, setDraftUpdatedFrom] = useState('');
+  const [draftUpdatedTo, setDraftUpdatedTo] = useState('');
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState({
+    general: true,
+    dates: true,
+    sort: true,
+  });
 
   // Derive unique categories
   const categories = useMemo(() => {
@@ -2336,165 +2353,277 @@ export const ProjectBoard: React.FC = () => {
     }
   }, [apiFeatures, selectedFeature]);
 
+  const hasPendingFilterChanges = (
+    draftSearchQuery !== searchQuery
+    || draftStatusFilter !== statusFilter
+    || draftCategoryFilter !== categoryFilter
+    || draftSortBy !== sortBy
+    || draftPlannedFrom !== plannedFrom
+    || draftPlannedTo !== plannedTo
+    || draftStartedFrom !== startedFrom
+    || draftStartedTo !== startedTo
+    || draftCompletedFrom !== completedFrom
+    || draftCompletedTo !== completedTo
+    || draftUpdatedFrom !== updatedFrom
+    || draftUpdatedTo !== updatedTo
+  );
+  const hasActiveDraftFilters = Boolean(
+    draftSearchQuery.trim()
+    || draftStatusFilter !== 'all'
+    || draftCategoryFilter !== 'all'
+    || draftSortBy !== 'date'
+    || draftPlannedFrom
+    || draftPlannedTo
+    || draftStartedFrom
+    || draftStartedTo
+    || draftCompletedFrom
+    || draftCompletedTo
+    || draftUpdatedFrom
+    || draftUpdatedTo
+  );
+  const toggleSidebarSection = (key: keyof typeof collapsedSidebarSections) => {
+    setCollapsedSidebarSections(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+  const applySidebarFilters = () => {
+    setSearchQuery(draftSearchQuery);
+    setStatusFilter(draftStatusFilter);
+    setCategoryFilter(draftCategoryFilter);
+    setSortBy(draftSortBy);
+    setPlannedFrom(draftPlannedFrom);
+    setPlannedTo(draftPlannedTo);
+    setStartedFrom(draftStartedFrom);
+    setStartedTo(draftStartedTo);
+    setCompletedFrom(draftCompletedFrom);
+    setCompletedTo(draftCompletedTo);
+    setUpdatedFrom(draftUpdatedFrom);
+    setUpdatedTo(draftUpdatedTo);
+  };
+  const clearSidebarFilters = () => {
+    setDraftSearchQuery('');
+    setDraftStatusFilter('all');
+    setDraftCategoryFilter('all');
+    setDraftSortBy('date');
+    setDraftPlannedFrom('');
+    setDraftPlannedTo('');
+    setDraftStartedFrom('');
+    setDraftStartedTo('');
+    setDraftCompletedFrom('');
+    setDraftCompletedTo('');
+    setDraftUpdatedFrom('');
+    setDraftUpdatedTo('');
+
+    setSearchQuery('');
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setSortBy('date');
+    setPlannedFrom('');
+    setPlannedTo('');
+    setStartedFrom('');
+    setStartedTo('');
+    setCompletedFrom('');
+    setCompletedTo('');
+    setUpdatedFrom('');
+    setUpdatedTo('');
+  };
+
   return (
     <div className="h-full flex flex-col relative">
 
       <SidebarFiltersPortal>
           <SidebarFiltersSection title="Filters" icon={Filter}>
-            <div className="space-y-3">
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder="Search features..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
-                />
-              </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => toggleSidebarSection('general')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>General</span>
+                {collapsedSidebarSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.general && (
+                <div className="pl-1 space-y-2">
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Search features..."
+                      value={draftSearchQuery}
+                      onChange={e => setDraftSearchQuery(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Status</label>
-                <select
-                  value={statusFilter}
-                  onChange={e => setStatusFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="all">All Statuses</option>
-                  <option value="backlog">Backlog</option>
-                  <option value="in-progress">In Progress</option>
-                  <option value="review">Review</option>
-                  <option value="done">Done</option>
-                  <option value="deferred">Deferred Caveat</option>
-                </select>
-              </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Status</label>
+                    <select
+                      value={draftStatusFilter}
+                      onChange={e => setDraftStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All Statuses</option>
+                      <option value="backlog">Backlog</option>
+                      <option value="in-progress">In Progress</option>
+                      <option value="review">Review</option>
+                      <option value="done">Done</option>
+                      <option value="deferred">Deferred Caveat</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Category</label>
-                <select
-                  value={categoryFilter}
-                  onChange={e => setCategoryFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="all">All Categories</option>
-                  {categories.map(c => (
-                    <option key={c} value={c}>{c}</option>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Category</label>
+                    <select
+                      value={draftCategoryFilter}
+                      onChange={e => setDraftCategoryFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All Categories</option>
+                      {categories.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => toggleSidebarSection('dates')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>Date Ranges</span>
+                {collapsedSidebarSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.dates && (
+                <div className="pl-1 space-y-2">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Planned</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftPlannedFrom}
+                        onChange={e => setDraftPlannedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftPlannedTo}
+                        onChange={e => setDraftPlannedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Started</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftStartedFrom}
+                        onChange={e => setDraftStartedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftStartedTo}
+                        onChange={e => setDraftStartedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Completed</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftCompletedFrom}
+                        onChange={e => setDraftCompletedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftCompletedTo}
+                        onChange={e => setDraftCompletedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Updated</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftUpdatedFrom}
+                        onChange={e => setDraftUpdatedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftUpdatedTo}
+                        onChange={e => setDraftUpdatedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => toggleSidebarSection('sort')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>Sort</span>
+                {collapsedSidebarSections.sort ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.sort && (
+                <div className="pl-1 flex flex-col gap-1.5">
+                  {[
+                    { key: 'date', label: 'Recent' },
+                    { key: 'progress', label: 'Progress' },
+                    { key: 'tasks', label: 'Task Count' },
+                  ].map(s => (
+                    <button
+                      key={s.key}
+                      onClick={() => setDraftSortBy(s.key as any)}
+                      className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${draftSortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
+                    >
+                      {s.label}
+                    </button>
                   ))}
-                </select>
-              </div>
-
-              <div className="space-y-2 pt-1 border-t border-slate-800/60">
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Planned</label>
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
-                      <input
-                        type="date"
-                        value={plannedFrom}
-                        onChange={e => setPlannedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
-                      <input
-                        type="date"
-                        value={plannedTo}
-                        onChange={e => setPlannedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
                 </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Started</label>
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
-                      <input
-                        type="date"
-                        value={startedFrom}
-                        onChange={e => setStartedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
-                      <input
-                        type="date"
-                        value={startedTo}
-                        onChange={e => setStartedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Completed</label>
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
-                      <input
-                        type="date"
-                        value={completedFrom}
-                        onChange={e => setCompletedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
-                      <input
-                        type="date"
-                        value={completedTo}
-                        onChange={e => setCompletedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">Updated</label>
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
-                      <input
-                        type="date"
-                        value={updatedFrom}
-                        onChange={e => setUpdatedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
-                      <input
-                        type="date"
-                        value={updatedTo}
-                        onChange={e => setUpdatedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
-          </SidebarFiltersSection>
 
-          <SidebarFiltersSection title="Sort" icon={ArrowUpDown}>
-            <div className="flex flex-col gap-1.5">
-              {[
-                { key: 'date', label: 'Recent' },
-                { key: 'progress', label: 'Progress' },
-                { key: 'tasks', label: 'Task Count' },
-              ].map(s => (
-                <button
-                  key={s.key}
-                  onClick={() => setSortBy(s.key as any)}
-                  className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${sortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-                >
-                  {s.label}
-                </button>
-              ))}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={clearSidebarFilters}
+                className="w-full inline-flex items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-200 hover:bg-rose-500/25 hover:border-rose-400/50 disabled:opacity-40"
+                disabled={!hasActiveDraftFilters}
+              >
+                Clear
+              </button>
+              <button
+                onClick={applySidebarFilters}
+                className="w-full inline-flex items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/25 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-100 hover:bg-indigo-500/35 hover:border-indigo-400/60 disabled:opacity-40"
+                disabled={!hasPendingFilterChanges}
+              >
+                Apply
+              </button>
             </div>
           </SidebarFiltersSection>
       </SidebarFiltersPortal>

@@ -221,6 +221,26 @@ export const PlanCatalog: React.FC = () => {
     const [completedFrom, setCompletedFrom] = useState('');
     const [completedTo, setCompletedTo] = useState('');
     const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+    const [draftSearchQuery, setDraftSearchQuery] = useState('');
+    const [draftDocSubtypeFilter, setDraftDocSubtypeFilter] = useState<string>('all');
+    const [draftDocTypeFilter, setDraftDocTypeFilter] = useState<string>('all');
+    const [draftStatusFilter, setDraftStatusFilter] = useState<string>('all');
+    const [draftCategoryFilter, setDraftCategoryFilter] = useState<string>('all');
+    const [draftFeatureFilter, setDraftFeatureFilter] = useState<string>('all');
+    const [draftPrdFilter, setDraftPrdFilter] = useState<string>('all');
+    const [draftPhaseFilter, setDraftPhaseFilter] = useState<string>('all');
+    const [draftFrontmatterFilter, setDraftFrontmatterFilter] = useState<'all' | 'with' | 'without'>('all');
+    const [draftCreatedFrom, setDraftCreatedFrom] = useState('');
+    const [draftCreatedTo, setDraftCreatedTo] = useState('');
+    const [draftUpdatedFrom, setDraftUpdatedFrom] = useState('');
+    const [draftUpdatedTo, setDraftUpdatedTo] = useState('');
+    const [draftCompletedFrom, setDraftCompletedFrom] = useState('');
+    const [draftCompletedTo, setDraftCompletedTo] = useState('');
+    const [collapsedSidebarSections, setCollapsedSidebarSections] = useState({
+        search: true,
+        metadata: true,
+        dates: true,
+    });
 
     // Auto-select document from URL search params (e.g. /plans?doc=DOC-xxx)
     useEffect(() => {
@@ -385,66 +405,188 @@ export const PlanCatalog: React.FC = () => {
 
     // Handle tree Selection
     const activeDoc = activeFilePath ? filteredDocs.find(d => d.filePath === activeFilePath) : null;
+    const hasPendingChanges = (
+        draftSearchQuery !== searchQuery
+        || draftDocSubtypeFilter !== docSubtypeFilter
+        || draftDocTypeFilter !== docTypeFilter
+        || draftStatusFilter !== statusFilter
+        || draftCategoryFilter !== categoryFilter
+        || draftFeatureFilter !== featureFilter
+        || draftPrdFilter !== prdFilter
+        || draftPhaseFilter !== phaseFilter
+        || draftFrontmatterFilter !== frontmatterFilter
+        || draftCreatedFrom !== createdFrom
+        || draftCreatedTo !== createdTo
+        || draftUpdatedFrom !== updatedFrom
+        || draftUpdatedTo !== updatedTo
+        || draftCompletedFrom !== completedFrom
+        || draftCompletedTo !== completedTo
+    );
+    const hasActiveDraftFilters = Boolean(
+        draftSearchQuery.trim()
+        || draftDocSubtypeFilter !== 'all'
+        || draftDocTypeFilter !== 'all'
+        || draftStatusFilter !== 'all'
+        || draftCategoryFilter !== 'all'
+        || draftFeatureFilter !== 'all'
+        || draftPrdFilter !== 'all'
+        || draftPhaseFilter !== 'all'
+        || draftFrontmatterFilter !== 'all'
+        || draftCreatedFrom
+        || draftCreatedTo
+        || draftUpdatedFrom
+        || draftUpdatedTo
+        || draftCompletedFrom
+        || draftCompletedTo
+    );
+    const toggleSidebarSection = (key: keyof typeof collapsedSidebarSections) => {
+        setCollapsedSidebarSections(prev => ({
+            ...prev,
+            [key]: !prev[key],
+        }));
+    };
+    const applySidebarFilters = () => {
+        setSearchQuery(draftSearchQuery);
+        setDocSubtypeFilter(draftDocSubtypeFilter);
+        setDocTypeFilter(draftDocTypeFilter);
+        setStatusFilter(draftStatusFilter);
+        setCategoryFilter(draftCategoryFilter);
+        setFeatureFilter(draftFeatureFilter);
+        setPrdFilter(draftPrdFilter);
+        setPhaseFilter(draftPhaseFilter);
+        setFrontmatterFilter(draftFrontmatterFilter);
+        setCreatedFrom(draftCreatedFrom);
+        setCreatedTo(draftCreatedTo);
+        setUpdatedFrom(draftUpdatedFrom);
+        setUpdatedTo(draftUpdatedTo);
+        setCompletedFrom(draftCompletedFrom);
+        setCompletedTo(draftCompletedTo);
+    };
+    const clearSidebarFilters = () => {
+        setDraftSearchQuery('');
+        setDraftDocSubtypeFilter('all');
+        setDraftDocTypeFilter('all');
+        setDraftStatusFilter('all');
+        setDraftCategoryFilter('all');
+        setDraftFeatureFilter('all');
+        setDraftPrdFilter('all');
+        setDraftPhaseFilter('all');
+        setDraftFrontmatterFilter('all');
+        setDraftCreatedFrom('');
+        setDraftCreatedTo('');
+        setDraftUpdatedFrom('');
+        setDraftUpdatedTo('');
+        setDraftCompletedFrom('');
+        setDraftCompletedTo('');
+
+        setSearchQuery('');
+        setDocSubtypeFilter('all');
+        setDocTypeFilter('all');
+        setStatusFilter('all');
+        setCategoryFilter('all');
+        setFeatureFilter('all');
+        setPrdFilter('all');
+        setPhaseFilter('all');
+        setFrontmatterFilter('all');
+        setCreatedFrom('');
+        setCreatedTo('');
+        setUpdatedFrom('');
+        setUpdatedTo('');
+        setCompletedFrom('');
+        setCompletedTo('');
+    };
 
     return (
         <div className="h-full flex flex-col relative">
             <SidebarFiltersPortal>
                 <SidebarFiltersSection title="Filter Documents">
-                        <div className="relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                            <input
-                                type="text"
-                                placeholder="Search files..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
-                            />
-                        </div>
-                        <div className="mt-3 space-y-2">
-                            {[
-                                { label: 'Subtype', value: docSubtypeFilter, onChange: setDocSubtypeFilter, options: facetOptions.docSubtypes },
-                                { label: 'Type', value: docTypeFilter, onChange: setDocTypeFilter, options: facetOptions.docTypes },
-                                { label: 'Status', value: statusFilter, onChange: setStatusFilter, options: facetOptions.statuses },
-                                { label: 'Category', value: categoryFilter, onChange: setCategoryFilter, options: facetOptions.categories },
-                                { label: 'Feature', value: featureFilter, onChange: setFeatureFilter, options: facetOptions.features },
-                                { label: 'PRD', value: prdFilter, onChange: setPrdFilter, options: facetOptions.prds },
-                                { label: 'Phase', value: phaseFilter, onChange: setPhaseFilter, options: facetOptions.phases },
-                            ].map(filter => (
-                                <div key={filter.label} className="grid grid-cols-[56px_1fr] items-center gap-2">
-                                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">{filter.label}</label>
+                    <div className="space-y-2">
+                        <button
+                            onClick={() => toggleSidebarSection('search')}
+                            className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        >
+                            <span>Search</span>
+                            {collapsedSidebarSections.search ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        {!collapsedSidebarSections.search && (
+                            <div className="pl-1">
+                                <div className="relative">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search files..."
+                                        value={draftSearchQuery}
+                                        onChange={(e) => setDraftSearchQuery(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={() => toggleSidebarSection('metadata')}
+                            className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        >
+                            <span>Metadata</span>
+                            {collapsedSidebarSections.metadata ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        {!collapsedSidebarSections.metadata && (
+                            <div className="pl-1 space-y-2">
+                                {[
+                                    { label: 'Subtype', value: draftDocSubtypeFilter, onChange: setDraftDocSubtypeFilter, options: facetOptions.docSubtypes },
+                                    { label: 'Type', value: draftDocTypeFilter, onChange: setDraftDocTypeFilter, options: facetOptions.docTypes },
+                                    { label: 'Status', value: draftStatusFilter, onChange: setDraftStatusFilter, options: facetOptions.statuses },
+                                    { label: 'Category', value: draftCategoryFilter, onChange: setDraftCategoryFilter, options: facetOptions.categories },
+                                    { label: 'Feature', value: draftFeatureFilter, onChange: setDraftFeatureFilter, options: facetOptions.features },
+                                    { label: 'PRD', value: draftPrdFilter, onChange: setDraftPrdFilter, options: facetOptions.prds },
+                                    { label: 'Phase', value: draftPhaseFilter, onChange: setDraftPhaseFilter, options: facetOptions.phases },
+                                ].map(filter => (
+                                    <div key={filter.label} className="grid grid-cols-[56px_1fr] items-center gap-2">
+                                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">{filter.label}</label>
+                                        <select
+                                            value={filter.value}
+                                            onChange={(e) => filter.onChange(e.target.value)}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                        >
+                                            <option value="all">All</option>
+                                            {filter.options.map(option => (
+                                                <option key={option} value={option}>{option}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ))}
+                                <div className="grid grid-cols-[56px_1fr] items-center gap-2">
+                                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">FM</label>
                                     <select
-                                        value={filter.value}
-                                        onChange={(e) => filter.onChange(e.target.value)}
+                                        value={draftFrontmatterFilter}
+                                        onChange={(e) => setDraftFrontmatterFilter(e.target.value as any)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                     >
                                         <option value="all">All</option>
-                                        {filter.options.map(option => (
-                                            <option key={option} value={option}>{option}</option>
-                                        ))}
+                                        <option value="with">With frontmatter</option>
+                                        <option value="without">Without frontmatter</option>
                                     </select>
                                 </div>
-                            ))}
-                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">FM</label>
-                                <select
-                                    value={frontmatterFilter}
-                                    onChange={(e) => setFrontmatterFilter(e.target.value as any)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
-                                >
-                                    <option value="all">All</option>
-                                    <option value="with">With frontmatter</option>
-                                    <option value="without">Without frontmatter</option>
-                                </select>
                             </div>
-                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Created</label>
-                                <div className="space-y-1">
+                        )}
+
+                        <button
+                            onClick={() => toggleSidebarSection('dates')}
+                            className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        >
+                            <span>Date Ranges</span>
+                            {collapsedSidebarSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        {!collapsedSidebarSections.dates && (
+                            <div className="pl-1 space-y-2">
+                                <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Created</p>
                                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
                                         <input
                                             type="date"
-                                            value={createdFrom}
-                                            onChange={(e) => setCreatedFrom(e.target.value)}
+                                            value={draftCreatedFrom}
+                                            onChange={(e) => setDraftCreatedFrom(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
@@ -452,22 +594,20 @@ export const PlanCatalog: React.FC = () => {
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
                                         <input
                                             type="date"
-                                            value={createdTo}
-                                            onChange={(e) => setCreatedTo(e.target.value)}
+                                            value={draftCreatedTo}
+                                            onChange={(e) => setDraftCreatedTo(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
                                 </div>
-                            </div>
-                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Updated</label>
-                                <div className="space-y-1">
+                                <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Updated</p>
                                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
                                         <input
                                             type="date"
-                                            value={updatedFrom}
-                                            onChange={(e) => setUpdatedFrom(e.target.value)}
+                                            value={draftUpdatedFrom}
+                                            onChange={(e) => setDraftUpdatedFrom(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
@@ -475,22 +615,20 @@ export const PlanCatalog: React.FC = () => {
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
                                         <input
                                             type="date"
-                                            value={updatedTo}
-                                            onChange={(e) => setUpdatedTo(e.target.value)}
+                                            value={draftUpdatedTo}
+                                            onChange={(e) => setDraftUpdatedTo(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
                                 </div>
-                            </div>
-                            <div className="grid grid-cols-[56px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Completed</label>
-                                <div className="space-y-1">
+                                <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Completed</p>
                                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
                                         <input
                                             type="date"
-                                            value={completedFrom}
-                                            onChange={(e) => setCompletedFrom(e.target.value)}
+                                            value={draftCompletedFrom}
+                                            onChange={(e) => setDraftCompletedFrom(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
@@ -498,14 +636,32 @@ export const PlanCatalog: React.FC = () => {
                                         <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
                                         <input
                                             type="date"
-                                            value={completedTo}
-                                            onChange={(e) => setCompletedTo(e.target.value)}
+                                            value={draftCompletedTo}
+                                            onChange={(e) => setDraftCompletedTo(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
                                         />
                                     </div>
                                 </div>
                             </div>
-                        </div>
+                        )}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button
+                            onClick={clearSidebarFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-200 hover:bg-rose-500/25 hover:border-rose-400/50 disabled:opacity-40"
+                            disabled={!hasActiveDraftFilters}
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={applySidebarFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/25 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-100 hover:bg-indigo-500/35 hover:border-indigo-400/60 disabled:opacity-40"
+                            disabled={!hasPendingChanges}
+                        >
+                            Apply
+                        </button>
+                    </div>
                 </SidebarFiltersSection>
             </SidebarFiltersPortal>
 
