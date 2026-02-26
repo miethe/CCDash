@@ -10,6 +10,7 @@ import { PlanCatalog } from './components/PlanCatalog';
 import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
 import { SessionMappings } from './components/SessionMappings';
 import { OpsPanel } from './components/OpsPanel';
+import { CodebaseExplorer } from './components/CodebaseExplorer';
 
 const App: React.FC = () => {
   return (
@@ -24,6 +25,7 @@ const App: React.FC = () => {
             <Route path="/analytics" element={<AnalyticsDashboard />} />
             <Route path="/session-mappings" element={<SessionMappings />} />
             <Route path="/ops" element={<OpsPanel />} />
+            <Route path="/codebase" element={<CodebaseExplorer />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

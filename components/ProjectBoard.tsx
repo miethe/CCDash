@@ -1,14 +1,14 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask } from '../types';
-import { SessionCard, deriveSessionCardTitle } from './SessionCard';
+import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
+import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
+import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
-  Search, Filter, ArrowUpDown, CheckCircle2, Circle, CircleDashed, Layers, Box,
+  Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
   Terminal, GitCommit,
 } from 'lucide-react';
@@ -29,7 +29,14 @@ interface FeatureSessionLink {
   modelProvider?: string;
   modelFamily?: string;
   modelVersion?: string;
+  modelsUsed?: SessionModelInfo[];
+  agentsUsed?: string[];
+  skillsUsed?: string[];
+  toolSummary?: string[];
   startedAt: string;
+  endedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   totalCost: number;
   durationSeconds: number;
   gitCommitHash?: string;
@@ -42,6 +49,15 @@ interface FeatureSessionLink {
   isPrimaryLink?: boolean;
   linkStrategy?: string;
   workflowType?: string;
+  relatedPhases?: string[];
+  relatedTasks?: Array<{
+    taskId: string;
+    taskTitle?: string;
+    phaseId?: string;
+    phase?: string;
+    matchedBy?: string;
+    linkedSessionId?: string;
+  }>;
   sessionMetadata?: {
     sessionTypeId: string;
     sessionTypeLabel: string;
@@ -59,6 +75,7 @@ interface FeatureSessionLink {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
+type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
 
 interface CoreSessionGroupDefinition {
   id: CoreSessionGroupId;
@@ -433,6 +450,7 @@ const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): Linke
 
 // ── Status helpers ─────────────────────────────────────────────────
 const getStatusStyle = getFeatureStatusStyle;
+const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 
 const getPhaseDeferredCount = (phase: FeaturePhase): number => Math.max(phase.deferredTasks || 0, 0);
 
@@ -454,9 +472,208 @@ const getFeatureCompletedCount = (feature: Feature): number => {
 const hasDeferredCaveat = (feature: Feature): boolean =>
   feature.status === 'deferred' || getFeatureDeferredCount(feature) > 0;
 
+const aggregateFeatureFromPhases = (feature: Feature, phases: FeaturePhase[]): Feature => {
+  const normalizedPhases = phases.map(phase => {
+    const total = Math.max(phase.totalTasks || 0, (phase.tasks || []).length);
+    let deferred = Math.max(phase.deferredTasks || 0, 0);
+    let completed = Math.max(phase.completedTasks || 0, 0);
+    if (phase.tasks && phase.tasks.length > 0) {
+      const doneCount = phase.tasks.filter(task => task.status === 'done').length;
+      deferred = phase.tasks.filter(task => task.status === 'deferred').length;
+      completed = doneCount + deferred;
+    }
+    if (phase.status === 'deferred' && total > 0) {
+      completed = total;
+      deferred = total;
+    }
+    if (total > 0 && completed > total) completed = total;
+    if (deferred > completed) deferred = completed;
+    return { ...phase, totalTasks: total, completedTasks: completed, deferredTasks: deferred };
+  });
+
+  const totalTasks = normalizedPhases.reduce((sum, phase) => sum + Math.max(phase.totalTasks || 0, 0), 0);
+  const completedTasks = normalizedPhases.reduce((sum, phase) => sum + getPhaseCompletedCount(phase), 0);
+  const deferredTasks = normalizedPhases.reduce((sum, phase) => sum + getPhaseDeferredCount(phase), 0);
+  const allTerminal = normalizedPhases.length > 0 && normalizedPhases.every(phase => TERMINAL_PHASE_STATUSES.has(phase.status));
+  const anyInProgress = normalizedPhases.some(phase => phase.status === 'in-progress');
+  const anyReview = normalizedPhases.some(phase => phase.status === 'review');
+
+  const status = totalTasks > 0 && completedTasks >= totalTasks
+    ? 'done'
+    : allTerminal
+      ? 'done'
+      : anyInProgress
+        ? 'in-progress'
+        : anyReview
+          ? 'review'
+          : 'backlog';
+
+  return {
+    ...feature,
+    status,
+    phases: normalizedPhases,
+    totalTasks,
+    completedTasks,
+    deferredTasks,
+  };
+};
+
+const syncDetailFeatureWithLiveFeature = (detail: Feature, liveFeature: Feature): Feature => {
+  const livePhasesByKey = new Map<string, FeaturePhase>();
+  (liveFeature.phases || []).forEach(phase => {
+    if (phase.id) livePhasesByKey.set(phase.id, phase);
+    livePhasesByKey.set(phase.phase, phase);
+  });
+
+  const phases = (detail.phases || []).map(phase => {
+    const live = (phase.id && livePhasesByKey.get(phase.id)) || livePhasesByKey.get(phase.phase);
+    if (!live) return phase;
+    return {
+      ...phase,
+      status: live.status,
+      progress: live.progress,
+      totalTasks: live.totalTasks,
+      completedTasks: live.completedTasks,
+      deferredTasks: live.deferredTasks,
+    };
+  });
+
+  return {
+    ...detail,
+    status: liveFeature.status,
+    totalTasks: liveFeature.totalTasks,
+    completedTasks: liveFeature.completedTasks,
+    deferredTasks: liveFeature.deferredTasks,
+    updatedAt: liveFeature.updatedAt,
+    phases,
+  };
+};
+
 const getFeatureBoardStage = (feature: Feature): string => {
   if (feature.status === 'deferred') return 'done';
   return feature.status;
+};
+
+const getFeatureBaseSlug = (featureId: string): string =>
+  featureId.toLowerCase().replace(/-v\d+(?:\.\d+)?$/, '');
+
+const toEpoch = (value?: string): number => {
+  const parsed = Date.parse(value || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const inDateRange = (value: string, from?: string, to?: string): boolean => {
+  if (!from && !to) return true;
+  const target = toEpoch(value);
+  if (!target) return false;
+  const fromEpoch = from ? toEpoch(from) : 0;
+  const toEpochValue = to ? toEpoch(to) + 86_399_000 : Number.POSITIVE_INFINITY;
+  return target >= fromEpoch && target <= toEpochValue;
+};
+
+const getFeatureDateValue = (
+  feature: Feature,
+  key: 'plannedAt' | 'startedAt' | 'completedAt' | 'updatedAt' | 'lastActivityAt',
+): { value: string; confidence?: string } => {
+  const fromDates = feature.dates?.[key];
+  if (fromDates?.value) return { value: fromDates.value, confidence: fromDates.confidence };
+  if (key === 'plannedAt') return { value: feature.plannedAt || '' };
+  if (key === 'startedAt') return { value: feature.startedAt || '' };
+  if (key === 'completedAt') return { value: feature.completedAt || '' };
+  if (key === 'updatedAt' || key === 'lastActivityAt') return { value: feature.updatedAt || '' };
+  return { value: '' };
+};
+
+const getFeaturePrimaryDate = (feature: Feature): { label: string; value: string; confidence?: string } => {
+  const stage = getFeatureBoardStage(feature);
+  if (stage === 'backlog') {
+    const planned = getFeatureDateValue(feature, 'plannedAt');
+    if (planned.value) return { label: 'Planned', ...planned };
+  }
+  if (stage === 'in-progress' || stage === 'review') {
+    const started = getFeatureDateValue(feature, 'startedAt');
+    if (started.value) return { label: 'Started', ...started };
+  }
+  if (stage === 'done') {
+    const completed = getFeatureDateValue(feature, 'completedAt');
+    if (completed.value) return { label: 'Completed', ...completed };
+  }
+  const updated = getFeatureDateValue(feature, 'updatedAt');
+  return { label: 'Updated', ...updated };
+};
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  prd: 'PRD',
+  implementation_plan: 'Plan',
+  phase_plan: 'Phase',
+  progress: 'Progress',
+  report: 'Report',
+  spec: 'Spec',
+};
+
+const getDocTypeLabel = (docType: string): string => DOC_TYPE_LABELS[docType] || docType;
+
+const toDateDayIndex = (value: string): number | null => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()) / 86_400_000;
+};
+
+const getDaysBetween = (startValue: string, endValue: string): number | null => {
+  const startDay = toDateDayIndex(startValue);
+  const endDay = toDateDayIndex(endValue);
+  if (startDay === null || endDay === null || endDay < startDay) return null;
+  return endDay - startDay;
+};
+
+const formatFeatureDate = (value?: string): string => {
+  if (!value) return 'Unavailable';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Unavailable';
+  return parsed.toLocaleDateString();
+};
+
+const formatFeatureDateCompact = (value?: string): string => {
+  if (!value) return '--';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '--';
+  return parsed.toLocaleDateString(undefined, {
+    month: 'numeric',
+    day: 'numeric',
+    year: '2-digit',
+  });
+};
+
+const buildLinkedDocTypeCounts = (docs: LinkedDocument[]): Array<{ docType: string; count: number }> => {
+  const counts = new Map<string, number>();
+  docs.forEach((doc) => {
+    const key = (doc.docType || 'document').toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([docType, count]) => ({ docType, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return getDocTypeLabel(a.docType).localeCompare(getDocTypeLabel(b.docType));
+    });
+};
+
+const getFeatureDateModule = (feature: Feature): {
+  first: { label: 'Planned' | 'Started'; value: string; confidence?: string };
+  completed: { label: 'Completed'; value: string; confidence?: string };
+  daysBetween: number | null;
+} => {
+  const planned = getFeatureDateValue(feature, 'plannedAt');
+  const started = getFeatureDateValue(feature, 'startedAt');
+  const completed = getFeatureDateValue(feature, 'completedAt');
+  const first = planned.value
+    ? { label: 'Planned' as const, value: planned.value, confidence: planned.confidence }
+    : { label: 'Started' as const, value: started.value, confidence: started.confidence };
+  return {
+    first,
+    completed: { label: 'Completed', value: completed.value, confidence: completed.confidence },
+    daysBetween: first.value && completed.value ? getDaysBetween(first.value, completed.value) : null,
+  };
 };
 
 const ProgressBar = ({
@@ -506,15 +723,92 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
 };
 
 const DocTypeBadge = ({ docType }: { docType: string }) => {
-  const labels: Record<string, string> = {
-    prd: 'PRD',
-    implementation_plan: 'Plan',
-    phase_plan: 'Phase',
-    progress: 'Progress',
-    report: 'Report',
-    spec: 'Spec',
-  };
-  return <span className="text-[9px] uppercase font-bold">{labels[docType] || docType}</span>;
+  return <span className="text-[9px] uppercase font-bold">{getDocTypeLabel(docType)}</span>;
+};
+
+const LinkedDocsSummaryBadge = ({
+  docs,
+  onClick,
+  compact = false,
+}: {
+  docs: LinkedDocument[];
+  onClick: () => void;
+  compact?: boolean;
+}) => {
+  if (docs.length === 0) return null;
+  const typeCounts = buildLinkedDocTypeCounts(docs);
+  return (
+    <button
+      type="button"
+      draggable={false}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="relative group/doc-badge inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/85 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
+      title="Open linked documents"
+    >
+      <FileText size={compact ? 10 : 11} />
+      <span className="uppercase tracking-wide">Docs</span>
+      <span className="font-mono">{docs.length}</span>
+
+      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[180px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/doc-badge:opacity-100 group-hover/doc-badge:translate-y-0">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Linked Documents</div>
+        <div className="space-y-1">
+          {typeCounts.map(row => (
+            <div key={row.docType} className="flex items-center justify-between gap-3 text-[11px] text-slate-300">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <DocTypeIcon docType={row.docType} />
+                <span className="truncate">{getDocTypeLabel(row.docType)}</span>
+              </span>
+              <span className="font-mono text-slate-400">{row.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+};
+
+const FeatureDateStack = ({ feature }: { feature: Feature }) => {
+  const dateModule = getFeatureDateModule(feature);
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2">
+      <div className="text-[10px] text-slate-500">
+        <span className="uppercase tracking-wider">{dateModule.first.label}</span>
+        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.first.value)}</span>
+      </div>
+      <div className="mt-1 text-[10px] text-slate-500">
+        <span className="uppercase tracking-wider">Completed</span>
+        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.completed.value)}</span>
+      </div>
+    </div>
+  );
+};
+
+const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
+  const dateModule = getFeatureDateModule(feature);
+  const firstLabel = dateModule.first.label === 'Planned' ? 'P' : 'S';
+  const firstDate = formatFeatureDateCompact(dateModule.first.value);
+  const completedDate = formatFeatureDateCompact(dateModule.completed.value);
+  return (
+    <div className="ml-auto mt-1 w-[52%] max-w-[170px] min-w-[124px]">
+      <div className="mb-0.5 text-center text-[8px] font-semibold uppercase tracking-wide text-indigo-300">
+        {dateModule.daysBetween !== null ? `${dateModule.daysBetween}d` : '--'}
+      </div>
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1">
+        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+          {firstLabel} {firstDate}
+        </span>
+        <span className="relative h-px bg-gradient-to-r from-slate-600 to-indigo-400">
+          <ChevronRight size={10} className="absolute -right-0.5 top-1/2 -translate-y-1/2 text-indigo-400" />
+        </span>
+        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+          C {completedDate}
+        </span>
+      </div>
+    </div>
+  );
 };
 
 // ── Status Dropdown ────────────────────────────────────────────────
@@ -622,13 +916,15 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
 const FeatureModal = ({
   feature,
   onClose,
+  initialTab = 'overview',
 }: {
   feature: Feature;
   onClose: () => void;
+  initialTab?: FeatureModalTab;
 }) => {
   const navigate = useNavigate();
   const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
-  const [activeTab, setActiveTab] = useState<'overview' | 'phases' | 'docs' | 'sessions'>('overview');
+  const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [viewingTask, setViewingTask] = useState<ProjectTask | null>(null);
@@ -682,6 +978,10 @@ const FeatureModal = ({
   }, [feature.id, refreshFeatureDetail, refreshLinkedSessions]);
 
   useEffect(() => {
+    setActiveTab(initialTab);
+  }, [feature.id, initialTab]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       refreshFeatureDetail();
       refreshLinkedSessions();
@@ -697,6 +997,14 @@ const FeatureModal = ({
       return next;
     });
   };
+
+  useEffect(() => {
+    if (updatingStatus) return;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      return syncDetailFeatureWithLiveFeature(prev, feature);
+    });
+  }, [feature, updatingStatus]);
 
   const activeFeature = fullFeature || feature;
   const phases = activeFeature.phases || [];
@@ -714,30 +1022,81 @@ const FeatureModal = ({
   }, [phases, phaseStatusFilter, taskStatusFilter]);
 
   const handleFeatureStatusChange = async (newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id || prev.status === newStatus) return prev;
+      previousFeatureSnapshot = prev;
+      return { ...prev, status: newStatus };
+    });
     setUpdatingStatus(true);
     try {
       await updateFeatureStatus(feature.id, newStatus);
-      await refreshFeatureDetail();
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const handlePhaseStatusChange = async (phaseId: string, newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      const hasPhase = (prev.phases || []).some(phase => phase.phase === phaseId || phase.id === phaseId);
+      if (!hasPhase) return prev;
+
+      previousFeatureSnapshot = prev;
+      const nextPhases = (prev.phases || []).map(phase => (
+        phase.phase === phaseId || phase.id === phaseId
+          ? { ...phase, status: newStatus }
+          : phase
+      ));
+      return aggregateFeatureFromPhases(prev, nextPhases);
+    });
     setUpdatingStatus(true);
     try {
       await updatePhaseStatus(feature.id, phaseId, newStatus);
-      await refreshFeatureDetail();
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const handleTaskStatusChange = async (phaseId: string, taskId: string, newStatus: string) => {
+    let previousFeatureSnapshot: Feature | null = null;
+    let previousTaskStatus: string | undefined;
+    setFullFeature(prev => {
+      if (!prev || prev.id !== feature.id) return prev;
+      let changed = false;
+      const nextPhases = (prev.phases || []).map(phase => {
+        if (phase.phase !== phaseId && phase.id !== phaseId) return phase;
+        const nextTasks = (phase.tasks || []).map(task => {
+          if (task.id !== taskId) return task;
+          changed = true;
+          previousTaskStatus = task.status;
+          return { ...task, status: newStatus };
+        });
+        return { ...phase, tasks: nextTasks };
+      });
+      if (!changed) return prev;
+      previousFeatureSnapshot = prev;
+      return aggregateFeatureFromPhases(prev, nextPhases);
+    });
     setUpdatingStatus(true);
     try {
-      await updateTaskStatus(feature.id, phaseId, taskId, newStatus);
-      await refreshFeatureDetail();
+      await updateTaskStatus(feature.id, phaseId, taskId, newStatus, previousTaskStatus);
+    } catch (error) {
+      if (previousFeatureSnapshot) {
+        setFullFeature(previousFeatureSnapshot);
+      }
+      throw error;
     } finally {
       setUpdatingStatus(false);
     }
@@ -779,6 +1138,174 @@ const FeatureModal = ({
       return bTime - aTime;
     });
   }, [linkedSessionLinks]);
+
+  const phaseSessionLinks = useMemo(() => {
+    const byPhase = new Map<string, FeatureSessionLink[]>();
+    const add = (phaseToken: string, session: FeatureSessionLink) => {
+      const key = (phaseToken || '').trim();
+      if (!key) return;
+      const existing = byPhase.get(key) || [];
+      if (!existing.some(item => item.sessionId === session.sessionId)) {
+        byPhase.set(key, [...existing, session]);
+      }
+    };
+
+    linkedSessions.forEach(session => {
+      const related = Array.isArray(session.relatedPhases) ? session.relatedPhases : [];
+      related.forEach(phaseToken => {
+        const normalized = String(phaseToken || '').trim();
+        if (!normalized) return;
+        if (normalized.toLowerCase() === 'all') {
+          phases.forEach(phase => add(String(phase.phase || '').trim(), session));
+          return;
+        }
+        add(normalized, session);
+      });
+    });
+
+    return byPhase;
+  }, [linkedSessions, phases]);
+
+  const taskSessionLinksByTaskId = useMemo(() => {
+    const byTask = new Map<string, Array<{
+      sessionId: string;
+      isSubthread: boolean;
+      confidence: number;
+      matchedBy: string;
+      source: 'task_frontmatter' | 'task_tool';
+    }>>();
+    const taskIdLookup = new Map<string, string>();
+
+    phases.forEach(phase => {
+      (phase.tasks || []).forEach(task => {
+        const taskId = String(task.id || '').trim();
+        if (!taskId) return;
+        taskIdLookup.set(taskId.toLowerCase(), taskId);
+      });
+    });
+
+    const addTaskSession = (
+      taskId: string,
+      value: {
+        sessionId: string;
+        isSubthread: boolean;
+        confidence: number;
+        matchedBy: string;
+        source: 'task_frontmatter' | 'task_tool';
+      }
+    ) => {
+      const existing = byTask.get(taskId) || [];
+      if (existing.some(item => item.sessionId === value.sessionId && item.source === value.source)) {
+        return;
+      }
+      byTask.set(taskId, [...existing, value]);
+    };
+
+    phases.forEach(phase => {
+      (phase.tasks || []).forEach(task => {
+        const taskId = String(task.id || '').trim();
+        const sessionId = String(task.sessionId || '').trim();
+        if (!taskId || !sessionId) return;
+        addTaskSession(taskId, {
+          sessionId,
+          isSubthread: false,
+          confidence: 1,
+          matchedBy: 'task_frontmatter',
+          source: 'task_frontmatter',
+        });
+      });
+    });
+
+    linkedSessions.forEach(session => {
+      const relatedTasks = Array.isArray(session.relatedTasks) ? session.relatedTasks : [];
+      relatedTasks.forEach(taskRef => {
+        const rawTaskId = String(taskRef.taskId || '').trim().toLowerCase();
+        if (!rawTaskId) return;
+        const resolvedTaskId = taskIdLookup.get(rawTaskId);
+        if (!resolvedTaskId) return;
+
+        const targetSessionId = String(taskRef.linkedSessionId || session.sessionId || '').trim();
+        if (!targetSessionId) return;
+
+        addTaskSession(resolvedTaskId, {
+          sessionId: targetSessionId,
+          isSubthread: Boolean(taskRef.linkedSessionId) || Boolean(session.isSubthread),
+          confidence: session.confidence || 0,
+          matchedBy: String(taskRef.matchedBy || ''),
+          source: 'task_tool',
+        });
+      });
+    });
+
+    return byTask;
+  }, [linkedSessions, phases]);
+  const primaryFeatureDate = getFeaturePrimaryDate(activeFeature);
+  const featureHistoryEvents = useMemo(() => {
+    const events: Array<{
+      id: string;
+      timestamp: string;
+      label: string;
+      kind: string;
+      confidence: string;
+      source: string;
+      description?: string;
+    }> = [];
+
+    (activeFeature.timeline || []).forEach((event, idx) => {
+      if (!event || !event.timestamp) return;
+      events.push({
+        id: event.id || `feature-${idx}`,
+        timestamp: event.timestamp,
+        label: event.label || 'Feature event',
+        kind: event.kind || 'feature',
+        confidence: event.confidence || 'low',
+        source: event.source || 'feature',
+        description: event.description,
+      });
+    });
+
+    linkedDocs.forEach((doc, docIndex) => {
+      (doc.timeline || []).forEach((event, idx) => {
+        if (!event || !event.timestamp) return;
+        events.push({
+          id: `${doc.id || docIndex}-${event.id || idx}`,
+          timestamp: event.timestamp,
+          label: `${event.label || 'Doc update'} (${doc.docType || 'doc'})`,
+          kind: event.kind || 'document',
+          confidence: event.confidence || 'low',
+          source: event.source || `document:${doc.filePath}`,
+          description: event.description,
+        });
+      });
+    });
+
+    linkedSessions.forEach((session) => {
+      if (session.startedAt) {
+        events.push({
+          id: `${session.sessionId}-started`,
+          timestamp: session.startedAt,
+          label: `Session Started (${session.workflowType || session.sessionType || 'related'})`,
+          kind: 'session_started',
+          confidence: 'high',
+          source: `session:${session.sessionId}`,
+        });
+      }
+      if (session.endedAt) {
+        events.push({
+          id: `${session.sessionId}-completed`,
+          timestamp: session.endedAt,
+          label: `Session Completed (${session.workflowType || session.sessionType || 'related'})`,
+          kind: 'session_completed',
+          confidence: 'high',
+          source: `session:${session.sessionId}`,
+        });
+      }
+    });
+
+    return events
+      .filter(event => !!event.timestamp)
+      .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
+  }, [activeFeature.timeline, linkedDocs, linkedSessions]);
 
   const allSessionRoots = useMemo(
     () => buildSessionThreadForest(linkedSessions),
@@ -865,9 +1392,18 @@ const FeatureModal = ({
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
     { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
     { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
+    { id: 'history', label: 'History', icon: Calendar },
   ];
 
-  const renderSessionCard = (session: FeatureSessionLink) => {
+  const renderSessionCard = (
+    session: FeatureSessionLink,
+    threadToggle?: {
+      expanded: boolean;
+      childCount: number;
+      onToggle: () => void;
+      label?: string;
+    }
+  ) => {
     const openSession = () => {
       onClose();
       navigate(`/sessions?session=${encodeURIComponent(session.sessionId)}`);
@@ -880,6 +1416,48 @@ const FeatureModal = ({
     const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
     const workflow = (session.workflowType || '').trim() || 'Related';
     const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
+    const modelBadges = (session.modelsUsed && session.modelsUsed.length > 0)
+      ? session.modelsUsed.map(modelInfo => ({
+        raw: modelInfo.raw,
+        displayName: modelInfo.modelDisplayName,
+        provider: modelInfo.modelProvider,
+        family: modelInfo.modelFamily,
+        version: modelInfo.modelVersion,
+      }))
+      : [{
+        raw: session.model,
+        displayName: session.modelDisplayName,
+        provider: session.modelProvider,
+        family: session.modelFamily,
+        version: session.modelVersion,
+      }];
+    const detailSections: SessionCardDetailSection[] = [];
+    const linkSignalItems = [
+      session.linkStrategy ? formatSessionReason(session.linkStrategy) : '',
+      ...session.reasons.map(reason => formatSessionReason(reason)),
+    ].filter(Boolean);
+    if (linkSignalItems.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-link-signals`,
+        label: 'Link Signals',
+        items: Array.from(new Set(linkSignalItems)),
+      });
+    }
+    if (session.commands.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-commands`,
+        label: 'Commands',
+        items: Array.from(new Set(session.commands)),
+      });
+    }
+    const toolSummary = Array.isArray(session.toolSummary) ? session.toolSummary.filter(Boolean) : [];
+    if (toolSummary.length > 0) {
+      detailSections.push({
+        id: `${session.sessionId}-tools`,
+        label: 'Tools',
+        items: toolSummary,
+      });
+    }
 
     return (
       <SessionCard
@@ -887,8 +1465,26 @@ const FeatureModal = ({
         title={displayTitle}
         status={session.status}
         startedAt={session.startedAt}
-        model={{ raw: session.model, displayName: session.modelDisplayName }}
+        endedAt={session.endedAt}
+        updatedAt={session.updatedAt}
+        dates={{
+          startedAt: session.startedAt ? { value: session.startedAt, confidence: 'high' } : undefined,
+          completedAt: session.endedAt ? { value: session.endedAt, confidence: 'high' } : undefined,
+          updatedAt: session.updatedAt ? { value: session.updatedAt, confidence: 'medium' } : undefined,
+        }}
+        model={{
+          raw: session.model,
+          displayName: session.modelDisplayName,
+          provider: session.modelProvider,
+          family: session.modelFamily,
+          version: session.modelVersion,
+        }}
+        models={modelBadges}
+        agentBadges={session.agentsUsed || []}
+        skillBadges={session.skillsUsed || []}
+        detailSections={detailSections}
         metadata={session.sessionMetadata || null}
+        threadToggle={threadToggle}
         onClick={openSession}
         className="rounded-lg"
         infoBadges={(
@@ -928,27 +1524,7 @@ const FeatureModal = ({
           <span className="px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10">
             {workflow}
           </span>
-          {session.linkStrategy && (
-            <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60 text-slate-400">
-              {formatSessionReason(session.linkStrategy)}
-            </span>
-          )}
         </div>
-
-        {(session.reasons.length > 0 || session.commands.length > 0) && (
-          <div className="mb-3 text-[10px] text-slate-500 flex flex-wrap items-center gap-2">
-            {session.reasons.slice(0, 3).map(reason => (
-              <span key={`${session.sessionId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
-                {formatSessionReason(reason)}
-              </span>
-            ))}
-            {session.commands.slice(0, 2).map(command => (
-              <span key={`${session.sessionId}-${command}`} className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono">
-                {command}
-              </span>
-            ))}
-          </div>
-        )}
 
         {relatedTasks.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-800/60">
@@ -978,29 +1554,20 @@ const FeatureModal = ({
 
     return (
       <div key={node.session.sessionId} className="space-y-2">
-        {renderSessionCard(node.session)}
-        {hasChildren && (
-          <div className="mt-2 pt-2 border-t border-slate-800/60">
-            <button
-              onClick={() => toggleSubthreads(node.session.sessionId)}
-              className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
-            >
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                Expand to see Sub-Threads
-              </span>
-              <span className="text-[11px] text-slate-500">{countThreadNodes(node.children)}</span>
-            </button>
-            {isExpanded && (
-              <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
-                {node.children.map(child => (
-                  <div key={child.session.sessionId} className="relative pl-3">
-                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
-                    {renderSessionTreeNode(child, depth + 1)}
-                  </div>
-                ))}
+        {renderSessionCard(node.session, hasChildren ? {
+          expanded: isExpanded,
+          childCount: countThreadNodes(node.children),
+          onToggle: () => toggleSubthreads(node.session.sessionId),
+          label: 'Sub-Threads',
+        } : undefined)}
+        {hasChildren && isExpanded && (
+          <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+            {node.children.map(child => (
+              <div key={child.session.sessionId} className="relative pl-3">
+                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                {renderSessionTreeNode(child, depth + 1)}
               </div>
-            )}
+            ))}
           </div>
         )}
       </div>
@@ -1037,10 +1604,11 @@ const FeatureModal = ({
                 {featureDeferredTasks > 0 && (
                   <span className="text-amber-300">{featureDeferredTasks} deferred</span>
                 )}
-                {activeFeature.updatedAt && activeFeature.updatedAt !== 'None' && (
+                {primaryFeatureDate.value && (
                   <span className="flex items-center gap-1">
                     <Calendar size={12} />
-                    {activeFeature.updatedAt}
+                    {primaryFeatureDate.label}: {new Date(primaryFeatureDate.value).toLocaleDateString()}
+                    {primaryFeatureDate.confidence ? ` (${primaryFeatureDate.confidence})` : ''}
                   </span>
                 )}
               </div>
@@ -1097,6 +1665,26 @@ const FeatureModal = ({
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Documents</div>
                   <div className="text-purple-400 font-bold text-2xl">{linkedDocs.length}</div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-slate-200 mb-3">Date Signals</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  {[
+                    { label: 'Planned', value: getFeatureDateValue(activeFeature, 'plannedAt') },
+                    { label: 'Started', value: getFeatureDateValue(activeFeature, 'startedAt') },
+                    { label: 'Completed', value: getFeatureDateValue(activeFeature, 'completedAt') },
+                    { label: 'Updated', value: getFeatureDateValue(activeFeature, 'updatedAt') },
+                  ].map(item => (
+                    <div key={item.label} className="p-2 rounded border border-slate-800 bg-slate-950">
+                      <div className="text-slate-500 uppercase">{item.label}</div>
+                      <div className="text-slate-200 mt-1">
+                        {item.value.value ? new Date(item.value.value).toLocaleDateString() : '-'}
+                        {item.value.confidence ? ` (${item.value.confidence})` : ''}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -1196,6 +1784,7 @@ const FeatureModal = ({
                 const isExpanded = expandedPhases.has(phaseKey);
                 const phaseCompletedTasks = getPhaseCompletedCount(phase);
                 const phaseDeferredTasks = getPhaseDeferredCount(phase);
+                const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                 const visibleTasks = taskStatusFilter === 'all'
                   ? phase.tasks
                   : phase.tasks.filter(task => task.status === taskStatusFilter);
@@ -1223,6 +1812,22 @@ const FeatureModal = ({
                           <div className="mt-1">
                             <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phase.totalTasks} />
                           </div>
+                          {phaseRelatedSessions.length > 0 && (
+                            <div className="mt-2 flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
+                              {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
+                                <span
+                                  key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 font-mono"
+                                >
+                                  {sessionLink.sessionId}
+                                </span>
+                              ))}
+                              {phaseRelatedSessions.length > 3 && (
+                                <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 3} more</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </button>
                       <StatusDropdown
@@ -1241,6 +1846,7 @@ const FeatureModal = ({
                           const taskDeferred = normalizedStatus === 'deferred';
                           const nextStatus = taskDone ? 'deferred' : taskDeferred ? 'backlog' : 'done';
                           const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
+                          const taskSessionLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                           const taskTextClass = taskDone
                             ? 'text-slate-500 line-through'
                             : taskDeferred
@@ -1281,15 +1887,26 @@ const FeatureModal = ({
                                   {task.commitHash.slice(0, 7)}
                                 </span>
                               )}
-                              {task.sessionId && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(task.sessionId!)}`); }}
-                                  className="flex items-center gap-1 text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/30 font-mono hover:bg-indigo-500/20 transition-colors flex-shrink-0"
-                                  title="Go to session"
-                                >
-                                  <Terminal size={10} />
-                                  {task.sessionId}
-                                </button>
+                              {taskSessionLinks.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {taskSessionLinks.slice(0, 3).map(link => (
+                                    <button
+                                      key={`${task.id}-session-${link.sessionId}-${link.source}`}
+                                      onClick={(e) => { e.stopPropagation(); onClose(); navigate(`/sessions?session=${encodeURIComponent(link.sessionId)}`); }}
+                                      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono transition-colors flex-shrink-0 ${link.isSubthread
+                                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
+                                        }`}
+                                      title={link.isSubthread ? 'Go to linked sub-thread session' : 'Go to linked session'}
+                                    >
+                                      <Terminal size={10} />
+                                      {link.sessionId}
+                                    </button>
+                                  ))}
+                                  {taskSessionLinks.length > 3 && (
+                                    <span className="text-[10px] text-slate-500">+{taskSessionLinks.length - 3} more</span>
+                                  )}
+                                </div>
                               )}
                               {task.owner && (
                                 <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
@@ -1450,6 +2067,42 @@ const FeatureModal = ({
               )}
             </div>
           )}
+          {activeTab === 'history' && (
+            <div className="space-y-3">
+              {featureHistoryEvents.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <Calendar size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>No timeline events available yet.</p>
+                </div>
+              )}
+              {featureHistoryEvents.length > 0 && (
+                <div className="space-y-2">
+                  {featureHistoryEvents.map(event => (
+                    <div key={event.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm text-slate-200">{event.label}</div>
+                        <div className="text-xs text-slate-500">
+                          {new Date(event.timestamp).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
+                          {event.kind}
+                        </span>
+                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
+                          {event.confidence}
+                        </span>
+                        <span className="font-mono truncate">{event.source}</span>
+                      </div>
+                      {event.description && (
+                        <p className="mt-2 text-xs text-slate-500">{event.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Task Source Dialog */}
@@ -1536,6 +2189,7 @@ const FeatureCard = ({
   sessionSummary,
   sessionSummaryLoading,
   onClick,
+  onOpenDocs,
   onStatusChange,
   onDragStart,
   onDragEnd,
@@ -1545,13 +2199,12 @@ const FeatureCard = ({
   sessionSummary?: FeatureSessionSummary;
   sessionSummaryLoading: boolean;
   onClick: () => void;
+  onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
   onDragStart: (featureId: string) => void;
   onDragEnd: () => void;
   isDragging: boolean;
 }) => {
-  const prdDoc = feature.linkedDocs.find(d => d.docType === 'prd');
-  const planDoc = feature.linkedDocs.find(d => d.docType === 'implementation_plan');
   const featureDeferredTasks = getFeatureDeferredCount(feature);
   const featureCompletedTasks = getFeatureCompletedCount(feature);
   const featureHasDeferred = hasDeferredCaveat(feature);
@@ -1591,18 +2244,9 @@ const FeatureCard = ({
         <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
-      {/* Linked Doc chips */}
+      {/* Linked doc summary */}
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {prdDoc && (
-          <span className="text-[9px] flex items-center gap-1 bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20">
-            <ClipboardList size={10} /> PRD
-          </span>
-        )}
-        {planDoc && (
-          <span className="text-[9px] flex items-center gap-1 bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">
-            <Layers size={10} /> Plan
-          </span>
-        )}
+        <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} compact />
         {feature.phases.length > 0 && (
           <span className="text-[9px] flex items-center gap-1 bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
             {feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}
@@ -1611,13 +2255,18 @@ const FeatureCard = ({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-        {feature.category ? (
-          <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
-        ) : <span />}
-        <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
-          Details <ChevronRight size={10} />
-        </span>
+      <div className="pt-2 border-t border-slate-800">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col min-w-0">
+            {feature.category ? (
+              <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
+            ) : <span />}
+          </div>
+          <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
+            Details <ChevronRight size={10} />
+          </span>
+        </div>
+        <FeatureKanbanDateModule feature={feature} />
       </div>
     </div>
   );
@@ -1630,12 +2279,14 @@ const FeatureListCard = ({
   sessionSummary,
   sessionSummaryLoading,
   onClick,
+  onOpenDocs,
   onStatusChange,
 }: {
   feature: Feature;
   sessionSummary?: FeatureSessionSummary;
   sessionSummaryLoading: boolean;
   onClick: () => void;
+  onOpenDocs: () => void;
   onStatusChange: (newStatus: string) => void;
 }) => {
   const featureDeferredTasks = getFeatureDeferredCount(feature);
@@ -1661,9 +2312,6 @@ const FeatureListCard = ({
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
-          {feature.updatedAt && feature.updatedAt !== 'None' && (
-            <div className="text-[10px] text-slate-500">{feature.updatedAt}</div>
-          )}
         </div>
       </div>
       {featureHasDeferred && (
@@ -1678,14 +2326,13 @@ const FeatureListCard = ({
         <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={feature.totalTasks} />
       </div>
 
+      <div className="mb-3">
+        <FeatureDateStack feature={feature} />
+      </div>
+
       <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
         <div className="flex gap-2">
-          {feature.linkedDocs.map(doc => (
-            <span key={doc.id} className="text-[10px] flex items-center gap-1 bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
-              <DocTypeIcon docType={doc.docType} />
-              <DocTypeBadge docType={doc.docType} />
-            </span>
-          ))}
+          <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} />
         </div>
         {feature.phases.length > 0 && (
           <span className="text-xs text-slate-500">{feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}</span>
@@ -1704,6 +2351,7 @@ const StatusColumn = ({
   featureSessionSummaries,
   loadingFeatureSessionSummaries,
   onFeatureClick,
+  onFeatureDocsClick,
   onStatusChange,
   onCardDragStart,
   onCardDragEnd,
@@ -1719,6 +2367,7 @@ const StatusColumn = ({
   featureSessionSummaries: Record<string, FeatureSessionSummary>;
   loadingFeatureSessionSummaries: Set<string>;
   onFeatureClick: (f: Feature) => void;
+  onFeatureDocsClick: (f: Feature) => void;
   onStatusChange: (featureId: string, newStatus: string) => void;
   onCardDragStart: (featureId: string) => void;
   onCardDragEnd: () => void;
@@ -1761,6 +2410,7 @@ const StatusColumn = ({
             sessionSummary={featureSessionSummaries[f.id]}
             sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
             onClick={() => onFeatureClick(f)}
+            onOpenDocs={() => onFeatureDocsClick(f)}
             onStatusChange={(newStatus) => onStatusChange(f.id, newStatus)}
             onDragStart={onCardDragStart}
             onDragEnd={onCardDragEnd}
@@ -1784,6 +2434,7 @@ export const ProjectBoard: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
+  const [selectedFeatureTab, setSelectedFeatureTab] = useState<FeatureModalTab>('overview');
   const [draggedFeatureId, setDraggedFeatureId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const [featureSessionSummaries, setFeatureSessionSummaries] = useState<Record<string, FeatureSessionSummary>>({});
@@ -1793,9 +2444,12 @@ export const ProjectBoard: React.FC = () => {
   useEffect(() => {
     const featureId = searchParams.get('feature');
     if (featureId && apiFeatures.length > 0) {
-      const feat = apiFeatures.find(f => f.id === featureId);
+      const featureBase = getFeatureBaseSlug(featureId);
+      const feat = apiFeatures.find(f => f.id === featureId)
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
       if (feat) {
         setSelectedFeature(feat);
+        setSelectedFeatureTab('overview');
         // Clear param to avoid re-triggering, or keep it for sharable URLs?
         // Let's clear it to keep URL clean after opening, similar to PlanCatalog
         setSearchParams({}, { replace: true });
@@ -1808,6 +2462,31 @@ export const ProjectBoard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'progress' | 'tasks'>('date');
+  const [plannedFrom, setPlannedFrom] = useState('');
+  const [plannedTo, setPlannedTo] = useState('');
+  const [startedFrom, setStartedFrom] = useState('');
+  const [startedTo, setStartedTo] = useState('');
+  const [completedFrom, setCompletedFrom] = useState('');
+  const [completedTo, setCompletedTo] = useState('');
+  const [updatedFrom, setUpdatedFrom] = useState('');
+  const [updatedTo, setUpdatedTo] = useState('');
+  const [draftSearchQuery, setDraftSearchQuery] = useState('');
+  const [draftStatusFilter, setDraftStatusFilter] = useState<string>('all');
+  const [draftCategoryFilter, setDraftCategoryFilter] = useState<string>('all');
+  const [draftSortBy, setDraftSortBy] = useState<'date' | 'progress' | 'tasks'>('date');
+  const [draftPlannedFrom, setDraftPlannedFrom] = useState('');
+  const [draftPlannedTo, setDraftPlannedTo] = useState('');
+  const [draftStartedFrom, setDraftStartedFrom] = useState('');
+  const [draftStartedTo, setDraftStartedTo] = useState('');
+  const [draftCompletedFrom, setDraftCompletedFrom] = useState('');
+  const [draftCompletedTo, setDraftCompletedTo] = useState('');
+  const [draftUpdatedFrom, setDraftUpdatedFrom] = useState('');
+  const [draftUpdatedTo, setDraftUpdatedTo] = useState('');
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState({
+    general: true,
+    dates: true,
+    sort: true,
+  });
 
   // Derive unique categories
   const categories = useMemo(() => {
@@ -1839,6 +2518,20 @@ export const ProjectBoard: React.FC = () => {
       result = result.filter(f => f.category === categoryFilter);
     }
 
+    result = result.filter(feature => {
+      const planned = getFeatureDateValue(feature, 'plannedAt').value;
+      const started = getFeatureDateValue(feature, 'startedAt').value;
+      const completed = getFeatureDateValue(feature, 'completedAt').value;
+      const updated = getFeatureDateValue(feature, 'updatedAt').value;
+      if (!inDateRange(planned, plannedFrom || undefined, plannedTo || undefined)) return false;
+      if (!inDateRange(started, startedFrom || undefined, startedTo || undefined)) return false;
+      if (!inDateRange(updated, updatedFrom || undefined, updatedTo || undefined)) return false;
+      if ((completedFrom || completedTo) && !inDateRange(completed, completedFrom || undefined, completedTo || undefined)) {
+        return false;
+      }
+      return true;
+    });
+
     return result.sort((a, b) => {
       if (sortBy === 'progress') {
         const pctA = a.totalTasks > 0 ? getFeatureCompletedCount(a) / a.totalTasks : 0;
@@ -1847,9 +2540,23 @@ export const ProjectBoard: React.FC = () => {
       }
       if (sortBy === 'tasks') return b.totalTasks - a.totalTasks;
       // date sort (default)
-      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+      return toEpoch(getFeatureDateValue(b, 'updatedAt').value) - toEpoch(getFeatureDateValue(a, 'updatedAt').value);
     });
-  }, [apiFeatures, searchQuery, statusFilter, categoryFilter, sortBy]);
+  }, [
+    apiFeatures,
+    searchQuery,
+    statusFilter,
+    categoryFilter,
+    sortBy,
+    plannedFrom,
+    plannedTo,
+    startedFrom,
+    startedTo,
+    completedFrom,
+    completedTo,
+    updatedFrom,
+    updatedTo,
+  ]);
 
   const handleStatusChange = useCallback(async (featureId: string, newStatus: string) => {
     const feature = apiFeatures.find(f => f.id === featureId);
@@ -1919,92 +2626,296 @@ export const ProjectBoard: React.FC = () => {
   // Keep selected feature in sync with API data
   useEffect(() => {
     if (selectedFeature) {
-      const updated = apiFeatures.find(f => f.id === selectedFeature.id);
+      const selectedBase = getFeatureBaseSlug(selectedFeature.id);
+      const updated = apiFeatures.find(f => f.id === selectedFeature.id)
+        || apiFeatures.find(f => getFeatureBaseSlug(f.id) === selectedBase);
       if (updated) {
         setSelectedFeature(updated);
+      } else if (apiFeatures.length > 0) {
+        setSelectedFeature(null);
       }
     }
-  }, [apiFeatures]);
+  }, [apiFeatures, selectedFeature]);
 
-  const sidebarPortal = document.getElementById('sidebar-portal');
+  const openFeatureModal = useCallback((feature: Feature, initialTab: FeatureModalTab = 'overview') => {
+    setSelectedFeatureTab(initialTab);
+    setSelectedFeature(feature);
+  }, []);
+
+  const hasPendingFilterChanges = (
+    draftSearchQuery !== searchQuery
+    || draftStatusFilter !== statusFilter
+    || draftCategoryFilter !== categoryFilter
+    || draftSortBy !== sortBy
+    || draftPlannedFrom !== plannedFrom
+    || draftPlannedTo !== plannedTo
+    || draftStartedFrom !== startedFrom
+    || draftStartedTo !== startedTo
+    || draftCompletedFrom !== completedFrom
+    || draftCompletedTo !== completedTo
+    || draftUpdatedFrom !== updatedFrom
+    || draftUpdatedTo !== updatedTo
+  );
+  const hasActiveDraftFilters = Boolean(
+    draftSearchQuery.trim()
+    || draftStatusFilter !== 'all'
+    || draftCategoryFilter !== 'all'
+    || draftSortBy !== 'date'
+    || draftPlannedFrom
+    || draftPlannedTo
+    || draftStartedFrom
+    || draftStartedTo
+    || draftCompletedFrom
+    || draftCompletedTo
+    || draftUpdatedFrom
+    || draftUpdatedTo
+  );
+  const toggleSidebarSection = (key: keyof typeof collapsedSidebarSections) => {
+    setCollapsedSidebarSections(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+  const applySidebarFilters = () => {
+    setSearchQuery(draftSearchQuery);
+    setStatusFilter(draftStatusFilter);
+    setCategoryFilter(draftCategoryFilter);
+    setSortBy(draftSortBy);
+    setPlannedFrom(draftPlannedFrom);
+    setPlannedTo(draftPlannedTo);
+    setStartedFrom(draftStartedFrom);
+    setStartedTo(draftStartedTo);
+    setCompletedFrom(draftCompletedFrom);
+    setCompletedTo(draftCompletedTo);
+    setUpdatedFrom(draftUpdatedFrom);
+    setUpdatedTo(draftUpdatedTo);
+  };
+  const clearSidebarFilters = () => {
+    setDraftSearchQuery('');
+    setDraftStatusFilter('all');
+    setDraftCategoryFilter('all');
+    setDraftSortBy('date');
+    setDraftPlannedFrom('');
+    setDraftPlannedTo('');
+    setDraftStartedFrom('');
+    setDraftStartedTo('');
+    setDraftCompletedFrom('');
+    setDraftCompletedTo('');
+    setDraftUpdatedFrom('');
+    setDraftUpdatedTo('');
+
+    setSearchQuery('');
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setSortBy('date');
+    setPlannedFrom('');
+    setPlannedTo('');
+    setStartedFrom('');
+    setStartedTo('');
+    setCompletedFrom('');
+    setCompletedTo('');
+    setUpdatedFrom('');
+    setUpdatedTo('');
+  };
 
   return (
     <div className="h-full flex flex-col relative">
 
-      {/* Sidebar Filters */}
-      {sidebarPortal && createPortal(
-        <div className="space-y-6 animate-in slide-in-from-left-4 duration-300">
-          <div>
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Filter size={12} /> Filters
-            </h3>
-            <div className="space-y-3">
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder="Search features..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
-                />
-              </div>
+      <SidebarFiltersPortal>
+          <SidebarFiltersSection title="Filters" icon={Filter}>
+            <div className="space-y-2">
+              <button
+                onClick={() => toggleSidebarSection('general')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>General</span>
+                {collapsedSidebarSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.general && (
+                <div className="pl-1 space-y-2">
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Search features..."
+                      value={draftSearchQuery}
+                      onChange={e => setDraftSearchQuery(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Status</label>
-                <select
-                  value={statusFilter}
-                  onChange={e => setStatusFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="all">All Statuses</option>
-                  <option value="backlog">Backlog</option>
-                  <option value="in-progress">In Progress</option>
-                  <option value="review">Review</option>
-                  <option value="done">Done</option>
-                  <option value="deferred">Deferred Caveat</option>
-                </select>
-              </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Status</label>
+                    <select
+                      value={draftStatusFilter}
+                      onChange={e => setDraftStatusFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All Statuses</option>
+                      <option value="backlog">Backlog</option>
+                      <option value="in-progress">In Progress</option>
+                      <option value="review">Review</option>
+                      <option value="done">Done</option>
+                      <option value="deferred">Deferred Caveat</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Category</label>
-                <select
-                  value={categoryFilter}
-                  onChange={e => setCategoryFilter(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="all">All Categories</option>
-                  {categories.map(c => (
-                    <option key={c} value={c}>{c}</option>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Category</label>
+                    <select
+                      value={draftCategoryFilter}
+                      onChange={e => setDraftCategoryFilter(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="all">All Categories</option>
+                      {categories.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => toggleSidebarSection('dates')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>Date Ranges</span>
+                {collapsedSidebarSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.dates && (
+                <div className="pl-1 space-y-2">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Planned</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftPlannedFrom}
+                        onChange={e => setDraftPlannedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftPlannedTo}
+                        onChange={e => setDraftPlannedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Started</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftStartedFrom}
+                        onChange={e => setDraftStartedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftStartedTo}
+                        onChange={e => setDraftStartedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Completed</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftCompletedFrom}
+                        onChange={e => setDraftCompletedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftCompletedTo}
+                        onChange={e => setDraftCompletedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Updated</p>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <input
+                        type="date"
+                        value={draftUpdatedFrom}
+                        onChange={e => setDraftUpdatedFrom(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <input
+                        type="date"
+                        value={draftUpdatedTo}
+                        onChange={e => setDraftUpdatedTo(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => toggleSidebarSection('sort')}
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+              >
+                <span>Sort</span>
+                {collapsedSidebarSections.sort ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {!collapsedSidebarSections.sort && (
+                <div className="pl-1 flex flex-col gap-1.5">
+                  {[
+                    { key: 'date', label: 'Recent' },
+                    { key: 'progress', label: 'Progress' },
+                    { key: 'tasks', label: 'Task Count' },
+                  ].map(s => (
+                    <button
+                      key={s.key}
+                      onClick={() => setDraftSortBy(s.key as any)}
+                      className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${draftSortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
+                    >
+                      {s.label}
+                    </button>
                   ))}
-                </select>
-              </div>
+                </div>
+              )}
             </div>
-          </div>
 
-          <div>
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <ArrowUpDown size={12} /> Sort
-            </h3>
-            <div className="flex flex-col gap-1.5">
-              {[
-                { key: 'date', label: 'Recent' },
-                { key: 'progress', label: 'Progress' },
-                { key: 'tasks', label: 'Task Count' },
-              ].map(s => (
-                <button
-                  key={s.key}
-                  onClick={() => setSortBy(s.key as any)}
-                  className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${sortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-                >
-                  {s.label}
-                </button>
-              ))}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={clearSidebarFilters}
+                className="w-full inline-flex items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-200 hover:bg-rose-500/25 hover:border-rose-400/50 disabled:opacity-40"
+                disabled={!hasActiveDraftFilters}
+              >
+                Clear
+              </button>
+              <button
+                onClick={applySidebarFilters}
+                className="w-full inline-flex items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/25 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-100 hover:bg-indigo-500/35 hover:border-indigo-400/60 disabled:opacity-40"
+                disabled={!hasPendingFilterChanges}
+              >
+                Apply
+              </button>
             </div>
-          </div>
-        </div>,
-        sidebarPortal,
-      )}
+          </SidebarFiltersSection>
+      </SidebarFiltersPortal>
 
       {/* Page Header */}
       <div className="mb-6 flex justify-between items-center">
@@ -2044,7 +2955,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'backlog')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2060,7 +2972,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'in-progress')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2076,7 +2989,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'review')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2092,7 +3006,8 @@ export const ProjectBoard: React.FC = () => {
               features={filteredFeatures.filter(f => getFeatureBoardStage(f) === 'done')}
               featureSessionSummaries={featureSessionSummaries}
               loadingFeatureSessionSummaries={loadingFeatureSessionSummaries}
-              onFeatureClick={setSelectedFeature}
+              onFeatureClick={(feature) => openFeatureModal(feature, 'overview')}
+              onFeatureDocsClick={(feature) => openFeatureModal(feature, 'docs')}
               onStatusChange={handleStatusChange}
               onCardDragStart={handleCardDragStart}
               onCardDragEnd={handleCardDragEnd}
@@ -2111,7 +3026,8 @@ export const ProjectBoard: React.FC = () => {
                 feature={f}
                 sessionSummary={featureSessionSummaries[f.id]}
                 sessionSummaryLoading={loadingFeatureSessionSummaries.has(f.id)}
-                onClick={() => setSelectedFeature(f)}
+                onClick={() => openFeatureModal(f, 'overview')}
+                onOpenDocs={() => openFeatureModal(f, 'docs')}
                 onStatusChange={(newStatus) => handleStatusChange(f.id, newStatus)}
               />
             ))}
@@ -2128,6 +3044,7 @@ export const ProjectBoard: React.FC = () => {
       {selectedFeature && (
         <FeatureModal
           feature={selectedFeature}
+          initialTab={selectedFeatureTab}
           onClose={() => setSelectedFeature(null)}
         />
       )}

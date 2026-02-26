@@ -10,6 +10,35 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: int
     offset: int
     limit: int
+
+
+class DateValue(BaseModel):
+    value: str = ""
+    confidence: Literal["high", "medium", "low"] = "low"
+    source: str = ""
+    reason: str = ""
+
+
+class EntityDates(BaseModel):
+    createdAt: Optional[DateValue] = None
+    updatedAt: Optional[DateValue] = None
+    completedAt: Optional[DateValue] = None
+    plannedAt: Optional[DateValue] = None
+    startedAt: Optional[DateValue] = None
+    endedAt: Optional[DateValue] = None
+    lastActivityAt: Optional[DateValue] = None
+
+
+class TimelineEvent(BaseModel):
+    id: str
+    timestamp: str
+    label: str
+    kind: str = ""
+    confidence: Literal["high", "medium", "low"] = "low"
+    source: str = ""
+    description: str = ""
+
+
 # ── Session-related models ──────────────────────────────────────────
 
 class ToolCallInfo(BaseModel):
@@ -72,6 +101,22 @@ class ToolUsage(BaseModel):
     name: str
     count: int = 0
     successRate: float = 1.0
+    totalMs: int = 0
+
+
+class SessionModelInfo(BaseModel):
+    raw: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
+
+
+class SessionPlatformTransition(BaseModel):
+    timestamp: str = ""
+    fromVersion: str = ""
+    toVersion: str = ""
+    sourceLogId: Optional[str] = None
 
 
 class ImpactPoint(BaseModel):
@@ -106,6 +151,14 @@ class AgentSession(BaseModel):
     modelProvider: str = ""
     modelFamily: str = ""
     modelVersion: str = ""
+    modelsUsed: list[SessionModelInfo] = Field(default_factory=list)
+    platformType: str = "Claude Code"
+    platformVersion: str = ""
+    platformVersions: list[str] = Field(default_factory=list)
+    platformVersionTransitions: list[SessionPlatformTransition] = Field(default_factory=list)
+    agentsUsed: list[str] = Field(default_factory=list)
+    skillsUsed: list[str] = Field(default_factory=list)
+    toolSummary: list[str] = Field(default_factory=list)
     sessionType: str = ""
     parentSessionId: Optional[str] = None
     rootSessionId: str = ""
@@ -115,6 +168,9 @@ class AgentSession(BaseModel):
     tokensOut: int = 0
     totalCost: float = 0.0
     startedAt: str = ""
+    endedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
     qualityRating: int = 0
     frictionRating: int = 0
     gitCommitHash: Optional[str] = None
@@ -127,6 +183,10 @@ class AgentSession(BaseModel):
     impactHistory: list[ImpactPoint] = Field(default_factory=list)
     logs: list[SessionLog] = Field(default_factory=list)
     sessionMetadata: Optional[SessionMetadata] = None
+    thinkingLevel: str = ""
+    sessionForensics: dict[str, Any] = Field(default_factory=dict)
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
 # ── Document-related models ────────────────────────────────────────
@@ -135,6 +195,10 @@ class DocumentFrontmatter(BaseModel):
     tags: list[str] = Field(default_factory=list)
     linkedFeatures: list[str] = Field(default_factory=list)
     linkedSessions: list[str] = Field(default_factory=list)
+    lineageFamily: str = ""
+    lineageParent: str = ""
+    lineageChildren: list[str] = Field(default_factory=list)
+    lineageType: str = ""
     version: Optional[str] = None
     commits: list[str] = Field(default_factory=list)
     prs: list[str] = Field(default_factory=list)
@@ -179,6 +243,9 @@ class PlanDocument(BaseModel):
     title: str
     filePath: str
     status: str = "active"
+    createdAt: str = ""
+    updatedAt: str = ""
+    completedAt: str = ""
     lastModified: str = ""
     author: str = ""
     docType: str = ""
@@ -204,6 +271,8 @@ class PlanDocument(BaseModel):
     frontmatter: DocumentFrontmatter = Field(default_factory=DocumentFrontmatter)
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
     linkCounts: DocumentLinkCounts = Field(default_factory=DocumentLinkCounts)
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
     content: Optional[str] = None  # markdown body, loaded on demand
 
 
@@ -284,6 +353,12 @@ class LinkedDocument(BaseModel):
     frontmatterKeys: list[str] = Field(default_factory=list)
     relatedRefs: list[str] = Field(default_factory=list)
     prdRef: str = ""
+    lineageFamily: str = ""
+    lineageParent: str = ""
+    lineageChildren: list[str] = Field(default_factory=list)
+    lineageType: str = ""
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
 class FeaturePhase(BaseModel):
@@ -308,6 +383,11 @@ class Feature(BaseModel):
     category: str = ""
     tags: list[str] = Field(default_factory=list)
     updatedAt: str = ""
+    plannedAt: str = ""
+    startedAt: str = ""
+    completedAt: str = ""
     linkedDocs: list[LinkedDocument] = Field(default_factory=list)
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
+    dates: EntityDates = Field(default_factory=EntityDates)
+    timeline: list[TimelineEvent] = Field(default_factory=list)

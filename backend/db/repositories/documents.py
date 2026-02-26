@@ -33,7 +33,7 @@ class SqliteDocumentRepository:
             if not raw:
                 return
             norm = normalize_ref_path(raw).lower() if "/" in raw or raw.lower().endswith(".md") else raw.lower()
-            if kind in {"feature", "feature_ref", "feature_slug"}:
+            if kind in {"feature", "feature_ref", "feature_slug", "lineage_parent", "lineage_child", "lineage_family"}:
                 norm = canonical_slug(norm)
             refs.append((kind, raw, norm, source_field))
 
@@ -43,6 +43,17 @@ class SqliteDocumentRepository:
         for value in frontmatter.get("linkedSessions", []) or []:
             if isinstance(value, str):
                 add("session", value, "linkedSessions")
+        lineage_parent = frontmatter.get("lineageParent")
+        if isinstance(lineage_parent, str):
+            add("lineage_parent", lineage_parent, "lineageParent")
+            add("feature", lineage_parent, "lineageParent")
+        lineage_family = frontmatter.get("lineageFamily")
+        if isinstance(lineage_family, str):
+            add("lineage_family", lineage_family, "lineageFamily")
+        for value in frontmatter.get("lineageChildren", []) or []:
+            if isinstance(value, str):
+                add("lineage_child", value, "lineageChildren")
+                add("feature", value, "lineageChildren")
         for value in frontmatter.get("relatedRefs", []) or []:
             if isinstance(value, str):
                 add("related", value, "relatedRefs")
@@ -173,10 +184,18 @@ class SqliteDocumentRepository:
 
     async def upsert(self, doc_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = doc_data.get("createdAt", "") or now
+        updated_at = doc_data.get("updatedAt", "") or doc_data.get("lastModified", "") or now
         frontmatter = doc_data.get("frontmatter", {})
-        metadata = doc_data.get("metadata", {})
+        raw_metadata = doc_data.get("metadata", {})
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        metadata_payload = dict(metadata)
+        if isinstance(doc_data.get("dates"), dict) and doc_data.get("dates"):
+            metadata_payload["dates"] = doc_data.get("dates")
+        if isinstance(doc_data.get("timeline"), list) and doc_data.get("timeline"):
+            metadata_payload["timeline"] = doc_data.get("timeline")
         fm_json = json.dumps(frontmatter if isinstance(frontmatter, dict) else {})
-        metadata_json = json.dumps(metadata if isinstance(metadata, dict) else {})
+        metadata_json = json.dumps(metadata_payload)
 
         canonical_path = str(doc_data.get("canonicalPath") or doc_data.get("filePath") or "")
         normalized_path = normalize_ref_path(canonical_path)
@@ -265,8 +284,8 @@ class SqliteDocumentRepository:
                 doc_data.get("blockedTasks", 0),
                 metadata_json,
                 doc_data.get("parentDocId"),
-                doc_data.get("createdAt", now),
-                now,
+                created_at,
+                updated_at,
                 doc_data.get("lastModified", ""),
                 fm_json,
                 doc_data.get("sourceFile", file_path),

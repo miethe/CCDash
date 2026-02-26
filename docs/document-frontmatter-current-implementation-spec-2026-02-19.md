@@ -5,6 +5,8 @@ Status: Implemented
 
 This spec describes what CCDash currently ingests, how fields are transformed, and where each normalized field is used in the app.
 
+This now includes implemented lineage enhancements from the improvement spec, focused on expansion/iteration feature linking and ownership-safe completion inference.
+
 ## 1. Ingestion Pipeline (Current)
 
 1. Files are scanned from both roots:
@@ -69,6 +71,10 @@ frontmatter:
   tags: [string]
   linkedFeatures: [string]
   linkedSessions: [string]
+  lineageFamily: string
+  lineageParent: string
+  lineageChildren: [string]
+  lineageType: string
   version: string|null
   commits: [string]
   prs: [string]
@@ -224,6 +230,15 @@ feature_keys:
   - feature_slug_hint
   - linked_features
   - linkedfeatures
+  - related_features
+  - lineage_parent
+  - lineage_children
+  - parent_feature
+  - parent_feature_slug
+  - extends_feature
+  - derived_from
+  - supersedes
+  - superseded_by
 ```
 
 ## 5. Current Normalization Mapping (Field -> Target -> Usage)
@@ -277,6 +292,7 @@ Subtype canonical set:
 | path-like refs | `frontmatter.pathRefs` | path normalization | doc-doc linking |
 | slug-like refs | `frontmatter.slugRefs` | token extraction | feature inference/search |
 | feature keys + inferred path slug | `frontmatter.linkedFeatures`, `featureCandidates`, `featureSlugHint` | feature token validation + canonicalization | feature filters + doc-feature linking |
+| lineage keys (`lineage_*`, `feature_family`) | `frontmatter.lineageFamily`, `frontmatter.lineageParent`, `frontmatter.lineageChildren`, `frontmatter.lineageType` | alias mapping + slug normalization | feature lineage graphing and related feature enrichment |
 | session keys | `frontmatter.linkedSessions` | string/list flatten | doc-session linking |
 | prd keys | `prdRef`, `frontmatter.prd`, `frontmatter.prdRefs` | primary + list | filters + feature matching |
 | request keys | `metadata.requestLogIds` | flatten + dedupe | search |
@@ -311,6 +327,11 @@ updated: ""
 
 tags: []
 feature_slug: ""
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 prd: ""                 # self or related prd ref
 related: []
@@ -343,6 +364,11 @@ updated: ""
 
 tags: []
 feature_slug: ""
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 prd: ""
 prd_ref: ""
@@ -372,6 +398,11 @@ phase_token: ""
 
 title: ""
 feature_slug: ""
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 prd: ""
 related: []
@@ -391,6 +422,11 @@ category: ""
 
 title: ""
 feature_slug: ""
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 prd: ""
 related: []
@@ -435,6 +471,11 @@ tasks:
     deliverables: []
 
 feature_slug: ""               # optional; often inferred from path
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 prd: ""
 plan_ref: ""
@@ -469,6 +510,11 @@ in_progress_tasks: 0
 blocked_tasks: 0
 
 tasks: []
+feature_family: ""
+lineage_family: ""
+lineage_parent: ""
+lineage_children: []
+lineage_type: ""
 linked_features: []
 linked_sessions: []
 prd: ""
@@ -485,7 +531,7 @@ Document link strategies used during rebuild:
 document_to_feature:
   explicit_frontmatter_ref:
     confidence: 0.98
-    inputs: [linkedFeatures, featureRefs, prd]
+    inputs: [linkedFeatures, featureRefs, lineageParent, lineageChildren, prd]
   path_feature_hint:
     confidence: 0.74
     inputs: [feature_slug_hint, feature_slug_canonical, feature_slug_from_path]
@@ -547,8 +593,13 @@ If any equivalent collection is complete, the feature status is treated as `done
 
 When this inference occurs, CCDash writes through `status: inferred_complete` to linked PRD/Plan docs that are not already completion-equivalent.
 
+Ownership guard (implemented):
+
+- Completion write-through now only considers ownership docs (`prd`, `implementation_plan`, `phase_plan`) that resolve to the same feature by path/slug.
+- If a planning/progress document path resolves to feature A, frontmatter refs to feature B cannot reassign ownership for completion inference.
+
 ## 11. Known Current Gaps
 
 - No strict frontmatter schema validation/linting at ingest time.
 - No standalone `RequestLog` entity table (request IDs are indexed strings only).
-- Long-tail metadata remains in `frontmatter.raw` / `metadata_json` and is not fully first-class in UI facets.
+- Several improvement-spec fields remain long-tail in `frontmatter.raw` / `metadata_json` and are not yet full facet dimensions.

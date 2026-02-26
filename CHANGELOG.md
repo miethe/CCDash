@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-02-22
+
+### Added
+
+- Track A analytics API surface:
+  - `GET /api/analytics/overview`
+  - `GET /api/analytics/series`
+  - `GET /api/analytics/breakdown`
+  - `GET /api/analytics/correlation`
+  - `POST /api/analytics/alerts`
+  - `PATCH /api/analytics/alerts/{id}`
+  - `DELETE /api/analytics/alerts/{id}`
+- Token timeline series support sourced from persisted session log usage metadata.
+- New documentation:
+  - `docs/telemetry-analytics-track-a-implementation-reference-2026-02-22.md`
+- New tests:
+  - `backend/tests/test_tasks_repository.py`
+  - `backend/tests/test_analytics_router.py`
+
+### Changed
+
+- Task analytics correctness:
+  - completion metrics now count `done`, `deferred`, and `completed` for compatibility.
+- Session telemetry persistence:
+  - session `dates`, `timeline`, and `impactHistory` are now persisted and rehydrated.
+- Tool usage telemetry:
+  - `session_tool_usage.total_ms` now populated from tool use/result timing.
+- Analytics capture:
+  - writes `analytics_entries.metadata_json` context and `analytics_entity_links` associations.
+- Dashboard analytics:
+  - KPI/model/series cards now sourced from backend analytics endpoints (removed hardcoded display values for core KPIs).
+- Session Inspector analytics:
+  - token timeline now uses backend series endpoint instead of simulated data.
+- Settings alerts:
+  - alerts tab now uses persisted backend CRUD operations.
+
+### Migrations
+
+- SQLite schema version bumped to `8`.
+- Postgres schema version bumped to `6`.
+- Added `sessions` columns:
+  - `dates_json`
+  - `timeline_json`
+  - `impact_history_json`
+- Added/ensured `session_tool_usage.total_ms`.
+
 ## 2026-02-19
 
 ### Added
@@ -34,6 +80,13 @@
   - Feature status now resolves to done when any equivalent completion collection is complete (`PRD`, `Plan`/phase plans, or all progress docs).
   - Inferred completion writes through `status: inferred_complete` to linked PRD/Plan docs that are not already completion-equivalent.
 - Document filter facets now normalize status/subtype variants into canonical values.
+- Document and feature date derivation now uses normalized source precedence with git-backed file history:
+  - batched `git log` extraction for `createdAt`/`updatedAt`
+  - dirty/untracked worktree detection for in-progress local edits
+  - parser fallback to frontmatter/filesystem when git data is unavailable
+- Link rebuild execution now uses cached-state gating:
+  - startup full sync skips relink when synced entities are unchanged and logic version matches
+  - full relink still runs on force sync, explicit rebuild endpoint, changed-file link-impact, or logic-version bump (`CCDASH_LINKING_LOGIC_VERSION`)
 
 ### Fixed
 
@@ -45,3 +98,5 @@
 
 - Added `/docs/setup-user-guide.md` with setup, startup, deployment-style runbook, and troubleshooting for `/api` connectivity errors.
 - Updated document entity/frontmatter specs with completion-equivalence and canonical filter-value behavior.
+- Updated sync/document developer docs with git date extraction strategy and one-time backfill workflow.
+- Documented linking rebuild gate and `CCDASH_LINKING_LOGIC_VERSION` usage for deployment-safe relink triggers.

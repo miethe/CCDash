@@ -11,6 +11,8 @@ from backend.routers import api as api_router
 class _FakeRepo:
     def __init__(self) -> None:
         self.last_filters = None
+        self.last_include_subagents_for_facets = None
+        self.last_include_subagents_for_platform_facets = None
 
     async def list_paginated(self, offset, limit, project_id, sort_by, sort_order, filters):
         self.last_filters = dict(filters)
@@ -20,6 +22,10 @@ class _FakeRepo:
                 "task_id": "",
                 "status": "completed",
                 "model": "claude-sonnet",
+                "platform_type": "Claude Code",
+                "platform_version": "2.1.52",
+                "platform_versions_json": "[\"2.1.52\"]",
+                "platform_version_transitions_json": "[]",
                 "session_type": "session",
                 "parent_session_id": None,
                 "root_session_id": "S-main",
@@ -34,6 +40,8 @@ class _FakeRepo:
                 "git_commit_hash": None,
                 "git_author": None,
                 "git_branch": None,
+                "thinking_level": "high",
+                "session_forensics_json": "{\"platform\":\"claude_code\",\"sidecars\":{\"teams\":{\"totalMessages\":2}}}",
             }
         ]
 
@@ -42,6 +50,20 @@ class _FakeRepo:
 
     async def get_logs(self, session_id):
         return []
+
+    async def get_model_facets(self, project_id, include_subagents=True):
+        self.last_include_subagents_for_facets = include_subagents
+        return [
+            {"model": "claude-opus-4-5-20251101", "count": 7},
+            {"model": "claude-sonnet-4-0-20251001", "count": 3},
+        ]
+
+    async def get_platform_facets(self, project_id, include_subagents=True):
+        self.last_include_subagents_for_platform_facets = include_subagents
+        return [
+            {"platform_type": "Claude Code", "platform_version": "2.1.52", "count": 9},
+            {"platform_type": "Claude Code", "platform_version": "2.1.51", "count": 2},
+        ]
 
 
 class _FakeSessionDetailRepo:
@@ -107,6 +129,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.total, 1)
         self.assertFalse(repo.last_filters["include_subagents"])
         self.assertEqual(response.items[0].rootSessionId, "S-main")
+        self.assertEqual(response.items[0].thinkingLevel, "high")
+        self.assertEqual(response.items[0].sessionForensics.get("platform"), "claude_code")
 
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()
@@ -131,6 +155,43 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.last_filters["model_provider"], "Claude")
         self.assertEqual(repo.last_filters["model_family"], "Opus")
         self.assertEqual(repo.last_filters["model_version"], "Opus 4.5")
+
+    async def test_list_sessions_accepts_platform_filters(self) -> None:
+        repo = _FakeRepo()
+        project = types.SimpleNamespace(id="project-1")
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+            await api_router.list_sessions(
+                platform_type="Claude Code",
+                platform_version="2.1.52",
+            )
+
+        self.assertEqual(repo.last_filters["platform_type"], "Claude Code")
+        self.assertEqual(repo.last_filters["platform_version"], "2.1.52")
+
+    async def test_get_session_model_facets_returns_normalized_values(self) -> None:
+        repo = _FakeRepo()
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo):
+            response = await api_router.get_session_model_facets(include_subagents=False)
+
+        self.assertEqual(len(response), 2)
+        self.assertFalse(repo.last_include_subagents_for_facets)
+        self.assertEqual(response[0].modelProvider, "Claude")
+        self.assertEqual(response[0].modelFamily, "Opus")
+        self.assertEqual(response[0].modelVersion, "Opus 4.5")
+
+    async def test_get_session_platform_facets_returns_values(self) -> None:
+        repo = _FakeRepo()
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo):
+            response = await api_router.get_session_platform_facets(include_subagents=False)
+
+        self.assertEqual(len(response), 2)
+        self.assertFalse(repo.last_include_subagents_for_platform_facets)
+        self.assertEqual(response[0].platformType, "Claude Code")
+        self.assertEqual(response[0].platformVersion, "2.1.52")
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:
         session_repo = _FakeSessionDetailRepo()

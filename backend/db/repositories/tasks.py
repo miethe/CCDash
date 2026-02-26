@@ -108,7 +108,7 @@ class SqliteTaskRepository:
         """Get aggregated task statistics."""
         # Completed count
         async with self.db.execute(
-            "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND status = 'completed'",
+            "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND lower(status) IN ('done', 'deferred', 'completed')",
             (project_id,)
         ) as cur:
             row = await cur.fetchone()
@@ -117,7 +117,8 @@ class SqliteTaskRepository:
         # Completion percentage
         query = """
             SELECT
-                CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100
+                CAST(SUM(CASE WHEN lower(status) IN ('done', 'deferred', 'completed') THEN 1 ELSE 0 END) AS REAL)
+                / NULLIF(COUNT(*), 0) * 100
             FROM tasks
             WHERE project_id = ?
         """

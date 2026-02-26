@@ -1,7 +1,7 @@
 # Document Entity Specification
 
 Last updated: 2026-02-19
-Version: 1.0
+Version: 1.1
 
 This specification defines the normalized `Document` data model, DB schema, API contracts, and UI-facing object shape.
 
@@ -97,6 +97,40 @@ Source of truth: `backend/models.py` and `types.ts`.
 - `tasks: number`
 - `sessions: number`
 - `documents: number`
+
+### Date metadata
+
+`dates` stores normalized date values with confidence metadata:
+
+- `createdAt?: { value, confidence, source, reason }`
+- `updatedAt?: { value, confidence, source, reason }`
+- `completedAt?: { value, confidence, source, reason }`
+- `lastActivityAt?: { value, confidence, source, reason }`
+
+`timeline[]` stores human-readable lifecycle events derived from these date values.
+
+Date sources are merged and ranked per field:
+
+- `createdAt`:
+  - frontmatter `created*` (`high`)
+  - git first commit touching file (`high`)
+  - filesystem birthtime (`medium`)
+  - filesystem mtime fallback (`low`)
+- `updatedAt`:
+  - git latest commit touching file (`high`)
+  - frontmatter `updated*` (`medium`)
+  - filesystem mtime when file is dirty/untracked in working tree (`high`)
+  - filesystem mtime fallback (`low`)
+  - frontmatter created fallback (`low`)
+- `completedAt`:
+  - frontmatter `completed*` (`high`)
+  - frontmatter `updated*` for completion-equivalent doc statuses (`medium`)
+  - filesystem mtime fallback for completion-equivalent statuses (`low`)
+
+Notes:
+
+- When git metadata is unavailable (non-git project or command failure), parser behavior falls back to frontmatter/filesystem sources.
+- `lastActivityAt` is computed as the latest of `updatedAt` and `completedAt`.
 
 ## 2. Classification
 
@@ -253,11 +287,22 @@ On full sync:
 5. link rebuild
 6. analytics snapshot
 
+Date extraction during full sync:
+
+- Git commit history is loaded in one batched pass for docs/progress roots.
+- Dirty/untracked file status is loaded separately so in-flight edits can surface as high-confidence `updatedAt`.
+- Parsed date values are persisted to `documents` and used by downstream feature derivation.
+
 On changed progress markdown:
 
 - document sync runs for changed file
 - task sync runs for changed file
 - feature/link rebuild runs for affected project context
+
+Date extraction during changed-file sync:
+
+- Git commit history is loaded once for docs/progress scope per batch.
+- Changed markdown paths are treated as dirty overrides to avoid missing fresh local edits.
 
 ## 6. Link Strategy Rules
 

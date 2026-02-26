@@ -43,6 +43,17 @@ Primary edge types in current system:
 - Session linked features API/model use:
   - `backend/routers/api.py:158`
 
+## Rebuild Triggers And Caching
+
+- Auto links are persisted in `entity_links` and rebuild state is tracked in `app_metadata` key `entity_link_state`.
+- Full-sync startup now rebuilds links only when one of these is true:
+  - force sync is requested
+  - any sessions/documents/tasks/features were actually synced
+  - linking logic version changed (`CCDASH_LINKING_LOGIC_VERSION`)
+- Changed-file sync (`sync_changed_files`) now triggers a link rebuild only when link-affecting entities changed, plus version-mismatch safety for logic bumps.
+- Manual rebuild endpoint remains available:
+  - `POST /api/cache/rebuild-links`
+
 ## Linking Utilities (Canonical Rules)
 
 Shared utility module:

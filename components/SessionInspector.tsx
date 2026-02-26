@@ -1,15 +1,18 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useData } from '../contexts/DataContext';
-import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, Filter, RefreshCw, LayoutGrid } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, Scatter, ReferenceLine } from 'recharts';
+import { useData, type SessionFilters } from '../contexts/DataContext';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate } from '../types';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
-import { SessionCard, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { analyticsService } from '../services/analytics';
+import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
+const LIVE_IN_FLIGHT_WINDOW_MS = 10 * 60 * 1000;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 
@@ -45,6 +48,28 @@ const toEpoch = (timestamp?: string): number => {
     if (!timestamp) return 0;
     const ms = Date.parse(timestamp);
     return Number.isFinite(ms) ? ms : 0;
+};
+
+const sessionLastActivityEpoch = (session: AgentSession): number => {
+    const candidates = [
+        session.dates?.lastActivityAt?.value,
+        session.updatedAt,
+        session.endedAt,
+        session.startedAt,
+    ];
+    for (const candidate of candidates) {
+        const epoch = toEpoch(candidate);
+        if (epoch > 0) return epoch;
+    }
+    return 0;
+};
+
+const isSessionLiveInFlight = (session: AgentSession, nowMs: number): boolean => {
+    if ((session.status || '').toLowerCase() !== 'active') return false;
+    const activityEpoch = sessionLastActivityEpoch(session);
+    if (activityEpoch <= 0) return false;
+    const ageMs = Math.max(0, nowMs - activityEpoch);
+    return ageMs <= LIVE_IN_FLIGHT_WINDOW_MS;
 };
 
 const parseLogIndex = (logId?: string): number => {
@@ -115,6 +140,12 @@ const normalizeFileAction = (action: string | undefined, sourceToolName?: string
     return 'other';
 };
 
+const formatAction = (action: string): string => {
+    const normalized = (action || '').trim();
+    if (!normalized) return 'Unknown';
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
 const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
     if (!raw || !raw.trim()) {
         return null;
@@ -136,6 +167,34 @@ const takeString = (...values: unknown[]): string | null => {
         }
     }
     return null;
+};
+
+const asRecord = (value: unknown): Record<string, any> => (
+    value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, any>
+        : {}
+);
+
+const asStringArray = (value: unknown): string[] => (
+    Array.isArray(value)
+        ? value
+            .map(item => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
+            .filter(Boolean)
+        : []
+);
+
+const asNumber = (value: unknown, fallback = 0): number => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+};
+
+const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: number }> => {
+    const record = asRecord(value);
+    return Object.entries(record)
+        .map(([key, rawCount]) => ({ key, count: asNumber(rawCount, 0) }))
+        .filter(item => item.key.trim() && item.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
 };
 
 const extractTaskSubagentName = (toolArgs: string | undefined): string | null => {
@@ -226,6 +285,11 @@ interface SessionThreadNode {
     session: AgentSession;
     children: SessionThreadNode[];
 }
+
+const threadNodeHasLiveSession = (node: SessionThreadNode, nowMs: number): boolean => {
+    if (isSessionLiveInFlight(node.session, nowMs)) return true;
+    return node.children.some(child => threadNodeHasLiveSession(child, nowMs));
+};
 
 const isSubthread = (session: AgentSession): boolean => {
     if (session.parentSessionId) return true;
@@ -775,10 +839,11 @@ const TranscriptView: React.FC<{
     threadSessions: AgentSession[];
     subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
-    onShowLinked: (tab: 'files' | 'artifacts', sourceLogId: string) => void;
+    onShowLinked: (tab: 'activity' | 'artifacts', sourceLogId: string) => void;
     primaryFeatureLink?: SessionFeatureLink | null;
     onOpenFeature?: (featureId: string) => void;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature }) => {
+    onOpenForensics?: () => void;
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature, onOpenForensics }) => {
 
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
@@ -829,6 +894,51 @@ const TranscriptView: React.FC<{
     const commitHashes = useMemo(() => collectSessionCommitHashes(session), [session]);
     const displayedCommitHashes = commitHashes.slice(0, 6);
     const hiddenCommitCount = Math.max(0, commitHashes.length - displayedCommitHashes.length);
+    const platformType = (session.platformType || '').trim() || 'Claude Code';
+    const platformVersions = useMemo(() => {
+        const values: string[] = [];
+        (session.platformVersions || []).forEach(value => {
+            const normalized = String(value || '').trim();
+            if (normalized && !values.includes(normalized)) values.push(normalized);
+        });
+        const primary = (session.platformVersion || '').trim();
+        if (primary && !values.includes(primary)) values.push(primary);
+        return values;
+    }, [session.platformVersion, session.platformVersions]);
+    const latestPlatformVersion = platformVersions[platformVersions.length - 1] || '';
+    const platformVersionTransitions = useMemo(() => (
+        (session.platformVersionTransitions || [])
+            .filter(event => event && event.fromVersion && event.toVersion)
+    ), [session.platformVersionTransitions]);
+    const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const forensicsThinking = useMemo(() => asRecord(sessionForensics.thinking), [sessionForensics]);
+    const forensicsEntryContext = useMemo(() => asRecord(sessionForensics.entryContext), [sessionForensics]);
+    const forensicsSidecars = useMemo(() => asRecord(sessionForensics.sidecars), [sessionForensics]);
+    const thinkingLevel = takeString(forensicsThinking.level, session.thinkingLevel)?.toUpperCase() || 'Unknown';
+    const permissionModes = useMemo(
+        () => asStringArray(forensicsEntryContext.permissionModes),
+        [forensicsEntryContext]
+    );
+    const requestIds = useMemo(
+        () => asStringArray(forensicsEntryContext.requestIds),
+        [forensicsEntryContext]
+    );
+    const queueOperations = useMemo(
+        () => (Array.isArray(forensicsEntryContext.queueOperations) ? forensicsEntryContext.queueOperations : []),
+        [forensicsEntryContext]
+    );
+    const apiErrors = useMemo(
+        () => (Array.isArray(forensicsEntryContext.apiErrors) ? forensicsEntryContext.apiErrors : []),
+        [forensicsEntryContext]
+    );
+    const todosSidecar = useMemo(() => asRecord(forensicsSidecars.todos), [forensicsSidecars]);
+    const tasksSidecar = useMemo(() => asRecord(forensicsSidecars.tasks), [forensicsSidecars]);
+    const teamsSidecar = useMemo(() => asRecord(forensicsSidecars.teams), [forensicsSidecars]);
+    const todosCount = asNumber(todosSidecar.totalItems, 0);
+    const tasksCount = Array.isArray(tasksSidecar.tasks) ? tasksSidecar.tasks.length : asNumber(tasksSidecar.taskFileCount, 0);
+    const teamMessagesCount = asNumber(teamsSidecar.totalMessages, 0);
+    const teamUnreadCount = asNumber(teamsSidecar.unreadMessages, 0);
+    const hasDetailedForensics = Object.keys(sessionForensics).length > 0;
 
     return (
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
@@ -853,7 +963,7 @@ const TranscriptView: React.FC<{
                             onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
                             fileCount={filesByLogId.get(log.id) || 0}
                             artifactCount={(artifactsByLogId.get(log.id) || []).length}
-                            onShowFiles={() => onShowLinked('files', log.id)}
+                            onShowFiles={() => onShowLinked('activity', log.id)}
                             onShowArtifacts={() => onShowLinked('artifacts', log.id)}
                             onOpenThread={onOpenThread}
                         />
@@ -955,6 +1065,82 @@ const TranscriptView: React.FC<{
                             >
                                 {formatModelDisplayName(session.model, session.modelDisplayName)}
                             </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Cpu size={14} /> Platform</div>
+                            <span
+                                className="text-[10px] font-mono text-amber-300 truncate max-w-[140px]"
+                                title={`${platformType}${latestPlatformVersion ? ` ${latestPlatformVersion}` : ''}`}
+                            >
+                                {latestPlatformVersion ? `${platformType} ${latestPlatformVersion}` : platformType}
+                            </span>
+                        </div>
+                        {platformVersions.length > 1 && (
+                            <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
+                                {platformVersions.length} versions seen in this session
+                            </div>
+                        )}
+                        {platformVersionTransitions.length > 0 && (
+                            <div className="pt-2 border-t border-slate-800/60 space-y-1.5">
+                                <div className="text-[9px] uppercase tracking-wider text-slate-500">Version Changes</div>
+                                {platformVersionTransitions.map((transition, idx) => (
+                                    <div key={`${transition.timestamp}-${idx}`} className="text-[10px] font-mono text-slate-300">
+                                        <span className="text-slate-500">{formatTimeAgo(transition.timestamp)}:</span>{' '}
+                                        {transition.fromVersion} {'->'} {transition.toVersion}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div className="pt-2 border-t border-slate-800/60 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Bot size={14} /> Thinking</div>
+                                <span className="text-[10px] font-mono text-fuchsia-300">{thinkingLevel}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Terminal size={14} /> Request IDs</div>
+                                <span className="text-[10px] font-mono text-slate-200">{requestIds.length}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Scroll size={14} /> Queue Ops</div>
+                                <span className="text-[10px] font-mono text-slate-200">{queueOperations.length}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><HardDrive size={14} /> Sidecars</div>
+                                <span className="text-[10px] font-mono text-slate-200" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount}`}>
+                                    {todosCount}/{tasksCount}/{teamMessagesCount}
+                                </span>
+                            </div>
+                            {teamUnreadCount > 0 && (
+                                <div className="text-[10px] text-amber-300 font-mono">Team unread: {teamUnreadCount}</div>
+                            )}
+                            {permissionModes.length > 0 && (
+                                <div className="pt-1">
+                                    <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-1">Permission Modes</div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {permissionModes.slice(0, 3).map(mode => (
+                                            <span key={mode} className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">
+                                                {mode}
+                                            </span>
+                                        ))}
+                                        {permissionModes.length > 3 && (
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-500">
+                                                +{permissionModes.length - 3}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                            {apiErrors.length > 0 && (
+                                <div className="text-[10px] text-rose-300 font-mono">API errors captured: {apiErrors.length}</div>
+                            )}
+                            {hasDetailedForensics && onOpenForensics && (
+                                <button
+                                    onClick={onOpenForensics}
+                                    className="w-full mt-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20 transition-colors"
+                                >
+                                    Open Full Forensics
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1166,6 +1352,255 @@ const SessionFeaturesView: React.FC<{
     );
 };
 
+const collectThreadDetailSessions = (
+    session: AgentSession,
+    threadSessions: AgentSession[],
+    threadSessionDetails: Record<string, AgentSession>,
+): AgentSession[] => {
+    const byId = new Map<string, AgentSession>();
+    byId.set(session.id, session);
+    threadSessions.forEach(thread => {
+        const detail = threadSessionDetails[thread.id] || (thread.id === session.id ? session : null);
+        if (detail) byId.set(thread.id, detail);
+    });
+    return Array.from(byId.values());
+};
+
+const ActivityView: React.FC<{
+    session: AgentSession;
+    threadSessions: AgentSession[];
+    threadSessionDetails: Record<string, AgentSession>;
+    subagentNameBySessionId: Map<string, string>;
+    onOpenDoc: (doc: PlanDocument) => void;
+    onOpenThread: (sessionId: string) => void;
+    highlightedSourceLogId?: string | null;
+}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, onOpenThread, highlightedSourceLogId }) => {
+    const { documents, activeProject } = useData();
+    const sessionsForActivity = useMemo(
+        () => collectThreadDetailSessions(session, threadSessions, threadSessionDetails),
+        [session, threadSessions, threadSessionDetails]
+    );
+
+    const resolveDocument = useCallback((path: string): PlanDocument | null => {
+        const normalized = normalizePath(path);
+        for (const doc of documents) {
+            const docPath = normalizePath(doc.filePath);
+            if (normalized === docPath || normalized.endsWith(`/${docPath}`) || docPath.endsWith(`/${normalized}`)) {
+                return doc;
+            }
+        }
+        return null;
+    }, [documents]);
+
+    const activityRows = useMemo(() => {
+        const rows: SessionActivityItem[] = [];
+
+        for (const thread of sessionsForActivity) {
+            const threadName = getThreadDisplayName(thread, subagentNameBySessionId);
+            const logsById = new Map<string, SessionLog>();
+            thread.logs.forEach(log => logsById.set(log.id, log));
+            const commitEvents = collectCommitEvents(thread);
+
+            thread.logs.forEach(log => {
+                const label = log.type === 'tool'
+                    ? `Tool: ${log.toolCall?.name || 'tool'}`
+                    : log.type === 'subagent_start'
+                        ? 'Subagent Started'
+                        : log.type === 'subagent'
+                            ? `Subagent: ${log.agentName || 'agent'}`
+                            : log.type === 'skill'
+                                ? `Skill: ${log.skillDetails?.name || 'skill'}`
+                                : log.type === 'thought'
+                                    ? 'Thought'
+                                    : log.type === 'system'
+                                        ? 'System'
+                                        : log.type === 'command'
+                                            ? `Command: ${log.content}`
+                                            : 'Message';
+                rows.push({
+                    id: `${thread.id}:log:${log.id}`,
+                    kind: 'log',
+                    timestamp: log.timestamp,
+                    sourceLogId: log.id,
+                    sessionId: thread.id,
+                    threadName,
+                    label,
+                    detail: log.content,
+                    linkedSessionId: log.linkedSessionId,
+                });
+            });
+
+            (thread.updatedFiles || []).forEach((file: SessionFileUpdate, idx: number) => {
+                const action = normalizeFileAction(file.action, file.sourceToolName);
+                if (action === 'other') return;
+                const filePath = normalizePath(file.filePath);
+                if (!filePath) return;
+
+                const doc = resolveDocument(filePath);
+                const localPath = resolveLocalPath(filePath, activeProject?.path);
+                const fileLogIndex = parseLogIndex(file.sourceLogId);
+                const fileTs = toEpoch(file.timestamp);
+                let commitHash = '';
+                let nearestAfter: CommitEvent | null = null;
+                let nearestBefore: CommitEvent | null = null;
+                for (const event of commitEvents) {
+                    const compareByIndex = fileLogIndex >= 0 && event.logIndex >= 0;
+                    const isAfter = compareByIndex ? event.logIndex >= fileLogIndex : event.timestampMs >= fileTs;
+                    const isBefore = compareByIndex ? event.logIndex <= fileLogIndex : event.timestampMs <= fileTs;
+                    if (isAfter && !nearestAfter) nearestAfter = event;
+                    if (isBefore) nearestBefore = event;
+                }
+                if (nearestAfter) commitHash = nearestAfter.hash;
+                else if (nearestBefore) commitHash = nearestBefore.hash;
+                else if (thread.gitCommitHash) commitHash = thread.gitCommitHash;
+
+                rows.push({
+                    id: `${thread.id}:file:${file.sourceLogId || idx}:${filePath}`,
+                    kind: 'file',
+                    timestamp: file.timestamp || '',
+                    sourceLogId: file.sourceLogId,
+                    sessionId: thread.id,
+                    threadName,
+                    label: `${formatAction(action)} ${filePath}`,
+                    detail: file.fileType || 'Other',
+                    action,
+                    filePath,
+                    fileType: file.fileType || 'Other',
+                    localPath,
+                    documentId: doc?.id,
+                    githubUrl: commitHash ? toGitHubBlobUrl(activeProject?.repoUrl || '', commitHash, filePath, activeProject?.path) : null,
+                    additions: file.additions || 0,
+                    deletions: file.deletions || 0,
+                });
+            });
+
+            (thread.linkedArtifacts || []).forEach((artifact, idx) => {
+                const sourceLog = artifact.sourceLogId ? logsById.get(artifact.sourceLogId) : undefined;
+                rows.push({
+                    id: `${thread.id}:artifact:${artifact.id || idx}`,
+                    kind: 'artifact',
+                    timestamp: sourceLog?.timestamp || thread.startedAt,
+                    sourceLogId: artifact.sourceLogId,
+                    sessionId: thread.id,
+                    threadName,
+                    label: artifact.title || artifact.type || 'Artifact',
+                    detail: artifact.source || artifact.type || '',
+                    artifactType: artifact.type,
+                    artifactUrl: artifact.url,
+                });
+            });
+        }
+
+        return rows.sort((a, b) => {
+            const ta = toEpoch(a.timestamp);
+            const tb = toEpoch(b.timestamp);
+            if (ta !== tb) return tb - ta;
+            return a.id.localeCompare(b.id);
+        });
+    }, [activeProject?.path, activeProject?.repoUrl, resolveDocument, sessionsForActivity, subagentNameBySessionId]);
+
+    if (activityRows.length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <Activity size={48} className="mb-4 opacity-20" />
+                <p>No activity entries found for this thread family.</p>
+            </div>
+        );
+    }
+
+    const openRowFile = (row: SessionActivityItem) => {
+        if (!row.filePath || !row.localPath) return;
+        if (row.documentId) {
+            const doc = documents.find(item => item.id === row.documentId);
+            if (doc) {
+                onOpenDoc(doc);
+                return;
+            }
+        }
+        window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
+    };
+
+    return (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
+            <div className="grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div>Timestamp</div>
+                <div>Type</div>
+                <div>Entry</div>
+                <div>Thread</div>
+                <div>Links</div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+                {activityRows.map(row => (
+                    <div
+                        key={row.id}
+                        className={`grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
+                    >
+                        <div className="text-slate-500 text-[11px]">{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</div>
+                        <div>
+                            <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] ${row.kind === 'file' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : row.kind === 'artifact' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-slate-600 bg-slate-700/30 text-slate-300'}`}>
+                                {formatAction(row.kind)}
+                            </span>
+                        </div>
+                        <div className="min-w-0">
+                            <div className="truncate text-slate-200">{row.label}</div>
+                            {row.detail && <div className="truncate text-[11px] text-slate-500">{row.detail}</div>}
+                            {row.kind === 'file' && (
+                                <div className="text-[10px] font-mono mt-0.5">
+                                    <span className="text-emerald-400">+{row.additions || 0}</span>
+                                    <span className="mx-1 text-slate-600">/</span>
+                                    <span className="text-rose-400">-{row.deletions || 0}</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="truncate text-slate-400">{row.threadName || row.sessionId}</div>
+                        <div className="flex items-center gap-1 justify-end">
+                            {row.kind === 'file' && row.localPath && (
+                                <button
+                                    onClick={() => openRowFile(row)}
+                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    title="Open file"
+                                >
+                                    <ExternalLink size={14} />
+                                </button>
+                            )}
+                            {row.githubUrl && (
+                                <a
+                                    href={row.githubUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    title="Open file on GitHub"
+                                >
+                                    <GitCommit size={14} />
+                                </a>
+                            )}
+                            {row.linkedSessionId && (
+                                <button
+                                    onClick={() => onOpenThread(row.linkedSessionId!)}
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+                                    title="Open linked thread"
+                                >
+                                    Thread
+                                </button>
+                            )}
+                            {row.artifactUrl && (
+                                <a
+                                    href={row.artifactUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                >
+                                    Artifact
+                                </a>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const FilesView: React.FC<{
     session: AgentSession;
     threadSessions: AgentSession[];
@@ -1175,59 +1610,10 @@ const FilesView: React.FC<{
     highlightedSourceLogId?: string | null;
 }> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, highlightedSourceLogId }) => {
     const { documents, activeProject } = useData();
-    const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
-        fileName: 220,
-        filePath: 380,
-        action: 90,
-        fileType: 130,
-        commits: 150,
-        agent: 140,
-        thread: 140,
-        timestamp: 170,
-        stats: 90,
-        open: 120,
-    });
-
-    const columns = useMemo(
-        () => ([
-            { id: 'fileName', label: 'File Name', min: 150 },
-            { id: 'filePath', label: 'File Path', min: 240 },
-            { id: 'action', label: 'Action', min: 80 },
-            { id: 'fileType', label: 'Type', min: 100 },
-            { id: 'commits', label: 'Commits', min: 130 },
-            { id: 'agent', label: 'Agent', min: 120 },
-            { id: 'thread', label: 'Thread', min: 120 },
-            { id: 'timestamp', label: 'Timestamp', min: 150 },
-            { id: 'stats', label: 'Stats', min: 80 },
-            { id: 'open', label: 'Open', min: 100 },
-        ]),
-        [],
+    const sessionsForFiles = useMemo(
+        () => collectThreadDetailSessions(session, threadSessions, threadSessionDetails),
+        [session, threadSessions, threadSessionDetails]
     );
-
-    const startResize = useCallback((columnId: string, minWidth: number, startX: number) => {
-        const initial = columnWidths[columnId] || minWidth;
-        const onMove = (event: MouseEvent) => {
-            const delta = event.clientX - startX;
-            const next = Math.max(minWidth, initial + delta);
-            setColumnWidths(prev => ({ ...prev, [columnId]: next }));
-        };
-        const onUp = () => {
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
-        };
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-    }, [columnWidths]);
-
-    const sessionsForFiles = useMemo(() => {
-        const byId = new Map<string, AgentSession>();
-        byId.set(session.id, session);
-        threadSessions.forEach(thread => {
-            const detail = threadSessionDetails[thread.id] || (thread.id === session.id ? session : null);
-            if (detail) byId.set(thread.id, detail);
-        });
-        return Array.from(byId.values());
-    }, [session, threadSessionDetails, threadSessions]);
 
     const resolveDocument = useCallback((path: string): PlanDocument | null => {
         const normalized = normalizePath(path);
@@ -1241,213 +1627,149 @@ const FilesView: React.FC<{
     }, [documents]);
 
     const fileRows = useMemo(() => {
-        type FileRow = {
-            key: string;
-            fileName: string;
-            filePath: string;
-            action: 'read' | 'create' | 'update' | 'delete' | 'other';
-            fileType: string;
-            commitLabel: string;
-            commitHash: string;
-            agentName: string;
-            threadName: string;
-            timestamp: string;
-            additions: number;
-            deletions: number;
-            sourceLogId?: string;
+        type MutableFileAggregate = SessionFileAggregateRow & {
+            actionsSet: Set<string>;
+            sessionSet: Set<string>;
+            agentSet: Set<string>;
+            sourceLogSet: Set<string>;
             doc: PlanDocument | null;
-            localPath: string;
-            githubUrl: string | null;
         };
 
-        const rows: FileRow[] = [];
+        const aggregates = new Map<string, MutableFileAggregate>();
+        const ensureAggregate = (filePath: string): MutableFileAggregate => {
+            const existing = aggregates.get(filePath);
+            if (existing) return existing;
+            const localPath = resolveLocalPath(filePath, activeProject?.path);
+            const doc = resolveDocument(filePath);
+            const created: MutableFileAggregate = {
+                key: filePath,
+                fileName: fileNameFromPath(filePath),
+                filePath,
+                actions: [],
+                touchCount: 0,
+                uniqueSessions: 0,
+                uniqueAgents: 0,
+                lastTouchedAt: '',
+                netDiff: 0,
+                additions: 0,
+                deletions: 0,
+                sourceLogIds: [],
+                localPath,
+                documentId: doc?.id,
+                fileType: '',
+                actionsSet: new Set<string>(),
+                sessionSet: new Set<string>(),
+                agentSet: new Set<string>(),
+                sourceLogSet: new Set<string>(),
+                doc,
+            };
+            aggregates.set(filePath, created);
+            return created;
+        };
+
         for (const thread of sessionsForFiles) {
-            const commitEvents = collectCommitEvents(thread);
             const threadName = getThreadDisplayName(thread, subagentNameBySessionId);
-            (thread.updatedFiles || []).forEach((file, idx) => {
+            (thread.updatedFiles || []).forEach(file => {
                 const action = normalizeFileAction(file.action, file.sourceToolName);
                 if (action === 'other') return;
                 const filePath = normalizePath(file.filePath);
                 if (!filePath) return;
-
-                let commitLabel = '—';
-                let commitHash = '';
-                if (action !== 'read') {
-                    const fileLogIndex = parseLogIndex(file.sourceLogId);
-                    const fileTs = toEpoch(file.timestamp);
-                    let nearestAfter: CommitEvent | null = null;
-                    let nearestBefore: CommitEvent | null = null;
-                    for (const event of commitEvents) {
-                        const compareByIndex = fileLogIndex >= 0 && event.logIndex >= 0;
-                        const isAfter = compareByIndex ? event.logIndex >= fileLogIndex : event.timestampMs >= fileTs;
-                        const isBefore = compareByIndex ? event.logIndex <= fileLogIndex : event.timestampMs <= fileTs;
-                        if (isAfter && !nearestAfter) nearestAfter = event;
-                        if (isBefore) nearestBefore = event;
-                    }
-                    if (nearestAfter) {
-                        commitHash = nearestAfter.hash;
-                        commitLabel = `Before ${toShortCommitHash(nearestAfter.hash)}`;
-                    } else if (nearestBefore) {
-                        commitHash = nearestBefore.hash;
-                        commitLabel = `After ${toShortCommitHash(nearestBefore.hash)}`;
-                    } else if (thread.gitCommitHash) {
-                        commitHash = thread.gitCommitHash;
-                        commitLabel = `Linked ${toShortCommitHash(thread.gitCommitHash)}`;
-                    }
+                const row = ensureAggregate(filePath);
+                row.touchCount += 1;
+                row.actionsSet.add(action);
+                row.sessionSet.add(thread.id);
+                row.agentSet.add(file.agentName || (thread.id === session.id ? MAIN_SESSION_AGENT : threadName));
+                if (file.sourceLogId) row.sourceLogSet.add(file.sourceLogId);
+                const ts = file.timestamp || '';
+                if (ts && (!row.lastTouchedAt || toEpoch(ts) >= toEpoch(row.lastTouchedAt))) {
+                    row.lastTouchedAt = ts;
                 }
-
-                const doc = resolveDocument(filePath);
-                const localPath = resolveLocalPath(filePath, activeProject?.path);
-                const githubUrl = commitHash
-                    ? toGitHubBlobUrl(activeProject?.repoUrl || '', commitHash, filePath, activeProject?.path)
-                    : null;
-
-                rows.push({
-                    key: `${thread.id}::${file.sourceLogId || idx}::${filePath}::${action}`,
-                    fileName: fileNameFromPath(filePath),
-                    filePath,
-                    action,
-                    fileType: file.fileType || 'Other',
-                    commitLabel,
-                    commitHash,
-                    agentName: file.agentName || (thread.id === session.id ? MAIN_SESSION_AGENT : threadName),
-                    threadName,
-                    timestamp: file.timestamp || '',
-                    additions: file.additions || 0,
-                    deletions: file.deletions || 0,
-                    sourceLogId: file.sourceLogId,
-                    doc,
-                    localPath,
-                    githubUrl,
-                });
+                row.additions += file.additions || 0;
+                row.deletions += file.deletions || 0;
+                row.netDiff = row.additions - row.deletions;
+                if (!row.fileType && file.fileType) row.fileType = file.fileType;
             });
         }
-        return rows.sort((a, b) => {
-            const ta = toEpoch(a.timestamp);
-            const tb = toEpoch(b.timestamp);
+
+        const rows = Array.from(aggregates.values()).map(row => ({
+            ...row,
+            actions: Array.from(row.actionsSet).sort(),
+            uniqueSessions: row.sessionSet.size,
+            uniqueAgents: row.agentSet.size,
+            sourceLogIds: Array.from(row.sourceLogSet),
+        }));
+        rows.sort((a, b) => {
+            const ta = toEpoch(a.lastTouchedAt);
+            const tb = toEpoch(b.lastTouchedAt);
             if (ta !== tb) return tb - ta;
             return a.filePath.localeCompare(b.filePath);
         });
-    }, [activeProject?.path, activeProject?.repoUrl, resolveDocument, session.id, sessionsForFiles, subagentNameBySessionId]);
-
-    const gridTemplateColumns = useMemo(
-        () => columns.map(col => `${columnWidths[col.id] || col.min}px`).join(' '),
-        [columnWidths, columns],
-    );
+        return rows;
+    }, [activeProject?.path, resolveDocument, session.id, sessionsForFiles, subagentNameBySessionId]);
 
     if (fileRows.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <FileText size={48} className="mb-4 opacity-20" />
-                <p>No tracked file actions found for this thread family.</p>
+                <p>No tracked files found for this thread family.</p>
             </div>
         );
     }
 
-    const openDocOrLocal = (row: { doc: PlanDocument | null; fileType: string; localPath: string }) => {
-        const isDocumentType = row.fileType === 'Document' || row.fileType === 'Plan';
-        if (isDocumentType && row.doc) {
-            onOpenDoc(row.doc);
-            return;
-        }
-        window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
-    };
-
-    const openLocal = (localPath: string) => {
-        window.location.href = `vscode://file/${encodeURI(localPath)}`;
-    };
-
-    const actionBadgeClass = (action: string): string => {
-        if (action === 'read') return 'bg-blue-500/10 text-blue-300 border-blue-500/30';
-        if (action === 'create') return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
-        if (action === 'update') return 'bg-amber-500/10 text-amber-300 border-amber-500/30';
-        if (action === 'delete') return 'bg-rose-500/10 text-rose-300 border-rose-500/30';
-        return 'bg-slate-700/40 text-slate-300 border-slate-600/60';
-    };
-
-    const formatAction = (action: string): string => {
-        if (!action) return 'Unknown';
-        return action.charAt(0).toUpperCase() + action.slice(1);
-    };
-
     return (
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
-            <div className="overflow-auto">
-                <div className="min-w-max">
-                    <div className="grid gap-0 px-2 py-2 border-b border-slate-800 bg-slate-950/70 text-[10px] font-semibold text-slate-500 uppercase tracking-wider" style={{ gridTemplateColumns }}>
-                        {columns.map((col, idx) => (
-                            <div key={col.id} className="relative pr-3 select-none">
-                                <span>{col.label}</span>
-                                {idx < columns.length - 1 && (
-                                    <button
-                                        type="button"
-                                        onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            startResize(col.id, col.min, e.clientX);
-                                        }}
-                                        className="absolute top-0 right-0 h-full w-2 cursor-col-resize text-slate-700 hover:text-indigo-400"
-                                        title={`Resize ${col.label}`}
-                                        aria-label={`Resize ${col.label}`}
-                                    >
-                                        |
-                                    </button>
-                                )}
-                            </div>
-                        ))}
+            <div className="grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_90px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div>File</div>
+                <div>Path</div>
+                <div>Actions</div>
+                <div>Touches</div>
+                <div>Sessions</div>
+                <div>Last Touched</div>
+                <div>Net Diff</div>
+                <div>Open</div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+                {fileRows.map(row => (
+                    <div
+                        key={row.key}
+                        className={`grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_90px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogIds.includes(highlightedSourceLogId) ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
+                    >
+                        <div className="truncate text-slate-200 font-medium">{row.fileName}</div>
+                        <div className="truncate font-mono text-[11px] text-slate-500">{row.filePath}</div>
+                        <div className="flex flex-wrap gap-1">
+                            {row.actions.map(action => (
+                                <span key={`${row.key}:${action}`} className={`inline-flex rounded border px-1 py-0.5 text-[10px] ${action === 'read' ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : action === 'create' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : action === 'update' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : action === 'delete' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-700/30 border-slate-600 text-slate-300'}`}>
+                                    {formatAction(action)}
+                                </span>
+                            ))}
+                        </div>
+                        <div className="text-slate-300">{row.touchCount}</div>
+                        <div className="text-slate-300">{row.uniqueSessions}</div>
+                        <div className="text-slate-500 text-[11px]">{row.lastTouchedAt ? new Date(row.lastTouchedAt).toLocaleString() : '—'}</div>
+                        <div className="font-mono text-[11px]">
+                            <span className={row.netDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                {row.netDiff >= 0 ? '+' : ''}{row.netDiff}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-end gap-1">
+                            <button
+                                onClick={() => {
+                                    if (row.documentId) {
+                                        const doc = documents.find(item => item.id === row.documentId);
+                                        if (doc) {
+                                            onOpenDoc(doc);
+                                            return;
+                                        }
+                                    }
+                                    window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
+                                }}
+                                className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                            >
+                                <ExternalLink size={14} />
+                            </button>
+                        </div>
                     </div>
-                    <div className="divide-y divide-slate-800/80">
-                        {fileRows.map(row => (
-                            <div key={row.key} className={`grid gap-0 px-2 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800/30 transition-colors items-center ${highlightedSourceLogId && row.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-y border-indigo-500/30' : ''}`} style={{ gridTemplateColumns }}>
-                                <div className="truncate font-medium text-slate-200" title={row.fileName}>{row.fileName}</div>
-                                <div className="truncate font-mono text-slate-400" title={row.filePath}>{row.filePath}</div>
-                                <div>
-                                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] ${actionBadgeClass(row.action)}`}>
-                                        {formatAction(row.action)}
-                                    </span>
-                                </div>
-                                <div className="truncate text-slate-400" title={row.fileType}>{row.fileType}</div>
-                                <div className="truncate font-mono text-[10px] text-slate-400" title={row.commitHash || row.commitLabel}>{row.commitLabel}</div>
-                                <div className="truncate text-slate-400" title={row.agentName}>{row.agentName}</div>
-                                <div className="truncate text-slate-500" title={row.threadName}>{row.threadName}</div>
-                                <div className="truncate text-[10px] text-slate-500" title={row.timestamp}>{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</div>
-                                <div className="font-mono text-[10px]">
-                                    {row.action === 'read'
-                                        ? <span className="text-slate-600">—</span>
-                                        : <span className="flex items-center gap-1"><span className="text-emerald-400">+{row.additions}</span><span className="text-rose-400">-{row.deletions}</span></span>}
-                                </div>
-                                <div className="flex items-center gap-1 justify-end">
-                                    <button
-                                        onClick={() => openDocOrLocal(row)}
-                                        className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
-                                        title={(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc ? 'Open document modal' : 'Open in local codebase'}
-                                    >
-                                        {(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc ? <Maximize2 size={14} /> : <ExternalLink size={14} />}
-                                    </button>
-                                    {(row.fileType === 'Document' || row.fileType === 'Plan') && row.doc && (
-                                        <button
-                                            onClick={() => openLocal(row.localPath)}
-                                            className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
-                                            title="Open in local codebase"
-                                        >
-                                            <Code size={14} />
-                                        </button>
-                                    )}
-                                    {row.githubUrl && (
-                                        <a
-                                            href={row.githubUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="p-1 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-300 rounded transition-colors"
-                                            title="Open this file at commit in GitHub"
-                                        >
-                                            <GitCommit size={14} />
-                                        </a>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                ))}
             </div>
         </div>
     );
@@ -1573,9 +1895,15 @@ const ArtifactsView: React.FC<{
     highlightedSourceLogId?: string | null;
 }> = ({ session, threadSessions, subagentNameBySessionId, onOpenThread, highlightedSourceLogId }) => {
     const [selectedGroup, setSelectedGroup] = useState<ArtifactGroup | null>(null);
+    const [activeSubTab, setActiveSubTab] = useState<'commands' | 'skills' | 'agents' | 'tools'>('commands');
+    const commandTagArtifactTypes = useMemo(
+        () => new Set(['command_path', 'feature_slug', 'command_phase', 'request']),
+        []
+    );
 
     const groupedArtifacts = useMemo(() => {
-        if (!session.linkedArtifacts || session.linkedArtifacts.length === 0) {
+        const artifacts = session.linkedArtifacts || [];
+        if (artifacts.length === 0) {
             return [];
         }
 
@@ -1633,7 +1961,10 @@ const ArtifactsView: React.FC<{
             }
         };
 
-        for (const artifact of session.linkedArtifacts) {
+        for (const artifact of artifacts) {
+            if (commandTagArtifactTypes.has((artifact.type || '').trim().toLowerCase())) {
+                continue;
+            }
             const group = ensureGroup(artifact);
             group.artifacts.push(artifact);
             if (!group.artifactIds.includes(artifact.id)) {
@@ -1711,9 +2042,81 @@ const ArtifactsView: React.FC<{
                 }
                 return a.title.localeCompare(b.title);
             });
-    }, [session.linkedArtifacts, session.logs, subagentNameBySessionId, threadSessions]);
+    }, [commandTagArtifactTypes, session.linkedArtifacts, session.logs, subagentNameBySessionId, threadSessions]);
 
-    if (groupedArtifacts.length === 0) {
+    const commandEntries = useMemo(() => {
+        const artifactsByLogId = new Map<string, SessionArtifact[]>();
+        for (const artifact of session.linkedArtifacts || []) {
+            if (!artifact.sourceLogId) continue;
+            const existing = artifactsByLogId.get(artifact.sourceLogId) || [];
+            existing.push(artifact);
+            artifactsByLogId.set(artifact.sourceLogId, existing);
+        }
+
+        return session.logs
+            .filter(log => log.type === 'command')
+            .map(log => {
+                const metadata = asRecord(log.metadata);
+                const parsedCommand = asRecord(metadata.parsedCommand);
+                const phaseValues = asStringArray(parsedCommand.phases);
+                const phaseToken = takeString(parsedCommand.phaseToken);
+                if (phaseToken && !phaseValues.includes(phaseToken)) {
+                    phaseValues.push(phaseToken);
+                }
+
+                const taggedArtifacts = (artifactsByLogId.get(log.id) || [])
+                    .filter(artifact => commandTagArtifactTypes.has((artifact.type || '').trim().toLowerCase()));
+                for (const artifact of taggedArtifacts) {
+                    if (artifact.type === 'command_phase' && artifact.title && !phaseValues.includes(artifact.title)) {
+                        phaseValues.push(artifact.title);
+                    }
+                }
+
+                return {
+                    logId: log.id,
+                    timestamp: log.timestamp,
+                    commandName: log.content,
+                    args: takeString(metadata.args),
+                    phases: phaseValues,
+                    featurePath: takeString(parsedCommand.featurePath),
+                    featureSlug: takeString(parsedCommand.featureSlug),
+                    requestId: takeString(parsedCommand.requestId),
+                    taggedArtifactsCount: taggedArtifacts.length,
+                };
+            })
+            .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
+    }, [commandTagArtifactTypes, session.linkedArtifacts, session.logs]);
+
+    const skillGroups = useMemo(
+        () => groupedArtifacts.filter(group => (group.type || '').trim().toLowerCase() === 'skill'),
+        [groupedArtifacts]
+    );
+    const agentGroups = useMemo(
+        () => groupedArtifacts.filter(group => {
+            const type = (group.type || '').trim().toLowerCase();
+            return type === 'agent' || type === 'task';
+        }),
+        [groupedArtifacts]
+    );
+    const toolGroups = useMemo(
+        () => groupedArtifacts.filter(group => {
+            const type = (group.type || '').trim().toLowerCase();
+            if (type === 'skill' || type === 'agent' || type === 'task' || type === 'command') return false;
+            return group.relatedToolLogs.length > 0 || group.sourceToolNames.length > 0;
+        }),
+        [groupedArtifacts]
+    );
+
+    const visibleGroups = useMemo(() => {
+        if (activeSubTab === 'skills') return skillGroups;
+        if (activeSubTab === 'agents') return agentGroups;
+        if (activeSubTab === 'tools') return toolGroups;
+        return [];
+    }, [activeSubTab, agentGroups, skillGroups, toolGroups]);
+
+    const hasAnyData = commandEntries.length > 0 || skillGroups.length > 0 || agentGroups.length > 0 || toolGroups.length > 0;
+
+    if (!hasAnyData) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <LinkIcon size={48} className="mb-4 opacity-20" />
@@ -1724,51 +2127,135 @@ const ArtifactsView: React.FC<{
 
     return (
         <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {groupedArtifacts.map(group => (
+            <div className="mb-4 flex items-center gap-2 border border-slate-800 rounded-lg bg-slate-900 p-1 w-fit">
+                {[
+                    { id: 'commands', label: `Commands (${commandEntries.length})` },
+                    { id: 'skills', label: `Skills (${skillGroups.length})` },
+                    { id: 'agents', label: `Agents (${agentGroups.length})` },
+                    { id: 'tools', label: `Tools (${toolGroups.length})` },
+                ].map(tab => (
                     <button
-                        key={group.key}
-                        onClick={() => setSelectedGroup(group)}
-                        className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+                        key={tab.id}
+                        onClick={() => setActiveSubTab(tab.id as 'commands' | 'skills' | 'agents' | 'tools')}
+                        className={`px-3 py-1.5 text-xs rounded-md transition-colors ${activeSubTab === tab.id
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-slate-400 hover:text-slate-200'
+                            }`}
                     >
-                        <div className="flex justify-between items-start mb-4">
-                            <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                                group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                                    'bg-blue-500/10 text-blue-400'
-                                }`}>
-                                {group.type === 'memory' ? <HardDrive size={20} /> :
-                                    group.type === 'request_log' ? <Scroll size={20} /> :
-                                        <Database size={20} />}
-                            </div>
-                            <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                                {group.source}
-                            </span>
-                        </div>
-
-                        <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
-                        <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
-
-                        <div className="flex flex-wrap gap-2 mb-4">
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.artifacts.length} merged
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.relatedToolLogs.length} tool calls
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                {group.linkedThreads.length} sub-threads
-                            </span>
-                        </div>
-
-                        <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                            <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
-                            <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
-                                View Details <ChevronRight size={12} />
-                            </span>
-                        </div>
+                        {tab.label}
                     </button>
                 ))}
             </div>
+
+            {activeSubTab === 'commands' && (
+                <div className="space-y-3">
+                    {commandEntries.length === 0 && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                            No command activity found.
+                        </div>
+                    )}
+                    {commandEntries.map(entry => (
+                        <div
+                            key={entry.logId}
+                            className={`rounded-xl border p-4 ${highlightedSourceLogId && entry.logId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800 bg-slate-900/40'}`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-[10px] uppercase tracking-wider text-emerald-300/90 font-semibold mb-1 flex items-center gap-1.5">
+                                        <Terminal size={11} /> Command
+                                    </div>
+                                    <p className="font-mono text-sm text-slate-200 break-all">{entry.commandName}</p>
+                                    {entry.args && (
+                                        <p className="mt-2 text-xs text-slate-400 whitespace-pre-wrap break-words">{entry.args}</p>
+                                    )}
+                                </div>
+                                <div className="text-[10px] text-slate-500">{new Date(entry.timestamp).toLocaleString()}</div>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {entry.phases.map(phase => (
+                                    <span key={`${entry.logId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                                        Phase {phase}
+                                    </span>
+                                ))}
+                                {entry.featureSlug && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-300">
+                                        Feature {entry.featureSlug}
+                                    </span>
+                                )}
+                                {entry.requestId && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 font-mono">
+                                        {entry.requestId}
+                                    </span>
+                                )}
+                                {entry.featurePath && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-400 font-mono">
+                                        {fileNameFromPath(entry.featurePath)}
+                                    </span>
+                                )}
+                                {entry.taggedArtifactsCount > 0 && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                                        {entry.taggedArtifactsCount} normalized tags
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {activeSubTab !== 'commands' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {visibleGroups.length === 0 && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
+                            No {activeSubTab} artifacts found.
+                        </div>
+                    )}
+                    {visibleGroups.map(group => (
+                        <button
+                            key={group.key}
+                            onClick={() => setSelectedGroup(group)}
+                            className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+                        >
+                            <div className="flex justify-between items-start mb-4">
+                                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+                                    group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+                                        'bg-blue-500/10 text-blue-400'
+                                    }`}>
+                                    {group.type === 'memory' ? <HardDrive size={20} /> :
+                                        group.type === 'request_log' ? <Scroll size={20} /> :
+                                            <Database size={20} />}
+                                </div>
+                                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
+                                    {group.source}
+                                </span>
+                            </div>
+
+                            <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
+                            <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
+
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.artifacts.length} merged
+                                </span>
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.relatedToolLogs.length} tool calls
+                                </span>
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                                    {group.linkedThreads.length} sub-threads
+                                </span>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
+                                <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
+                                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
+                                    View Details <ChevronRight size={12} />
+                                </span>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {selectedGroup && (
                 <ArtifactDetailsModal
@@ -1840,33 +2327,55 @@ const AnalyticsDetailsModal: React.FC<{
 };
 
 const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
-    // Transform logs into cumulative timeline data
-    const timelineData = useMemo(() => {
-        let cumulativeTokens = 0;
-        return session.logs.map((log, index) => {
-            // Mock token estimation per step
-            const stepTokens = (log.content.length / 4) + (log.toolCall ? 100 : 0);
-            cumulativeTokens += stepTokens;
+    const [timelineData, setTimelineData] = useState<Array<{
+        index: number;
+        time: string;
+        tokens: number;
+        stepTokens: number;
+        agent?: string;
+    }>>([]);
 
-            // Map file edits to this timestamp if they exist
-            const fileUpdates = session.updatedFiles?.filter(f => {
-                // Approximate matching by index or timestamp string would be better in real app
-                // For mock, we'll just check if speaker is agent and index matches roughly
-                return log.speaker === 'agent' && Math.random() > 0.9;
-            });
-
-            return {
-                index,
-                time: log.timestamp,
-                tokens: Math.round(cumulativeTokens),
-                stepTokens: Math.round(stepTokens),
-                agent: log.agentName,
-                tool: log.toolCall ? log.toolCall.name : null,
-                fileCount: fileUpdates?.length || 0,
-                speaker: log.speaker
-            };
-        });
-    }, [session]);
+    useEffect(() => {
+        let mounted = true;
+        const loadSeries = async () => {
+            try {
+                const res = await analyticsService.getSeries({
+                    metric: 'session_tokens',
+                    period: 'point',
+                    sessionId: session.id,
+                    limit: 2000,
+                });
+                if (!mounted) return;
+                const points = (res.items || []).map((point, index) => ({
+                    index,
+                    time: String(point.captured_at || ''),
+                    tokens: Math.round(Number(point.value || 0)),
+                    stepTokens: Math.round(Number(point.metadata?.stepTokens || 0)),
+                    agent: String(point.metadata?.agent || ''),
+                }));
+                setTimelineData(points);
+            } catch (err) {
+                console.error('Failed to fetch token timeline:', err);
+                let cumulative = 0;
+                const fallback = (session.logs || []).map((log, index) => {
+                    const step = Number(log.metadata?.totalTokens || 0);
+                    cumulative += step;
+                    return {
+                        index,
+                        time: log.timestamp,
+                        tokens: cumulative,
+                        stepTokens: step,
+                        agent: log.agentName || '',
+                    };
+                }).filter(item => item.stepTokens > 0);
+                setTimelineData(fallback);
+            }
+        };
+        loadSeries();
+        return () => {
+            mounted = false;
+        };
+    }, [session.id, session.logs]);
 
     return (
         <div className="h-80 w-full relative">
@@ -1889,24 +2398,8 @@ const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
 
                     {/* Token Area */}
                     <Area type="monotone" dataKey="tokens" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTokens)" name="Cumulative Tokens" />
-
-                    {/* Tool Usage Scatter */}
-                    <Scatter name="Tool Used" dataKey="tool" fill="#f59e0b" shape="circle" />
-
-                    {/* File Edit Scatter (Using dummy value 1 for y-placement normalization, but ideally should be on timeline) */}
-                    {/* Note: Recharts scatter on composed chart is tricky with categorical data, simulating via customized dots on line if needed, 
-                        but for now relying on toolTip to show details */}
                 </ComposedChart>
             </ResponsiveContainer>
-
-            {/* Overlay Event Markers (Custom HTML overlay for better control than SVG scatter sometimes) */}
-            <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden">
-                {timelineData.filter(d => d.tool).map((d, i) => (
-                    <div key={`tool-${i}`} className="absolute bottom-2" style={{ left: `${(i / timelineData.length) * 100}%` }}>
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`Tool: ${d.tool}`} />
-                    </div>
-                ))}
-            </div>
         </div>
     );
 };
@@ -2287,28 +2780,706 @@ const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
     );
 };
 
+const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) => {
+    const forensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const thinking = useMemo(() => asRecord(forensics.thinking), [forensics]);
+    const entryContext = useMemo(() => asRecord(forensics.entryContext), [forensics]);
+    const sidecars = useMemo(() => asRecord(forensics.sidecars), [forensics]);
+    const todosSidecar = useMemo(() => asRecord(sidecars.todos), [sidecars]);
+    const tasksSidecar = useMemo(() => asRecord(sidecars.tasks), [sidecars]);
+    const teamsSidecar = useMemo(() => asRecord(sidecars.teams), [sidecars]);
+    const sessionEnvSidecar = useMemo(() => asRecord(sidecars.sessionEnv), [sidecars]);
+
+    const permissionModes = asStringArray(entryContext.permissionModes);
+    const workingDirectories = asStringArray(entryContext.workingDirectories);
+    const versions = asStringArray(entryContext.versions);
+    const requestIds = asStringArray(entryContext.requestIds);
+    const queueOperations = Array.isArray(entryContext.queueOperations) ? entryContext.queueOperations : [];
+    const apiErrors = Array.isArray(entryContext.apiErrors) ? entryContext.apiErrors : [];
+    const entryTypeCounts = asCountEntries(entryContext.entryTypeCounts, 12);
+    const contentBlockTypeCounts = asCountEntries(entryContext.contentBlockTypeCounts, 12);
+    const progressTypeCounts = asCountEntries(entryContext.progressTypeCounts, 12);
+
+    if (Object.keys(forensics).length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <Database size={48} className="mb-4 opacity-20" />
+                <p>No forensic payload available for this session.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6 h-full overflow-y-auto pb-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
+                    <div className="space-y-2 text-xs">
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Platform</span><span className="text-slate-200 font-mono">{String(forensics.platform || 'claude_code')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Schema Version</span><span className="text-slate-200 font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Raw Session ID</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
+                        <div className="text-slate-500">Session File</div>
+                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.sessionFile || '')}</div>
+                        <div className="text-slate-500">Claude Root</div>
+                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.claudeRoot || '')}</div>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Bot size={16} /> Thinking</h3>
+                    <div className="space-y-2 text-xs">
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Level</span><span className="text-fuchsia-300 font-mono uppercase">{String(thinking.level || session.thinkingLevel || 'unknown')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Source</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(thinking.source || '')}>{String(thinking.source || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Max Thinking Tokens</span><span className="text-slate-200 font-mono">{asNumber(thinking.maxThinkingTokens, 0).toLocaleString()}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-slate-500">Disabled</span><span className={`font-mono ${thinking.disabled ? 'text-amber-300' : 'text-slate-300'}`}>{String(Boolean(thinking.disabled))}</span></div>
+                        {thinking.explicitLevel && (
+                            <div className="flex justify-between gap-4"><span className="text-slate-500">Explicit Level</span><span className="text-slate-300 font-mono uppercase">{String(thinking.explicitLevel)}</span></div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><HardDrive size={16} /> Sidecars</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Todos</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(todosSidecar.fileCount, 0)} files · {asNumber(todosSidecar.totalItems, 0)} items</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Tasks</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(tasksSidecar.taskFileCount, 0)} files · HWM {String(tasksSidecar.highWatermark || '0')}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Teams</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(teamsSidecar.totalMessages, 0)} msgs · {asNumber(teamsSidecar.unreadMessages, 0)} unread</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Env</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(sessionEnvSidecar.fileCount, 0)} files</div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Terminal size={16} /> Entry Context</h3>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Session Context</div>
+                        <div className="space-y-1.5 text-xs">
+                            <div className="flex justify-between"><span className="text-slate-500">Request IDs</span><span className="text-slate-200 font-mono">{requestIds.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">Queue Ops</span><span className="text-slate-200 font-mono">{queueOperations.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">API Errors</span><span className={`font-mono ${apiErrors.length > 0 ? 'text-rose-300' : 'text-slate-200'}`}>{apiErrors.length}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">Snapshots</span><span className="text-slate-200 font-mono">{asNumber(entryContext.snapshotCount, 0)}</span></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Permission Modes</div>
+                        <div className="flex flex-wrap gap-1">
+                            {permissionModes.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {permissionModes.map(mode => (
+                                <span key={mode} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">{mode}</span>
+                            ))}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 mt-4">Working Directories</div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                            {workingDirectories.length === 0 && <div className="text-xs text-slate-500">None captured</div>}
+                            {workingDirectories.map(dir => (
+                                <div key={dir} className="text-[10px] text-slate-300 font-mono break-all">{dir}</div>
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Versions Seen</div>
+                        <div className="flex flex-wrap gap-1 mb-4">
+                            {versions.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {versions.map(version => (
+                                <span key={version} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-amber-300 font-mono">{version}</span>
+                            ))}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Entry Types</div>
+                        <div className="space-y-1">
+                            {entryTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                            {entryTypeCounts.map(item => (
+                                <div key={item.key} className="flex justify-between text-[10px]">
+                                    <span className="text-slate-400 font-mono">{item.key}</span>
+                                    <span className="text-slate-200 font-mono">{item.count}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Queue Operations</h3>
+                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        {queueOperations.length === 0 && <div className="text-xs text-slate-500">No queue operations recorded.</div>}
+                        {queueOperations.slice(0, 40).map((operation, idx) => {
+                            const op = asRecord(operation);
+                            return (
+                                <div key={`${String(op.timestamp || idx)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                    <div className="text-[10px] text-slate-500 font-mono">{String(op.timestamp || '')}</div>
+                                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[11px]">
+                                        <span className="text-indigo-300 font-mono">{String(op.operation || 'event')}</span>
+                                        {op.taskId && <span className="text-slate-300 font-mono">Task {String(op.taskId)}</span>}
+                                        {op.status && <span className="text-amber-300 font-mono">{String(op.status)}</span>}
+                                    </div>
+                                    {op.summary && <div className="text-[11px] text-slate-300 mt-1 break-words">{String(op.summary)}</div>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Additional Event Mix</h3>
+                    <div className="space-y-3 text-[11px]">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Content Block Types</div>
+                            <div className="space-y-1">
+                                {contentBlockTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {contentBlockTypeCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Progress Types</div>
+                            <div className="space-y-1">
+                                {progressTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {progressTypeCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-slate-300 mb-3">API Errors</h3>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {apiErrors.length === 0 && <div className="text-xs text-slate-500">No API errors captured.</div>}
+                    {apiErrors.slice(0, 30).map((error, idx) => {
+                        const row = asRecord(error);
+                        return (
+                            <div key={`${String(row.timestamp || idx)}-${idx}`} className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2">
+                                <div className="text-[10px] text-rose-300/80 font-mono">{String(row.timestamp || '')}</div>
+                                <div className="text-[11px] text-rose-100 mt-1 break-words">{String(row.message || '')}</div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-slate-300 mb-3">Raw Forensics Payload</h3>
+                <pre className="text-[10px] leading-4 font-mono bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-x-auto text-slate-300">
+                    {JSON.stringify(forensics, null, 2)}
+                </pre>
+            </div>
+        </div>
+    );
+};
+
 // --- Main Container ---
 
+interface SessionModelFacet {
+    raw: string;
+    modelDisplayName: string;
+    modelProvider: string;
+    modelFamily: string;
+    modelVersion: string;
+    count: number;
+}
+
+interface SessionPlatformFacet {
+    platformType: string;
+    platformVersion: string;
+    count: number;
+}
+
+const MODEL_PROVIDER_ORDER = ['Claude', 'OpenAI', 'Gemini', 'Codex'];
+const MODEL_FAMILY_ORDER = ['Opus', 'Sonnet', 'Haiku', 'Codex'];
+
+const titleCaseToken = (value: string): string =>
+    value
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(token => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(' ');
+
+const inferProviderFromRawModel = (rawModel: string): string => {
+    const raw = (rawModel || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('claude')) return 'Claude';
+    if (raw.includes('gpt') || raw.includes('openai')) return 'OpenAI';
+    if (raw.includes('gemini')) return 'Gemini';
+    if (raw.includes('codex')) return 'Codex';
+    const token = raw.split(/[-_\s]+/).filter(Boolean)[0] || '';
+    return titleCaseToken(token);
+};
+
+const inferFamilyFromRawModel = (rawModel: string): string => {
+    const raw = (rawModel || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('opus')) return 'Opus';
+    if (raw.includes('sonnet')) return 'Sonnet';
+    if (raw.includes('haiku')) return 'Haiku';
+    if (raw.includes('codex')) return 'Codex';
+    const parts = raw.split(/[-_\s]+/).filter(Boolean);
+    return parts[1] ? titleCaseToken(parts[1]) : '';
+};
+
+const inferVersionFromRawModel = (rawModel: string, family: string): string => {
+    const tokens = (rawModel || '').toLowerCase().split(/[-_\s]+/).filter(Boolean);
+    const numericTokens = tokens.filter(token => /^\d+$/.test(token));
+    let numeric = '';
+    if (numericTokens.length >= 2) numeric = `${numericTokens[0]}.${numericTokens[1]}`;
+    else if (numericTokens.length === 1) numeric = numericTokens[0];
+
+    if (family && numeric) return `${family} ${numeric}`;
+    if (family) return family;
+    return numeric;
+};
+
+const normalizeModelFacet = (facet: SessionModelFacet): SessionModelFacet => {
+    const raw = (facet.raw || '').trim();
+    const provider = (facet.modelProvider || '').trim() || inferProviderFromRawModel(raw);
+    const family = (facet.modelFamily || '').trim() || inferFamilyFromRawModel(raw);
+    const version = (facet.modelVersion || '').trim() || inferVersionFromRawModel(raw, family);
+    const displayName = (facet.modelDisplayName || '').trim() || formatModelDisplayName(raw, '');
+    return {
+        raw,
+        modelDisplayName: displayName,
+        modelProvider: provider,
+        modelFamily: family,
+        modelVersion: version,
+        count: facet.count || 0,
+    };
+};
+
+const stripFamilyPrefix = (version: string, family: string): string => {
+    const normalizedVersion = (version || '').trim();
+    const normalizedFamily = (family || '').trim();
+    if (!normalizedVersion || !normalizedFamily) return normalizedVersion;
+    const prefixPattern = new RegExp(`^${normalizedFamily}\\s+`, 'i');
+    return normalizedVersion.replace(prefixPattern, '').trim() || normalizedVersion;
+};
+
+const compareByPreferredOrder = (left: string, right: string, preferred: string[]): number => {
+    const leftIdx = preferred.findIndex(value => value.toLowerCase() === left.toLowerCase());
+    const rightIdx = preferred.findIndex(value => value.toLowerCase() === right.toLowerCase());
+    const leftRank = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
+    const rightRank = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.localeCompare(right);
+};
+
+const versionParts = (value: string): number[] => {
+    const matches = (value || '').match(/\d+/g);
+    if (!matches) return [];
+    return matches.map(token => Number.parseInt(token, 10)).filter(num => Number.isFinite(num));
+};
+
+const compareVersionLabelsDesc = (left: string, right: string): number => {
+    const leftParts = versionParts(left);
+    const rightParts = versionParts(right);
+    const maxLength = Math.max(leftParts.length, rightParts.length);
+    for (let idx = 0; idx < maxLength; idx += 1) {
+        const leftPart = leftParts[idx] ?? -1;
+        const rightPart = rightParts[idx] ?? -1;
+        if (leftPart !== rightPart) return rightPart - leftPart;
+    }
+    return right.localeCompare(left);
+};
+
+const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFilters => {
+    const payload: SessionFilters = {
+        include_subagents: filters.include_subagents ?? true,
+    };
+
+    const stringKeys: Array<keyof SessionFilters> = [
+        'status',
+        'model',
+        'model_provider',
+        'model_family',
+        'model_version',
+        'platform_type',
+        'platform_version',
+        'root_session_id',
+        'start_date',
+        'end_date',
+        'created_start',
+        'created_end',
+        'completed_start',
+        'completed_end',
+        'updated_start',
+        'updated_end',
+    ];
+    stringKeys.forEach(key => {
+        const rawValue = filters[key];
+        const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+        if (value) payload[key] = value as any;
+    });
+
+    if (typeof filters.min_duration === 'number' && Number.isFinite(filters.min_duration)) {
+        payload.min_duration = filters.min_duration;
+    }
+    if (typeof filters.max_duration === 'number' && Number.isFinite(filters.max_duration)) {
+        payload.max_duration = filters.max_duration;
+    }
+
+    return payload;
+};
+
+const areSessionFiltersEqual = (left: Partial<SessionFilters>, right: Partial<SessionFilters>): boolean =>
+    JSON.stringify(buildSessionFilterPayload(left)) === JSON.stringify(buildSessionFilterPayload(right));
+
 const SessionFilterBar: React.FC = () => {
-    const { sessionFilters, setSessionFilters } = useData();
-    const [localFilters, setLocalFilters] = useState({ ...sessionFilters, include_subagents: sessionFilters.include_subagents ?? true });
+    const { sessionFilters, setSessionFilters, sessions } = useData();
+    const [localFilters, setLocalFilters] = useState<SessionFilters>(() => buildSessionFilterPayload(sessionFilters));
+    const [modelFacets, setModelFacets] = useState<SessionModelFacet[]>([]);
+    const [modelFacetsLoading, setModelFacetsLoading] = useState(false);
+    const [platformFacets, setPlatformFacets] = useState<SessionPlatformFacet[]>([]);
+    const [platformFacetsLoading, setPlatformFacetsLoading] = useState(false);
+    const [collapsedSections, setCollapsedSections] = useState({
+        general: true,
+        models: true,
+        dates: true,
+    });
 
-    // Debounce triggers
     useEffect(() => {
-        const timer = setTimeout(() => {
-            if (JSON.stringify(localFilters) !== JSON.stringify(sessionFilters)) {
-                setSessionFilters(localFilters);
-            }
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [localFilters, sessionFilters, setSessionFilters]);
+        setLocalFilters(prev => {
+            const next = buildSessionFilterPayload(sessionFilters);
+            return areSessionFiltersEqual(prev, next) ? prev : next;
+        });
+    }, [sessionFilters]);
 
-    const handleChange = (key: keyof typeof sessionFilters, value: any) => {
+    const handleChange = (key: keyof SessionFilters, value: any) => {
         setLocalFilters(prev => ({
             ...prev,
             [key]: typeof value === 'boolean' ? value : (value || undefined),
         }));
     };
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadModelFacets = async () => {
+            try {
+                setModelFacetsLoading(true);
+                const params = new URLSearchParams({
+                    include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
+                });
+                const response = await fetch(`/api/sessions/facets/models?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load session model facets (${response.status})`);
+                }
+                const payload = await response.json();
+                if (cancelled) return;
+                if (!Array.isArray(payload)) {
+                    setModelFacets([]);
+                    return;
+                }
+                setModelFacets(payload.map((item: any) => ({
+                    raw: String(item?.raw || ''),
+                    modelDisplayName: String(item?.modelDisplayName || ''),
+                    modelProvider: String(item?.modelProvider || ''),
+                    modelFamily: String(item?.modelFamily || ''),
+                    modelVersion: String(item?.modelVersion || ''),
+                    count: Number(item?.count || 0),
+                })));
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Failed to load session model facets', error);
+                    setModelFacets([]);
+                }
+            } finally {
+                if (!cancelled) setModelFacetsLoading(false);
+            }
+        };
+        void loadModelFacets();
+        return () => {
+            cancelled = true;
+        };
+    }, [localFilters.include_subagents]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadPlatformFacets = async () => {
+            try {
+                setPlatformFacetsLoading(true);
+                const params = new URLSearchParams({
+                    include_subagents: localFilters.include_subagents === false ? 'false' : 'true',
+                });
+                const response = await fetch(`/api/sessions/facets/platforms?${params.toString()}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load session platform facets (${response.status})`);
+                }
+                const payload = await response.json();
+                if (cancelled) return;
+                if (!Array.isArray(payload)) {
+                    setPlatformFacets([]);
+                    return;
+                }
+                setPlatformFacets(payload.map((item: any) => ({
+                    platformType: String(item?.platformType || 'Claude Code'),
+                    platformVersion: String(item?.platformVersion || ''),
+                    count: Number(item?.count || 0),
+                })));
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Failed to load session platform facets', error);
+                    setPlatformFacets([]);
+                }
+            } finally {
+                if (!cancelled) setPlatformFacetsLoading(false);
+            }
+        };
+        void loadPlatformFacets();
+        return () => {
+            cancelled = true;
+        };
+    }, [localFilters.include_subagents]);
+
+    const fallbackFacets = useMemo<SessionModelFacet[]>(() => {
+        const byRawModel = new Map<string, SessionModelFacet>();
+        sessions.forEach(session => {
+            const raw = (session.model || '').trim();
+            if (!raw) return;
+            const existing = byRawModel.get(raw);
+            if (existing) {
+                existing.count += 1;
+                return;
+            }
+            byRawModel.set(raw, {
+                raw,
+                modelDisplayName: session.modelDisplayName || '',
+                modelProvider: session.modelProvider || '',
+                modelFamily: session.modelFamily || '',
+                modelVersion: session.modelVersion || '',
+                count: 1,
+            });
+        });
+        return Array.from(byRawModel.values());
+    }, [sessions]);
+
+    const normalizedModelFacets = useMemo(() => {
+        const source = modelFacets.length > 0 ? modelFacets : fallbackFacets;
+        const byRaw = new Map<string, SessionModelFacet>();
+        source.forEach(item => {
+            const normalized = normalizeModelFacet(item);
+            if (!normalized.raw) return;
+            const existing = byRaw.get(normalized.raw);
+            if (existing) {
+                existing.count += normalized.count || 0;
+                return;
+            }
+            byRaw.set(normalized.raw, normalized);
+        });
+        return Array.from(byRaw.values());
+    }, [fallbackFacets, modelFacets]);
+
+    const fallbackPlatformFacets = useMemo<SessionPlatformFacet[]>(() => {
+        const byFacet = new Map<string, SessionPlatformFacet>();
+        sessions.forEach(session => {
+            const platformType = (session.platformType || '').trim() || 'Claude Code';
+            const versions: string[] = [];
+            (session.platformVersions || []).forEach(value => {
+                const normalized = String(value || '').trim();
+                if (normalized && !versions.includes(normalized)) versions.push(normalized);
+            });
+            const primaryVersion = (session.platformVersion || '').trim();
+            if (primaryVersion && !versions.includes(primaryVersion)) versions.unshift(primaryVersion);
+            versions.forEach(version => {
+                const key = `${platformType}::${version}`;
+                const existing = byFacet.get(key);
+                if (existing) {
+                    existing.count += 1;
+                    return;
+                }
+                byFacet.set(key, { platformType, platformVersion: version, count: 1 });
+            });
+        });
+        return Array.from(byFacet.values());
+    }, [sessions]);
+
+    const normalizedPlatformFacets = useMemo<SessionPlatformFacet[]>(() => {
+        const source = platformFacets.length > 0 ? platformFacets : fallbackPlatformFacets;
+        const byFacet = new Map<string, SessionPlatformFacet>();
+        source.forEach(facet => {
+            const platformType = (facet.platformType || '').trim() || 'Claude Code';
+            const platformVersion = (facet.platformVersion || '').trim();
+            if (!platformVersion) return;
+            const key = `${platformType}::${platformVersion}`;
+            const existing = byFacet.get(key);
+            if (existing) {
+                existing.count += facet.count || 0;
+                return;
+            }
+            byFacet.set(key, {
+                platformType,
+                platformVersion,
+                count: facet.count || 0,
+            });
+        });
+        return Array.from(byFacet.values());
+    }, [fallbackPlatformFacets, platformFacets]);
+
+    const platformTypeOptions = useMemo(() => {
+        const types = Array.from(new Set(
+            normalizedPlatformFacets
+                .map(facet => facet.platformType)
+                .filter(Boolean),
+        ));
+        return types.sort((left, right) => left.localeCompare(right));
+    }, [normalizedPlatformFacets]);
+
+    const platformVersionOptions = useMemo(() => {
+        const selectedPlatformType = (localFilters.platform_type || '').trim();
+        if (!selectedPlatformType) return [];
+        const values = Array.from(new Set(
+            normalizedPlatformFacets
+                .filter(facet => facet.platformType === selectedPlatformType)
+                .map(facet => facet.platformVersion)
+                .filter(Boolean),
+        ));
+        return values.sort(compareVersionLabelsDesc);
+    }, [localFilters.platform_type, normalizedPlatformFacets]);
+
+    const providerOptions = useMemo(() => {
+        const providers = Array.from(new Set(
+            normalizedModelFacets
+                .map(facet => facet.modelProvider)
+                .filter(Boolean),
+        ));
+        return providers.sort((left, right) => compareByPreferredOrder(left, right, MODEL_PROVIDER_ORDER));
+    }, [normalizedModelFacets]);
+
+    const familyOptions = useMemo(() => {
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        const families = Array.from(new Set(
+            normalizedModelFacets
+                .filter(facet => !selectedProvider || facet.modelProvider === selectedProvider)
+                .map(facet => facet.modelFamily)
+                .filter(Boolean),
+        ));
+        return families.sort((left, right) => compareByPreferredOrder(left, right, MODEL_FAMILY_ORDER));
+    }, [localFilters.model_provider, normalizedModelFacets]);
+
+    const versionOptions = useMemo(() => {
+        const selectedFamily = (localFilters.model_family || '').trim();
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        if (!selectedFamily) return [];
+
+        const byValue = new Map<string, { value: string; label: string }>();
+        normalizedModelFacets.forEach(facet => {
+            if (selectedProvider && facet.modelProvider !== selectedProvider) return;
+            if (facet.modelFamily !== selectedFamily) return;
+            const version = (facet.modelVersion || '').trim();
+            if (!version) return;
+            if (!byValue.has(version)) {
+                byValue.set(version, {
+                    value: version,
+                    label: stripFamilyPrefix(version, selectedFamily),
+                });
+            }
+        });
+
+        return Array.from(byValue.values()).sort((left, right) => compareVersionLabelsDesc(left.label, right.label));
+    }, [localFilters.model_family, localFilters.model_provider, normalizedModelFacets]);
+
+    const modelOptions = useMemo(() => {
+        const selectedProvider = (localFilters.model_provider || '').trim();
+        const selectedFamily = (localFilters.model_family || '').trim();
+        const selectedVersion = (localFilters.model_version || '').trim();
+        if (!selectedFamily || !selectedVersion) return [];
+
+        const byRaw = new Map<string, { value: string; label: string }>();
+        normalizedModelFacets.forEach(facet => {
+            if (selectedProvider && facet.modelProvider !== selectedProvider) return;
+            if (facet.modelFamily !== selectedFamily) return;
+            if (facet.modelVersion !== selectedVersion) return;
+            if (!facet.raw) return;
+            if (!byRaw.has(facet.raw)) {
+                byRaw.set(facet.raw, {
+                    value: facet.raw,
+                    label: facet.modelDisplayName || facet.modelVersion || facet.raw,
+                });
+            }
+        });
+
+        return Array.from(byRaw.values()).sort((left, right) => left.label.localeCompare(right.label));
+    }, [localFilters.model_family, localFilters.model_provider, localFilters.model_version, normalizedModelFacets]);
+
+    const handlePlatformTypeChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            platform_type: value || undefined,
+            platform_version: undefined,
+        }));
+    };
+
+    const handlePlatformVersionChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            platform_version: value || undefined,
+        }));
+    };
+
+    const handleProviderChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_provider: value || undefined,
+            model_family: undefined,
+            model_version: undefined,
+            model: undefined,
+        }));
+    };
+
+    const handleFamilyChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_family: value || undefined,
+            model_version: undefined,
+            model: undefined,
+        }));
+    };
+
+    const handleVersionChange = (value: string) => {
+        setLocalFilters(prev => ({
+            ...prev,
+            model_version: value || undefined,
+            model: undefined,
+        }));
+    };
+
+    const toggleSection = (key: keyof typeof collapsedSections) => {
+        setCollapsedSections(prev => ({
+            ...prev,
+            [key]: !prev[key],
+        }));
+    };
+
+    const applyFilters = () => {
+        setSessionFilters(buildSessionFilterPayload(localFilters));
+    };
+
+    const clearFilters = () => {
+        const cleared: SessionFilters = { include_subagents: true };
+        setLocalFilters(cleared);
+        setSessionFilters(cleared);
+    };
+
+    const hasPendingChanges = !areSessionFiltersEqual(localFilters, sessionFilters);
 
     const hasActiveFilters = Boolean(
         localFilters.status
@@ -2316,131 +3487,253 @@ const SessionFilterBar: React.FC = () => {
         || localFilters.model_provider
         || localFilters.model_family
         || localFilters.model_version
+        || localFilters.platform_type
+        || localFilters.platform_version
         || localFilters.start_date
         || localFilters.end_date
+        || localFilters.created_start
+        || localFilters.created_end
+        || localFilters.completed_start
+        || localFilters.completed_end
+        || localFilters.updated_start
+        || localFilters.updated_end
         || localFilters.include_subagents === false
     );
 
+    const renderDateRangeControl = (label: string, startKey: keyof SessionFilters, endKey: keyof SessionFilters) => (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
+            <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                <input
+                    type="date"
+                    value={String(localFilters[startKey] || '')}
+                    onChange={e => handleChange(startKey, e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                />
+            </div>
+            <div className="grid grid-cols-[34px_1fr] items-center gap-1">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                <input
+                    type="date"
+                    value={String(localFilters[endKey] || '')}
+                    onChange={e => handleChange(endKey, e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                />
+            </div>
+        </div>
+    );
+
     return (
-        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-4 items-center mb-6">
-            <div className="flex items-center gap-2 text-slate-400 text-sm font-bold uppercase tracking-wider">
-                <Filter size={14} /> Filters
-            </div>
+        <SidebarFiltersPortal>
+            <SidebarFiltersSection title="Filter Sessions">
+                <div className="space-y-2">
+                    <button
+                        onClick={() => toggleSection('general')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>General</span>
+                        {collapsedSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.general && (
+                        <div className="pl-1 space-y-2">
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Status</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.status || ''}
+                                    onChange={e => handleChange('status', e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    <option value="active">Active</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Activity size={12} className="text-slate-500" />
-                <select
-                    className="bg-transparent border-none text-xs text-slate-300 focus:ring-0 cursor-pointer outline-none"
-                    value={localFilters.status || ''}
-                    onChange={e => handleChange('status', e.target.value)}
-                >
-                    <option value="">All Statuses</option>
-                    <option value="active">Active</option>
-                    <option value="completed">Completed</option>
-                    <option value="failed">Failed</option>
-                </select>
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Platform</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.platform_type || ''}
+                                    onChange={e => handlePlatformTypeChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {platformTypeOptions.map(platformType => (
+                                        <option key={platformType} value={platformType}>{platformType}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Cpu size={12} className="text-slate-500" />
-                <input
-                    type="text"
-                    placeholder="Model..."
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-24"
-                    value={localFilters.model || ''}
-                    onChange={e => handleChange('model', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">CLI Ver</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.platform_version || ''}
+                                    onChange={e => handlePlatformVersionChange(e.target.value)}
+                                    disabled={!localFilters.platform_type}
+                                >
+                                    <option value="">
+                                        {localFilters.platform_type ? 'All' : 'Select platform first'}
+                                    </option>
+                                    {platformVersionOptions.map(version => (
+                                        <option key={version} value={version}>{version}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Provider (e.g. Claude)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
-                    value={localFilters.model_provider || ''}
-                    onChange={e => handleChange('model_provider', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Threads</label>
+                                <label className="inline-flex items-center gap-2 text-[11px] text-slate-300">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!localFilters.include_subagents}
+                                        onChange={e => handleChange('include_subagents', e.target.checked)}
+                                        className="accent-indigo-500"
+                                    />
+                                    Include subagents
+                                </label>
+                            </div>
+                        </div>
+                    )}
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Family (e.g. Opus)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-32"
-                    value={localFilters.model_family || ''}
-                    onChange={e => handleChange('model_family', e.target.value)}
-                />
-            </div>
+                    <button
+                        onClick={() => toggleSection('models')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>Model Fields</span>
+                        {collapsedSections.models ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.models && (
+                        <div className="pl-1 space-y-2">
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Provider</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.model_provider || ''}
+                                    onChange={e => handleProviderChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {providerOptions.map(provider => (
+                                        <option key={provider} value={provider}>{provider}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <input
-                    type="text"
-                    placeholder="Version (e.g. Opus 4.5)"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none w-36"
-                    value={localFilters.model_version || ''}
-                    onChange={e => handleChange('model_version', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Family</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.model_family || ''}
+                                    onChange={e => handleFamilyChange(e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    {familyOptions.map(family => (
+                                        <option key={family} value={family}>{family}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <label className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
-                <input
-                    type="checkbox"
-                    checked={!!localFilters.include_subagents}
-                    onChange={e => handleChange('include_subagents', e.target.checked)}
-                    className="accent-indigo-500"
-                />
-                Show Sub-agents
-            </label>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Version</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.model_version || ''}
+                                    onChange={e => handleVersionChange(e.target.value)}
+                                    disabled={!localFilters.model_family}
+                                >
+                                    <option value="">
+                                        {localFilters.model_family ? 'All' : 'Select family first'}
+                                    </option>
+                                    {versionOptions.map(version => (
+                                        <option key={version.value} value={version.value}>{version.label}</option>
+                                    ))}
+                                </select>
+                            </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 focus-within:border-indigo-500/50 transition-colors">
-                <Calendar size={12} className="text-slate-500" />
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.start_date || ''}
-                    onChange={e => handleChange('start_date', e.target.value)}
-                />
-                <span className="text-slate-600">-</span>
-                <input
-                    type="date"
-                    className="bg-transparent border-none text-xs text-slate-300 placeholder:text-slate-600 focus:ring-0 outline-none"
-                    value={localFilters.end_date || ''}
-                    onChange={e => handleChange('end_date', e.target.value)}
-                />
-            </div>
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Model</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    value={localFilters.model || ''}
+                                    onChange={e => handleChange('model', e.target.value)}
+                                    disabled={!localFilters.model_version}
+                                >
+                                    <option value="">
+                                        {localFilters.model_version ? 'All' : 'Select version first'}
+                                    </option>
+                                    {modelOptions.map(model => (
+                                        <option key={model.value} value={model.value}>{model.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    )}
 
-            {hasActiveFilters && (
-                <button
-                    onClick={() => setLocalFilters({ include_subagents: true })}
-                    className="text-[10px] text-rose-400 hover:text-rose-300 uppercase font-bold px-2"
-                >
-                    Clear
-                </button>
-            )}
+                    <button
+                        onClick={() => toggleSection('dates')}
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                    >
+                        <span>Date Ranges</span>
+                        {collapsedSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {!collapsedSections.dates && (
+                        <div className="pl-1 space-y-2">
+                            {renderDateRangeControl('Started', 'start_date', 'end_date')}
+                            {renderDateRangeControl('Created', 'created_start', 'created_end')}
+                            {renderDateRangeControl('Completed', 'completed_start', 'completed_end')}
+                            {renderDateRangeControl('Updated', 'updated_start', 'updated_end')}
+                        </div>
+                    )}
+                </div>
 
-            <div className="ml-auto pl-4 border-l border-slate-800">
+                <div className="mt-3 space-y-2">
+                    <p className="text-[10px] text-slate-500 leading-snug break-words">
+                        {modelFacetsLoading || platformFacetsLoading
+                            ? 'Loading model/platform history…'
+                            : `${normalizedModelFacets.length} model variants · ${normalizedPlatformFacets.length} platform versions`}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={clearFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-rose-200 hover:bg-rose-500/25 hover:border-rose-400/50 disabled:opacity-40 disabled:hover:bg-rose-500/15 disabled:hover:border-rose-500/30"
+                            disabled={!hasActiveFilters}
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={applyFilters}
+                            className="w-full inline-flex items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/25 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-indigo-100 hover:bg-indigo-500/35 hover:border-indigo-400/60 disabled:opacity-40 disabled:hover:bg-indigo-500/25 disabled:hover:border-indigo-500/40"
+                            disabled={!hasPendingChanges}
+                        >
+                            Apply
+                        </button>
+                    </div>
+                </div>
+            </SidebarFiltersSection>
+
+            <SidebarFiltersSection title="Data Sync" icon={RefreshCw}>
                 <button
                     onClick={async () => {
                         try {
                             const btn = document.getElementById('force-sync-btn');
                             if (btn) btn.classList.add('animate-spin');
                             await fetch('/api/cache/rescan', { method: 'POST' });
-                            // Wait a bit for background task to start/finish some work
                             setTimeout(() => {
                                 window.location.reload();
                             }, 2000);
                         } catch (e) {
-                            console.error("Sync failed", e);
+                            console.error('Sync failed', e);
                         }
                     }}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
                     title="Force full project re-scan"
                 >
                     <RefreshCw size={14} id="force-sync-btn" />
-                    <span className="hidden sm:inline">Force Sync</span>
+                    <span>Force Sync</span>
                 </button>
-            </div>
-        </div>
+            </SidebarFiltersSection>
+        </SidebarFiltersPortal>
     );
 };
 
@@ -2448,7 +3741,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
     const { getSessionById } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'transcript' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
+    const [activeTab, setActiveTab] = useState<'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
@@ -2585,7 +3878,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         setActiveTab('transcript');
     }
 
-    const handleShowLinked = (tab: 'files' | 'artifacts', sourceLogId: string) => {
+    const handleShowLinked = (tab: 'activity' | 'artifacts', sourceLogId: string) => {
         setLinkedSourceLogId(sourceLogId);
         setActiveTab(tab);
     };
@@ -2630,6 +3923,8 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                 <div className="flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
                     {[
                         { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+                        { id: 'activity', icon: Activity, label: 'Activity' },
+                        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
                         { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
                         { id: 'files', icon: FileText, label: 'Files' },
                         { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
@@ -2673,12 +3968,25 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         onShowLinked={handleShowLinked}
                         primaryFeatureLink={primaryFeatureLink}
                         onOpenFeature={handleOpenFeature}
+                        onOpenForensics={() => setActiveTab('forensics')}
                     />
                 )}
                 {activeTab === 'features' && (
                     <SessionFeaturesView
                         linkedFeatures={linkedFeatureLinks}
                         onOpenFeature={handleOpenFeature}
+                    />
+                )}
+                {activeTab === 'forensics' && <SessionForensicsView session={session} />}
+                {activeTab === 'activity' && (
+                    <ActivityView
+                        session={session}
+                        threadSessions={threadSessions}
+                        threadSessionDetails={threadSessionDetails}
+                        subagentNameBySessionId={subagentNameBySessionId}
+                        onOpenDoc={setViewingDoc}
+                        onOpenThread={onOpenSession}
+                        highlightedSourceLogId={linkedSourceLogId}
                     />
                 )}
                 {activeTab === 'files' && (
@@ -2768,18 +4076,25 @@ export const SessionInspector: React.FC = () => {
 
     const [sessionsViewMode, setSessionsViewMode] = useState<'threaded' | 'cards'>('threaded');
     const [expandedThreadSessionIds, setExpandedThreadSessionIds] = useState<Set<string>>(new Set());
+    const liveNowMs = Date.now();
 
-    const activeSessions = useMemo(() => sessions.filter(s => s.status === 'active'), [sessions]);
-    const pastSessions = useMemo(() => sessions.filter(s => s.status !== 'active'), [sessions]);
+    const activeSessions = useMemo(
+        () => sessions.filter(session => isSessionLiveInFlight(session, liveNowMs)),
+        [sessions, liveNowMs]
+    );
+    const pastSessions = useMemo(
+        () => sessions.filter(session => !isSessionLiveInFlight(session, liveNowMs)),
+        [sessions, liveNowMs]
+    );
 
     const sessionThreadRoots = useMemo(() => buildSessionThreadForest(sessions), [sessions]);
     const activeSessionThreadRoots = useMemo(
-        () => sessionThreadRoots.filter(node => node.session.status === 'active'),
-        [sessionThreadRoots]
+        () => sessionThreadRoots.filter(node => threadNodeHasLiveSession(node, liveNowMs)),
+        [sessionThreadRoots, liveNowMs]
     );
     const pastSessionThreadRoots = useMemo(
-        () => sessionThreadRoots.filter(node => node.session.status !== 'active'),
-        [sessionThreadRoots]
+        () => sessionThreadRoots.filter(node => !threadNodeHasLiveSession(node, liveNowMs)),
+        [sessionThreadRoots, liveNowMs]
     );
 
     const openSessionFromList = useCallback((session: AgentSession) => {
@@ -2799,42 +4114,35 @@ export const SessionInspector: React.FC = () => {
     const renderThreadNode = useCallback((node: SessionThreadNode, depth = 0): React.ReactNode => {
         const hasChildren = node.children.length > 0;
         const expanded = expandedThreadSessionIds.has(node.session.id);
+        const displayStatus = isSessionLiveInFlight(node.session, liveNowMs) ? 'active' : 'completed';
 
         return (
             <div key={node.session.id} className="space-y-2">
                 <SessionSummaryCard
                     session={node.session}
+                    statusOverride={displayStatus}
+                    threadToggle={hasChildren ? {
+                        expanded,
+                        childCount: countSessionThreadNodes(node.children),
+                        onToggle: () => toggleThreadChildren(node.session.id),
+                        label: 'Sub-Threads',
+                    } : undefined}
                     onClick={() => openSessionFromList(node.session)}
                 />
 
-                {hasChildren && (
-                    <div className="mt-2 pt-2 border-t border-slate-800/60">
-                        <button
-                            onClick={() => toggleThreadChildren(node.session.id)}
-                            className="w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-colors"
-                        >
-                            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                Expand to see Sub-Threads
-                            </span>
-                            <span className="text-[11px] text-slate-500">{countSessionThreadNodes(node.children)}</span>
-                        </button>
-
-                        {expanded && (
-                            <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
-                                {node.children.map(child => (
-                                    <div key={child.session.id} className="relative pl-3">
-                                        <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
-                                        {renderThreadNode(child, depth + 1)}
-                                    </div>
-                                ))}
+                {hasChildren && expanded && (
+                    <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                        {node.children.map(child => (
+                            <div key={child.session.id} className="relative pl-3">
+                                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                                {renderThreadNode(child, depth + 1)}
                             </div>
-                        )}
+                        ))}
                     </div>
                 )}
             </div>
         );
-    }, [expandedThreadSessionIds, openSessionFromList, toggleThreadChildren]);
+    }, [expandedThreadSessionIds, liveNowMs, openSessionFromList, toggleThreadChildren]);
 
     if (selectedSession) {
         return (
@@ -2881,6 +4189,9 @@ export const SessionInspector: React.FC = () => {
                     <h3 className="text-xs font-bold text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2">
                         <Activity size={16} /> Live In-Flight
                     </h3>
+                    <p className="text-[11px] text-emerald-300/70 -mt-2">
+                        Active sessions with updates in the last 10 minutes.
+                    </p>
                     {sessionsViewMode === 'threaded' ? (
                         <div className="space-y-4">
                             {activeSessionThreadRoots.map(node => renderThreadNode(node))}
@@ -2897,6 +4208,7 @@ export const SessionInspector: React.FC = () => {
                                 <SessionSummaryCard
                                     key={session.id}
                                     session={session}
+                                    statusOverride="active"
                                     onClick={() => openSessionFromList(session)}
                                 />
                             ))}
@@ -2932,6 +4244,7 @@ export const SessionInspector: React.FC = () => {
                                 <SessionSummaryCard
                                     key={session.id}
                                     session={session}
+                                    statusOverride="completed"
                                     onClick={() => openSessionFromList(session)}
                                 />
                             ))}
@@ -2956,17 +4269,70 @@ export const SessionInspector: React.FC = () => {
     );
 };
 
-const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void; className?: string }> = ({ session, onClick, className }) => {
+const SessionSummaryCard: React.FC<{
+    session: AgentSession;
+    onClick: () => void;
+    className?: string;
+    statusOverride?: AgentSession['status'];
+    threadToggle?: {
+        expanded: boolean;
+        childCount: number;
+        onToggle: () => void;
+        label?: string;
+    };
+}> = ({ session, onClick, className, statusOverride, threadToggle }) => {
     const displayTitle = deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null);
     const agentNames = Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent'))).slice(0, 3);
+    const agentBadges = (session.agentsUsed && session.agentsUsed.length > 0)
+        ? session.agentsUsed
+        : Array.from(new Set(session.logs.filter(l => l.speaker === 'agent').map(l => l.agentName || 'Agent')));
+    const models = (session.modelsUsed && session.modelsUsed.length > 0)
+        ? session.modelsUsed.map(modelInfo => ({
+            raw: modelInfo.raw,
+            displayName: modelInfo.modelDisplayName,
+            provider: modelInfo.modelProvider,
+            family: modelInfo.modelFamily,
+            version: modelInfo.modelVersion,
+        }))
+        : [{
+            raw: session.model,
+            displayName: session.modelDisplayName,
+            provider: session.modelProvider,
+            family: session.modelFamily,
+            version: session.modelVersion,
+        }];
+    const detailSections: SessionCardDetailSection[] = [];
+    const toolSummary = Array.isArray(session.toolSummary) ? session.toolSummary.filter(Boolean) : [];
+    if (toolSummary.length > 0) {
+        detailSections.push({
+            id: `${session.id}-tools`,
+            label: 'Tools',
+            items: toolSummary,
+        });
+    }
+    const displayStatus = statusOverride || session.status;
     return (
         <SessionCard
             sessionId={session.id}
             title={displayTitle}
-            status={session.status}
+            status={displayStatus}
             startedAt={session.startedAt}
-            model={{ raw: session.model, displayName: session.modelDisplayName }}
+            endedAt={session.endedAt}
+            updatedAt={session.updatedAt}
+            dates={session.dates}
+            model={{
+                raw: session.model,
+                displayName: session.modelDisplayName,
+                provider: session.modelProvider,
+                family: session.modelFamily,
+                version: session.modelVersion,
+            }}
+            models={models}
+            agentBadges={agentBadges}
+            skillBadges={session.skillsUsed || []}
+            detailSections={detailSections}
             metadata={session.sessionMetadata || null}
+            threadToggle={threadToggle}
             onClick={onClick}
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
@@ -2980,7 +4346,7 @@ const SessionSummaryCard: React.FC<{ session: AgentSession; onClick: () => void;
                 </span>
             )}
         >
-            {session.status === 'active' && (
+            {displayStatus === 'active' && (
                 <div className="absolute top-0 right-0 p-3">
                     <span className="flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

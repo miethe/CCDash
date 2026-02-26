@@ -15,6 +15,9 @@ class SqliteFeatureRepository:
 
     async def upsert(self, feature_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = feature_data.get("createdAt", "") or now
+        updated_at = feature_data.get("updatedAt", "") or now
+        completed_at = feature_data.get("completedAt", "")
         data_json = json.dumps(feature_data)
 
         await self.db.execute(
@@ -41,9 +44,9 @@ class SqliteFeatureRepository:
                 feature_data.get("totalTasks", 0),
                 feature_data.get("completedTasks", 0),
                 feature_data.get("parentFeatureId"),
-                feature_data.get("createdAt", now),
-                now,
-                feature_data.get("completedAt", ""),
+                created_at,
+                updated_at,
+                completed_at,
                 data_json,
             ),
         )
@@ -81,7 +84,16 @@ class SqliteFeatureRepository:
             await self.db.execute(
                 """INSERT INTO feature_phases
                     (id, feature_id, phase, title, status, progress, total_tasks, completed_tasks)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       feature_id=excluded.feature_id,
+                       phase=excluded.phase,
+                       title=excluded.title,
+                       status=excluded.status,
+                       progress=excluded.progress,
+                       total_tasks=excluded.total_tasks,
+                       completed_tasks=excluded.completed_tasks
+                """,
                 (
                     phase_id, feature_id,
                     str(p.get("phase", "")),

@@ -83,6 +83,9 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
    canonicalPath: String(raw.canonicalPath || fallback.canonicalPath || raw.filePath || fallback.filePath || ''),
    status: String(raw.status || fallback.status || 'active'),
    statusNormalized: String(raw.statusNormalized || fallback.statusNormalized || ''),
+   createdAt: String(raw.createdAt || fallback.createdAt || ''),
+   updatedAt: String(raw.updatedAt || fallback.updatedAt || ''),
+   completedAt: String(raw.completedAt || fallback.completedAt || ''),
    lastModified: String(raw.lastModified || fallback.lastModified || ''),
    author: String(raw.author || fallback.author || ''),
    content: typeof raw.content === 'string' ? raw.content : fallback.content,
@@ -127,10 +130,16 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       sessions: raw.linkCounts?.sessions ?? fallback.linkCounts?.sessions ?? 0,
       documents: raw.linkCounts?.documents ?? fallback.linkCounts?.documents ?? 0,
    },
+   dates: raw.dates ?? fallback.dates,
+   timeline: Array.isArray(raw.timeline) ? raw.timeline : (fallback.timeline || []),
    frontmatter: {
       tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
       linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
       linkedSessions: Array.isArray(raw.frontmatter?.linkedSessions) ? raw.frontmatter.linkedSessions : (fallback.frontmatter?.linkedSessions || []),
+      lineageFamily: raw.frontmatter?.lineageFamily ?? fallback.frontmatter?.lineageFamily,
+      lineageParent: raw.frontmatter?.lineageParent ?? fallback.frontmatter?.lineageParent,
+      lineageChildren: Array.isArray(raw.frontmatter?.lineageChildren) ? raw.frontmatter.lineageChildren : (fallback.frontmatter?.lineageChildren || []),
+      lineageType: raw.frontmatter?.lineageType ?? fallback.frontmatter?.lineageType,
       relatedFiles: Array.isArray(raw.frontmatter?.relatedFiles) ? raw.frontmatter.relatedFiles : (fallback.frontmatter?.relatedFiles || []),
       version: raw.frontmatter?.version ?? fallback.frontmatter?.version,
       commits: Array.isArray(raw.frontmatter?.commits) ? raw.frontmatter.commits : (fallback.frontmatter?.commits || []),
@@ -264,6 +273,18 @@ export const DocumentModal = ({
       inProgress: doc.inProgressTasks || 0,
       blocked: doc.blockedTasks || 0,
    };
+   const formatDate = (value?: string): string => {
+      if (!value) return '-';
+      const parsed = Date.parse(value);
+      if (Number.isNaN(parsed)) return value;
+      return new Date(parsed).toLocaleDateString();
+   };
+   const dateChip = (key: keyof NonNullable<PlanDocument['dates']>) => {
+      const value = doc.dates?.[key];
+      if (!value?.value) return '';
+      const confidence = value.confidence ? ` (${value.confidence})` : '';
+      return `${formatDate(value.value)}${confidence}`;
+   };
 
    return (
       <div className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200`} onClick={onClose}>
@@ -350,10 +371,15 @@ export const DocumentModal = ({
                            <div className="space-y-2 text-sm">
                               <div className="flex justify-between text-slate-400"><span>Status</span><span className="text-slate-200">{doc.statusNormalized || doc.status}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Author</span><span className="text-slate-200">{doc.author || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Modified</span><span className="text-slate-200">{doc.lastModified ? new Date(doc.lastModified).toLocaleDateString() : '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Created</span><span className="text-slate-200">{dateChip('createdAt') || formatDate(doc.createdAt)}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Updated</span><span className="text-slate-200">{dateChip('updatedAt') || formatDate(doc.updatedAt || doc.lastModified)}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Completed</span><span className="text-slate-200">{dateChip('completedAt') || formatDate(doc.completedAt)}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Category</span><span className="text-slate-200">{doc.category || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Feature Hint</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Family</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageFamily || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Parent</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageParent || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Lineage Type</span><span className="text-slate-200">{doc.frontmatter.lineageType || '-'}</span></div>
                            </div>
                         </div>
 
@@ -401,6 +427,10 @@ export const DocumentModal = ({
                               <div>
                                  <div className="text-slate-500 uppercase mb-1">Commit Refs</div>
                                  <div className="text-slate-300 font-mono break-all">{(doc.metadata?.commitRefs || doc.frontmatter.commits || []).join(', ') || '-'}</div>
+                              </div>
+                              <div>
+                                 <div className="text-slate-500 uppercase mb-1">Lineage Children</div>
+                                 <div className="text-slate-300 font-mono break-all">{(doc.frontmatter.lineageChildren || []).join(', ') || '-'}</div>
                               </div>
                            </div>
                         </div>

@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 11
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     task_id          TEXT DEFAULT '',
     status           TEXT DEFAULT 'completed',
     model            TEXT DEFAULT '',
+    platform_type    TEXT DEFAULT 'Claude Code',
+    platform_version TEXT DEFAULT '',
+    platform_versions_json TEXT DEFAULT '[]',
+    platform_version_transitions_json TEXT DEFAULT '[]',
     duration_seconds INTEGER DEFAULT 0,
     tokens_in        INTEGER DEFAULT 0,
     tokens_out       INTEGER DEFAULT 0,
@@ -107,7 +111,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at         TEXT DEFAULT '',
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL,
-    source_file      TEXT NOT NULL
+    source_file      TEXT NOT NULL,
+    dates_json       TEXT DEFAULT '{}',
+    timeline_json    TEXT DEFAULT '[]',
+    impact_history_json TEXT DEFAULT '[]',
+    thinking_level   TEXT DEFAULT '',
+    session_forensics_json TEXT DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, started_at DESC);
@@ -331,7 +340,51 @@ CREATE TABLE IF NOT EXISTS analytics_entity_links (
 CREATE INDEX IF NOT EXISTS idx_analytics_entity
     ON analytics_entity_links(entity_type, entity_id);
 
--- ── 9. App Metadata + Alert Configs ────────────────────────────────
+-- ── 9. Telemetry Events (Fact Layer) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS telemetry_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    root_session_id TEXT DEFAULT '',
+    feature_id      TEXT DEFAULT '',
+    task_id         TEXT DEFAULT '',
+    commit_hash     TEXT DEFAULT '',
+    pr_number       TEXT DEFAULT '',
+    phase           TEXT DEFAULT '',
+    event_type      TEXT NOT NULL,
+    tool_name       TEXT DEFAULT '',
+    model           TEXT DEFAULT '',
+    agent           TEXT DEFAULT '',
+    skill           TEXT DEFAULT '',
+    status          TEXT DEFAULT '',
+    duration_ms     INTEGER DEFAULT 0,
+    token_input     INTEGER DEFAULT 0,
+    token_output    INTEGER DEFAULT 0,
+    cost_usd        REAL DEFAULT 0.0,
+    occurred_at     TEXT NOT NULL,
+    sequence_no     INTEGER DEFAULT 0,
+    source          TEXT DEFAULT 'sync',
+    source_key      TEXT NOT NULL,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_source_key
+    ON telemetry_events(project_id, source_key);
+CREATE INDEX IF NOT EXISTS idx_telemetry_project_time
+    ON telemetry_events(project_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_event_type
+    ON telemetry_events(project_id, event_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_tool
+    ON telemetry_events(project_id, tool_name, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_model
+    ON telemetry_events(project_id, model, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_feature
+    ON telemetry_events(project_id, feature_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_telemetry_task
+    ON telemetry_events(project_id, task_id, occurred_at);
+
+-- ── 10. App Metadata + Alert Configs ───────────────────────────────
 CREATE TABLE IF NOT EXISTS app_metadata (
     entity_type  TEXT NOT NULL,
     entity_id    TEXT NOT NULL,
@@ -414,12 +467,22 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "agent_id", "TEXT")
     await _ensure_column(db, "sessions", "git_commit_hashes_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "dates_json", "TEXT DEFAULT '{}'")
+    await _ensure_column(db, "sessions", "timeline_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "impact_history_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "thinking_level", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "session_forensics_json", "TEXT DEFAULT '{}'")
+    await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
+    await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "platform_version_transitions_json", "TEXT DEFAULT '[]'")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "linked_session_id", "TEXT")
     await _ensure_column(db, "session_logs", "metadata_json", "TEXT")
+    await _ensure_column(db, "session_tool_usage", "total_ms", "INTEGER DEFAULT 0")
 
     await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
     await _ensure_column(db, "session_file_updates", "source_tool_name", "TEXT")

@@ -1,0 +1,55 @@
+{
+  "platform": "claude_code",
+  "schema_version": 2,
+  "thinking": {
+    "levels": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "defaults": {
+      "disabled_level": "low"
+    },
+    "max_token_thresholds": {
+      "low_max": 8000,
+      "medium_max": 24000
+    }
+  },
+  "entry_fields": {
+    "session": [
+      "cwd",
+      "gitBranch",
+      "slug",
+      "permissionMode",
+      "userType",
+      "version"
+    ],
+    "message": [
+      "requestId",
+      "sourceToolAssistantUUID",
+      "sourceToolUseID",
+      "isApiErrorMessage",
+      "error"
+    ]
+  },
+  "sidecars": {
+    "todos": {
+      "dir": "todos",
+      "glob": "{session_id}-agent-*.json"
+    },
+    "tasks": {
+      "dir": "tasks/{session_id}",
+      "task_glob": "*.json",
+      "high_watermark_file": ".highwatermark",
+      "lock_file": ".lock"
+    },
+    "teams": {
+      "dir": "teams/{session_id}/inboxes",
+      "glob": "*.json"
+    },
+    "session_env": {
+      "dir": "session-env/{session_id}",
+      "glob": "*"
+    }
+  }
+}

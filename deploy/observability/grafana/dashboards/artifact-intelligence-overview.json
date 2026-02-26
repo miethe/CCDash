@@ -1,0 +1,139 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total Artifacts",
+      "id": 1,
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ccdash_artifacts_total{project=~\"$project\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Artifact Types",
+      "id": 2,
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ccdash_artifact_types_total{project=~\"$project\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Command Artifacts",
+      "id": 3,
+      "gridPos": {"h": 7, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ccdash_artifact_kind_total{project=~\"$project\",kind=\"commands\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Skill Artifacts",
+      "id": 4,
+      "gridPos": {"h": 7, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ccdash_artifact_kind_total{project=~\"$project\",kind=\"skills\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Artifacts by Type",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "targets": [
+        {
+          "expr": "sum by (artifact_type) (ccdash_artifact_events_total{project=~\"$project\"})",
+          "legendFormat": "{{artifact_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Allocation by Artifact Type",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "targets": [
+        {
+          "expr": "sum by (artifact_type, direction) (ccdash_artifact_tokens_total{project=~\"$project\"})",
+          "legendFormat": "{{artifact_type}} {{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost by Artifact Type",
+      "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "targets": [
+        {
+          "expr": "sum by (artifact_type) (ccdash_artifact_cost_usd_total{project=~\"$project\"})",
+          "legendFormat": "{{artifact_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Artifact Event Coverage (Sessions/Features)",
+      "id": 8,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "targets": [
+        {
+          "expr": "sum by (artifact_type) (ccdash_artifact_session_coverage_total{project=~\"$project\"})",
+          "legendFormat": "{{artifact_type}} sessions",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (artifact_type) (ccdash_artifact_feature_coverage_total{project=~\"$project\"})",
+          "legendFormat": "{{artifact_type}} features",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["ccdash", "artifacts", "analytics"],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "Project",
+        "datasource": "Prometheus",
+        "query": "label_values(ccdash_session_count, project)",
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": ["$__all"]}
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "CCDash Artifact Intelligence Overview",
+  "uid": "ccdash-artifact-intelligence",
+  "version": 1,
+  "weekStart": ""
+}

@@ -13,6 +13,9 @@ class PostgresFeatureRepository:
 
     async def upsert(self, feature_data: dict, project_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        created_at = feature_data.get("createdAt", "") or now
+        updated_at = feature_data.get("updatedAt", "") or now
+        completed_at = feature_data.get("completedAt", "")
         data_json = json.dumps(feature_data)
 
         query = """
@@ -40,9 +43,9 @@ class PostgresFeatureRepository:
             feature_data.get("totalTasks", 0),
             feature_data.get("completedTasks", 0),
             feature_data.get("parentFeatureId"),
-            feature_data.get("createdAt", now),
-            now,
-            feature_data.get("completedAt", ""),
+            created_at,
+            updated_at,
+            completed_at,
             data_json,
         )
 
@@ -61,26 +64,16 @@ class PostgresFeatureRepository:
         return [dict(r) for r in rows]
 
     async def upsert_phases(self, feature_id: str, phases: list[dict]) -> None:
-        async with self.db.transaction(): # Does this work with pool? No, if db is pool. 
-            # I must assume 'db' is Connection or I handle it. 
-            # Ideally I should use a recursive 'acquire' check or just 'execute' logic.
-            # But here standard 'transaction()' requires connection.
-            # I'll rely on the caller passing a Connection OR handle pool.
-            # Given previous steps, I decided 'db' is Union[Connection, Pool].
-            # I will use a helper or explicit check.
-            pass
-            
-        # Refactor: deleting and inserting without transaction is risky but okay for now?
-        # A safer way without explicit transaction context manager (if I don't want to check type)
-        # is just executing separate queries.
         await self.db.execute("DELETE FROM feature_phases WHERE feature_id = $1", feature_id)
-        
+
         if not phases:
             return
 
         records = []
-        for p in phases:
-            phase_id = p.get("id", f"{feature_id}:phase-{str(p.get('phase', '0'))}")
+        for idx, p in enumerate(phases):
+            phase_id = p.get("id")
+            if not phase_id:
+                phase_id = f"{feature_id}:phase-{str(p.get('phase', '0'))}-{idx}"
             records.append((
                 phase_id, feature_id,
                 str(p.get("phase", "")),
@@ -94,7 +87,16 @@ class PostgresFeatureRepository:
         await self.db.executemany(
             """INSERT INTO feature_phases
                 (id, feature_id, phase, title, status, progress, total_tasks, completed_tasks)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT(id) DO UPDATE SET
+                   feature_id=EXCLUDED.feature_id,
+                   phase=EXCLUDED.phase,
+                   title=EXCLUDED.title,
+                   status=EXCLUDED.status,
+                   progress=EXCLUDED.progress,
+                   total_tasks=EXCLUDED.total_tasks,
+                   completed_tasks=EXCLUDED.completed_tasks
+            """,
             records
         )
 

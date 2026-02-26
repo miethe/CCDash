@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from backend.session_mappings import (
     load_session_mappings,
 )
 from backend.model_identity import derive_model_identity
+from backend.session_badges import derive_session_badges
 from backend.document_linking import (
     make_document_id,
     normalize_doc_status,
@@ -32,6 +34,7 @@ from backend.document_linking import (
     normalize_doc_type,
     normalize_ref_path,
 )
+from backend.date_utils import make_date_value
 
 _NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
 _KEY_WORKFLOW_COMMAND_MARKERS = (
@@ -143,6 +146,25 @@ def _phase_label(phase_token: str) -> str:
     return f"Phase {token}"
 
 
+def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
+    row_dates = _safe_json(row.get("dates_json"))
+    if isinstance(row_dates, dict) and row_dates:
+        return row_dates
+
+    dates: dict[str, Any] = {}
+    for key, candidate in (
+        ("createdAt", make_date_value(row.get("created_at"), "medium", "repository", "session_record_created")),
+        ("updatedAt", make_date_value(row.get("updated_at"), "medium", "repository", "session_record_updated")),
+        ("startedAt", make_date_value(row.get("started_at"), "high", "session", "session_started")),
+        ("completedAt", make_date_value(row.get("ended_at"), "high", "session", "session_completed")),
+        ("endedAt", make_date_value(row.get("ended_at"), "high", "session", "session_completed")),
+        ("lastActivityAt", make_date_value(row.get("ended_at") or row.get("updated_at"), "medium", "session", "last_activity")),
+    ):
+        if candidate:
+            dates[key] = candidate
+    return dates
+
+
 def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
     summary_text = (summary or "").strip()
     if summary_text:
@@ -179,6 +201,22 @@ class SessionFeatureLink(BaseModel):
     commitHashes: list[str] = Field(default_factory=list)
     ambiguityShare: float = 0.0
 
+
+class SessionModelFacet(BaseModel):
+    raw: str = ""
+    modelDisplayName: str = ""
+    modelProvider: str = ""
+    modelFamily: str = ""
+    modelVersion: str = ""
+    count: int = 0
+
+
+class SessionPlatformFacet(BaseModel):
+    platformType: str = "Claude Code"
+    platformVersion: str = ""
+    count: int = 0
+
+
 # ── Sessions router ─────────────────────────────────────────────────
 
 sessions_router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -195,10 +233,18 @@ async def list_sessions(
     model_provider: str | None = Query(None, description="Filter by model provider"),
     model_family: str | None = Query(None, description="Filter by model family"),
     model_version: str | None = Query(None, description="Filter by model version"),
+    platform_type: str | None = Query(None, description="Filter by agent platform type"),
+    platform_version: str | None = Query(None, description="Filter by agent platform version"),
     include_subagents: bool = Query(False, description="Include subagent sessions in list results"),
     root_session_id: str | None = Query(None, description="Filter to a specific root thread family"),
     start_date: str | None = Query(None, description="ISO timestamp for start range"),
     end_date: str | None = Query(None, description="ISO timestamp for end range"),
+    created_start: str | None = Query(None, description="ISO timestamp for created-at range start"),
+    created_end: str | None = Query(None, description="ISO timestamp for created-at range end"),
+    completed_start: str | None = Query(None, description="ISO timestamp for completed-at range start"),
+    completed_end: str | None = Query(None, description="ISO timestamp for completed-at range end"),
+    updated_start: str | None = Query(None, description="ISO timestamp for updated-at range start"),
+    updated_end: str | None = Query(None, description="ISO timestamp for updated-at range end"),
     min_duration: int | None = Query(None, description="Minimum duration in seconds"),
     max_duration: int | None = Query(None, description="Maximum duration in seconds"),
 ):
@@ -218,10 +264,18 @@ async def list_sessions(
     if model_provider: filters["model_provider"] = model_provider
     if model_family: filters["model_family"] = model_family
     if model_version: filters["model_version"] = model_version
+    if platform_type: filters["platform_type"] = platform_type
+    if platform_version: filters["platform_version"] = platform_version
     filters["include_subagents"] = include_subagents
     if root_session_id: filters["root_session_id"] = root_session_id
     if start_date: filters["start_date"] = start_date
     if end_date: filters["end_date"] = end_date
+    if created_start: filters["created_start"] = created_start
+    if created_end: filters["created_end"] = created_end
+    if completed_start: filters["completed_start"] = completed_start
+    if completed_end: filters["completed_end"] = completed_end
+    if updated_start: filters["updated_start"] = updated_start
+    if updated_end: filters["updated_end"] = updated_end
     if min_duration is not None: filters["min_duration"] = min_duration
     if max_duration is not None: filters["max_duration"] = max_duration
 
@@ -235,6 +289,11 @@ async def list_sessions(
     results = []
     for s in sessions_data:
         logs = await repo.get_logs(s["id"])
+        badge_data = derive_session_badges(
+            logs,
+            primary_model=str(s.get("model") or ""),
+            session_agent_id=s.get("agent_id"),
+        )
         command_events: list[dict] = []
         latest_summary = ""
         for log in logs:
@@ -252,6 +311,20 @@ async def list_sessions(
         session_metadata = classify_session_key_metadata(command_events, mappings)
         model_identity = derive_model_identity(s.get("model"))
         session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+        platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+        platform_version_value = str(s.get("platform_version") or "").strip()
+        raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
+        platform_versions: list[str] = []
+        for value in raw_platform_versions:
+            raw = str(value or "").strip()
+            if raw and raw not in platform_versions:
+                platform_versions.append(raw)
+        if platform_version_value and platform_version_value not in platform_versions:
+            platform_versions.insert(0, platform_version_value)
+        platform_version_transitions = [
+            event for event in _safe_json_list(s.get("platform_version_transitions_json"))
+            if isinstance(event, dict)
+        ]
 
         results.append(AgentSession(
             id=s["id"],
@@ -263,6 +336,14 @@ async def list_sessions(
             modelProvider=model_identity["modelProvider"],
             modelFamily=model_identity["modelFamily"],
             modelVersion=model_identity["modelVersion"],
+            modelsUsed=badge_data["modelsUsed"],
+            platformType=platform_type_value,
+            platformVersion=platform_version_value,
+            platformVersions=platform_versions,
+            platformVersionTransitions=platform_version_transitions,
+            agentsUsed=badge_data["agentsUsed"],
+            skillsUsed=badge_data["skillsUsed"],
+            toolSummary=badge_data["toolSummary"],
             sessionType=s["session_type"] or "",
             parentSessionId=s["parent_session_id"],
             rootSessionId=s.get("root_session_id") or s["id"],
@@ -272,6 +353,9 @@ async def list_sessions(
             tokensOut=s["tokens_out"],
             totalCost=s["total_cost"],
             startedAt=s["started_at"] or "",
+            endedAt=s.get("ended_at") or "",
+            createdAt=s.get("created_at") or "",
+            updatedAt=s.get("updated_at") or "",
             qualityRating=s["quality_rating"],
             frictionRating=s["friction_rating"],
             gitCommitHash=s["git_commit_hash"],
@@ -284,6 +368,10 @@ async def list_sessions(
             impactHistory=[],
             logs=[],
             sessionMetadata=session_metadata,
+            thinkingLevel=str(s.get("thinking_level") or ""),
+            sessionForensics=_safe_json(s.get("session_forensics_json")),
+            dates=_session_dates_payload(s),
+            timeline=[event for event in _safe_json_list(s.get("timeline_json")) if isinstance(event, dict)],
         ))
         
     return PaginatedResponse(
@@ -292,6 +380,59 @@ async def list_sessions(
         offset=offset,
         limit=limit
     )
+
+
+@sessions_router.get("/facets/models", response_model=list[SessionModelFacet])
+async def get_session_model_facets(
+    include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+):
+    """Return normalized model facets for Session Forensics filters."""
+    project = project_manager.get_active_project()
+    if not project:
+        return []
+
+    db = await connection.get_connection()
+    repo = get_session_repository(db)
+    rows = await repo.get_model_facets(project.id, include_subagents=include_subagents)
+
+    items: list[SessionModelFacet] = []
+    for row in rows:
+        raw_model = str(row.get("model") or "")
+        identity = derive_model_identity(raw_model)
+        items.append(
+            SessionModelFacet(
+                raw=raw_model,
+                modelDisplayName=identity["modelDisplayName"],
+                modelProvider=identity["modelProvider"],
+                modelFamily=identity["modelFamily"],
+                modelVersion=identity["modelVersion"],
+                count=int(row.get("count") or 0),
+            )
+        )
+    return items
+
+
+@sessions_router.get("/facets/platforms", response_model=list[SessionPlatformFacet])
+async def get_session_platform_facets(
+    include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+):
+    """Return platform facets for Session Forensics platform filters."""
+    project = project_manager.get_active_project()
+    if not project:
+        return []
+
+    db = await connection.get_connection()
+    repo = get_session_repository(db)
+    rows = await repo.get_platform_facets(project.id, include_subagents=include_subagents)
+
+    return [
+        SessionPlatformFacet(
+            platformType=str(row.get("platform_type") or "Claude Code").strip() or "Claude Code",
+            platformVersion=str(row.get("platform_version") or "").strip(),
+            count=int(row.get("count") or 0),
+        )
+        for row in rows
+    ]
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)
@@ -308,6 +449,11 @@ async def get_session(session_id: str):
         
     # Fetch details
     logs = await repo.get_logs(session_id)
+    badge_data = derive_session_badges(
+        logs,
+        primary_model=str(s.get("model") or ""),
+        session_agent_id=s.get("agent_id"),
+    )
     tools = await repo.get_tool_usage(session_id)
     files = await repo.get_file_updates(session_id)
     artifacts = await repo.get_artifacts(session_id)
@@ -370,6 +516,20 @@ async def get_session(session_id: str):
     session_metadata = classify_session_key_metadata(command_events, mappings)
     model_identity = derive_model_identity(s.get("model"))
     session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+    platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+    platform_version_value = str(s.get("platform_version") or "").strip()
+    raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
+    platform_versions: list[str] = []
+    for value in raw_platform_versions:
+        raw = str(value or "").strip()
+        if raw and raw not in platform_versions:
+            platform_versions.append(raw)
+    if platform_version_value and platform_version_value not in platform_versions:
+        platform_versions.insert(0, platform_version_value)
+    platform_version_transitions = [
+        event for event in _safe_json_list(s.get("platform_version_transitions_json"))
+        if isinstance(event, dict)
+    ]
         
     # Tools
     tool_usage = []
@@ -378,6 +538,7 @@ async def get_session(session_id: str):
             "name": t["tool_name"],
             "count": t["call_count"],
             "successRate": t["success_count"] / t["call_count"] if t["call_count"] > 0 else 0.0,
+            "totalMs": int(t.get("total_ms") or 0),
         })
         
     # Files
@@ -421,6 +582,14 @@ async def get_session(session_id: str):
         modelProvider=model_identity["modelProvider"],
         modelFamily=model_identity["modelFamily"],
         modelVersion=model_identity["modelVersion"],
+        modelsUsed=badge_data["modelsUsed"],
+        platformType=platform_type_value,
+        platformVersion=platform_version_value,
+        platformVersions=platform_versions,
+        platformVersionTransitions=platform_version_transitions,
+        agentsUsed=badge_data["agentsUsed"],
+        skillsUsed=badge_data["skillsUsed"],
+        toolSummary=badge_data["toolSummary"],
         sessionType=s["session_type"] or "",
         parentSessionId=s["parent_session_id"],
         rootSessionId=s.get("root_session_id") or s["id"],
@@ -430,6 +599,9 @@ async def get_session(session_id: str):
         tokensOut=s["tokens_out"],
         totalCost=s["total_cost"],
         startedAt=s["started_at"] or "",
+        endedAt=s.get("ended_at") or "",
+        createdAt=s.get("created_at") or "",
+        updatedAt=s.get("updated_at") or "",
         qualityRating=s["quality_rating"],
         frictionRating=s["friction_rating"],
         gitCommitHash=s["git_commit_hash"],
@@ -439,13 +611,41 @@ async def get_session(session_id: str):
         updatedFiles=file_updates,
         linkedArtifacts=linked_artifacts,
         toolsUsed=tool_usage,
-        impactHistory=[], # We didn't persist impact history separately in DB schema plan? 
-                          # Ah, impacts logic was in parser but not in schema?
-                          # Checking schema... no impact_history table.
-                          # We can store it as JSON in metadata or add a table later.
-                          # For now, return empty list.
+        impactHistory=[event for event in _safe_json_list(s.get("impact_history_json")) if isinstance(event, dict)],
         logs=session_logs,
         sessionMetadata=session_metadata,
+        thinkingLevel=str(s.get("thinking_level") or ""),
+        sessionForensics=_safe_json(s.get("session_forensics_json")),
+        dates=_session_dates_payload(s),
+        timeline=[
+            event for event in _safe_json_list(s.get("timeline_json"))
+            if isinstance(event, dict)
+        ] or [
+            *(
+                [{
+                    "id": "session-started",
+                    "timestamp": s.get("started_at") or "",
+                    "label": "Session Started",
+                    "kind": "started",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "First session event timestamp",
+                }]
+                if s.get("started_at") else []
+            ),
+            *(
+                [{
+                    "id": "session-completed",
+                    "timestamp": s.get("ended_at") or "",
+                    "label": "Session Completed",
+                    "kind": "completed",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "Last session event timestamp",
+                }]
+                if s.get("ended_at") else []
+            ),
+        ],
     )
 
 
@@ -567,11 +767,29 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
     metadata_task_counts = metadata.get("taskCounts")
     if not isinstance(metadata_task_counts, dict):
         metadata_task_counts = {}
+    date_metadata = metadata.get("dates")
+    if not isinstance(date_metadata, dict):
+        date_metadata = {}
+    if not date_metadata.get("createdAt") and row.get("created_at"):
+        date_metadata["createdAt"] = make_date_value(row.get("created_at"), "medium", "repository", "document_record_created")
+    if not date_metadata.get("updatedAt") and row.get("updated_at"):
+        date_metadata["updatedAt"] = make_date_value(row.get("updated_at"), "medium", "repository", "document_record_updated")
+    if not date_metadata.get("lastActivityAt"):
+        last_activity = row.get("last_modified") or row.get("updated_at")
+        if last_activity:
+            date_metadata["lastActivityAt"] = make_date_value(last_activity, "medium", "repository", "document_last_activity")
+    timeline = metadata.get("timeline")
+    if not isinstance(timeline, list):
+        timeline = []
 
     frontmatter_obj = {
         "tags": fm.get("tags") if isinstance(fm.get("tags"), list) else [],
         "linkedFeatures": fm.get("linkedFeatures") if isinstance(fm.get("linkedFeatures"), list) else [],
         "linkedSessions": fm.get("linkedSessions") if isinstance(fm.get("linkedSessions"), list) else [],
+        "lineageFamily": str(fm.get("lineageFamily") or ""),
+        "lineageParent": str(fm.get("lineageParent") or ""),
+        "lineageChildren": fm.get("lineageChildren") if isinstance(fm.get("lineageChildren"), list) else [],
+        "lineageType": str(fm.get("lineageType") or ""),
         "version": fm.get("version"),
         "commits": fm.get("commits") if isinstance(fm.get("commits"), list) else [],
         "prs": fm.get("prs") if isinstance(fm.get("prs"), list) else [],
@@ -594,11 +812,19 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         doc_type=normalized_doc_type,
     )
 
+    completed_at = ""
+    raw_completed = date_metadata.get("completedAt")
+    if isinstance(raw_completed, dict):
+        completed_at = str(raw_completed.get("value") or "")
+
     return PlanDocument(
         id=str(row.get("id") or make_document_id(normalized_canonical)),
         title=str(row.get("title") or ""),
         filePath=file_path,
         status=str(row.get("status") or "active"),
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+        completedAt=completed_at,
         lastModified=str(row.get("last_modified") or ""),
         author=str(row.get("author") or ""),
         docType=normalized_doc_type,
@@ -645,6 +871,8 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
             "sessions": int((link_counts or {}).get("sessions", 0)),
             "documents": int((link_counts or {}).get("documents", 0)),
         },
+        dates=date_metadata,
+        timeline=[event for event in timeline if isinstance(event, dict)],
         content=(str(row.get("content") or "") if include_content else None),
     )
 

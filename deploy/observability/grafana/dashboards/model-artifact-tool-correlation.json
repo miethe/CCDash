@@ -1,0 +1,112 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Model ↔ Artifact Event Volume",
+      "id": 1,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "topk(20, ccdash_model_artifact_events_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} :: {{artifact_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Model ↔ Artifact ↔ Tool Event Volume",
+      "id": 2,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "topk(30, ccdash_model_artifact_tool_events_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} :: {{artifact_type}} :: {{tool}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Input/Output by Model-Artifact",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (model, artifact_type, direction) (ccdash_model_artifact_tokens_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} {{artifact_type}} {{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost by Model-Artifact",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (model, artifact_type) (ccdash_model_artifact_cost_usd_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} {{artifact_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Input/Output by Model-Artifact-Tool",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "topk(40, ccdash_model_artifact_tool_tokens_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} {{artifact_type}} {{tool}} {{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost by Model-Artifact-Tool",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "topk(40, ccdash_model_artifact_tool_cost_usd_total{project=~\"$project\"})",
+          "legendFormat": "{{model}} {{artifact_type}} {{tool}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["ccdash", "models", "artifacts", "tools", "correlation"],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "Project",
+        "datasource": "Prometheus",
+        "query": "label_values(ccdash_session_count, project)",
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": ["$__all"]}
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "CCDash Model, Artifact, and Tool Correlation",
+  "uid": "ccdash-model-artifact-tool-correlation",
+  "version": 1,
+  "weekStart": ""
+}

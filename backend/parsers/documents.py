@@ -27,6 +27,14 @@ from backend.document_linking import (
     is_feature_like_token,
     make_document_id,
     normalize_doc_status,
+    normalize_ref_path,
+)
+from backend.date_utils import (
+    choose_first,
+    choose_latest,
+    file_metadata_dates,
+    make_date_value,
+    normalize_iso_date,
 )
 
 _DONE_STATUSES = {"done", "completed", "complete"}
@@ -51,6 +59,7 @@ _NORMALIZED_STATUS = {
     "blocked": "blocked",
     "archived": "archived",
 }
+_COMPLETION_EQUIVALENT_STATUSES = {"completed", "inferred_complete", "deferred"}
 
 
 def _extract_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
@@ -98,6 +107,34 @@ def _first_string(value: Any) -> str:
     return values[0] if values else ""
 
 
+def _normalize_feature_ref(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    path_slug = feature_slug_from_path(raw)
+    if path_slug:
+        return path_slug
+    normalized_path = normalize_ref_path(raw)
+    if normalized_path and normalized_path.endswith(".md"):
+        stem = Path(normalized_path).stem.lower()
+        if is_feature_like_token(stem):
+            return stem
+    token = raw.lower()
+    return token if is_feature_like_token(token) else ""
+
+
+def _normalize_feature_ref_list(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _normalize_feature_ref(value)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized
+
+
 def _to_int(value: Any) -> int:
     if isinstance(value, bool):
         return 0
@@ -140,6 +177,112 @@ def _normalize_status(status: str) -> str:
         return "pending"
     mapped = _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
     return normalize_doc_status(mapped, default="pending")
+
+
+def _frontmatter_date(fm: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = normalize_iso_date(fm.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _build_document_date_fields(path: Path, fm: dict[str, Any], status_normalized: str) -> tuple[str, str, str, dict[str, Any], list[dict[str, Any]]]:
+    return _build_document_date_fields_with_git(path, fm, status_normalized)
+
+
+def _build_document_date_fields_with_git(
+    path: Path,
+    fm: dict[str, Any],
+    status_normalized: str,
+    canonical_path: str = "",
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
+) -> tuple[str, str, str, dict[str, Any], list[dict[str, Any]]]:
+    fs_dates = file_metadata_dates(path)
+    git_dates = (git_date_index or {}).get(canonical_path, {})
+    dirty = canonical_path in (dirty_paths or set())
+
+    fm_created = _frontmatter_date(fm, "created", "created_at", "date_created")
+    fm_updated = _frontmatter_date(fm, "updated", "updated_at", "last_updated", "modified", "modified_at")
+    fm_completed = _frontmatter_date(fm, "completed", "completed_at", "completion_date", "done_at")
+    git_created = normalize_iso_date(git_dates.get("createdAt"))
+    git_updated = normalize_iso_date(git_dates.get("updatedAt"))
+
+    created = choose_first([
+        make_date_value(fm_created, "high", "frontmatter", "created"),
+        make_date_value(git_created, "high", "git", "first_commit"),
+        make_date_value(fs_dates.get("createdAt", ""), "medium", "filesystem", "file_birthtime"),
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_created else {},
+    ])
+    updated_candidates = [
+        make_date_value(git_updated, "high", "git", "latest_commit"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated"),
+        make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "dirty_worktree")
+        if dirty else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_fallback")
+        if not git_updated and not fm_updated else {},
+        make_date_value(fm_created, "low", "frontmatter", "created_fallback"),
+    ]
+    updated = choose_latest([
+        candidate for candidate in updated_candidates if candidate
+    ])
+    completed = choose_first([
+        make_date_value(fm_completed, "high", "frontmatter", "completed"),
+        make_date_value(fm_updated, "medium", "frontmatter", "updated_completion_fallback")
+        if status_normalized in _COMPLETION_EQUIVALENT_STATUSES else {},
+        make_date_value(fs_dates.get("updatedAt", ""), "low", "filesystem", "mtime_completion_fallback")
+        if status_normalized in _COMPLETION_EQUIVALENT_STATUSES else {},
+    ])
+    last_activity = choose_latest([updated, completed])
+
+    dates: dict[str, Any] = {}
+    if created:
+        dates["createdAt"] = created
+    if updated:
+        dates["updatedAt"] = updated
+    if completed:
+        dates["completedAt"] = completed
+    if last_activity:
+        dates["lastActivityAt"] = last_activity
+
+    timeline: list[dict[str, Any]] = []
+    if created:
+        timeline.append({
+            "id": "doc-created",
+            "timestamp": created["value"],
+            "label": "Document Created",
+            "kind": "created",
+            "confidence": created["confidence"],
+            "source": created["source"],
+            "description": created.get("reason", ""),
+        })
+    if updated:
+        timeline.append({
+            "id": "doc-updated",
+            "timestamp": updated["value"],
+            "label": "Last Updated",
+            "kind": "updated",
+            "confidence": updated["confidence"],
+            "source": updated["source"],
+            "description": updated.get("reason", ""),
+        })
+    if completed:
+        timeline.append({
+            "id": "doc-completed",
+            "timestamp": completed["value"],
+            "label": "Marked Complete",
+            "kind": "completed",
+            "confidence": completed["confidence"],
+            "source": completed["source"],
+            "description": completed.get("reason", ""),
+        })
+
+    created_at = created.get("value", "")
+    updated_at = updated.get("value", "")
+    completed_at = completed.get("value", "")
+    return created_at, updated_at, completed_at, dates, timeline
 
 
 def _normalize_task_counts(fm: dict[str, Any]) -> DocumentTaskCounts:
@@ -217,6 +360,8 @@ def parse_document_file(
     path: Path,
     base_dir: Path,
     project_root: Path | None = None,
+    git_date_index: dict[str, dict[str, str]] | None = None,
+    dirty_paths: set[str] | None = None,
 ) -> PlanDocument | None:
     """Parse a single markdown file into a PlanDocument."""
     try:
@@ -241,9 +386,15 @@ def parse_document_file(
     status_normalized = _normalize_status(status)
     tags = [str(v) for v in _to_string_list(fm.get("tags"))]
 
-    created = fm.get("created", "")
-    updated = fm.get("updated", created)
-    last_modified = str(updated) if updated else ""
+    created_at, updated_at, completed_at, dates, timeline = _build_document_date_fields_with_git(
+        path,
+        fm,
+        status_normalized,
+        canonical_path=canonical_path,
+        git_date_index=git_date_index,
+        dirty_paths=dirty_paths,
+    )
+    last_modified = updated_at or created_at
     audience = fm.get("audience", [])
     if isinstance(audience, list) and audience:
         author = str(audience[0])
@@ -295,21 +446,58 @@ def parse_document_file(
 
     feature_slug_hint = str(fm.get("feature_slug") or fm.get("feature_slug_hint") or "").strip().lower()
     if not feature_slug_hint:
+        feature_slug_hint = feature_slug_from_path(canonical_path)
+    if not feature_slug_hint:
         for candidate in linked_feature_refs:
             token = str(candidate or "").strip().lower()
             if is_feature_like_token(token):
                 feature_slug_hint = token
                 break
-    if not feature_slug_hint:
-        feature_slug_hint = feature_slug_from_path(canonical_path)
     feature_slug_canonical = canonical_slug(feature_slug_hint) if feature_slug_hint else ""
+
+    lineage_family_raw = _first_string(fm.get("lineage_family") or fm.get("feature_family"))
+    lineage_parent_raw = _first_string(
+        fm.get("lineage_parent")
+        or fm.get("parent_feature")
+        or fm.get("parent_feature_slug")
+        or fm.get("extends_feature")
+        or fm.get("derived_from")
+        or fm.get("supersedes")
+    )
+    lineage_children_raw = _to_string_list(
+        fm.get("lineage_children")
+        or fm.get("child_features")
+        or fm.get("superseded_by")
+    )
+    lineage_type = str(
+        _first_string(
+            fm.get("lineage_type")
+            or fm.get("lineage_relationship")
+            or fm.get("feature_lineage_type")
+        )
+    ).strip().lower().replace(" ", "_")
+    lineage_parent = _normalize_feature_ref(lineage_parent_raw)
+    lineage_children = _normalize_feature_ref_list(lineage_children_raw)
+    normalized_lineage_family = _normalize_feature_ref(lineage_family_raw)
+    lineage_family = canonical_slug(
+        normalized_lineage_family or feature_slug_hint or feature_slug_canonical
+    )
+
+    all_linked_feature_refs = sorted(
+        {
+            *linked_feature_refs,
+            *([lineage_parent] if lineage_parent else []),
+            *lineage_children,
+        }
+    )
 
     feature_candidates = sorted(
         {
-            *linked_feature_refs,
+            *all_linked_feature_refs,
             *alias_tokens_from_path(canonical_path),
             *( [feature_slug_hint] if feature_slug_hint else [] ),
             *( [feature_slug_canonical] if feature_slug_canonical else [] ),
+            *( [lineage_family] if lineage_family else [] ),
         }
     )
 
@@ -335,6 +523,9 @@ def parse_document_file(
         title=title,
         filePath=canonical_path,
         status=status,
+        createdAt=created_at,
+        updatedAt=updated_at,
+        completedAt=completed_at,
         lastModified=last_modified,
         author=author,
         docType=doc_type,
@@ -359,8 +550,12 @@ def parse_document_file(
         featureCandidates=feature_candidates,
         frontmatter=DocumentFrontmatter(
             tags=tags,
-            linkedFeatures=linked_feature_refs,
+            linkedFeatures=all_linked_feature_refs,
             linkedSessions=linked_session_refs,
+            lineageFamily=lineage_family,
+            lineageParent=lineage_parent,
+            lineageChildren=lineage_children,
+            lineageType=lineage_type,
             version=version or None,
             commits=all_commit_refs,
             prs=prs,
@@ -373,6 +568,8 @@ def parse_document_file(
             raw=_json_safe({str(k): v for k, v in fm.items()}),
         ),
         metadata=metadata,
+        dates=dates,
+        timeline=timeline,
         content=body[:5000] if body else None,
     )
 

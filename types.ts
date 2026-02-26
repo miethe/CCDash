@@ -1,6 +1,35 @@
 
 export type TaskStatus = 'todo' | 'backlog' | 'in-progress' | 'review' | 'done' | 'deferred';
 
+export type DateConfidence = 'high' | 'medium' | 'low';
+
+export interface DateValue {
+  value: string;
+  confidence: DateConfidence;
+  source: string;
+  reason?: string;
+}
+
+export interface EntityDates {
+  createdAt?: DateValue;
+  updatedAt?: DateValue;
+  completedAt?: DateValue;
+  plannedAt?: DateValue;
+  startedAt?: DateValue;
+  endedAt?: DateValue;
+  lastActivityAt?: DateValue;
+}
+
+export interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  label: string;
+  kind?: string;
+  confidence: DateConfidence;
+  source: string;
+  description?: string;
+}
+
 export interface ProjectTask {
   id: string;
   title: string;
@@ -25,7 +54,8 @@ export interface ToolUsage {
   name: string;
   count: number;
   successRate: number;
-  category: 'search' | 'edit' | 'test' | 'system';
+  category?: 'search' | 'edit' | 'test' | 'system';
+  totalMs?: number;
 }
 
 export type LogType = 'message' | 'tool' | 'subagent' | 'skill' | 'thought' | 'system' | 'command' | 'subagent_start';
@@ -81,6 +111,21 @@ export interface SessionMetadata {
   fields: SessionMetadataField[];
 }
 
+export interface SessionModelInfo {
+  raw: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
+}
+
+export interface SessionPlatformTransition {
+  timestamp: string;
+  fromVersion: string;
+  toVersion: string;
+  sourceLogId?: string;
+}
+
 export interface SessionFileUpdate {
   filePath: string;
   commits: string[];
@@ -118,6 +163,14 @@ export interface AgentSession {
   modelProvider?: string;
   modelFamily?: string;
   modelVersion?: string;
+  modelsUsed?: SessionModelInfo[];
+  platformType?: string;
+  platformVersion?: string;
+  platformVersions?: string[];
+  platformVersionTransitions?: SessionPlatformTransition[];
+  agentsUsed?: string[];
+  skillsUsed?: string[];
+  toolSummary?: string[];
   durationSeconds: number;
   sessionType?: string;
   parentSessionId?: string | null;
@@ -127,6 +180,9 @@ export interface AgentSession {
   tokensOut: number;
   totalCost: number;
   startedAt: string;
+  endedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   qualityRating?: number; // 1-5
   frictionRating?: number; // 1-5
   toolsUsed: ToolUsage[];
@@ -135,11 +191,158 @@ export interface AgentSession {
   updatedFiles?: SessionFileUpdate[];
   linkedArtifacts?: SessionArtifact[];
   sessionMetadata?: SessionMetadata | null;
+  thinkingLevel?: 'low' | 'medium' | 'high' | string;
+  sessionForensics?: Record<string, any>;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitAuthor?: string;
   gitBranch?: string;
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
+}
+
+export interface SessionActivityItem {
+  id: string;
+  kind: 'log' | 'file' | 'artifact' | string;
+  timestamp: string;
+  sourceLogId?: string;
+  sessionId: string;
+  threadName?: string;
+  label: string;
+  detail?: string;
+  action?: 'read' | 'create' | 'update' | 'delete' | string;
+  filePath?: string;
+  fileType?: string;
+  artifactType?: string;
+  artifactUrl?: string;
+  linkedSessionId?: string;
+  localPath?: string;
+  documentId?: string;
+  githubUrl?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface SessionFileAggregateRow {
+  key: string;
+  fileName: string;
+  filePath: string;
+  actions: Array<'read' | 'create' | 'update' | 'delete' | string>;
+  touchCount: number;
+  uniqueSessions: number;
+  uniqueAgents: number;
+  lastTouchedAt: string;
+  netDiff: number;
+  additions: number;
+  deletions: number;
+  sourceLogIds: string[];
+  localPath: string;
+  documentId?: string;
+  fileType?: string;
+}
+
+export interface CodebaseFeatureInvolvement {
+  featureId: string;
+  featureName: string;
+  featureStatus?: string;
+  featureCategory?: string;
+  score: number;
+  confidence: number;
+  involvementLevel: 'primary' | 'supporting' | 'peripheral';
+  sessionCount: number;
+  actions: string[];
+}
+
+export interface CodebaseTreeNode {
+  path: string;
+  name: string;
+  nodeType: 'folder' | 'file';
+  depth: number;
+  parentPath: string;
+  touchCount: number;
+  isTouched: boolean;
+  sessionCount: number;
+  featureCount: number;
+  lastTouchedAt: string;
+  actions: string[];
+  hasChildren: boolean;
+  sizeBytes?: number;
+  exists?: boolean;
+  children?: CodebaseTreeNode[];
+}
+
+export interface CodebaseFileSummary {
+  filePath: string;
+  fileName: string;
+  directory: string;
+  exists: boolean;
+  sizeBytes: number;
+  lastModified: string;
+  actions: string[];
+  touchCount: number;
+  sessionCount: number;
+  agentCount: number;
+  lastTouchedAt: string;
+  additions: number;
+  deletions: number;
+  netDiff: number;
+  actionCounts: Record<string, number>;
+  featureCount: number;
+  features: CodebaseFeatureInvolvement[];
+  sourceLogIds: string[];
+}
+
+export interface CodebaseFileSessionSummary {
+  sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  totalCost: number;
+  touchCount: number;
+  actions: string[];
+  lastTouchedAt: string;
+  agentNames: string[];
+}
+
+export interface CodebaseLinkedDocument {
+  documentId: string;
+  title: string;
+  filePath: string;
+  docType?: string;
+  category?: string;
+  status?: string;
+  relation: 'source' | 'reference' | string;
+}
+
+export interface CodebaseFileActivityEntry {
+  id: string;
+  kind: string;
+  timestamp: string;
+  action?: string;
+  filePath?: string;
+  fileType?: string;
+  sessionId?: string;
+  rootSessionId?: string;
+  sourceLogId?: string;
+  sourceToolName?: string;
+  additions?: number;
+  deletions?: number;
+  agentName?: string;
+  logType?: string;
+  logContent?: string;
+  linkedSessionId?: string;
+  artifactCount?: number;
+  artifactIds?: string[];
+}
+
+export interface CodebaseFileDetail extends CodebaseFileSummary {
+  absolutePath: string;
+  sessions: CodebaseFileSessionSummary[];
+  documents: CodebaseLinkedDocument[];
+  activity: CodebaseFileActivityEntry[];
 }
 
 export interface PlanDocument {
@@ -149,6 +352,9 @@ export interface PlanDocument {
   canonicalPath?: string;
   status: string;
   statusNormalized?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
   lastModified: string;
   author: string;
   content?: string; // Raw markdown content
@@ -171,6 +377,10 @@ export interface PlanDocument {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
     linkedSessions?: string[]; // IDs like S-8821
+    lineageFamily?: string;
+    lineageParent?: string;
+    lineageChildren?: string[];
+    lineageType?: string;
     relatedFiles?: string[];
     version?: string;
     commits?: string[];
@@ -209,6 +419,8 @@ export interface PlanDocument {
     sessions: number;
     documents: number;
   };
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface AnalyticsMetric {
@@ -223,8 +435,258 @@ export interface AnalyticsTrendPoint {
   metadata?: any;
 }
 
+export interface AnalyticsOverview {
+  kpis: {
+    sessionCost: number;
+    sessionTokens: number;
+    sessionCount: number;
+    sessionDurationAvg: number;
+    taskVelocity: number;
+    taskCompletionPct: number;
+    featureProgress: number;
+    toolCallCount: number;
+    toolSuccessRate: number;
+  };
+  topModels: Array<{ name: string; usage: number }>;
+  generatedAt: string;
+  range: {
+    start: string;
+    end: string;
+  };
+}
+
+export interface AnalyticsBreakdownItem {
+  name: string;
+  count: number;
+  tokens?: number;
+  cost?: number;
+}
+
+export interface AnalyticsCorrelationItem {
+  sessionId: string;
+  featureId: string;
+  featureName: string;
+  confidence: number;
+  linkStrategy?: string;
+  commitHash: string;
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+export interface AnalyticsArtifactTypePoint {
+  artifactType: string;
+  count: number;
+}
+
+export interface AnalyticsArtifactTypeBreakdownItem {
+  artifactType: string;
+  count: number;
+  sessions: number;
+  features: number;
+  models: string[];
+  tools: string[];
+  sources: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactSourceBreakdownItem {
+  source: string;
+  count: number;
+  sessions: number;
+  artifactTypes: string[];
+}
+
+export interface AnalyticsArtifactToolBreakdownItem {
+  toolName: string;
+  count: number;
+  sessions: number;
+  artifactTypes: string[];
+  models: string[];
+}
+
+export interface AnalyticsArtifactSessionItem {
+  sessionId: string;
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  status: string;
+  startedAt: string;
+  artifactCount: number;
+  artifactTypes: AnalyticsArtifactTypePoint[];
+  toolNames: string[];
+  sources: string[];
+  featureIds: string[];
+  featureNames: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactFeatureItem {
+  featureId: string;
+  featureName: string;
+  artifactCount: number;
+  sessions: number;
+  models: string[];
+  tools: string[];
+  artifactTypes: AnalyticsArtifactTypePoint[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsModelArtifactItem {
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  artifactType: string;
+  count: number;
+  sessions: number;
+  tools: string[];
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactToolRelationItem {
+  artifactType: string;
+  toolName: string;
+  count: number;
+  sessions: number;
+  models: string[];
+}
+
+export interface AnalyticsModelArtifactToolItem {
+  model: string;
+  modelRaw?: string;
+  modelFamily?: string;
+  artifactType: string;
+  toolName: string;
+  count: number;
+  sessions: number;
+  tokenInput: number;
+  tokenOutput: number;
+  totalTokens: number;
+  totalCost: number;
+}
+
+export interface AnalyticsArtifactsResponse {
+  generatedAt: string;
+  range: {
+    start: string;
+    end: string;
+  };
+  totals: {
+    artifactCount: number;
+    artifactTypes: number;
+    sessions: number;
+    features: number;
+    models: number;
+    modelFamilies: number;
+    tools: number;
+    sources: number;
+    agents: number;
+    skills: number;
+    commands: number;
+    kindTotals: {
+      agents: number;
+      skills: number;
+      commands: number;
+      manifests: number;
+      requests: number;
+    };
+  };
+  byType: AnalyticsArtifactTypeBreakdownItem[];
+  bySource: AnalyticsArtifactSourceBreakdownItem[];
+  byTool: AnalyticsArtifactToolBreakdownItem[];
+  bySession: AnalyticsArtifactSessionItem[];
+  byFeature: AnalyticsArtifactFeatureItem[];
+  modelArtifact: AnalyticsModelArtifactItem[];
+  modelFamilies: Array<{
+    modelFamily: string;
+    artifactCount: number;
+    sessions: number;
+    models: string[];
+    artifactTypes: string[];
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  artifactTool: AnalyticsArtifactToolRelationItem[];
+  modelArtifactTool: AnalyticsModelArtifactToolItem[];
+  commandModel: Array<{
+    command: string;
+    model: string;
+    modelRaw?: string;
+    modelFamily?: string;
+    count: number;
+    sessions: number;
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  agentModel: Array<{
+    agent: string;
+    model: string;
+    modelRaw?: string;
+    modelFamily?: string;
+    count: number;
+    sessions: number;
+    tokenInput: number;
+    tokenOutput: number;
+    totalTokens: number;
+    totalCost: number;
+  }>;
+  tokenUsage: {
+    byArtifactType: Array<{
+      artifactType: string;
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+    byModel: Array<{
+      model: string;
+      modelRaw?: string;
+      modelFamily?: string;
+      artifactCount: number;
+      sessions: number;
+      artifactTypes: string[];
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+    byModelArtifact: AnalyticsModelArtifactItem[];
+    byModelFamily: Array<{
+      modelFamily: string;
+      artifactCount: number;
+      sessions: number;
+      models: string[];
+      artifactTypes: string[];
+      tokenInput: number;
+      tokenOutput: number;
+      totalTokens: number;
+      totalCost: number;
+    }>;
+  };
+  detailLimit: number;
+}
+
 // Alert System
-export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold';
+export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold' | string;
 export type AlertOperator = '>' | '<';
 
 export interface AlertConfig {
@@ -268,6 +730,8 @@ export interface LinkedDocument {
   frontmatterKeys?: string[];
   relatedRefs?: string[];
   prdRef?: string;
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface FeaturePhase {
@@ -292,9 +756,14 @@ export interface Feature {
   category: string;
   tags: string[];
   updatedAt: string;
+  plannedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
   linkedDocs: LinkedDocument[];
   phases: FeaturePhase[];
   relatedFeatures: string[];
+  dates?: EntityDates;
+  timeline?: TimelineEvent[];
 }
 
 export interface PaginatedResponse<T> {
