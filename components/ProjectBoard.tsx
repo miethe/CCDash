@@ -454,20 +454,83 @@ const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): Linke
 const getStatusStyle = getFeatureStatusStyle;
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 
+const TASK_STATUS_PRIORITY: Record<string, number> = {
+  done: 5,
+  deferred: 4,
+  review: 3,
+  'in-progress': 2,
+  backlog: 1,
+  todo: 1,
+};
+
+const taskUpdatedAtEpoch = (task: ProjectTask): number => {
+  const parsed = Date.parse(task.updatedAt || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const taskStatusPriority = (task: ProjectTask): number =>
+  TASK_STATUS_PRIORITY[String(task.status || '').toLowerCase()] || 0;
+
+const taskSignalScore = (task: ProjectTask): number => {
+  let score = 0;
+  if ((task.sessionId || '').trim()) score += 2;
+  if ((task.commitHash || '').trim()) score += 2;
+  const sourcePath = normalizePath(task.sourceFile || '').toLowerCase();
+  if (sourcePath.includes('/progress/')) score += 1;
+  if (sourcePath.includes('/project_plans/')) score += 0.5;
+  return score;
+};
+
+const pickFresherTask = (existing: ProjectTask, candidate: ProjectTask): ProjectTask => {
+  const existingUpdated = taskUpdatedAtEpoch(existing);
+  const candidateUpdated = taskUpdatedAtEpoch(candidate);
+  if (candidateUpdated !== existingUpdated) return candidateUpdated > existingUpdated ? candidate : existing;
+
+  const existingStatus = taskStatusPriority(existing);
+  const candidateStatus = taskStatusPriority(candidate);
+  if (candidateStatus !== existingStatus) return candidateStatus > existingStatus ? candidate : existing;
+
+  const existingSignals = taskSignalScore(existing);
+  const candidateSignals = taskSignalScore(candidate);
+  if (candidateSignals !== existingSignals) return candidateSignals > existingSignals ? candidate : existing;
+
+  return existing;
+};
+
+const getTaskIdentity = (task: ProjectTask): string => {
+  const taskId = String(task.id || '').trim().toLowerCase();
+  if (taskId) return taskId;
+  return String(task.title || '').trim().toLowerCase();
+};
+
 const dedupePhaseTasks = (tasks: ProjectTask[]): ProjectTask[] => {
-  const seen = new Set<string>();
-  const deduped: ProjectTask[] = [];
+  const byIdentity = new Map<string, ProjectTask>();
   tasks.forEach(task => {
-    const key = [
-      String(task.id || '').trim().toLowerCase(),
-      normalizePath(String(task.sourceFile || '')),
-      String(task.title || '').trim().toLowerCase(),
-    ].join('::');
-    if (seen.has(key)) return;
-    seen.add(key);
-    deduped.push(task);
+    const identity = getTaskIdentity(task);
+    if (!identity) return;
+
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      byIdentity.set(identity, task);
+      return;
+    }
+
+    const preferred = pickFresherTask(existing, task);
+    const other = preferred === existing ? task : existing;
+    byIdentity.set(identity, {
+      ...other,
+      ...preferred,
+      title: preferred.title || other.title,
+      description: preferred.description || other.description,
+      sourceFile: preferred.sourceFile || other.sourceFile,
+      sessionId: preferred.sessionId || other.sessionId,
+      commitHash: preferred.commitHash || other.commitHash,
+      relatedFiles: (preferred.relatedFiles && preferred.relatedFiles.length > 0) ? preferred.relatedFiles : other.relatedFiles,
+      updatedAt: preferred.updatedAt || other.updatedAt,
+      status: preferred.status || other.status,
+    });
   });
-  return deduped;
+  return Array.from(byIdentity.values());
 };
 
 const normalizeFeatureForModal = (feature: Feature): Feature => {
