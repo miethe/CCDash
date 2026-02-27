@@ -7,6 +7,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { SessionArtifactsView } from './SessionArtifactsView';
 import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 
@@ -4140,7 +4141,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                     />
                 )}
                 {activeTab === 'artifacts' && (
-                    <ArtifactsView
+                    <SessionArtifactsView
                         session={session}
                         threadSessions={threadSessions}
                         subagentNameBySessionId={subagentNameBySessionId}

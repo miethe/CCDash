@@ -22,6 +22,7 @@ import {
 
 import { useData } from '../contexts/DataContext';
 import {
+  AgentSession,
   Feature,
   FeatureExecutionContext,
   FeatureExecutionSessionLink,
@@ -29,10 +30,10 @@ import {
   LinkedDocument,
   PlanDocument,
   ProjectTask,
-  SessionModelInfo,
 } from '../types';
 import { getFeatureExecutionContext, trackExecutionEvent } from '../services/execution';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
+import { SessionArtifactsView } from './SessionArtifactsView';
 import { DocumentModal } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
 
@@ -444,7 +445,7 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { features, refreshFeatures, documents } = useData();
+  const { features, refreshFeatures, documents, getSessionById } = useData();
 
   const [selectedFeatureId, setSelectedFeatureId] = useState<string>(searchParams.get('feature') || '');
   const [query, setQuery] = useState('');
@@ -462,7 +463,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   );
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
-  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [artifactSourceSessions, setArtifactSourceSessions] = useState<AgentSession[]>([]);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
 
   useEffect(() => {
@@ -522,7 +524,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
     setShowSecondarySessions(false);
     setExpandedSubthreadsBySessionId(new Set());
-    setExpandedAgent(null);
+    setArtifactSourceSessions([]);
 
     void trackExecutionEvent({
       eventType: 'execution_workbench_opened',
@@ -932,58 +934,140 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     [secondarySessionRoots],
   );
 
-  const agentBreakdown = useMemo(() => {
-    const byAgent = new Map<string, {
-      name: string;
-      sessions: FeatureExecutionSessionLink[];
-      modelNames: Set<string>;
-      skills: Set<string>;
-      totalCost: number;
-    }>();
+  useEffect(() => {
+    if (activeTab !== 'artifacts') return;
 
-    executionSessions.forEach(session => {
-      const rawAgents = Array.isArray(session.agentsUsed) ? session.agentsUsed.filter(Boolean) : [];
-      const fallbackAgent = session.agentId ? [session.agentId] : [];
-      const agents = rawAgents.length > 0 ? rawAgents : fallbackAgent;
-      if (agents.length === 0) return;
+    const primarySessionIds = Array.from(new Set(executionSessions.map(session => String(session.sessionId || '').trim()).filter(Boolean)));
+    if (primarySessionIds.length === 0) {
+      setArtifactSourceSessions([]);
+      setArtifactsLoading(false);
+      return;
+    }
 
-      agents.forEach(agent => {
-        const key = agent.trim().toLowerCase();
-        if (!key) return;
-        const existing = byAgent.get(key) || {
-          name: agent,
-          sessions: [],
-          modelNames: new Set<string>(),
-          skills: new Set<string>(),
-          totalCost: 0,
-        };
-        if (!existing.sessions.some(item => item.sessionId === session.sessionId)) {
-          existing.sessions.push(session);
-        }
-        if (Array.isArray(session.modelsUsed) && session.modelsUsed.length > 0) {
-          session.modelsUsed.forEach((model: SessionModelInfo) => {
-            const token = model.modelDisplayName || model.raw;
-            if (token) existing.modelNames.add(token);
-          });
-        } else {
-          const fallbackModel = session.modelDisplayName || session.model || '';
-          if (fallbackModel) existing.modelNames.add(fallbackModel);
-        }
-        (session.skillsUsed || []).forEach(skill => {
-          if (skill) existing.skills.add(skill);
-        });
-        existing.totalCost += Number(session.totalCost || 0);
-        byAgent.set(key, existing);
+    let cancelled = false;
+    setArtifactsLoading(true);
+
+    const loadSessions = async (sessionIds: string[]): Promise<Map<string, AgentSession>> => {
+      const sessionMap = new Map<string, AgentSession>();
+      const rows = await Promise.all(
+        sessionIds.map(async sessionId => {
+          try {
+            return await getSessionById(sessionId);
+          } catch {
+            return null;
+          }
+        }),
+      );
+      rows.forEach(row => {
+        if (row) sessionMap.set(row.id, row);
       });
+      return sessionMap;
+    };
+
+    void (async () => {
+      const sessionMap = await loadSessions(primarySessionIds);
+      const linkedThreadIds = new Set<string>();
+
+      sessionMap.forEach(session => {
+        (session.logs || []).forEach(log => {
+          const linkedId = String(log.linkedSessionId || '').trim();
+          if (linkedId) linkedThreadIds.add(linkedId);
+        });
+      });
+
+      const missingThreadIds = Array.from(linkedThreadIds).filter(sessionId => !sessionMap.has(sessionId));
+      if (missingThreadIds.length > 0) {
+        const threadMap = await loadSessions(missingThreadIds);
+        threadMap.forEach((session, sessionId) => sessionMap.set(sessionId, session));
+      }
+
+      if (cancelled) return;
+      setArtifactSourceSessions(Array.from(sessionMap.values()));
+      setArtifactsLoading(false);
+    })().catch(() => {
+      if (cancelled) return;
+      setArtifactSourceSessions([]);
+      setArtifactsLoading(false);
     });
 
-    return Array.from(byAgent.values())
-      .map(row => ({
-        ...row,
-        sessions: [...row.sessions].sort(compareSessionsByConfidenceAndTime),
-      }))
-      .sort((a, b) => b.sessions.length - a.sessions.length || b.totalCost - a.totalCost || a.name.localeCompare(b.name));
-  }, [executionSessions]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, executionSessions, getSessionById]);
+
+  const mergedArtifactSession = useMemo<AgentSession | null>(() => {
+    const featureId = context?.feature.id || '';
+    if (!featureId || artifactSourceSessions.length === 0) return null;
+
+    const mergedLogs = artifactSourceSessions.flatMap(session =>
+      (session.logs || []).map(log => ({
+        ...log,
+        id: `${session.id}:${log.id}`,
+      })),
+    );
+
+    const mergedArtifacts = artifactSourceSessions.flatMap(session =>
+      (session.linkedArtifacts || []).map(artifact => ({
+        ...artifact,
+        sourceLogId: artifact.sourceLogId ? `${session.id}:${artifact.sourceLogId}` : artifact.sourceLogId,
+      })),
+    );
+
+    const startedAtEpochs = artifactSourceSessions
+      .map(session => Date.parse(session.startedAt || ''))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const endedAtEpochs = artifactSourceSessions
+      .map(session => Date.parse(session.endedAt || ''))
+      .filter(value => Number.isFinite(value) && value > 0);
+
+    const earliestStartedAt = startedAtEpochs.length > 0 ? new Date(Math.min(...startedAtEpochs)).toISOString() : '';
+    const latestEndedAt = endedAtEpochs.length > 0 ? new Date(Math.max(...endedAtEpochs)).toISOString() : '';
+    const latestUpdatedAt = artifactSourceSessions
+      .map(session => session.updatedAt || '')
+      .filter(Boolean)
+      .sort((a, b) => Date.parse(b) - Date.parse(a))[0] || '';
+    const mergedAgents = Array.from(
+      new Set(artifactSourceSessions.flatMap(session => session.agentsUsed || []).filter(Boolean)),
+    );
+    const mergedSkills = Array.from(
+      new Set(artifactSourceSessions.flatMap(session => session.skillsUsed || []).filter(Boolean)),
+    );
+
+    return {
+      id: `feature-artifacts:${featureId}`,
+      taskId: featureId,
+      status: 'completed',
+      model: 'mixed',
+      modelDisplayName: 'Mixed Models',
+      durationSeconds: artifactSourceSessions.reduce((sum, session) => sum + Number(session.durationSeconds || 0), 0),
+      tokensIn: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensIn || 0), 0),
+      tokensOut: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensOut || 0), 0),
+      totalCost: artifactSourceSessions.reduce((sum, session) => sum + Number(session.totalCost || 0), 0),
+      startedAt: earliestStartedAt,
+      endedAt: latestEndedAt || undefined,
+      updatedAt: latestUpdatedAt || undefined,
+      toolsUsed: [],
+      logs: mergedLogs,
+      linkedArtifacts: mergedArtifacts,
+      sessionType: 'feature-artifacts',
+      agentsUsed: mergedAgents,
+      skillsUsed: mergedSkills,
+    };
+  }, [artifactSourceSessions, context?.feature.id]);
+
+  const artifactThreadSessions = useMemo(
+    () => artifactSourceSessions.filter(session => Boolean(session.parentSessionId) || (session.sessionType || '').toLowerCase() === 'subagent'),
+    [artifactSourceSessions],
+  );
+
+  const artifactSubagentNameBySessionId = useMemo(() => {
+    const names = new Map<string, string>();
+    artifactSourceSessions.forEach(session => {
+      const label = (session.agentId ? `agent-${session.agentId}` : '') || session.sessionType || '';
+      if (label) names.set(session.id, label);
+    });
+    return names;
+  }, [artifactSourceSessions]);
 
   const renderSessionCard = useCallback((session: FeatureExecutionSessionLink, threadToggle?: {
     expanded: boolean;
@@ -1508,7 +1592,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         </div>
 
                         {isExpanded && (
-                          <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/60 space-y-1.5">
+                          <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/60 space-y-1.5 overflow-x-hidden">
                             {phaseTasks.length === 0 && (
                               <p className="text-xs text-slate-500 italic">No task details currently available for this phase.</p>
                             )}
@@ -1516,33 +1600,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                               const taskLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                               const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
                               return (
-                                <div key={`${phaseKey}-${task.id}`} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-900/70">
+                                <div key={`${phaseKey}-${task.id}`} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-900/70 min-w-0">
                                   <button
                                     onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                    className="font-mono text-[10px] text-slate-500 w-16 text-left hover:text-indigo-300"
+                                    className="font-mono text-[10px] text-slate-500 w-16 shrink-0 text-left hover:text-indigo-300"
                                   >
                                     {task.id}
                                   </button>
                                   <button
                                     onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                    className="text-sm text-slate-300 flex-1 truncate text-left hover:text-indigo-300"
+                                    className="text-sm text-slate-300 flex-1 min-w-0 truncate text-left hover:text-indigo-300"
                                     title={task.title}
                                   >
                                     {task.title}
                                   </button>
-                                  <span className={`text-[10px] uppercase font-bold ${statusStyle.color}`}>
+                                  <span className={`text-[10px] uppercase font-bold shrink-0 ${statusStyle.color}`}>
                                     {statusStyle.label}
                                   </span>
                                   {taskLinks.length > 0 && (
-                                    <div className="flex items-center gap-1 flex-wrap">
+                                    <div className="flex items-center gap-1 flex-wrap min-w-0 max-w-full">
                                       {taskLinks.slice(0, 3).map(link => (
                                         <button
                                           key={`${task.id}-session-${link.sessionId}-${link.source}`}
                                           onClick={() => openSession(link.sessionId)}
-                                          className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${link.isSubthread
+                                          className={`text-[10px] px-1.5 py-0.5 rounded border font-mono truncate max-w-[150px] ${link.isSubthread
                                             ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                                             : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
                                             }`}
+                                          title={link.sessionId}
                                         >
                                           {link.sessionId}
                                         </button>
@@ -1658,68 +1743,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
               {activeTab === 'artifacts' && (
                 <div className="mt-4 space-y-3">
-                  {agentBreakdown.length === 0 && (
-                    <div className="text-sm text-slate-400">No agent linkage was detected across linked sessions.</div>
+                  {artifactsLoading && (
+                    <div className="text-xs text-slate-400 flex items-center gap-2">
+                      <Loader2 size={13} className="animate-spin" />
+                      Loading linked session artifacts...
+                    </div>
                   )}
-                  {agentBreakdown.map(agent => {
-                    const open = expandedAgent === agent.name;
-                    return (
-                      <div key={agent.name} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                        <button
-                          onClick={() => setExpandedAgent(open ? null : agent.name)}
-                          className="w-full p-4 flex items-center justify-between hover:bg-slate-800/30 transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-sm font-bold text-indigo-400">
-                              {agent.name[0]}
-                            </div>
-                            <div className="text-left">
-                              <div className="font-bold text-slate-200">{agent.name}</div>
-                              <div className="text-xs text-slate-500 font-mono">
-                                {agent.sessions.length} sessions · ${agent.totalCost.toFixed(2)} cost
-                              </div>
-                            </div>
-                          </div>
-                          {open ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
-                        </button>
-
-                        {open && (
-                          <div className="p-4 border-t border-slate-800 space-y-3">
-                            <div className="flex flex-wrap gap-1">
-                              {[...agent.modelNames].map(model => (
-                                <span key={`${agent.name}-model-${model}`} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">
-                                  {model}
-                                </span>
-                              ))}
-                            </div>
-                            {[...agent.skills].length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {[...agent.skills].map(skill => (
-                                  <span key={`${agent.name}-skill-${skill}`} className="text-[10px] px-1.5 py-0.5 rounded border border-purple-500/30 bg-purple-500/10 text-purple-300">
-                                    {skill}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <div className="space-y-2">
-                              {agent.sessions.map(session => (
-                                <button
-                                  key={`${agent.name}-${session.sessionId}`}
-                                  onClick={() => openSession(session.sessionId)}
-                                  className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
-                                >
-                                  <div className="text-[11px] font-mono text-indigo-300 truncate">{session.sessionId}</div>
-                                  <div className="text-[10px] text-slate-500 mt-1 truncate">
-                                    {session.title || session.workflowType || session.sessionType || 'linked session'}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {!artifactsLoading && mergedArtifactSession && (
+                    <SessionArtifactsView
+                      session={mergedArtifactSession}
+                      threadSessions={artifactThreadSessions}
+                      subagentNameBySessionId={artifactSubagentNameBySessionId}
+                      onOpenThread={openSession}
+                    />
+                  )}
+                  {!artifactsLoading && !mergedArtifactSession && (
+                    <div className="text-sm text-slate-400">No linked artifacts found for this feature yet.</div>
+                  )}
                 </div>
               )}
 
