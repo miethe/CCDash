@@ -972,8 +972,20 @@ async def get_feature_linked_sessions(feature_id: str):
         metadata_hashes = metadata.get("commitHashes", [])
         if not isinstance(metadata_hashes, list):
             metadata_hashes = []
+        commit_correlation_rows = metadata.get("commitCorrelations", [])
+        if not isinstance(commit_correlation_rows, list):
+            commit_correlation_rows = []
+        commit_correlation_hashes = []
+        for row in commit_correlation_rows:
+            if not isinstance(row, dict):
+                continue
+            commit_hash = str(row.get("commitHash") or "").strip()
+            if commit_hash:
+                commit_correlation_hashes.append(commit_hash)
         row_hashes = [str(v) for v in _safe_json_list(session_row.get("git_commit_hashes_json")) if isinstance(v, str)]
-        merged_hashes = sorted(set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes))
+        merged_hashes = sorted(
+            set([str(v) for v in metadata_hashes if isinstance(v, str)]).union(row_hashes).union(commit_correlation_hashes)
+        )
 
         model_identity = derive_model_identity(session_row.get("model"))
         session_type = str(session_row.get("session_type") or "")
@@ -1100,11 +1112,39 @@ async def get_feature_linked_sessions(feature_id: str):
             phase_candidates.extend(str(value) for value in session_metadata.get("relatedPhases", []) if str(value).strip())
 
         normalized_related_phases = _normalize_feature_phase_values(phase_candidates, available_phase_tokens)
+        normalized_commit_correlations: list[dict[str, Any]] = []
+        for row in commit_correlation_rows[:60]:
+            if not isinstance(row, dict):
+                continue
+            normalized_commit_correlations.append(
+                {
+                    "commitHash": str(row.get("commitHash") or ""),
+                    "windowStart": str(row.get("windowStart") or ""),
+                    "windowEnd": str(row.get("windowEnd") or ""),
+                    "eventCount": _safe_int(row.get("eventCount"), 0),
+                    "toolCallCount": _safe_int(row.get("toolCallCount"), 0),
+                    "commandCount": _safe_int(row.get("commandCount"), 0),
+                    "artifactCount": _safe_int(row.get("artifactCount"), 0),
+                    "tokenInput": _safe_int(row.get("tokenInput"), 0),
+                    "tokenOutput": _safe_int(row.get("tokenOutput"), 0),
+                    "fileCount": _safe_int(row.get("fileCount"), 0),
+                    "additions": _safe_int(row.get("additions"), 0),
+                    "deletions": _safe_int(row.get("deletions"), 0),
+                    "costUsd": float(row.get("costUsd") or 0.0),
+                    "featureIds": [str(v) for v in row.get("featureIds", []) if isinstance(v, str)],
+                    "phases": [str(v) for v in row.get("phases", []) if isinstance(v, str)],
+                    "taskIds": [str(v) for v in row.get("taskIds", []) if isinstance(v, str)],
+                    "provisional": bool(row.get("provisional", False)),
+                }
+            )
         if session_metadata:
             session_metadata = {
                 **session_metadata,
                 "relatedPhases": normalized_related_phases,
             }
+        if normalized_commit_correlations:
+            session_metadata = dict(session_metadata or {})
+            session_metadata["commitCorrelations"] = normalized_commit_correlations
 
         related_tasks = sorted(
             related_tasks_by_key.values(),

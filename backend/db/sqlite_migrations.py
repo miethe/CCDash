@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -384,7 +384,44 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_feature
 CREATE INDEX IF NOT EXISTS idx_telemetry_task
     ON telemetry_events(project_id, task_id, occurred_at);
 
--- ── 10. App Metadata + Alert Configs ───────────────────────────────
+-- ── 10. Commit Correlations ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS commit_correlations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    root_session_id TEXT DEFAULT '',
+    commit_hash     TEXT NOT NULL,
+    feature_id      TEXT DEFAULT '',
+    phase           TEXT DEFAULT '',
+    task_id         TEXT DEFAULT '',
+    window_start    TEXT NOT NULL,
+    window_end      TEXT NOT NULL,
+    event_count     INTEGER DEFAULT 0,
+    tool_call_count INTEGER DEFAULT 0,
+    command_count   INTEGER DEFAULT 0,
+    artifact_count  INTEGER DEFAULT 0,
+    token_input     INTEGER DEFAULT 0,
+    token_output    INTEGER DEFAULT 0,
+    file_count      INTEGER DEFAULT 0,
+    additions       INTEGER DEFAULT 0,
+    deletions       INTEGER DEFAULT 0,
+    cost_usd        REAL DEFAULT 0.0,
+    source          TEXT DEFAULT 'sync',
+    source_key      TEXT NOT NULL,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commit_corr_source_key
+    ON commit_correlations(project_id, source_key);
+CREATE INDEX IF NOT EXISTS idx_commit_corr_project_commit
+    ON commit_correlations(project_id, commit_hash, window_end);
+CREATE INDEX IF NOT EXISTS idx_commit_corr_session
+    ON commit_correlations(project_id, session_id, window_end);
+CREATE INDEX IF NOT EXISTS idx_commit_corr_feature
+    ON commit_correlations(project_id, feature_id, window_end);
+
+-- ── 11. App Metadata + Alert Configs ───────────────────────────────
 CREATE TABLE IF NOT EXISTS app_metadata (
     entity_type  TEXT NOT NULL,
     entity_id    TEXT NOT NULL,

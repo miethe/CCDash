@@ -59,6 +59,20 @@ class _FakeLinkRepo:
                         "signals": [{"type": "command_args_path"}],
                         "commands": ["/dev:execute-phase"],
                         "title": "Execute phase",
+                        "commitCorrelations": [
+                            {
+                                "commitHash": "abc1234",
+                                "windowStart": "2026-02-17T00:00:00Z",
+                                "windowEnd": "2026-02-17T00:05:00Z",
+                                "tokenInput": 10,
+                                "tokenOutput": 5,
+                                "fileCount": 2,
+                                "additions": 9,
+                                "deletions": 1,
+                                "phases": ["1"],
+                                "taskIds": ["TASK-1.1"],
+                            }
+                        ],
                     }
                 ),
             }
@@ -143,6 +157,7 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
         assert metadata is not None
         self.assertEqual(metadata.get("sessionTypeLabel"), "Phased Execution")
         self.assertEqual(metadata.get("relatedPhases"), ["1"])
+        self.assertEqual(len(metadata.get("commitCorrelations", [])), 1)
         self.assertEqual(response[0].title, "Phased Execution - Phase 1")
 
     async def test_linked_sessions_include_inherited_subthreads_for_linked_main(self) -> None:
