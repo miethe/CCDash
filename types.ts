@@ -811,14 +811,60 @@ export interface FeatureExecutionAnalyticsSummary {
 export interface FeatureExecutionSessionLink {
   sessionId: string;
   title?: string;
+  titleSource?: string;
+  titleConfidence?: number;
   confidence: number;
+  reasons?: string[];
   commands: string[];
+  commitHashes?: string[];
   startedAt?: string;
+  endedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   status?: string;
+  model?: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  modelFamily?: string;
+  modelVersion?: string;
+  modelsUsed?: SessionModelInfo[];
+  agentsUsed?: string[];
+  skillsUsed?: string[];
+  toolSummary?: string[];
   totalCost?: number;
+  durationSeconds?: number;
+  gitCommitHash?: string;
+  gitCommitHashes?: string[];
   sessionType?: string;
+  parentSessionId?: string | null;
+  rootSessionId?: string;
+  agentId?: string | null;
+  isSubthread?: boolean;
+  linkStrategy?: string;
   workflowType?: string;
   isPrimaryLink?: boolean;
+  relatedPhases?: string[];
+  relatedTasks?: Array<{
+    taskId: string;
+    taskTitle?: string;
+    phaseId?: string;
+    phase?: string;
+    matchedBy?: string;
+    linkedSessionId?: string;
+  }>;
+  sessionMetadata?: {
+    sessionTypeId?: string;
+    sessionTypeLabel?: string;
+    mappingId?: string;
+    relatedCommand?: string;
+    relatedPhases?: string[];
+    relatedFilePath?: string;
+    fields?: Array<{
+      id: string;
+      label: string;
+      value: string;
+    }>;
+  } | null;
 }
 
 export interface FeatureExecutionContext {

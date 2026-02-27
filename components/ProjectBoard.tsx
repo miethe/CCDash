@@ -2512,13 +2512,16 @@ export const ProjectBoard: React.FC = () => {
   // Auto-select feature from URL search params
   useEffect(() => {
     const featureId = searchParams.get('feature');
+    const tabParam = (searchParams.get('tab') || '').trim().toLowerCase();
+    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'sessions', 'history'];
+    const requestedTab = validTabs.includes(tabParam as FeatureModalTab) ? (tabParam as FeatureModalTab) : 'overview';
     if (featureId && apiFeatures.length > 0) {
       const featureBase = getFeatureBaseSlug(featureId);
       const feat = apiFeatures.find(f => f.id === featureId)
         || apiFeatures.find(f => getFeatureBaseSlug(f.id) === featureBase);
       if (feat) {
         setSelectedFeature(feat);
-        setSelectedFeatureTab('overview');
+        setSelectedFeatureTab(requestedTab);
         // Clear param to avoid re-triggering, or keep it for sharable URLs?
         // Let's clear it to keep URL clean after opening, similar to PlanCatalog
         setSearchParams({}, { replace: true });
