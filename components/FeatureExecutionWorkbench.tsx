@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BookOpen,
@@ -42,8 +42,17 @@ const formatStatus = (value: string): string => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
-const getPhasePendingTasks = (phase: FeaturePhase): number =>
-  (phase.tasks || []).filter(task => !TERMINAL_PHASE_STATUSES.has(task.status)).length;
+const getPhasePendingTasks = (phase: FeaturePhase): number => {
+  if (Array.isArray(phase.tasks) && phase.tasks.length > 0) {
+    return phase.tasks.filter(task => !TERMINAL_PHASE_STATUSES.has(task.status)).length;
+  }
+  const total = Math.max(phase.totalTasks || 0, 0);
+  const completed = Math.max(
+    Math.max(phase.completedTasks || 0, 0),
+    Math.max(phase.deferredTasks || 0, 0),
+  );
+  return Math.max(total - completed, 0);
+};
 
 const copyText = async (value: string): Promise<void> => {
   if (navigator?.clipboard?.writeText) {
@@ -74,10 +83,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [copiedCommand, setCopiedCommand] = useState('');
+  const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
 
   useEffect(() => {
-    void refreshFeatures();
-  }, [refreshFeatures]);
+    if (features.length === 0) {
+      void refreshFeatures();
+    }
+  }, [features.length, refreshFeatures]);
 
   const filteredFeatures = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -128,7 +140,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     void trackExecutionEvent({
       eventType: 'execution_workbench_opened',
       featureId: selectedFeatureId,
-      metadata: { hasQueryFeature: Boolean(searchParams.get('feature')) },
+      metadata: { hasQueryFeature: initialHasQueryFeatureRef.current },
     });
 
     void getFeatureExecutionContext(selectedFeatureId)
@@ -155,7 +167,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, selectedFeatureId]);
+  }, [selectedFeatureId]);
 
   const sourceDocPath = useMemo(
     () => context?.recommendations.evidence.find(item => item.sourcePath)?.sourcePath || '',

@@ -716,7 +716,7 @@ async def get_feature_execution_context(feature_id: str):
     db = await connection.get_connection()
     warnings: list[FeatureExecutionWarning] = []
 
-    feature = await get_feature(feature_id)
+    feature = await get_feature(feature_id, include_tasks=False)
 
     sessions: list[FeatureSessionLink] = []
     try:
@@ -774,7 +774,7 @@ async def get_feature_execution_context(feature_id: str):
 
 
 @features_router.get("/{feature_id}", response_model=Feature)
-async def get_feature(feature_id: str):
+async def get_feature(feature_id: str, include_tasks: bool = True):
     """Return full feature detail from DB."""
     db = await connection.get_connection()
     repo = get_feature_repository(db)
@@ -789,12 +789,13 @@ async def get_feature(feature_id: str):
     phases_data = await repo.get_phases(f["id"])
     phases = []
     
-    task_repo = get_task_repository(db)
-    all_tasks_data = await task_repo.list_by_feature(f["id"], None)
     tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
-    for row in all_tasks_data:
-        phase_key = str(row.get("phase_id") or "")
-        tasks_by_phase.setdefault(phase_key, []).append(row)
+    if include_tasks:
+        task_repo = get_task_repository(db)
+        all_tasks_data = await task_repo.list_by_feature(f["id"], None)
+        for row in all_tasks_data:
+            phase_key = str(row.get("phase_id") or "")
+            tasks_by_phase.setdefault(phase_key, []).append(row)
     
     blob_phase_tasks: dict[str, list[list[dict[str, Any]]]] = {}
     blob_phase_deferred: dict[str, int] = {}
@@ -813,25 +814,26 @@ async def get_feature(feature_id: str):
 
     total_deferred = 0
     for p in phases_data:
-        tasks_data = tasks_by_phase.get(str(p.get("id") or ""), [])
+        tasks_data = tasks_by_phase.get(str(p.get("id") or ""), []) if include_tasks else []
         phase_key = str(p.get("phase", ""))
 
         p_tasks = []
-        if tasks_data:
-            p_tasks = [_task_from_db_row(t) for t in tasks_data]
-        else:
-            # Fallback for legacy rows where task PK collisions broke phase linkage.
-            candidates = blob_phase_tasks.get(phase_key, [])
-            if candidates:
-                raw_tasks = candidates.pop(0)
-                for raw_task in raw_tasks:
-                    if isinstance(raw_task, dict):
-                        p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
+        if include_tasks:
+            if tasks_data:
+                p_tasks = [_task_from_db_row(t) for t in tasks_data]
+            else:
+                # Fallback for legacy rows where task PK collisions broke phase linkage.
+                candidates = blob_phase_tasks.get(phase_key, [])
+                if candidates:
+                    raw_tasks = candidates.pop(0)
+                    for raw_task in raw_tasks:
+                        if isinstance(raw_task, dict):
+                            p_tasks.append(_task_from_feature_blob(raw_task, f["id"], p["id"]))
 
         total_tasks = _safe_int(p.get("total_tasks"), 0)
         completed_tasks = _safe_int(p.get("completed_tasks"), 0)
         deferred_tasks = blob_phase_deferred.get(phase_key, 0)
-        if p_tasks:
+        if include_tasks and p_tasks:
             if total_tasks == 0:
                 total_tasks = len(p_tasks)
             done_count = sum(1 for t in p_tasks if t.status == "done")
