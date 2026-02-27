@@ -294,6 +294,51 @@ class SessionParserTests(unittest.TestCase):
         task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
         self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a456")
 
+    def test_task_tool_extracts_metadata_from_description_and_prompt(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_task_3",
+                                "name": "Task",
+                                "input": {
+                                    "description": "SSO-1.5: Frontend text_score display",
+                                    "prompt": "Implement UI text_score rendering and edge-state handling.",
+                                    "subagent_type": "ui-engineer-enhanced",
+                                    "mode": "acceptEdits",
+                                    "model": "sonnet",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
+        self.assertEqual(len(task_tools), 1)
+        metadata = task_tools[0].metadata
+        self.assertEqual(metadata.get("taskId"), "SSO-1.5")
+        self.assertEqual(metadata.get("taskDescription"), "SSO-1.5: Frontend text_score display")
+        self.assertEqual(metadata.get("taskSubagentType"), "ui-engineer-enhanced")
+        self.assertEqual(metadata.get("taskMode"), "acceptEdits")
+        self.assertEqual(metadata.get("taskModel"), "sonnet")
+        self.assertTrue(str(metadata.get("taskPromptPreview") or "").startswith("Implement UI text_score"))
+
+        task_artifacts = [a for a in session.linkedArtifacts if a.type == "task"]
+        self.assertEqual(len(task_artifacts), 1)
+        self.assertEqual(task_artifacts[0].title, "SSO-1.5")
+
     def test_thinking_becomes_thought_log_and_extracts_artifacts_and_files(self) -> None:
         path = self._write_jsonl(
             [

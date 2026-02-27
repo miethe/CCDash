@@ -391,3 +391,55 @@ class Feature(BaseModel):
     relatedFeatures: list[str] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+
+
+class ExecutionRecommendationEvidence(BaseModel):
+    id: str
+    label: str = ""
+    value: str = ""
+    sourceType: str = ""
+    sourcePath: str = ""
+
+
+class ExecutionRecommendationOption(BaseModel):
+    command: str
+    ruleId: str
+    confidence: float = 0.0
+    explanation: str = ""
+    evidenceRefs: list[str] = Field(default_factory=list)
+
+
+class ExecutionRecommendation(BaseModel):
+    primary: ExecutionRecommendationOption
+    alternatives: list[ExecutionRecommendationOption] = Field(default_factory=list)
+    ruleId: str
+    confidence: float = 0.0
+    explanation: str = ""
+    evidenceRefs: list[str] = Field(default_factory=list)
+    evidence: list[ExecutionRecommendationEvidence] = Field(default_factory=list)
+
+
+class FeatureExecutionWarning(BaseModel):
+    section: str
+    message: str
+    recoverable: bool = True
+
+
+class FeatureExecutionAnalyticsSummary(BaseModel):
+    sessionCount: int = 0
+    primarySessionCount: int = 0
+    totalSessionCost: float = 0.0
+    artifactEventCount: int = 0
+    commandEventCount: int = 0
+    lastEventAt: str = ""
+    modelCount: int = 0
+
+
+class FeatureExecutionContext(BaseModel):
+    feature: Feature
+    documents: list[LinkedDocument] = Field(default_factory=list)
+    sessions: list[dict[str, Any]] = Field(default_factory=list)
+    analytics: FeatureExecutionAnalyticsSummary = Field(default_factory=FeatureExecutionAnalyticsSummary)
+    recommendations: ExecutionRecommendation
+    warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    generatedAt: str = ""

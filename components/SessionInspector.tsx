@@ -197,6 +197,71 @@ const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: 
         .slice(0, limit);
 };
 
+const TASK_ID_TEXT_PATTERN = /\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b/;
+
+const toTextBlob = (value: unknown): string => {
+    if (typeof value === 'string') {
+        return value.trim();
+    }
+    if (value === null || value === undefined) {
+        return '';
+    }
+    try {
+        return JSON.stringify(value).trim();
+    } catch {
+        return String(value).trim();
+    }
+};
+
+const extractTaskIdFromText = (...values: unknown[]): string | null => {
+    for (const value of values) {
+        const text = toTextBlob(value);
+        if (!text) continue;
+        const match = TASK_ID_TEXT_PATTERN.exec(text);
+        if (match && match[1]) return match[1];
+    }
+    return null;
+};
+
+interface TaskToolDetails {
+    taskId: string | null;
+    name: string | null;
+    description: string | null;
+    prompt: string | null;
+    promptPreview: string | null;
+    subagentType: string | null;
+    mode: string | null;
+    model: string | null;
+}
+
+const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
+    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+        return null;
+    }
+    const args = parseToolArgs(log.toolCall?.args);
+    const metadata = asRecord(log.metadata);
+
+    const name = takeString(metadata.taskName, args?.name);
+    const description = takeString(metadata.taskDescription, args?.description);
+    const promptText = takeString(metadata.taskPromptPreview, args?.prompt ? toTextBlob(args.prompt) : null);
+    const taskId = takeString(metadata.taskId, extractTaskIdFromText(name, description, promptText));
+    const subagentType = takeString(metadata.taskSubagentType, args?.subagent_type, args?.subagentType);
+    const mode = takeString(metadata.taskMode, args?.mode);
+    const model = takeString(metadata.taskModel, args?.model);
+    const promptPreview = promptText && promptText.length > 320 ? `${promptText.slice(0, 320)}...` : promptText;
+
+    return {
+        taskId,
+        name,
+        description,
+        prompt: promptText,
+        promptPreview,
+        subagentType,
+        mode,
+        model,
+    };
+};
+
 const extractTaskSubagentName = (toolArgs: string | undefined): string | null => {
     const args = parseToolArgs(toolArgs);
     if (!args) {
@@ -505,6 +570,7 @@ const LogItemBlurb: React.FC<{
                     log.type === 'command' ? `Command: ${log.content}` :
         log.type === 'subagent' ? `Spawned Agent: ${log.agentName || 'Subagent'}` :
             `Loaded Skill: ${log.skillDetails?.name}`;
+    const taskToolDetails = getTaskToolDetails(log);
 
     return (
         <div
@@ -516,9 +582,25 @@ const LogItemBlurb: React.FC<{
         >
             <div className="flex items-center gap-2 overflow-hidden">
                 {icons[log.type as keyof typeof icons] || <Box size={12} />}
-                <span className={`text-[11px] font-mono truncate transition-colors ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
-                    {label}
-                </span>
+                {taskToolDetails ? (
+                    <div className="min-w-0 space-y-0.5">
+                        <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-amber-400'}`}>
+                            Task Invocation
+                        </div>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                            {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Task tool call'}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                            {taskToolDetails.taskId && <span className="font-mono">{taskToolDetails.taskId}</span>}
+                            {taskToolDetails.subagentType && <span>{taskToolDetails.subagentType}</span>}
+                            {taskToolDetails.model && <span>{taskToolDetails.model}</span>}
+                        </div>
+                    </div>
+                ) : (
+                    <span className={`text-[11px] font-mono truncate transition-colors ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
+                        {label}
+                    </span>
+                )}
             </div>
             <div className="flex items-center gap-2">
                 {log.linkedSessionId && (
@@ -576,6 +658,7 @@ const DetailPane: React.FC<{
     };
 
     const parsedMessage = formattedMessage || parseTranscriptMessage(log.content);
+    const taskToolDetails = getTaskToolDetails(log);
     const detailTitle = (() => {
         if (log.type === 'subagent') return 'Subagent Thread';
         if (log.type === 'tool') return 'Tool Execution';
@@ -727,6 +810,63 @@ const DetailPane: React.FC<{
                                     {log.toolCall.status.toUpperCase()}
                                 </span>
                             </div>
+
+                            {taskToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-amber-500/5">
+                                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">Task Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        {taskToolDetails.taskId && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task ID</div>
+                                                <div className="font-mono text-amber-200">{taskToolDetails.taskId}</div>
+                                            </div>
+                                        )}
+                                        {(taskToolDetails.description || taskToolDetails.name) && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-slate-200">{taskToolDetails.description || taskToolDetails.name}</div>
+                                            </div>
+                                        )}
+                                        {taskToolDetails.subagentType && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Subagent</div>
+                                                <div className="text-slate-300">{taskToolDetails.subagentType}</div>
+                                            </div>
+                                        )}
+                                        {taskToolDetails.mode && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Mode</div>
+                                                <div className="text-slate-300">{taskToolDetails.mode}</div>
+                                            </div>
+                                        )}
+                                        {taskToolDetails.model && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Model</div>
+                                                <div className="text-slate-300">{taskToolDetails.model}</div>
+                                            </div>
+                                        )}
+                                        {taskToolDetails.promptPreview && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Prompt (Preview)</div>
+                                                <p className="text-slate-300 whitespace-pre-wrap break-words">{taskToolDetails.promptPreview}</p>
+                                                {taskToolDetails.prompt && taskToolDetails.prompt !== taskToolDetails.promptPreview && (
+                                                    <button
+                                                        onClick={() => toggleSection('task-full-prompt')}
+                                                        className="mt-2 text-[10px] px-2 py-1 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+                                                    >
+                                                        {expandedSections.has('task-full-prompt') ? 'Hide Full Prompt' : 'View Full Prompt'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    {expandedSections.has('task-full-prompt') && taskToolDetails.prompt && (
+                                        <pre className="mt-3 text-xs font-mono text-slate-300 bg-slate-900/60 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
+                                            {taskToolDetails.prompt}
+                                        </pre>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Arguments Section */}
                             <div className="p-4 border-b border-slate-800">

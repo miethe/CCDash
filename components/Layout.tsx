@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { ProjectSelector } from './ProjectSelector';
@@ -55,6 +55,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto overflow-x-hidden">
           <NavItem to="/" icon={LayoutDashboard} label="Overview" active={location.pathname === '/'} isCollapsed={isCollapsed} />
           <NavItem to="/board" icon={ListTodo} label="Project Board" active={location.pathname === '/board'} isCollapsed={isCollapsed} />
+          <NavItem to="/execution" icon={Command} label="Execution" active={location.pathname === '/execution'} isCollapsed={isCollapsed} />
           <NavItem to="/plans" icon={FileText} label="Documents" active={location.pathname === '/plans'} isCollapsed={isCollapsed} />
           <NavItem to="/sessions" icon={Terminal} label="Session Forensics" active={location.pathname === '/sessions'} isCollapsed={isCollapsed} />
           <NavItem to="/codebase" icon={FolderTree} label="Codebase Explorer" active={location.pathname === '/codebase'} isCollapsed={isCollapsed} />

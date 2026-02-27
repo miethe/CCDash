@@ -4,12 +4,24 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
+import aiosqlite
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.models import Feature, ProjectTask, FeaturePhase, LinkedDocument, SessionModelInfo
+from backend.models import (
+    Feature,
+    ProjectTask,
+    FeaturePhase,
+    LinkedDocument,
+    SessionModelInfo,
+    FeatureExecutionAnalyticsSummary,
+    FeatureExecutionContext,
+    FeatureExecutionWarning,
+)
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
@@ -30,6 +42,11 @@ from backend.session_mappings import classify_session_key_metadata, load_session
 from backend.model_identity import derive_model_identity
 from backend.session_badges import derive_session_badges
 from backend.document_linking import canonical_slug
+from backend.services.feature_execution import (
+    build_execution_context,
+    load_execution_analytics,
+    load_execution_documents,
+)
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
@@ -44,11 +61,26 @@ _KEY_WORKFLOW_COMMAND_MARKERS = (
     "/dev:complete-user-story",
     "/fix:debug",
 )
+_EXECUTION_TELEMETRY_EVENTS = {
+    "execution_workbench_opened",
+    "execution_begin_work_clicked",
+    "execution_recommendation_generated",
+    "execution_command_copied",
+    "execution_source_link_clicked",
+}
 
 # ── Request models ──────────────────────────────────────────────────
 
 class StatusUpdateRequest(BaseModel):
     status: str  # backlog | in-progress | review | done | deferred
+
+
+class ExecutionTelemetryRequest(BaseModel):
+    eventType: str
+    featureId: str = ""
+    recommendationRuleId: str = ""
+    command: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Status value mapping (frontend values → frontmatter values) ─────
@@ -201,7 +233,7 @@ class FeatureSessionLink(BaseModel):
     sessionMetadata: dict[str, Any] | None = None
 
 
-_TASK_ID_TOKEN_PATTERN = re.compile(r"\b([A-Za-z]+-\d+(?:\.\d+)?)\b")
+_TASK_ID_TOKEN_PATTERN = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
 _PHASE_FROM_TEXT_PATTERN = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
 _PHASE_RANGE_PATTERN = re.compile(r"^(\d+)\s*-\s*(\d+)$")
 _TITLE_TOKEN_SANITIZER_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -304,6 +336,22 @@ def _normalize_title_token(value: str) -> str:
 def _extract_task_id_from_text(value: str) -> str:
     match = _TASK_ID_TOKEN_PATTERN.search(value or "")
     return match.group(1) if match else ""
+
+
+def _coerce_task_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=True).strip()
+        except Exception:
+            return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
 
 
 def _extract_phase_token_from_text(value: str) -> str:
@@ -557,6 +605,172 @@ async def get_task_source(file: str):
         raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
     return TaskSourceResponse(filePath=file, content=content)
+
+
+@features_router.post("/execution-events")
+async def track_execution_event(req: ExecutionTelemetryRequest):
+    """Persist execution workbench UI telemetry events."""
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=400, detail="No active project")
+
+    event_type = str(req.eventType or "").strip()
+    if event_type not in _EXECUTION_TELEMETRY_EVENTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported event type '{event_type}'")
+
+    db = await connection.get_connection()
+    occurred_at = datetime.now(timezone.utc).isoformat()
+    feature_id = str(req.featureId or "").strip()
+    payload = {
+        "recommendationRuleId": str(req.recommendationRuleId or "").strip(),
+        "command": str(req.command or "").strip(),
+        "metadata": req.metadata if isinstance(req.metadata, dict) else {},
+    }
+    source_key = f"ui-execution:{event_type}:{uuid4().hex}"
+
+    if isinstance(db, aiosqlite.Connection):
+        await db.execute(
+            """
+            INSERT INTO telemetry_events (
+                project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
+                pr_number, phase, event_type, tool_name, model, agent, skill, status,
+                duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
+                source, source_key, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                active_project.id,
+                "ui-execution-workbench",
+                "ui-execution-workbench",
+                feature_id,
+                "",
+                "",
+                "",
+                "",
+                event_type,
+                "",
+                "",
+                "frontend",
+                "",
+                "ok",
+                0,
+                0,
+                0,
+                0.0,
+                occurred_at,
+                0,
+                "frontend",
+                source_key,
+                json.dumps(payload),
+            ),
+        )
+        await db.commit()
+    else:
+        await db.execute(
+            """
+            INSERT INTO telemetry_events (
+                project_id, session_id, root_session_id, feature_id, task_id, commit_hash,
+                pr_number, phase, event_type, tool_name, model, agent, skill, status,
+                duration_ms, token_input, token_output, cost_usd, occurred_at, sequence_no,
+                source, source_key, payload_json
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20, $21, $22, $23
+            )
+            """,
+            active_project.id,
+            "ui-execution-workbench",
+            "ui-execution-workbench",
+            feature_id,
+            "",
+            "",
+            "",
+            "",
+            event_type,
+            "",
+            "",
+            "frontend",
+            "",
+            "ok",
+            0,
+            0,
+            0,
+            0.0,
+            occurred_at,
+            0,
+            "frontend",
+            source_key,
+            json.dumps(payload),
+        )
+
+    return {"status": "ok"}
+
+
+@features_router.get("/{feature_id}/execution-context", response_model=FeatureExecutionContext)
+async def get_feature_execution_context(feature_id: str):
+    """Return unified context payload for the execution workbench."""
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=400, detail="No active project")
+
+    db = await connection.get_connection()
+    warnings: list[FeatureExecutionWarning] = []
+
+    feature = await get_feature(feature_id)
+
+    sessions: list[FeatureSessionLink] = []
+    try:
+        sessions = await get_feature_linked_sessions(feature.id)
+    except Exception:
+        logger.exception("Failed to load execution sessions for '%s'", feature.id)
+        warnings.append(
+            FeatureExecutionWarning(
+                section="sessions",
+                message="Linked sessions could not be loaded; showing partial context.",
+            )
+        )
+
+    documents = feature.linkedDocs
+    try:
+        documents = await load_execution_documents(
+            db,
+            active_project.id,
+            feature.id,
+            feature.linkedDocs,
+        )
+    except Exception:
+        logger.exception("Failed to load execution documents for '%s'", feature.id)
+        warnings.append(
+            FeatureExecutionWarning(
+                section="documents",
+                message="Correlated documents could not be loaded; falling back to feature-linked docs.",
+            )
+        )
+
+    analytics = FeatureExecutionAnalyticsSummary()
+    try:
+        analytics = await load_execution_analytics(
+            db,
+            active_project.id,
+            feature.id,
+            sessions,
+        )
+    except Exception:
+        logger.exception("Failed to load execution analytics for '%s'", feature.id)
+        warnings.append(
+            FeatureExecutionWarning(
+                section="analytics",
+                message="Analytics summary is currently unavailable; recommendations are still generated.",
+            )
+        )
+
+    return build_execution_context(
+        feature=feature,
+        documents=documents,
+        sessions=sessions,
+        analytics=analytics,
+        warnings=warnings,
+    )
 
 
 @features_router.get("/{feature_id}", response_model=Feature)
@@ -823,9 +1037,15 @@ async def get_feature_linked_sessions(feature_id: str):
             task_name = str(parsed_metadata.get("taskName") or "").strip()
             if not task_name:
                 task_name = str(parsed_tool_args.get("name") or "").strip()
+            task_description = str(parsed_metadata.get("taskDescription") or "").strip()
+            if not task_description:
+                task_description = str(parsed_tool_args.get("description") or "").strip()
+            task_prompt = str(parsed_metadata.get("taskPromptPreview") or "").strip()
+            if not task_prompt:
+                task_prompt = _coerce_task_text(parsed_tool_args.get("prompt"))
             task_id = str(parsed_metadata.get("taskId") or "").strip()
-            if not task_id and task_name:
-                task_id = _extract_task_id_from_text(task_name)
+            if not task_id:
+                task_id = _extract_task_id_from_text(task_name) or _extract_task_id_from_text(task_description) or _extract_task_id_from_text(task_prompt)
             linked_session_id = str(log.get("linked_session_id") or "").strip()
 
             matched_records: list[tuple[dict[str, str], str]] = []
@@ -833,18 +1053,28 @@ async def get_feature_linked_sessions(feature_id: str):
                 for match in tasks_by_identifier.get(task_id.lower(), []):
                     matched_records.append((match, "task_id_exact"))
 
-            if not matched_records and task_name:
-                task_name_token = _normalize_title_token(task_name)
-                for match in tasks_by_title.get(task_name_token, []):
-                    matched_records.append((match, "task_title_exact"))
+            if not matched_records:
+                candidate_texts = [
+                    ("task_title_exact", task_name),
+                    ("task_description_exact", task_description),
+                ]
+                for match_label, candidate_text in candidate_texts:
+                    candidate_token = _normalize_title_token(candidate_text)
+                    if not candidate_token:
+                        continue
+                    for match in tasks_by_title.get(candidate_token, []):
+                        matched_records.append((match, match_label))
+                    if matched_records:
+                        break
 
-                if not matched_records and task_name_token:
-                    for candidate_token, task_matches in tasks_by_title.items():
-                        if task_name_token in candidate_token or candidate_token in task_name_token:
+                    for title_token, task_matches in tasks_by_title.items():
+                        if candidate_token in title_token or title_token in candidate_token:
                             for match in task_matches:
-                                matched_records.append((match, "task_title_fuzzy"))
+                                matched_records.append((match, match_label.replace("_exact", "_fuzzy")))
                             if matched_records:
                                 break
+                    if matched_records:
+                        break
 
             for matched_record, matched_by in matched_records:
                 task_token = str(matched_record.get("taskId") or "").strip()

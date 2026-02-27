@@ -1,8 +1,9 @@
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
+import { trackExecutionEvent } from '../services/execution';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
@@ -10,7 +11,7 @@ import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
-  Terminal, GitCommit,
+  Terminal, GitCommit, Play,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
@@ -103,6 +104,7 @@ interface FeatureSessionSummary {
 }
 
 const SHORT_COMMIT_LENGTH = 7;
+const FEATURE_MODAL_POLL_INTERVAL_MS = 15_000;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 const normalizePath = (value: string): string => (value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
@@ -452,6 +454,30 @@ const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): Linke
 const getStatusStyle = getFeatureStatusStyle;
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 
+const dedupePhaseTasks = (tasks: ProjectTask[]): ProjectTask[] => {
+  const seen = new Set<string>();
+  const deduped: ProjectTask[] = [];
+  tasks.forEach(task => {
+    const key = [
+      String(task.id || '').trim().toLowerCase(),
+      normalizePath(String(task.sourceFile || '')),
+      String(task.title || '').trim().toLowerCase(),
+    ].join('::');
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(task);
+  });
+  return deduped;
+};
+
+const normalizeFeatureForModal = (feature: Feature): Feature => {
+  const normalizedPhases = (feature.phases || []).map(phase => ({
+    ...phase,
+    tasks: dedupePhaseTasks(phase.tasks || []),
+  }));
+  return aggregateFeatureFromPhases(feature, normalizedPhases);
+};
+
 const getPhaseDeferredCount = (phase: FeaturePhase): number => Math.max(phase.deferredTasks || 0, 0);
 
 const getPhaseCompletedCount = (phase: FeaturePhase): number => {
@@ -532,18 +558,12 @@ const syncDetailFeatureWithLiveFeature = (detail: Feature, liveFeature: Feature)
       ...phase,
       status: live.status,
       progress: live.progress,
-      totalTasks: live.totalTasks,
-      completedTasks: live.completedTasks,
-      deferredTasks: live.deferredTasks,
     };
   });
 
   return {
     ...detail,
     status: liveFeature.status,
-    totalTasks: liveFeature.totalTasks,
-    completedTasks: liveFeature.completedTasks,
-    deferredTasks: liveFeature.deferredTasks,
     updatedAt: liveFeature.updatedAt,
     phases,
   };
@@ -941,25 +961,42 @@ const FeatureModal = ({
   );
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
+  const featureDetailRequestIdRef = useRef(0);
+  const linkedSessionsRequestIdRef = useRef(0);
 
   const refreshFeatureDetail = useCallback(async () => {
+    const requestId = ++featureDetailRequestIdRef.current;
     try {
       const res = await fetch(`/api/features/${feature.id}`);
       if (!res.ok) throw new Error(`Failed to load feature detail (${res.status})`);
-      setFullFeature(await res.json());
+      const data = await res.json();
+      if (requestId !== featureDetailRequestIdRef.current) return;
+      setFullFeature(normalizeFeatureForModal(data as Feature));
     } catch {
       // Keep existing detail snapshot on transient failures.
     }
   }, [feature.id]);
 
   const refreshLinkedSessions = useCallback(async () => {
+    const requestId = ++linkedSessionsRequestIdRef.current;
     try {
       const res = await fetch(`/api/features/${feature.id}/linked-sessions`);
       if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
       const data = await res.json();
-      setLinkedSessionLinks(Array.isArray(data) ? data : []);
+      if (requestId !== linkedSessionsRequestIdRef.current) return;
+      const rows = Array.isArray(data) ? (data as FeatureSessionLink[]) : [];
+      const bestBySession = new Map<string, FeatureSessionLink>();
+      rows.forEach(row => {
+        const sessionId = String(row.sessionId || '').trim();
+        if (!sessionId) return;
+        const existing = bestBySession.get(sessionId);
+        if (!existing || row.confidence > existing.confidence) {
+          bestBySession.set(sessionId, row);
+        }
+      });
+      setLinkedSessionLinks(Array.from(bestBySession.values()));
     } catch {
-      setLinkedSessionLinks([]);
+      // Keep previous linked sessions on transient failures.
     }
   }, [feature.id]);
 
@@ -983,11 +1020,13 @@ const FeatureModal = ({
 
   useEffect(() => {
     const interval = setInterval(() => {
-      refreshFeatureDetail();
-      refreshLinkedSessions();
-    }, 5_000);
+      void refreshFeatureDetail();
+      if (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history') {
+        void refreshLinkedSessions();
+      }
+    }, FEATURE_MODAL_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [refreshFeatureDetail, refreshLinkedSessions]);
+  }, [activeTab, refreshFeatureDetail, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
@@ -1040,6 +1079,16 @@ const FeatureModal = ({
       setUpdatingStatus(false);
     }
   };
+
+  const handleBeginWork = useCallback(() => {
+    void trackExecutionEvent({
+      eventType: 'execution_begin_work_clicked',
+      featureId: activeFeature.id,
+      metadata: { source: 'feature_modal' },
+    });
+    navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}`);
+    onClose();
+  }, [activeFeature.id, navigate, onClose]);
 
   const handlePhaseStatusChange = async (phaseId: string, newStatus: string) => {
     let previousFeatureSnapshot: Feature | null = null;
@@ -1613,9 +1662,18 @@ const FeatureModal = ({
                 )}
               </div>
             </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded ml-4">
-              <X size={24} />
-            </button>
+            <div className="ml-4 flex items-center gap-2">
+              <button
+                onClick={handleBeginWork}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 text-xs font-semibold hover:bg-indigo-500/30"
+              >
+                <Play size={14} />
+                Begin Work
+              </button>
+              <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
+                <X size={24} />
+              </button>
+            </div>
           </div>
           <div className="mt-3">
             <ProgressBar completed={featureCompletedTasks} deferred={featureDeferredTasks} total={activeFeature.totalTasks} />
@@ -1782,54 +1840,65 @@ const FeatureModal = ({
                 const phaseStatus = getStatusStyle(phase.status);
                 const phaseKey = phase.id || phase.phase;
                 const isExpanded = expandedPhases.has(phaseKey);
-                const phaseCompletedTasks = getPhaseCompletedCount(phase);
-                const phaseDeferredTasks = getPhaseDeferredCount(phase);
+                const phaseTasks = dedupePhaseTasks(phase.tasks || []);
+                const phaseDoneTasks = phaseTasks.filter(task => task.status === 'done').length;
+                const phaseDeferredTasks = phaseTasks.filter(task => task.status === 'deferred').length;
+                const phaseCompletedTasks = phaseTasks.length > 0 ? phaseDoneTasks + phaseDeferredTasks : getPhaseCompletedCount(phase);
+                const phaseTotalTasks = phaseTasks.length > 0 ? Math.max(phase.totalTasks || 0, phaseTasks.length) : phase.totalTasks;
                 const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                 const visibleTasks = taskStatusFilter === 'all'
-                  ? phase.tasks
-                  : phase.tasks.filter(task => task.status === taskStatusFilter);
+                  ? phaseTasks
+                  : phaseTasks.filter(task => task.status === taskStatusFilter);
                 return (
                   <div key={phaseKey} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-                    <div className="flex items-center gap-3 p-4 hover:bg-slate-800/50 transition-colors">
-                      <button
-                        onClick={() => togglePhase(phaseKey)}
-                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
-                      >
-                        {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
-                        <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
-                            {phase.title && (
-                              <span className="text-sm text-slate-400 truncate">- {phase.title}</span>
-                            )}
-                            {phaseDeferredTasks > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
-                                Deferred
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1">
-                            <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phase.totalTasks} />
-                          </div>
-                          {phaseRelatedSessions.length > 0 && (
-                            <div className="mt-2 flex flex-wrap items-center gap-1">
-                              <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
-                              {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
-                                <span
-                                  key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
-                                  className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 font-mono"
-                                >
-                                  {sessionLink.sessionId}
+                    <div className="flex items-start gap-3 p-4 hover:bg-slate-800/50 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <button
+                          onClick={() => togglePhase(phaseKey)}
+                          className="w-full flex items-center gap-3 text-left"
+                        >
+                          {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                          <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
+                              {phase.title && (
+                                <span className="text-sm text-slate-400 truncate">- {phase.title}</span>
+                              )}
+                              {phaseDeferredTasks > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
+                                  Deferred
                                 </span>
-                              ))}
-                              {phaseRelatedSessions.length > 3 && (
-                                <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 3} more</span>
                               )}
                             </div>
-                          )}
-                        </div>
-                      </button>
+                            <div className="mt-1">
+                              <ProgressBar completed={phaseCompletedTasks} deferred={phaseDeferredTasks} total={phaseTotalTasks} />
+                            </div>
+                          </div>
+                        </button>
+                        {phaseRelatedSessions.length > 0 && (
+                          <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
+                            {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
+                              <button
+                                key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onClose();
+                                  navigate(`/sessions?session=${encodeURIComponent(sessionLink.sessionId)}`);
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 font-mono hover:bg-indigo-500/20 transition-colors"
+                                title="Go to linked session"
+                              >
+                                {sessionLink.sessionId}
+                              </button>
+                            ))}
+                            {phaseRelatedSessions.length > 3 && (
+                              <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 3} more</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <StatusDropdown
                         status={phase.status}
                         onStatusChange={(s) => handlePhaseStatusChange(phase.phase, s)}
@@ -1853,7 +1922,7 @@ const FeatureModal = ({
                               ? 'text-amber-300/90 italic'
                               : 'text-slate-300';
                           return (
-                            <div key={task.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
+                            <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
                               <button
                                 onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus)}
                                 className="flex-shrink-0 hover:scale-110 transition-transform"

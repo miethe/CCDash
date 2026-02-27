@@ -766,6 +766,71 @@ export interface Feature {
   timeline?: TimelineEvent[];
 }
 
+export interface ExecutionRecommendationEvidence {
+  id: string;
+  label: string;
+  value: string;
+  sourceType: string;
+  sourcePath?: string;
+}
+
+export interface ExecutionRecommendationOption {
+  command: string;
+  ruleId: string;
+  confidence: number;
+  explanation: string;
+  evidenceRefs: string[];
+}
+
+export interface ExecutionRecommendation {
+  primary: ExecutionRecommendationOption;
+  alternatives: ExecutionRecommendationOption[];
+  ruleId: string;
+  confidence: number;
+  explanation: string;
+  evidenceRefs: string[];
+  evidence: ExecutionRecommendationEvidence[];
+}
+
+export interface FeatureExecutionWarning {
+  section: string;
+  message: string;
+  recoverable: boolean;
+}
+
+export interface FeatureExecutionAnalyticsSummary {
+  sessionCount: number;
+  primarySessionCount: number;
+  totalSessionCost: number;
+  artifactEventCount: number;
+  commandEventCount: number;
+  lastEventAt: string;
+  modelCount: number;
+}
+
+export interface FeatureExecutionSessionLink {
+  sessionId: string;
+  title?: string;
+  confidence: number;
+  commands: string[];
+  startedAt?: string;
+  status?: string;
+  totalCost?: number;
+  sessionType?: string;
+  workflowType?: string;
+  isPrimaryLink?: boolean;
+}
+
+export interface FeatureExecutionContext {
+  feature: Feature;
+  documents: LinkedDocument[];
+  sessions: FeatureExecutionSessionLink[];
+  analytics: FeatureExecutionAnalyticsSummary;
+  recommendations: ExecutionRecommendation;
+  warnings: FeatureExecutionWarning[];
+  generatedAt: string;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
 
 export interface SessionFilters {
@@ -144,6 +144,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const sessionsCountRef = useRef(0);
 
     const upsertFeatureInState = useCallback((updatedFeature: Feature) => {
         setFeatures(prev => {
@@ -165,12 +166,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
     }, [pendingFeatureStatusById]);
 
+    useEffect(() => {
+        sessionsCountRef.current = sessions.length;
+    }, [sessions.length]);
+
     const refreshSessions = useCallback(async (reset = true) => {
         try {
             // If resetting (background poll), we want to fetch enough items to cover what the user has currently loaded
             // so they don't lose their scroll position or see items disappear.
             // Minimum 50, but if they loaded 300, fetch 300.
-            const currentCount = sessions.length;
+            const currentCount = sessionsCountRef.current;
             const limit = reset ? Math.max(SESSIONS_PER_PAGE, currentCount) : SESSIONS_PER_PAGE;
             const offset = reset ? 0 : currentCount;
 
@@ -212,12 +217,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (e) {
             console.error('Failed to fetch sessions:', e);
         }
-    }, [sessions.length, sessionFilters]);
+    }, [sessionFilters]);
 
     // Refresh when filters change
     useEffect(() => {
-        refreshSessions(true);
-    }, [sessionFilters]);
+        void refreshSessions(true);
+    }, [refreshSessions]);
 
     const loadMoreSessions = useCallback(async () => {
         if (sessions.length < sessionTotal) {
@@ -589,26 +594,37 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [refreshSessions, refreshDocuments, refreshTasks, refreshFeatures, refreshAlerts, refreshNotifications, refreshProjects]);
 
+    const refreshAllRef = useRef(refreshAll);
+    const refreshFeaturesRef = useRef(refreshFeatures);
+
+    useEffect(() => {
+        refreshAllRef.current = refreshAll;
+    }, [refreshAll]);
+
+    useEffect(() => {
+        refreshFeaturesRef.current = refreshFeatures;
+    }, [refreshFeatures]);
+
     // Initial load
     useEffect(() => {
-        refreshAll();
-    }, [refreshAll]);
+        void refreshAllRef.current();
+    }, []);
 
     // Polling for live updates
     useEffect(() => {
         const interval = setInterval(() => {
-            refreshAll();
+            void refreshAllRef.current();
         }, POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, [refreshAll]);
+    }, []);
 
     // Faster feature polling to keep Kanban and Feature modal responsive to background updates.
     useEffect(() => {
         const interval = setInterval(() => {
-            refreshFeatures();
+            void refreshFeaturesRef.current();
         }, FEATURE_POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, [refreshFeatures]);
+    }, []);
 
     return (
         <DataContext.Provider

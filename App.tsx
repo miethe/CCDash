@@ -11,6 +11,7 @@ import { AnalyticsDashboard } from './components/Analytics/AnalyticsDashboard';
 import { SessionMappings } from './components/SessionMappings';
 import { OpsPanel } from './components/OpsPanel';
 import { CodebaseExplorer } from './components/CodebaseExplorer';
+import { FeatureExecutionWorkbench } from './components/FeatureExecutionWorkbench';
 
 const App: React.FC = () => {
   return (
@@ -22,6 +23,7 @@ const App: React.FC = () => {
             <Route path="/board" element={<ProjectBoard />} />
             <Route path="/plans" element={<PlanCatalog />} />
             <Route path="/sessions" element={<SessionInspector />} />
+            <Route path="/execution" element={<FeatureExecutionWorkbench />} />
             <Route path="/analytics" element={<AnalyticsDashboard />} />
             <Route path="/session-mappings" element={<SessionMappings />} />
             <Route path="/ops" element={<OpsPanel />} />

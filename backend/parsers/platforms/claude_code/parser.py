@@ -35,7 +35,7 @@ _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _VERSION_SUFFIX_PATTERN = re.compile(r"-v\d+(?:\.\d+)?$", re.IGNORECASE)
 _PLACEHOLDER_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _ASYNC_TASK_AGENT_ID_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9_-]+)\b", re.IGNORECASE)
-_TASK_ID_PATTERN = re.compile(r"\b([A-Z]{2,10}-[A-Z0-9]+-\d{1,4})\b")
+_TASK_ID_PATTERN = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
 _BATCH_HEADER_PATTERN = re.compile(r"(?:\*\*)?\s*Batch\s+([A-Za-z0-9_-]+)\s*(?:\*\*)?", re.IGNORECASE)
 _BATCH_BULLET_PATTERN = re.compile(r"^\s*-\s*\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$")
 _MODEL_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,}$")
@@ -708,6 +708,33 @@ def _extract_commit_hashes(text: str) -> list[str]:
                 commits.add(candidate)
 
     return sorted(commits)
+
+
+def _coerce_text_blob(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=True).strip()
+        except Exception:
+            return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
+def _extract_task_id(*values: Any) -> str:
+    for value in values:
+        text = _coerce_text_blob(value)
+        if not text:
+            continue
+        match = _TASK_ID_PATTERN.search(text)
+        if match:
+            return match.group(1).strip()
+    return ""
 
 
 def _classify_bash_result(output_text: str, is_error: bool) -> str:
@@ -2084,20 +2111,35 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         source_tool_name=tool_name,
                     )
                     task_name = str(tool_input.get("name") or "").strip()
+                    task_description = str(tool_input.get("description") or "").strip()
+                    task_prompt = _coerce_text_blob(tool_input.get("prompt"))
+                    task_mode = str(tool_input.get("mode") or "").strip()
+                    task_model = str(tool_input.get("model") or "").strip()
+
                     if task_name:
-                        task_id_match = _TASK_ID_PATTERN.search(task_name)
-                        if task_id_match:
-                            task_id = task_id_match.group(1)
-                            tool_log.metadata["taskId"] = task_id
-                            add_artifact(
-                                kind="task",
-                                title=task_id,
-                                description=task_name[:500],
-                                source="tool",
-                                source_log_id=tool_log.id,
-                                source_tool_name=tool_name,
-                            )
                         tool_log.metadata["taskName"] = task_name[:240]
+                    if task_description:
+                        tool_log.metadata["taskDescription"] = task_description[:500]
+                    if task_prompt:
+                        tool_log.metadata["taskPromptPreview"] = task_prompt[:500]
+                        tool_log.metadata["taskPromptLength"] = len(task_prompt)
+                    if task_mode:
+                        tool_log.metadata["taskMode"] = task_mode[:120]
+                    if task_model:
+                        tool_log.metadata["taskModel"] = task_model[:120]
+
+                    task_id = _extract_task_id(task_name, task_description, task_prompt)
+                    if task_id:
+                        tool_log.metadata["taskId"] = task_id
+                        task_summary = task_description or task_name or task_prompt
+                        add_artifact(
+                            kind="task",
+                            title=task_id,
+                            description=(task_summary or "Task tool invocation")[:500],
+                            source="tool",
+                            source_log_id=tool_log.id,
+                            source_tool_name=tool_name,
+                        )
                     if isinstance(sub_type, str) and sub_type.strip():
                         tool_log.metadata["taskSubagentType"] = sub_type.strip()
 
