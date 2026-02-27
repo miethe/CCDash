@@ -1403,7 +1403,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   {context.recommendations.evidence.map(item => {
                     const rawPath = (item.sourcePath || (isPathLike(item.value) ? item.value : '')).trim();
                     const parsed = parseEvidenceToken(item.value);
-                    const derivedLabel = item.label?.trim() || humanizeEvidenceKey(parsed.key) || 'Evidence';
+                    const structuredLabel = rawPath
+                      ? (humanizeEvidenceKey(parsed.key) || 'Document')
+                      : (humanizeEvidenceKey(parsed.key) || item.label?.trim() || 'Evidence');
                     const structuredValue = parsed.key ? parsed.tokenValue : item.value;
                     const displayValue = rawPath ? fileNameFromPath(rawPath) : structuredValue;
                     const tooltipValue = rawPath || structuredValue || item.value;
@@ -1415,7 +1417,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       || parsed.key === 'highest_completed_phase';
                     return (
                       <li key={item.id} className="text-xs text-slate-300 flex items-center gap-2 min-w-0">
-                        <span className="shrink-0 text-[11px] text-slate-500">{derivedLabel}:</span>
+                        <span className="shrink-0 max-w-[140px] truncate text-[11px] text-slate-500" title={structuredLabel}>
+                          {structuredLabel}:
+                        </span>
                         {isClickable ? (
                           <button
                             onClick={() => openEvidenceLink(clickableToken)}
@@ -1592,7 +1596,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         </div>
 
                         {isExpanded && (
-                          <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/60 space-y-1.5 overflow-x-hidden">
+                          <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/60 space-y-1.5 overflow-hidden">
                             {phaseTasks.length === 0 && (
                               <p className="text-xs text-slate-500 italic">No task details currently available for this phase.</p>
                             )}
@@ -1600,25 +1604,31 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                               const taskLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                               const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
                               return (
-                                <div key={`${phaseKey}-${task.id}`} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-900/70 min-w-0">
-                                  <button
-                                    onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                    className="font-mono text-[10px] text-slate-500 w-16 shrink-0 text-left hover:text-indigo-300"
-                                  >
-                                    {task.id}
-                                  </button>
-                                  <button
-                                    onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                    className="text-sm text-slate-300 flex-1 min-w-0 truncate text-left hover:text-indigo-300"
-                                    title={task.title}
-                                  >
-                                    {task.title}
-                                  </button>
-                                  <span className={`text-[10px] uppercase font-bold shrink-0 ${statusStyle.color}`}>
-                                    {statusStyle.label}
-                                  </span>
+                                <div key={`${phaseKey}-${task.id}`} className="w-full max-w-full rounded px-2 py-1.5 hover:bg-slate-900/70 min-w-0 overflow-hidden">
+                                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 min-w-0 w-full max-w-full overflow-hidden">
+                                    <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+                                      <button
+                                        onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
+                                        className="font-mono text-[10px] text-slate-500 max-w-16 shrink-0 text-left hover:text-indigo-300 truncate"
+                                        title={task.id}
+                                      >
+                                        {task.id}
+                                      </button>
+                                      <button
+                                        onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
+                                        className="text-sm text-slate-300 flex-1 min-w-0 truncate text-left hover:text-indigo-300 block w-full"
+                                        title={task.title}
+                                      >
+                                        {task.title}
+                                      </button>
+                                    </div>
+                                    <span className={`text-[10px] uppercase font-bold shrink-0 ${statusStyle.color}`}>
+                                      {statusStyle.label}
+                                    </span>
+                                  </div>
                                   {taskLinks.length > 0 && (
-                                    <div className="flex items-center gap-1 flex-wrap min-w-0 max-w-full">
+                                    <div className="mt-1 pl-16 min-w-0 max-w-full overflow-hidden">
+                                      <div className="flex items-center gap-1 flex-wrap min-w-0 max-w-full">
                                       {taskLinks.slice(0, 3).map(link => (
                                         <button
                                           key={`${task.id}-session-${link.sessionId}-${link.source}`}
@@ -1635,6 +1645,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                       {taskLinks.length > 3 && (
                                         <span className="text-[10px] text-slate-500">+{taskLinks.length - 3}</span>
                                       )}
+                                      </div>
                                     </div>
                                   )}
                                 </div>

@@ -420,10 +420,14 @@ export const SessionArtifactsView: React.FC<{
     () => groupedArtifacts.filter(group => (group.type || '').trim().toLowerCase() === 'skill'),
     [groupedArtifacts],
   );
+  const taskGroups = useMemo(
+    () => groupedArtifacts.filter(group => (group.type || '').trim().toLowerCase() === 'task'),
+    [groupedArtifacts],
+  );
   const agentGroups = useMemo(
     () => groupedArtifacts.filter(group => {
       const type = (group.type || '').trim().toLowerCase();
-      return type === 'agent' || type === 'task';
+      return type === 'agent';
     }),
     [groupedArtifacts],
   );
@@ -450,6 +454,9 @@ export const SessionArtifactsView: React.FC<{
       <div className="flex flex-col items-center justify-center h-full text-slate-500">
         <LinkIcon size={48} className="mb-4 opacity-20" />
         <p>No linked artifacts found.</p>
+        {taskGroups.length > 0 && (
+          <p className="text-xs mt-1 text-slate-600">Task links are shown on the Features tab.</p>
+        )}
       </div>
     );
   }
