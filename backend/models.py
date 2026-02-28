@@ -569,5 +569,17 @@ class IngestRunRequest(BaseModel):
     agent_session_id: str = ""
     env_fingerprint: str = ""
     trigger: str = "local"
+    test_definitions: list[dict[str, Any]] = Field(default_factory=list)
     test_results: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestRunResponse(BaseModel):
+    run_id: str
+    status: str  # created | updated | skipped
+    test_definitions_upserted: int = 0
+    test_results_inserted: int = 0
+    test_results_skipped: int = 0
+    mapping_trigger_queued: bool = False
+    integrity_check_queued: bool = False
+    errors: list[str] = Field(default_factory=list)

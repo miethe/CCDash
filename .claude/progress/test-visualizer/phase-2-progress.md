@@ -16,7 +16,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: on-track
 total_tasks: 8
-completed_tasks: 4
+completed_tasks: 7
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -73,7 +73,7 @@ tasks:
   description: Create backend/routers/test_visualizer.py with router declaration and
     POST /api/tests/ingest endpoint. Wire to ingest service. Register router in backend/main.py.
     Gate with CCDASH_TEST_VISUALIZER_ENABLED flag.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -85,7 +85,7 @@ tasks:
   description: 'Implement backend/services/test_ingest.py with ingest_run(payload:
     IngestRunRequest, db) -> IngestRunResponse. Orchestrates: validate payload, upsert
     test_run, upsert test_definitions, upsert test_results. Returns counts.'
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -96,7 +96,7 @@ tasks:
   description: Add _trigger_mapping_resolution() and _trigger_integrity_check() as
     async stubs called after successful ingest via asyncio.create_task(). Gate each
     by its feature flag. Log task creation.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -155,7 +155,7 @@ files_modified:
 - backend/models.py
 - backend/tests/test_test_results_parser.py
 - backend/tests/test_test_ingest_service.py
-progress: 50
+progress: 87
 updated: '2026-02-28'
 ---
 
