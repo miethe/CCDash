@@ -73,6 +73,13 @@ class _FakeLinkRepo:
                                 "taskIds": ["TASK-1.1"],
                             }
                         ],
+                        "prLinks": [
+                            {
+                                "prNumber": "42",
+                                "prUrl": "https://github.com/acme/repo/pull/42",
+                                "prRepository": "acme/repo",
+                            }
+                        ],
                     }
                 ),
             }
@@ -90,6 +97,7 @@ class _FakeSessionRepo:
             "duration_seconds": 120,
             "git_commit_hash": None,
             "git_commit_hashes_json": "[]",
+            "git_branch": "feature/test",
             "session_type": "session",
             "parent_session_id": None,
             "root_session_id": "S-1",
@@ -158,6 +166,9 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metadata.get("sessionTypeLabel"), "Phased Execution")
         self.assertEqual(metadata.get("relatedPhases"), ["1"])
         self.assertEqual(len(metadata.get("commitCorrelations", [])), 1)
+        self.assertEqual(len(metadata.get("prLinks", [])), 1)
+        self.assertEqual(response[0].gitBranch, "feature/test")
+        self.assertEqual(len(response[0].pullRequests), 1)
         self.assertEqual(response[0].title, "Phased Execution - Phase 1")
 
     async def test_linked_sessions_include_inherited_subthreads_for_linked_main(self) -> None:

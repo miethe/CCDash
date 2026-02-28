@@ -220,6 +220,8 @@ class FeatureSessionLink(BaseModel):
     durationSeconds: int = 0
     gitCommitHash: str | None = None
     gitCommitHashes: list[str] = Field(default_factory=list)
+    gitBranch: str | None = None
+    pullRequests: list[dict[str, str]] = Field(default_factory=list)
     sessionType: str = ""
     parentSessionId: str | None = None
     rootSessionId: str = ""
@@ -969,6 +971,45 @@ async def get_feature_linked_sessions(feature_id: str):
             commands = []
         normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
 
+        pull_requests_by_key: dict[str, dict[str, str]] = {}
+
+        def register_pull_request(
+            pr_number: str = "",
+            pr_url: str = "",
+            pr_repository: str = "",
+        ) -> None:
+            number = str(pr_number or "").strip()
+            url = str(pr_url or "").strip()
+            repository = str(pr_repository or "").strip()
+            key = (url or number or repository).strip().lower()
+            if not key:
+                return
+            existing = pull_requests_by_key.get(key)
+            if existing:
+                if not existing.get("prUrl") and url:
+                    existing["prUrl"] = url
+                if not existing.get("prNumber") and number:
+                    existing["prNumber"] = number
+                if not existing.get("prRepository") and repository:
+                    existing["prRepository"] = repository
+                return
+            pull_requests_by_key[key] = {
+                "prNumber": number,
+                "prUrl": url,
+                "prRepository": repository,
+            }
+
+        metadata_pr_links = metadata.get("prLinks", [])
+        if isinstance(metadata_pr_links, list):
+            for pr_ref in metadata_pr_links:
+                if not isinstance(pr_ref, dict):
+                    continue
+                register_pull_request(
+                    pr_number=str(pr_ref.get("prNumber") or ""),
+                    pr_url=str(pr_ref.get("prUrl") or ""),
+                    pr_repository=str(pr_ref.get("prRepository") or ""),
+                )
+
         metadata_hashes = metadata.get("commitHashes", [])
         if not isinstance(metadata_hashes, list):
             metadata_hashes = []
@@ -1008,6 +1049,12 @@ async def get_feature_linked_sessions(feature_id: str):
                 summary_text = str(log.get("content") or "").strip()
                 if summary_text:
                     latest_summary = summary_text
+            if str(log.get("type") or "") == "system" and str(parsed_metadata.get("eventType") or "").strip().lower() == "pr-link":
+                register_pull_request(
+                    pr_number=str(parsed_metadata.get("prNumber") or ""),
+                    pr_url=str(parsed_metadata.get("prUrl") or ""),
+                    pr_repository=str(parsed_metadata.get("prRepository") or ""),
+                )
             if str(log.get("type") or "") != "command":
                 continue
             command_events.append({
@@ -1112,6 +1159,10 @@ async def get_feature_linked_sessions(feature_id: str):
             phase_candidates.extend(str(value) for value in session_metadata.get("relatedPhases", []) if str(value).strip())
 
         normalized_related_phases = _normalize_feature_phase_values(phase_candidates, available_phase_tokens)
+        normalized_pull_requests = sorted(
+            pull_requests_by_key.values(),
+            key=lambda row: (str(row.get("prNumber") or ""), str(row.get("prUrl") or ""), str(row.get("prRepository") or "")),
+        )
         normalized_commit_correlations: list[dict[str, Any]] = []
         for row in commit_correlation_rows[:60]:
             if not isinstance(row, dict):
@@ -1145,6 +1196,9 @@ async def get_feature_linked_sessions(feature_id: str):
         if normalized_commit_correlations:
             session_metadata = dict(session_metadata or {})
             session_metadata["commitCorrelations"] = normalized_commit_correlations
+        if normalized_pull_requests:
+            session_metadata = dict(session_metadata or {})
+            session_metadata["prLinks"] = normalized_pull_requests
 
         related_tasks = sorted(
             related_tasks_by_key.values(),
@@ -1184,6 +1238,8 @@ async def get_feature_linked_sessions(feature_id: str):
             durationSeconds=int(session_row.get("duration_seconds") or 0),
             gitCommitHash=session_row.get("git_commit_hash"),
             gitCommitHashes=merged_hashes,
+            gitBranch=session_row.get("git_branch"),
+            pullRequests=normalized_pull_requests,
             sessionType=session_type,
             parentSessionId=parent_session_id,
             rootSessionId=root_session_id,
