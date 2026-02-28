@@ -9,9 +9,11 @@ import logging
 
 import aiosqlite
 
+from backend import config
+
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -443,6 +445,137 @@ CREATE TABLE IF NOT EXISTS alert_configs (
 );
 """
 
+_TEST_VISUALIZER_TABLES = """
+-- ── 12. Test Visualizer ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS test_runs (
+    run_id              TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    timestamp           TEXT NOT NULL,
+    git_sha             TEXT DEFAULT '',
+    branch              TEXT DEFAULT '',
+    agent_session_id    TEXT DEFAULT '',
+    env_fingerprint     TEXT DEFAULT '',
+    trigger             TEXT DEFAULT 'local',
+    status              TEXT DEFAULT 'complete',
+    total_tests         INTEGER DEFAULT 0,
+    passed_tests        INTEGER DEFAULT 0,
+    failed_tests        INTEGER DEFAULT 0,
+    skipped_tests       INTEGER DEFAULT 0,
+    duration_ms         INTEGER DEFAULT 0,
+    metadata_json       TEXT DEFAULT '{}',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_runs_project
+    ON test_runs(project_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_test_runs_session
+    ON test_runs(project_id, agent_session_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_test_runs_sha
+    ON test_runs(project_id, git_sha);
+
+CREATE TABLE IF NOT EXISTS test_definitions (
+    test_id         TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    framework       TEXT DEFAULT 'pytest',
+    tags_json       TEXT DEFAULT '[]',
+    owner           TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_defs_project
+    ON test_definitions(project_id);
+CREATE INDEX IF NOT EXISTS idx_test_defs_path
+    ON test_definitions(project_id, path);
+
+CREATE TABLE IF NOT EXISTS test_results (
+    run_id              TEXT NOT NULL REFERENCES test_runs(run_id) ON DELETE CASCADE,
+    test_id             TEXT NOT NULL REFERENCES test_definitions(test_id),
+    status              TEXT NOT NULL,
+    duration_ms         INTEGER DEFAULT 0,
+    error_fingerprint   TEXT DEFAULT '',
+    error_message       TEXT DEFAULT '',
+    artifact_refs_json  TEXT DEFAULT '[]',
+    stdout_ref          TEXT DEFAULT '',
+    stderr_ref          TEXT DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (run_id, test_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_results_test
+    ON test_results(test_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_status
+    ON test_results(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_fingerprint
+    ON test_results(error_fingerprint) WHERE error_fingerprint != '';
+
+CREATE TABLE IF NOT EXISTS test_domains (
+    domain_id       TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    parent_id       TEXT REFERENCES test_domains(domain_id),
+    description     TEXT DEFAULT '',
+    tier            TEXT DEFAULT 'core',
+    sort_order      INTEGER DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_domains_project
+    ON test_domains(project_id);
+CREATE INDEX IF NOT EXISTS idx_test_domains_parent
+    ON test_domains(parent_id) WHERE parent_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS test_feature_mappings (
+    mapping_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id          TEXT NOT NULL,
+    test_id             TEXT NOT NULL REFERENCES test_definitions(test_id),
+    feature_id          TEXT NOT NULL,
+    domain_id           TEXT REFERENCES test_domains(domain_id),
+    provider_source     TEXT NOT NULL,
+    confidence          REAL DEFAULT 0.5,
+    version             INTEGER DEFAULT 1,
+    snapshot_hash       TEXT DEFAULT '',
+    is_primary          INTEGER DEFAULT 0,
+    metadata_json       TEXT DEFAULT '{}',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mappings_test
+    ON test_feature_mappings(project_id, test_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_mappings_feature
+    ON test_feature_mappings(project_id, feature_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_mappings_domain
+    ON test_feature_mappings(project_id, domain_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mappings_upsert
+    ON test_feature_mappings(test_id, feature_id, provider_source, version);
+
+CREATE TABLE IF NOT EXISTS test_integrity_signals (
+    signal_id           TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    git_sha             TEXT NOT NULL,
+    file_path           TEXT NOT NULL,
+    test_id             TEXT REFERENCES test_definitions(test_id),
+    signal_type         TEXT NOT NULL,
+    severity            TEXT DEFAULT 'medium',
+    details_json        TEXT DEFAULT '{}',
+    linked_run_ids_json TEXT DEFAULT '[]',
+    agent_session_id    TEXT DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_integrity_project
+    ON test_integrity_signals(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_integrity_sha
+    ON test_integrity_signals(project_id, git_sha);
+CREATE INDEX IF NOT EXISTS idx_integrity_test
+    ON test_integrity_signals(test_id) WHERE test_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_integrity_type
+    ON test_integrity_signals(project_id, signal_type, severity);
+"""
+
 _SEED_METRIC_TYPES = """
 INSERT OR IGNORE INTO metric_types (id, display_name, unit, value_type, aggregation, description) VALUES
     ('session_cost',        'Session Cost',      '$',       'gauge',   'sum',   'Total cost per session'),
@@ -481,6 +614,12 @@ async def _ensure_index(db: aiosqlite.Connection, ddl: str) -> None:
     await db.execute(ddl)
 
 
+async def _ensure_test_visualizer_tables(db: aiosqlite.Connection) -> None:
+    if not config.CCDASH_TEST_VISUALIZER_ENABLED:
+        return
+    await db.executescript(_TEST_VISUALIZER_TABLES)
+
+
 async def run_migrations(db: aiosqlite.Connection) -> None:
     """Create all tables and seed data. Idempotent."""
     # Check current schema version
@@ -492,6 +631,8 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         current_version = 0
 
     if current_version >= SCHEMA_VERSION:
+        await _ensure_test_visualizer_tables(db)
+        await db.commit()
         logger.info(f"Schema is up to date (version {current_version})")
         return
 
@@ -499,6 +640,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
 
     # Execute all CREATE TABLE statements
     await db.executescript(_TABLES)
+    await _ensure_test_visualizer_tables(db)
 
     # Explicit table upgrades for existing DBs.
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")

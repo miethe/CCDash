@@ -443,3 +443,131 @@ class FeatureExecutionContext(BaseModel):
     recommendations: ExecutionRecommendation
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
     generatedAt: str = ""
+
+
+# ── Test Visualizer DTOs ───────────────────────────────────────────
+
+class TestRunDTO(BaseModel):
+    run_id: str
+    project_id: str
+    timestamp: str
+    git_sha: str = ""
+    branch: str = ""
+    agent_session_id: str = ""
+    env_fingerprint: str = ""
+    trigger: str = "local"
+    status: str = "complete"
+    total_tests: int = 0
+    passed_tests: int = 0
+    failed_tests: int = 0
+    skipped_tests: int = 0
+    duration_ms: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TestDefinitionDTO(BaseModel):
+    test_id: str
+    project_id: str
+    path: str
+    name: str
+    framework: str = "pytest"
+    tags: list[str] = Field(default_factory=list)
+    owner: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class TestResultDTO(BaseModel):
+    run_id: str
+    test_id: str
+    status: str
+    duration_ms: int = 0
+    error_fingerprint: str = ""
+    error_message: str = ""
+    artifact_refs: list[str] = Field(default_factory=list)
+    stdout_ref: str = ""
+    stderr_ref: str = ""
+    created_at: str = ""
+
+
+class TestDomainDTO(BaseModel):
+    domain_id: str
+    project_id: str
+    name: str
+    parent_id: Optional[str] = None
+    description: str = ""
+    tier: str = "core"
+    sort_order: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class TestFeatureMappingDTO(BaseModel):
+    mapping_id: int
+    project_id: str
+    test_id: str
+    feature_id: str
+    domain_id: Optional[str] = None
+    provider_source: str
+    confidence: float = 0.5
+    version: int = 1
+    snapshot_hash: str = ""
+    is_primary: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TestIntegritySignalDTO(BaseModel):
+    signal_id: str
+    project_id: str
+    git_sha: str
+    file_path: str
+    test_id: Optional[str] = None
+    signal_type: str
+    severity: str = "medium"
+    details: dict[str, Any] = Field(default_factory=dict)
+    linked_run_ids: list[str] = Field(default_factory=list)
+    agent_session_id: str = ""
+    created_at: str = ""
+
+
+class DomainHealthRollupDTO(BaseModel):
+    domain_id: str
+    domain_name: str
+    tier: str = "core"
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pass_rate: float = 0.0
+    integrity_score: float = 1.0
+    last_run_at: Optional[str] = None
+    children: list["DomainHealthRollupDTO"] = Field(default_factory=list)
+
+
+class FeatureTestHealthDTO(BaseModel):
+    feature_id: str
+    feature_name: str
+    domain_id: Optional[str] = None
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pass_rate: float = 0.0
+    integrity_score: float = 1.0
+    last_run_at: Optional[str] = None
+    open_signals: int = 0
+
+
+class IngestRunRequest(BaseModel):
+    run_id: str
+    project_id: str
+    timestamp: str
+    git_sha: str = ""
+    branch: str = ""
+    agent_session_id: str = ""
+    env_fingerprint: str = ""
+    trigger: str = "local"
+    test_results: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
