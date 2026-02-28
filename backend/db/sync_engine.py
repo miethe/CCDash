@@ -22,11 +22,13 @@ import aiosqlite
 import yaml
 
 from backend import config, observability
-from backend.models import Project
+from backend.models import IngestRunRequest, Project
 from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file
 from backend.parsers.progress import parse_progress_file
 from backend.parsers.features import scan_features
+from backend.parsers.test_results import parse_junit_xml_file
+from backend.services.test_ingest import ingest_run as ingest_test_run
 from backend.document_linking import (
     alias_tokens_from_path,
     canonical_project_path,
@@ -86,6 +88,11 @@ def _file_hash(path: Path) -> str:
     except Exception:
         return ""
     return h.hexdigest()
+
+
+def _default_test_run_id(project_id: str, path: Path, file_hash: str) -> str:
+    raw = f"{project_id}::{path.resolve()}::{file_hash}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def _canonical_task_source(path: Path, progress_dir: Path) -> str:
@@ -2376,9 +2383,115 @@ class SyncEngine:
             "suspects": suspects_as_dicts(suspects),
         }
 
+    async def sync_test_results(
+        self,
+        project_id: str,
+        results_dir: Path,
+        force: bool = False,
+        changed_files: list[Path] | None = None,
+    ) -> dict:
+        """Sync JUnit XML files from a configured test-results directory."""
+        stats = {"synced": 0, "skipped": 0, "errors": 0}
+        if not config.CCDASH_TEST_VISUALIZER_ENABLED:
+            return stats
+        if not results_dir or not results_dir.exists():
+            return stats
+
+        if changed_files is not None:
+            files = [path for path in changed_files if path.exists() and path.suffix.lower() == ".xml"]
+        else:
+            files = sorted(results_dir.rglob("*.xml"))
+
+        for xml_path in files:
+            try:
+                synced = await self._sync_single_test_result(project_id, xml_path, force=force)
+            except Exception as exc:
+                logger.error("Failed to sync test results file %s: %s", xml_path, exc)
+                stats["errors"] += 1
+                continue
+            if synced:
+                stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+        return stats
+
+    async def _sync_single_test_result(self, project_id: str, path: Path, force: bool = False) -> bool:
+        file_path = str(path)
+        mtime = path.stat().st_mtime
+
+        if not force:
+            cached = await self.sync_repo.get_sync_state(file_path)
+            if cached and cached["file_mtime"] == mtime:
+                return False
+
+        overall_t0 = time.monotonic()
+        file_hash = _file_hash(path)
+        run_timestamp = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        default_metadata = {
+            "run_id": _default_test_run_id(project_id, path, file_hash),
+            "timestamp": run_timestamp,
+            "trigger": "file_watcher",
+        }
+
+        try:
+            with observability.start_span(
+                "ccdash.sync.test_results.parse",
+                {
+                    "ccdash.project_id": project_id,
+                    "ccdash.file_path": file_path,
+                },
+            ):
+                t0 = time.monotonic()
+                parsed = parse_junit_xml_file(path, project_id, run_metadata=default_metadata)
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("test_results", project_id=project_id)
+            raise
+
+        run_data = parsed.get("run", {}) if isinstance(parsed.get("run"), dict) else {}
+        payload = IngestRunRequest(
+            run_id=str(run_data.get("run_id") or default_metadata["run_id"]).strip(),
+            project_id=str(run_data.get("project_id") or project_id).strip(),
+            timestamp=str(run_data.get("timestamp") or run_timestamp).strip(),
+            git_sha=str(run_data.get("git_sha") or "").strip(),
+            branch=str(run_data.get("branch") or "").strip(),
+            agent_session_id=str(run_data.get("agent_session_id") or "").strip(),
+            env_fingerprint=str(run_data.get("env_fingerprint") or "").strip(),
+            trigger=str(run_data.get("trigger") or "file_watcher").strip() or "file_watcher",
+            test_definitions=parsed.get("test_definitions", []) if isinstance(parsed.get("test_definitions"), list) else [],
+            test_results=parsed.get("test_results", []) if isinstance(parsed.get("test_results"), list) else [],
+            metadata=run_data.get("metadata", {}) if isinstance(run_data.get("metadata"), dict) else {},
+        )
+        response = await ingest_test_run(payload, self.db)
+        if response.errors:
+            logger.warning(
+                "Test ingestion completed with warnings for %s: %s",
+                file_path,
+                "; ".join(response.errors),
+            )
+
+        await self.sync_repo.upsert_sync_state({
+            "file_path": file_path,
+            "file_hash": file_hash,
+            "file_mtime": mtime,
+            "entity_type": "test_result",
+            "project_id": project_id,
+            "last_synced": datetime.now(timezone.utc).isoformat(),
+            "parse_ms": parse_ms,
+        })
+
+        observability.record_ingestion(
+            "test_results",
+            "success",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=project_id,
+        )
+        return True
+
     async def sync_changed_files(
         self, project_id: str, changed_files: list[tuple[str, Path]],
         sessions_dir: Path, docs_dir: Path, progress_dir: Path,
+        test_results_dir: Path | None = None,
         operation_id: str | None = None,
         trigger: str = "watcher",
     ) -> dict:
@@ -2386,7 +2499,15 @@ class SyncEngine:
 
         changed_files: list of (change_type, path) where change_type is 'modified'|'added'|'deleted'
         """
-        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0, "links_created": 0, "operation_id": ""}
+        stats = {
+            "sessions": 0,
+            "documents": 0,
+            "tasks": 0,
+            "tests": 0,
+            "features": 0,
+            "links_created": 0,
+            "operation_id": "",
+        }
         if not operation_id and trigger != "watcher":
             operation_id = await self._start_operation(
                 "sync_changed_files",
@@ -2408,6 +2529,12 @@ class SyncEngine:
         should_resync_features = False
         should_rebuild_links = False
         project_root = infer_project_root(docs_dir, progress_dir)
+        resolved_test_results_dir = test_results_dir
+        if not resolved_test_results_dir and config.TEST_RESULTS_DIR:
+            configured = Path(config.TEST_RESULTS_DIR)
+            resolved_test_results_dir = (
+                configured if configured.is_absolute() else (project_root / configured)
+            )
         root_scopes: list[Path] = []
         if docs_dir.exists():
             root_scopes.append(docs_dir)
@@ -2441,6 +2568,12 @@ class SyncEngine:
                         await self.session_repo.delete_by_source(str(path))
                         stats["sessions"] += 1
                         should_rebuild_links = True
+                    elif (
+                        path.suffix == ".xml"
+                        and resolved_test_results_dir
+                        and (path == resolved_test_results_dir or resolved_test_results_dir in path.parents)
+                    ):
+                        stats["tests"] += 1
                     elif path.suffix == ".md":
                         await self.document_repo.delete_by_source(str(path))
                         await self.task_repo.delete_by_source(str(path))
@@ -2456,6 +2589,13 @@ class SyncEngine:
                         if await self._sync_single_session(project_id, path):
                             stats["sessions"] += 1
                             should_rebuild_links = True
+                    elif (
+                        path.suffix == ".xml"
+                        and resolved_test_results_dir
+                        and (path == resolved_test_results_dir or resolved_test_results_dir in path.parents)
+                    ):
+                        if await self._sync_single_test_result(project_id, path):
+                            stats["tests"] += 1
                     elif path.suffix == ".md":
                         if docs_dir in path.parents:
                             synced = await self._sync_single_document(

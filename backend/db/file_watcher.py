@@ -32,6 +32,7 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
     ) -> None:
         """Start watching project directories in a background task."""
         if self._running:
@@ -40,7 +41,14 @@ class FileWatcher:
 
         self._running = True
         self._task = asyncio.create_task(
-            self._watch_loop(sync_engine, project_id, sessions_dir, docs_dir, progress_dir)
+            self._watch_loop(
+                sync_engine,
+                project_id,
+                sessions_dir,
+                docs_dir,
+                progress_dir,
+                test_results_dir,
+            )
         )
         logger.info(f"File watcher started for project {project_id}")
 
@@ -67,9 +75,12 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
     ) -> None:
         """Main watching loop. Watches all project dirs for changes."""
         watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
+        if test_results_dir and test_results_dir.exists():
+            watch_paths.append(test_results_dir)
 
         if not watch_paths:
             logger.warning("No watch paths exist, watcher has nothing to monitor")
@@ -83,13 +94,20 @@ class FileWatcher:
                 if not self._running:
                     break
 
-                classified = self._classify_changes(changes, sessions_dir, docs_dir, progress_dir)
+                classified = self._classify_changes(
+                    changes,
+                    sessions_dir,
+                    docs_dir,
+                    progress_dir,
+                    test_results_dir,
+                )
                 if classified:
                     logger.info(f"Detected {len(classified)} file changes, syncing...")
                     try:
                         await sync_engine.sync_changed_files(
                             project_id, classified,
                             sessions_dir, docs_dir, progress_dir,
+                            test_results_dir=test_results_dir,
                         )
                     except Exception as e:
                         logger.error(f"Error syncing changed files: {e}")
@@ -106,17 +124,22 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
     ) -> list[tuple[str, Path]]:
         """Classify raw watchfiles changes into (change_type, path) pairs.
 
-        Only returns relevant file types (.jsonl, .md).
+        Only returns relevant file types (.jsonl, .md, .xml for test results).
         """
         result = []
         for change_type, path_str in changes:
             path = Path(path_str)
 
-            # Only care about session JSONL files and markdown docs
-            if path.suffix not in (".jsonl", ".md"):
+            if path.suffix == ".xml":
+                if not test_results_dir:
+                    continue
+                if path != test_results_dir and test_results_dir not in path.parents:
+                    continue
+            elif path.suffix not in (".jsonl", ".md"):
                 continue
 
             if change_type == Change.deleted:

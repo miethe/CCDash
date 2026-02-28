@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
@@ -53,6 +54,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting initial project sync...")
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
     active_project = project_manager.get_active_project()
+    test_results_dir: Optional[Path] = None
+    if active_project and config.TEST_RESULTS_DIR:
+        configured = Path(config.TEST_RESULTS_DIR)
+        test_results_dir = configured if configured.is_absolute() else (Path(active_project.path) / configured)
     
     if active_project:
         async def _run_startup_sync_pipeline() -> None:
@@ -70,6 +75,9 @@ async def lifespan(app: FastAPI):
                 rebuild_links=not light_mode,
                 capture_analytics=not light_mode,
             )
+            if test_results_dir and config.CCDASH_TEST_VISUALIZER_ENABLED:
+                test_stats = await sync.sync_test_results(active_project.id, test_results_dir)
+                logger.info("Startup test result sync stats: %s", test_stats)
 
             if light_mode and bool(getattr(config, "STARTUP_DEFERRED_REBUILD_LINKS", True)):
                 stagger = max(0, int(getattr(config, "STARTUP_DEFERRED_REBUILD_DELAY_SECONDS", 0)))
@@ -89,7 +97,12 @@ async def lifespan(app: FastAPI):
         
         # 5. Start File Watcher
         await file_watcher.start(
-            sync, active_project.id, sessions_dir, docs_dir, progress_dir
+            sync,
+            active_project.id,
+            sessions_dir,
+            docs_dir,
+            progress_dir,
+            test_results_dir=test_results_dir,
         )
     
     yield
