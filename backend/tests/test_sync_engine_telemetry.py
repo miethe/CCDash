@@ -2,6 +2,7 @@ import json
 import unittest
 
 from backend.db.sync_engine import _build_session_telemetry_events
+from backend.db.sync_engine import _build_session_commit_correlations
 
 
 class SyncEngineTelemetryTests(unittest.TestCase):
@@ -100,6 +101,113 @@ class SyncEngineTelemetryTests(unittest.TestCase):
         self.assertEqual(message["source_key"], "log:S-200:3")
         self.assertEqual(message["token_input"], 2)
         self.assertEqual(message["token_output"], 3)
+
+    def test_build_session_commit_correlations_assigns_windows_to_commits(self) -> None:
+        session_payload = {
+            "id": "S-500",
+            "rootSessionId": "S-500",
+            "featureId": "feature-one-v1",
+            "taskId": "TASK-2.1",
+            "startedAt": "2026-02-26T09:00:00Z",
+            "totalCost": 3.0,
+        }
+        logs = [
+            {
+                "id": "log-1",
+                "type": "tool",
+                "timestamp": "2026-02-26T09:00:01Z",
+                "metadata": {
+                    "inputTokens": 10,
+                    "outputTokens": 6,
+                    "taskDescription": "Implement TASK-2.1 in phase 2",
+                },
+            },
+            {
+                "id": "log-2",
+                "type": "command",
+                "timestamp": "2026-02-26T09:00:02Z",
+                "content": "/dev:execute-phase",
+                "metadata": {
+                    "parsedCommand": {
+                        "phaseToken": "2",
+                        "phases": ["2"],
+                        "featureSlugCanonical": "feature-one",
+                    }
+                },
+            },
+            {
+                "id": "log-3",
+                "type": "tool",
+                "timestamp": "2026-02-26T09:00:03Z",
+                "metadata": {"commitHashes": ["abc1234"]},
+            },
+            {
+                "id": "log-4",
+                "type": "tool",
+                "timestamp": "2026-02-26T09:00:04Z",
+                "metadata": {
+                    "inputTokens": 4,
+                    "outputTokens": 3,
+                    "taskDescription": "Finalize TASK-2.2 updates",
+                },
+            },
+            {
+                "id": "log-5",
+                "type": "tool",
+                "timestamp": "2026-02-26T09:00:05Z",
+                "metadata": {"commitHashes": ["def5678"]},
+            },
+        ]
+        files = [
+            {"sourceLogId": "log-1", "filePath": "backend/main.py", "additions": 5, "deletions": 1},
+            {"sourceLogId": "log-4", "filePath": "backend/api.py", "additions": 2, "deletions": 0},
+        ]
+
+        rows, latest = _build_session_commit_correlations(
+            "project-1",
+            session_payload,
+            logs,
+            files,
+            source="sync",
+            baseline_commit_hash="",
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["commit_hash"], "abc1234")
+        self.assertEqual(rows[1]["commit_hash"], "def5678")
+        self.assertEqual(rows[0]["file_count"], 1)
+        self.assertEqual(rows[1]["file_count"], 1)
+        self.assertGreater(rows[0]["token_input"], 0)
+        self.assertGreater(rows[1]["token_input"], 0)
+        self.assertEqual(latest, "def5678")
+
+    def test_build_session_commit_correlations_uses_baseline_when_no_new_commit(self) -> None:
+        session_payload = {
+            "id": "S-501",
+            "startedAt": "2026-02-26T10:00:00Z",
+        }
+        logs = [
+            {
+                "id": "log-1",
+                "type": "command",
+                "timestamp": "2026-02-26T10:00:01Z",
+                "content": "/dev:execute-phase 3",
+                "metadata": {"inputTokens": 2, "outputTokens": 1},
+            }
+        ]
+
+        rows, latest = _build_session_commit_correlations(
+            "project-1",
+            session_payload,
+            logs,
+            files=[],
+            source="sync",
+            baseline_commit_hash="c0ffee1",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["commit_hash"], "c0ffee1")
+        self.assertEqual(latest, "c0ffee1")
 
 
 if __name__ == "__main__":

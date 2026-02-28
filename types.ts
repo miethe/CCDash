@@ -835,6 +835,12 @@ export interface FeatureExecutionSessionLink {
   durationSeconds?: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
+  gitBranch?: string;
+  pullRequests?: Array<{
+    prNumber?: string;
+    prUrl?: string;
+    prRepository?: string;
+  }>;
   sessionType?: string;
   parentSessionId?: string | null;
   rootSessionId?: string;
@@ -859,6 +865,31 @@ export interface FeatureExecutionSessionLink {
     relatedCommand?: string;
     relatedPhases?: string[];
     relatedFilePath?: string;
+    prLinks?: Array<{
+      prNumber?: string;
+      prUrl?: string;
+      prRepository?: string;
+    }>;
+    commitCorrelations?: Array<{
+      commitHash?: string;
+      windowStart?: string;
+      windowEnd?: string;
+      eventCount?: number;
+      toolCallCount?: number;
+      commandCount?: number;
+      artifactCount?: number;
+      tokenInput?: number;
+      tokenOutput?: number;
+      fileCount?: number;
+      additions?: number;
+      deletions?: number;
+      costUsd?: number;
+      featureIds?: string[];
+      phases?: string[];
+      taskIds?: string[];
+      filePaths?: string[];
+      provisional?: boolean;
+    }>;
     fields?: Array<{
       id: string;
       label: string;

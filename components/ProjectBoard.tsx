@@ -11,7 +11,7 @@ import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
-  Terminal, GitCommit, Play,
+  Terminal, GitCommit, GitBranch, Play,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
@@ -42,6 +42,12 @@ interface FeatureSessionLink {
   durationSeconds: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
+  gitBranch?: string;
+  pullRequests?: Array<{
+    prNumber?: string;
+    prUrl?: string;
+    prRepository?: string;
+  }>;
   sessionType?: string;
   parentSessionId?: string | null;
   rootSessionId?: string;
@@ -66,12 +72,89 @@ interface FeatureSessionLink {
     relatedCommand: string;
     relatedPhases: string[];
     relatedFilePath?: string;
+    prLinks?: Array<{
+      prNumber?: string;
+      prUrl?: string;
+      prRepository?: string;
+    }>;
+    commitCorrelations?: Array<{
+      commitHash?: string;
+      windowStart?: string;
+      windowEnd?: string;
+      eventCount?: number;
+      toolCallCount?: number;
+      commandCount?: number;
+      artifactCount?: number;
+      tokenInput?: number;
+      tokenOutput?: number;
+      fileCount?: number;
+      additions?: number;
+      deletions?: number;
+      costUsd?: number;
+      featureIds?: string[];
+      phases?: string[];
+      taskIds?: string[];
+      filePaths?: string[];
+      provisional?: boolean;
+    }>;
     fields: Array<{
       id: string;
       label: string;
       value: string;
     }>;
   } | null;
+}
+
+interface PullRequestRef {
+  prNumber?: string;
+  prUrl?: string;
+  prRepository?: string;
+}
+
+interface CommitCorrelationRef {
+  commitHash: string;
+  sessionId: string;
+  branch?: string;
+  windowStart?: string;
+  windowEnd?: string;
+  eventCount: number;
+  toolCallCount: number;
+  commandCount: number;
+  artifactCount: number;
+  tokenInput: number;
+  tokenOutput: number;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  costUsd: number;
+  featureIds: string[];
+  phases: string[];
+  taskIds: string[];
+  filePaths: string[];
+  provisional: boolean;
+}
+
+interface GitCommitAggregate {
+  commitHash: string;
+  sessionIds: string[];
+  branches: string[];
+  phases: string[];
+  taskIds: string[];
+  filePaths: string[];
+  pullRequests: PullRequestRef[];
+  tokenInput: number;
+  tokenOutput: number;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  costUsd: number;
+  eventCount: number;
+  toolCallCount: number;
+  commandCount: number;
+  artifactCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  provisional: boolean;
 }
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
@@ -105,9 +188,18 @@ interface FeatureSessionSummary {
 
 const SHORT_COMMIT_LENGTH = 7;
 const FEATURE_MODAL_POLL_INTERVAL_MS = 15_000;
+const WORKING_TREE_COMMIT_HASH = '__working_tree__';
+const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 const normalizePath = (value: string): string => (value || '').replace(/\\/g, '/').replace(/^\.?\//, '');
+const normalizeCommitHash = (value: string): string => {
+  const raw = (value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === WORKING_TREE_COMMIT_HASH) return raw;
+  if (!COMMIT_HASH_PATTERN.test(raw)) return '';
+  return raw;
+};
 const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
   {
     id: 'plan',
@@ -454,20 +546,83 @@ const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): Linke
 const getStatusStyle = getFeatureStatusStyle;
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 
+const TASK_STATUS_PRIORITY: Record<string, number> = {
+  done: 5,
+  deferred: 4,
+  review: 3,
+  'in-progress': 2,
+  backlog: 1,
+  todo: 1,
+};
+
+const taskUpdatedAtEpoch = (task: ProjectTask): number => {
+  const parsed = Date.parse(task.updatedAt || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const taskStatusPriority = (task: ProjectTask): number =>
+  TASK_STATUS_PRIORITY[String(task.status || '').toLowerCase()] || 0;
+
+const taskSignalScore = (task: ProjectTask): number => {
+  let score = 0;
+  if ((task.sessionId || '').trim()) score += 2;
+  if ((task.commitHash || '').trim()) score += 2;
+  const sourcePath = normalizePath(task.sourceFile || '').toLowerCase();
+  if (sourcePath.includes('/progress/')) score += 1;
+  if (sourcePath.includes('/project_plans/')) score += 0.5;
+  return score;
+};
+
+const pickFresherTask = (existing: ProjectTask, candidate: ProjectTask): ProjectTask => {
+  const existingUpdated = taskUpdatedAtEpoch(existing);
+  const candidateUpdated = taskUpdatedAtEpoch(candidate);
+  if (candidateUpdated !== existingUpdated) return candidateUpdated > existingUpdated ? candidate : existing;
+
+  const existingStatus = taskStatusPriority(existing);
+  const candidateStatus = taskStatusPriority(candidate);
+  if (candidateStatus !== existingStatus) return candidateStatus > existingStatus ? candidate : existing;
+
+  const existingSignals = taskSignalScore(existing);
+  const candidateSignals = taskSignalScore(candidate);
+  if (candidateSignals !== existingSignals) return candidateSignals > existingSignals ? candidate : existing;
+
+  return existing;
+};
+
+const getTaskIdentity = (task: ProjectTask): string => {
+  const taskId = String(task.id || '').trim().toLowerCase();
+  if (taskId) return taskId;
+  return String(task.title || '').trim().toLowerCase();
+};
+
 const dedupePhaseTasks = (tasks: ProjectTask[]): ProjectTask[] => {
-  const seen = new Set<string>();
-  const deduped: ProjectTask[] = [];
+  const byIdentity = new Map<string, ProjectTask>();
   tasks.forEach(task => {
-    const key = [
-      String(task.id || '').trim().toLowerCase(),
-      normalizePath(String(task.sourceFile || '')),
-      String(task.title || '').trim().toLowerCase(),
-    ].join('::');
-    if (seen.has(key)) return;
-    seen.add(key);
-    deduped.push(task);
+    const identity = getTaskIdentity(task);
+    if (!identity) return;
+
+    const existing = byIdentity.get(identity);
+    if (!existing) {
+      byIdentity.set(identity, task);
+      return;
+    }
+
+    const preferred = pickFresherTask(existing, task);
+    const other = preferred === existing ? task : existing;
+    byIdentity.set(identity, {
+      ...other,
+      ...preferred,
+      title: preferred.title || other.title,
+      description: preferred.description || other.description,
+      sourceFile: preferred.sourceFile || other.sourceFile,
+      sessionId: preferred.sessionId || other.sessionId,
+      commitHash: preferred.commitHash || other.commitHash,
+      relatedFiles: (preferred.relatedFiles && preferred.relatedFiles.length > 0) ? preferred.relatedFiles : other.relatedFiles,
+      updatedAt: preferred.updatedAt || other.updatedAt,
+      status: preferred.status || other.status,
+    });
   });
-  return deduped;
+  return Array.from(byIdentity.values());
 };
 
 const normalizeFeatureForModal = (feature: Feature): Feature => {
@@ -959,6 +1114,7 @@ const FeatureModal = ({
   const [docGroupExpanded, setDocGroupExpanded] = useState<Record<DocGroupId, boolean>>(
     () => ({ ...DEFAULT_DOC_GROUP_EXPANDED })
   );
+  const [gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const featureDetailRequestIdRef = useRef(0);
@@ -1005,6 +1161,7 @@ const FeatureModal = ({
     setLinkedSessionLinks([]);
     setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
     setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
+    setGitHistoryCommitFilter('');
     setShowSecondarySessions(false);
     setExpandedSubthreadsBySessionId(new Set());
     setPhaseStatusFilter('all');
@@ -1089,6 +1246,13 @@ const FeatureModal = ({
     navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}`);
     onClose();
   }, [activeFeature.id, navigate, onClose]);
+
+  const openGitCommitInHistory = useCallback((commitHash: string) => {
+    const normalized = normalizeCommitHash(commitHash);
+    if (!normalized) return;
+    setGitHistoryCommitFilter(normalized);
+    setActiveTab('history');
+  }, []);
 
   const handlePhaseStatusChange = async (phaseId: string, newStatus: string) => {
     let previousFeatureSnapshot: Feature | null = null;
@@ -1288,6 +1452,367 @@ const FeatureModal = ({
 
     return byTask;
   }, [linkedSessions, phases]);
+
+  const gitHistoryData = useMemo(() => {
+    type CommitAccumulator = {
+      commitHash: string;
+      sessionIds: Set<string>;
+      branches: Set<string>;
+      phases: Set<string>;
+      taskIds: Set<string>;
+      filePaths: Set<string>;
+      pullRequestKeys: Set<string>;
+      tokenInput: number;
+      tokenOutput: number;
+      fileCount: number;
+      additions: number;
+      deletions: number;
+      costUsd: number;
+      eventCount: number;
+      toolCallCount: number;
+      commandCount: number;
+      artifactCount: number;
+      firstSeenAt: string;
+      lastSeenAt: string;
+      provisional: boolean;
+    };
+
+    const commitMap = new Map<string, CommitAccumulator>();
+    const pullRequestMap = new Map<string, PullRequestRef>();
+    const branchSet = new Set<string>();
+
+    const addPullRequest = (candidate: PullRequestRef) => {
+      const prNumber = String(candidate.prNumber || '').trim();
+      const prUrl = String(candidate.prUrl || '').trim();
+      const prRepository = String(candidate.prRepository || '').trim();
+      const key = (prUrl || prNumber || prRepository).toLowerCase();
+      if (!key) return;
+      const existing = pullRequestMap.get(key);
+      if (existing) {
+        if (!existing.prUrl && prUrl) existing.prUrl = prUrl;
+        if (!existing.prNumber && prNumber) existing.prNumber = prNumber;
+        if (!existing.prRepository && prRepository) existing.prRepository = prRepository;
+        return;
+      }
+      pullRequestMap.set(key, {
+        prNumber: prNumber || undefined,
+        prUrl: prUrl || undefined,
+        prRepository: prRepository || undefined,
+      });
+    };
+
+    const addCommitRow = ({
+      session,
+      commitHash,
+      phases,
+      taskIds,
+      filePaths,
+      tokenInput,
+      tokenOutput,
+      fileCount,
+      additions,
+      deletions,
+      costUsd,
+      eventCount,
+      toolCallCount,
+      commandCount,
+      artifactCount,
+      windowStart,
+      windowEnd,
+      provisional,
+      pullRequests,
+    }: {
+      session: FeatureSessionLink;
+      commitHash: string;
+      phases?: string[];
+      taskIds?: string[];
+      filePaths?: string[];
+      tokenInput?: number;
+      tokenOutput?: number;
+      fileCount?: number;
+      additions?: number;
+      deletions?: number;
+      costUsd?: number;
+      eventCount?: number;
+      toolCallCount?: number;
+      commandCount?: number;
+      artifactCount?: number;
+      windowStart?: string;
+      windowEnd?: string;
+      provisional?: boolean;
+      pullRequests?: PullRequestRef[];
+    }) => {
+      const normalizedHash = normalizeCommitHash(commitHash);
+      if (!normalizedHash) return;
+
+      let current = commitMap.get(normalizedHash);
+      if (!current) {
+        current = {
+          commitHash: normalizedHash,
+          sessionIds: new Set<string>(),
+          branches: new Set<string>(),
+          phases: new Set<string>(),
+          taskIds: new Set<string>(),
+          filePaths: new Set<string>(),
+          pullRequestKeys: new Set<string>(),
+          tokenInput: 0,
+          tokenOutput: 0,
+          fileCount: 0,
+          additions: 0,
+          deletions: 0,
+          costUsd: 0,
+          eventCount: 0,
+          toolCallCount: 0,
+          commandCount: 0,
+          artifactCount: 0,
+          firstSeenAt: '',
+          lastSeenAt: '',
+          provisional: false,
+        };
+        commitMap.set(normalizedHash, current);
+      }
+
+      const sessionId = String(session.sessionId || '').trim();
+      if (sessionId) current.sessionIds.add(sessionId);
+
+      const branch = String(session.gitBranch || '').trim();
+      if (branch) {
+        current.branches.add(branch);
+        branchSet.add(branch);
+      }
+
+      (phases || []).forEach(phase => {
+        const token = String(phase || '').trim();
+        if (token) current?.phases.add(token);
+      });
+      (taskIds || []).forEach(taskId => {
+        const token = String(taskId || '').trim();
+        if (token) current?.taskIds.add(token);
+      });
+      (filePaths || []).forEach(path => {
+        const token = normalizePath(String(path || ''));
+        if (token) current?.filePaths.add(token);
+      });
+
+      current.tokenInput += Number(tokenInput || 0);
+      current.tokenOutput += Number(tokenOutput || 0);
+      current.fileCount += Number(fileCount || 0);
+      current.additions += Number(additions || 0);
+      current.deletions += Number(deletions || 0);
+      current.costUsd += Number(costUsd || 0);
+      current.eventCount += Number(eventCount || 0);
+      current.toolCallCount += Number(toolCallCount || 0);
+      current.commandCount += Number(commandCount || 0);
+      current.artifactCount += Number(artifactCount || 0);
+
+      const startedAt = String(windowStart || session.startedAt || '').trim();
+      const endedAt = String(windowEnd || session.endedAt || session.startedAt || '').trim();
+      if (startedAt && (!current.firstSeenAt || toEpoch(startedAt) < toEpoch(current.firstSeenAt))) {
+        current.firstSeenAt = startedAt;
+      }
+      if (endedAt && (!current.lastSeenAt || toEpoch(endedAt) > toEpoch(current.lastSeenAt))) {
+        current.lastSeenAt = endedAt;
+      }
+
+      if (provisional) current.provisional = true;
+
+      (pullRequests || []).forEach(pr => {
+        addPullRequest(pr);
+        const key = (String(pr.prUrl || '').trim() || String(pr.prNumber || '').trim() || String(pr.prRepository || '').trim()).toLowerCase();
+        if (key) current?.pullRequestKeys.add(key);
+      });
+    };
+
+    linkedSessions.forEach(session => {
+      const metadata = session.sessionMetadata || {};
+      const metadataPrLinks = Array.isArray(metadata.prLinks) ? metadata.prLinks as PullRequestRef[] : [];
+      const sessionPrLinks = Array.isArray(session.pullRequests) ? session.pullRequests : [];
+      const mergedPrLinks = [...sessionPrLinks, ...metadataPrLinks];
+
+      mergedPrLinks.forEach(addPullRequest);
+
+      const correlationRows = Array.isArray(metadata.commitCorrelations)
+        ? metadata.commitCorrelations
+        : [];
+
+      if (correlationRows.length > 0) {
+        correlationRows.forEach(rawRow => {
+          if (!rawRow || typeof rawRow !== 'object') return;
+          const commitHash = String(rawRow.commitHash || '').trim();
+          const phases = Array.isArray(rawRow.phases)
+            ? rawRow.phases.map(value => String(value || '').trim()).filter(Boolean)
+            : [];
+          const taskIds = Array.isArray(rawRow.taskIds)
+            ? rawRow.taskIds.map(value => String(value || '').trim()).filter(Boolean)
+            : [];
+          const filePaths = Array.isArray(rawRow.filePaths)
+            ? rawRow.filePaths.map(value => String(value || '')).filter(Boolean)
+            : [];
+          addCommitRow({
+            session,
+            commitHash,
+            phases: phases.length > 0 ? phases : (session.relatedPhases || []),
+            taskIds,
+            filePaths,
+            tokenInput: Number(rawRow.tokenInput || 0),
+            tokenOutput: Number(rawRow.tokenOutput || 0),
+            fileCount: Number(rawRow.fileCount || 0),
+            additions: Number(rawRow.additions || 0),
+            deletions: Number(rawRow.deletions || 0),
+            costUsd: Number(rawRow.costUsd || 0),
+            eventCount: Number(rawRow.eventCount || 0),
+            toolCallCount: Number(rawRow.toolCallCount || 0),
+            commandCount: Number(rawRow.commandCount || 0),
+            artifactCount: Number(rawRow.artifactCount || 0),
+            windowStart: String(rawRow.windowStart || ''),
+            windowEnd: String(rawRow.windowEnd || ''),
+            provisional: Boolean(rawRow.provisional),
+            pullRequests: mergedPrLinks,
+          });
+        });
+        return;
+      }
+
+      const commitHashes = Array.from(new Set([
+        String(session.gitCommitHash || '').trim(),
+        ...(session.gitCommitHashes || []),
+        ...(session.commitHashes || []),
+      ]))
+        .map(normalizeCommitHash)
+        .filter(Boolean);
+
+      commitHashes.forEach(commitHash => {
+        addCommitRow({
+          session,
+          commitHash,
+          phases: session.relatedPhases || [],
+          taskIds: [],
+          filePaths: [],
+          windowStart: session.startedAt,
+          windowEnd: session.endedAt || session.startedAt,
+          pullRequests: mergedPrLinks,
+          provisional: commitHash === WORKING_TREE_COMMIT_HASH,
+        });
+      });
+    });
+
+    const pullRequests = Array.from(pullRequestMap.values()).sort((a, b) => {
+      const aNumber = Number.parseInt(String(a.prNumber || ''), 10);
+      const bNumber = Number.parseInt(String(b.prNumber || ''), 10);
+      const aHas = Number.isFinite(aNumber);
+      const bHas = Number.isFinite(bNumber);
+      if (aHas && bHas && bNumber !== aNumber) return bNumber - aNumber;
+      return String(a.prUrl || a.prRepository || '').localeCompare(String(b.prUrl || b.prRepository || ''));
+    });
+
+    const commits: GitCommitAggregate[] = Array.from(commitMap.values())
+      .map(commit => ({
+        commitHash: commit.commitHash,
+        sessionIds: Array.from(commit.sessionIds),
+        branches: Array.from(commit.branches).sort((a, b) => a.localeCompare(b)),
+        phases: Array.from(commit.phases).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        taskIds: Array.from(commit.taskIds).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        filePaths: Array.from(commit.filePaths).sort((a, b) => a.localeCompare(b)),
+        pullRequests: Array.from(commit.pullRequestKeys)
+          .map(key => pullRequestMap.get(key))
+          .filter((value): value is PullRequestRef => Boolean(value)),
+        tokenInput: commit.tokenInput,
+        tokenOutput: commit.tokenOutput,
+        fileCount: commit.fileCount,
+        additions: commit.additions,
+        deletions: commit.deletions,
+        costUsd: commit.costUsd,
+        eventCount: commit.eventCount,
+        toolCallCount: commit.toolCallCount,
+        commandCount: commit.commandCount,
+        artifactCount: commit.artifactCount,
+        firstSeenAt: commit.firstSeenAt,
+        lastSeenAt: commit.lastSeenAt,
+        provisional: commit.provisional,
+      }))
+      .sort((a, b) => {
+        const aTime = toEpoch(a.lastSeenAt || a.firstSeenAt);
+        const bTime = toEpoch(b.lastSeenAt || b.firstSeenAt);
+        if (aTime !== bTime) return bTime - aTime;
+        return a.commitHash.localeCompare(b.commitHash);
+      });
+
+    const branches = Array.from(branchSet).sort((a, b) => a.localeCompare(b));
+    return { commits, pullRequests, branches };
+  }, [linkedSessions]);
+
+  const filteredGitCommits = useMemo(() => {
+    const normalized = normalizeCommitHash(gitHistoryCommitFilter);
+    if (!normalized) return gitHistoryData.commits;
+    return gitHistoryData.commits.filter(commit => commit.commitHash === normalized);
+  }, [gitHistoryCommitFilter, gitHistoryData.commits]);
+
+  const phaseCommitLinks = useMemo(() => {
+    const byPhase = new Map<string, GitCommitAggregate[]>();
+    const addPhaseCommit = (phaseToken: string, commit: GitCommitAggregate) => {
+      const key = String(phaseToken || '').trim();
+      if (!key) return;
+      const existing = byPhase.get(key) || [];
+      if (existing.some(item => item.commitHash === commit.commitHash)) return;
+      byPhase.set(key, [...existing, commit]);
+    };
+
+    gitHistoryData.commits.forEach(commit => {
+      commit.phases.forEach(phase => {
+        if (String(phase || '').toLowerCase() === 'all') {
+          phases.forEach(row => addPhaseCommit(String(row.phase || ''), commit));
+          return;
+        }
+        addPhaseCommit(phase, commit);
+      });
+    });
+
+    return byPhase;
+  }, [gitHistoryData.commits, phases]);
+
+  const taskCommitLinksByTaskId = useMemo(() => {
+    const byTask = new Map<string, GitCommitAggregate[]>();
+    const canonicalTaskIdByLower = new Map<string, string>();
+    const taskIdsByPhase = new Map<string, string[]>();
+
+    phases.forEach(phase => {
+      const phaseToken = String(phase.phase || '').trim();
+      (phase.tasks || []).forEach(task => {
+        const taskId = String(task.id || '').trim();
+        if (!taskId) return;
+        canonicalTaskIdByLower.set(taskId.toLowerCase(), taskId);
+        if (phaseToken) {
+          taskIdsByPhase.set(phaseToken, [...(taskIdsByPhase.get(phaseToken) || []), taskId]);
+        }
+      });
+    });
+
+    const addTaskCommit = (taskId: string, commit: GitCommitAggregate) => {
+      const key = String(taskId || '').trim();
+      if (!key) return;
+      const existing = byTask.get(key) || [];
+      if (existing.some(item => item.commitHash === commit.commitHash)) return;
+      byTask.set(key, [...existing, commit]);
+    };
+
+    gitHistoryData.commits.forEach(commit => {
+      const explicitTaskIds = commit.taskIds
+        .map(taskId => canonicalTaskIdByLower.get(String(taskId || '').toLowerCase()) || String(taskId || '').trim())
+        .filter(Boolean);
+
+      explicitTaskIds.forEach(taskId => addTaskCommit(taskId, commit));
+      if (explicitTaskIds.length > 0) return;
+
+      commit.phases.forEach(phase => {
+        const phaseToken = String(phase || '').trim();
+        if (!phaseToken) return;
+        (taskIdsByPhase.get(phaseToken) || []).forEach(taskId => addTaskCommit(taskId, commit));
+      });
+    });
+
+    return byTask;
+  }, [gitHistoryData.commits, phases]);
+
   const primaryFeatureDate = getFeaturePrimaryDate(activeFeature);
   const featureHistoryEvents = useMemo(() => {
     const events: Array<{
@@ -1441,7 +1966,7 @@ const FeatureModal = ({
     { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
     { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
     { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
-    { id: 'history', label: 'History', icon: Calendar },
+    { id: 'history', label: 'Git History', icon: Calendar },
   ];
 
   const renderSessionCard = (
@@ -1846,6 +2371,7 @@ const FeatureModal = ({
                 const phaseCompletedTasks = phaseTasks.length > 0 ? phaseDoneTasks + phaseDeferredTasks : getPhaseCompletedCount(phase);
                 const phaseTotalTasks = phaseTasks.length > 0 ? Math.max(phase.totalTasks || 0, phaseTasks.length) : phase.totalTasks;
                 const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
+                const phaseRelatedCommits = phaseCommitLinks.get(String(phase.phase || '').trim()) || [];
                 const visibleTasks = taskStatusFilter === 'all'
                   ? phaseTasks
                   : phaseTasks.filter(task => task.status === taskStatusFilter);
@@ -1898,6 +2424,27 @@ const FeatureModal = ({
                             )}
                           </div>
                         )}
+                        {phaseRelatedCommits.length > 0 && (
+                          <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500">Commits</span>
+                            {phaseRelatedCommits.slice(0, 5).map(commitRef => (
+                              <button
+                                key={`phase-${phaseKey}-commit-${commitRef.commitHash}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openGitCommitInHistory(commitRef.commitHash);
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-mono hover:bg-emerald-500/20 transition-colors"
+                                title={`Open ${commitRef.commitHash} in Git history`}
+                              >
+                                {toShortCommitHash(commitRef.commitHash)}
+                              </button>
+                            ))}
+                            {phaseRelatedCommits.length > 5 && (
+                              <span className="text-[10px] text-slate-500">+{phaseRelatedCommits.length - 5} more</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <StatusDropdown
                         status={phase.status}
@@ -1921,6 +2468,15 @@ const FeatureModal = ({
                             : taskDeferred
                               ? 'text-amber-300/90 italic'
                               : 'text-slate-300';
+                          const correlatedCommits = taskCommitLinksByTaskId.get(String(task.id || '').trim()) || [];
+                          const taskCommitHashes = Array.from(
+                            new Set(
+                              [
+                                normalizeCommitHash(String(task.commitHash || '')),
+                                ...correlatedCommits.map(commit => normalizeCommitHash(commit.commitHash)),
+                              ].filter(Boolean)
+                            )
+                          );
                           return (
                             <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
                               <button
@@ -1950,11 +2506,26 @@ const FeatureModal = ({
                               >
                                 {task.title}
                               </button>
-                              {task.commitHash && (
-                                <span className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono flex-shrink-0" title={`Commit: ${task.commitHash}`}>
-                                  <GitCommit size={10} />
-                                  {task.commitHash.slice(0, 7)}
-                                </span>
+                              {taskCommitHashes.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {taskCommitHashes.slice(0, 3).map(hash => (
+                                    <button
+                                      key={`${task.id}-commit-${hash}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openGitCommitInHistory(hash);
+                                      }}
+                                      className="flex items-center gap-1 text-[10px] bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-mono flex-shrink-0 hover:bg-emerald-500/20 transition-colors"
+                                      title={`Open ${hash} in Git history`}
+                                    >
+                                      <GitCommit size={10} />
+                                      {toShortCommitHash(hash)}
+                                    </button>
+                                  ))}
+                                  {taskCommitHashes.length > 3 && (
+                                    <span className="text-[10px] text-slate-500">+{taskCommitHashes.length - 3} more</span>
+                                  )}
+                                </div>
                               )}
                               {taskSessionLinks.length > 0 && (
                                 <div className="flex items-center gap-1 flex-wrap">
@@ -2138,34 +2709,149 @@ const FeatureModal = ({
           )}
           {activeTab === 'history' && (
             <div className="space-y-3">
-              {featureHistoryEvents.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                  <Calendar size={32} className="mx-auto mb-3 opacity-50" />
-                  <p>No timeline events available yet.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Commits</div>
+                  <div className="text-xl font-semibold text-emerald-300 mt-1">{gitHistoryData.commits.length}</div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked PRs</div>
+                  <div className="text-xl font-semibold text-blue-300 mt-1">{gitHistoryData.pullRequests.length}</div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Branches</div>
+                  <div className="text-xl font-semibold text-purple-300 mt-1">{gitHistoryData.branches.length}</div>
+                </div>
+              </div>
+
+              {gitHistoryCommitFilter && (
+                <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+                  <div className="text-xs text-emerald-200">
+                    Filtering to commit <span className="font-mono">{gitHistoryCommitFilter}</span>
+                  </div>
+                  <button
+                    onClick={() => setGitHistoryCommitFilter('')}
+                    className="text-[11px] px-2 py-1 rounded border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/20 transition-colors"
+                  >
+                    Clear Filter
+                  </button>
                 </div>
               )}
-              {featureHistoryEvents.length > 0 && (
+
+              {gitHistoryData.branches.length > 0 && (
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Branches</div>
+                  <div className="flex flex-wrap gap-2">
+                    {gitHistoryData.branches.map(branch => (
+                      <span
+                        key={`branch-${branch}`}
+                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-purple-500/30 bg-purple-500/10 text-purple-200 font-mono"
+                      >
+                        <GitBranch size={12} />
+                        {branch}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {gitHistoryData.pullRequests.length > 0 && (
+                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Pull Requests</div>
+                  <div className="space-y-2">
+                    {gitHistoryData.pullRequests.map((pr, index) => {
+                      const label = pr.prNumber ? `#${pr.prNumber}` : (pr.prUrl || pr.prRepository || `PR ${index + 1}`);
+                      const href = pr.prUrl || '';
+                      return (
+                        <div key={`pr-${pr.prUrl || pr.prNumber || index}`} className="flex items-center justify-between gap-3 text-xs">
+                          <div className="text-slate-300 flex items-center gap-2">
+                            <span className="font-mono text-blue-300">{label}</span>
+                            {pr.prRepository && <span className="text-slate-500">{pr.prRepository}</span>}
+                          </div>
+                          {href ? (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200"
+                            >
+                              Open <ExternalLink size={12} />
+                            </a>
+                          ) : (
+                            <span className="text-slate-600">No URL</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {filteredGitCommits.length === 0 && (
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  <GitCommit size={32} className="mx-auto mb-3 opacity-50" />
+                  <p>No linked Git commits available yet.</p>
+                  <p className="text-xs mt-1 text-slate-600">Commit correlations are derived from session evidence and forensics metadata.</p>
+                </div>
+              )}
+
+              {filteredGitCommits.length > 0 && (
                 <div className="space-y-2">
-                  {featureHistoryEvents.map(event => (
-                    <div key={event.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm text-slate-200">{event.label}</div>
+                  {filteredGitCommits.map(commit => (
+                    <div key={commit.commitHash} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <button
+                          onClick={() => setGitHistoryCommitFilter(commit.commitHash === gitHistoryCommitFilter ? '' : commit.commitHash)}
+                          className="inline-flex items-center gap-2 text-sm text-emerald-300 font-mono hover:text-emerald-200 transition-colors"
+                          title="Filter to this commit"
+                        >
+                          <GitCommit size={14} />
+                          {toShortCommitHash(commit.commitHash)}
+                        </button>
                         <div className="text-xs text-slate-500">
-                          {new Date(event.timestamp).toLocaleString()}
+                          {commit.lastSeenAt ? `Last seen ${new Date(commit.lastSeenAt).toLocaleString()}` : 'No timestamp'}
                         </div>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
-                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
-                          {event.kind}
-                        </span>
-                        <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">
-                          {event.confidence}
-                        </span>
-                        <span className="font-mono truncate">{event.source}</span>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                        {commit.provisional && (
+                          <span className="px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300 uppercase">
+                            Provisional
+                          </span>
+                        )}
+                        {commit.branches.map(branch => (
+                          <span key={`${commit.commitHash}-branch-${branch}`} className="px-2 py-0.5 rounded border border-purple-500/30 bg-purple-500/10 text-purple-200 font-mono">
+                            {branch}
+                          </span>
+                        ))}
+                        {commit.pullRequests.map((pr, idx) => (
+                          <span key={`${commit.commitHash}-pr-${pr.prUrl || pr.prNumber || idx}`} className="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 font-mono">
+                            {pr.prNumber ? `PR #${pr.prNumber}` : 'PR'}
+                          </span>
+                        ))}
+                        {commit.phases.map(phase => (
+                          <span key={`${commit.commitHash}-phase-${phase}`} className="px-2 py-0.5 rounded border border-slate-700 bg-slate-800/80 text-slate-300">
+                            Phase {phase}
+                          </span>
+                        ))}
+                        {commit.taskIds.slice(0, 6).map(taskId => (
+                          <span key={`${commit.commitHash}-task-${taskId}`} className="px-2 py-0.5 rounded border border-slate-700 bg-slate-800/80 text-slate-300 font-mono">
+                            {taskId}
+                          </span>
+                        ))}
+                        {commit.taskIds.length > 6 && (
+                          <span className="text-slate-500">+{commit.taskIds.length - 6} tasks</span>
+                        )}
                       </div>
-                      {event.description && (
-                        <p className="mt-2 text-xs text-slate-500">{event.description}</p>
-                      )}
+
+                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 text-[11px]">
+                        <div className="text-slate-400">Sessions: <span className="text-slate-200">{commit.sessionIds.length}</span></div>
+                        <div className="text-slate-400">Files: <span className="text-slate-200">{commit.fileCount}</span></div>
+                        <div className="text-slate-400">+/-: <span className="text-slate-200">{commit.additions}/{commit.deletions}</span></div>
+                        <div className="text-slate-400">Tokens: <span className="text-slate-200">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
+                        <div className="text-slate-400">Events: <span className="text-slate-200">{commit.eventCount}</span></div>
+                        <div className="text-slate-400">Cost: <span className="text-slate-200">${commit.costUsd.toFixed(2)}</span></div>
+                      </div>
                     </div>
                   ))}
                 </div>

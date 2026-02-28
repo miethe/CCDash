@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
-import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate } from '../types';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
@@ -10,6 +10,7 @@ import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatMo
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
+import { getFeatureStatusStyle } from './featureStatus';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -345,6 +346,85 @@ const formatSessionReason = (reason: string): string => {
     if (normalized === 'search_reference') return 'search reference';
     if (normalized === 'file_read') return 'file read';
     return normalized.replace(/_/g, ' ');
+};
+
+const TASK_STATUS_PRIORITY: Record<string, number> = {
+    done: 5,
+    deferred: 4,
+    review: 3,
+    'in-progress': 2,
+    backlog: 1,
+    todo: 1,
+};
+
+const taskUpdatedAtEpoch = (task: ProjectTask): number => {
+    const parsed = Date.parse(task.updatedAt || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const taskStatusPriority = (task: ProjectTask): number =>
+    TASK_STATUS_PRIORITY[String(task.status || '').toLowerCase()] || 0;
+
+const taskSignalScore = (task: ProjectTask): number => {
+    let score = 0;
+    if ((task.sessionId || '').trim()) score += 2;
+    if ((task.commitHash || '').trim()) score += 2;
+    const sourcePath = normalizePath(task.sourceFile || '').toLowerCase();
+    if (sourcePath.includes('/progress/')) score += 1;
+    if (sourcePath.includes('/project_plans/')) score += 0.5;
+    return score;
+};
+
+const pickFresherTask = (existing: ProjectTask, candidate: ProjectTask): ProjectTask => {
+    const existingUpdated = taskUpdatedAtEpoch(existing);
+    const candidateUpdated = taskUpdatedAtEpoch(candidate);
+    if (candidateUpdated !== existingUpdated) return candidateUpdated > existingUpdated ? candidate : existing;
+
+    const existingStatus = taskStatusPriority(existing);
+    const candidateStatus = taskStatusPriority(candidate);
+    if (candidateStatus !== existingStatus) return candidateStatus > existingStatus ? candidate : existing;
+
+    const existingSignals = taskSignalScore(existing);
+    const candidateSignals = taskSignalScore(candidate);
+    if (candidateSignals !== existingSignals) return candidateSignals > existingSignals ? candidate : existing;
+
+    return existing;
+};
+
+const getTaskIdentity = (task: ProjectTask): string => {
+    const taskId = String(task.id || '').trim().toLowerCase();
+    if (taskId) return taskId;
+    return String(task.title || '').trim().toLowerCase();
+};
+
+const dedupePhaseTasks = (tasks: ProjectTask[]): ProjectTask[] => {
+    const byIdentity = new Map<string, ProjectTask>();
+    tasks.forEach(task => {
+        const identity = getTaskIdentity(task);
+        if (!identity) return;
+
+        const existing = byIdentity.get(identity);
+        if (!existing) {
+            byIdentity.set(identity, task);
+            return;
+        }
+
+        const preferred = pickFresherTask(existing, task);
+        const other = preferred === existing ? task : existing;
+        byIdentity.set(identity, {
+            ...other,
+            ...preferred,
+            title: preferred.title || other.title,
+            description: preferred.description || other.description,
+            sourceFile: preferred.sourceFile || other.sourceFile,
+            sessionId: preferred.sessionId || other.sessionId,
+            commitHash: preferred.commitHash || other.commitHash,
+            relatedFiles: (preferred.relatedFiles && preferred.relatedFiles.length > 0) ? preferred.relatedFiles : other.relatedFiles,
+            updatedAt: preferred.updatedAt || other.updatedAt,
+            status: preferred.status || other.status,
+        });
+    });
+    return Array.from(byIdentity.values());
 };
 
 interface SessionThreadNode {
@@ -1378,13 +1458,108 @@ const TranscriptView: React.FC<{
 
 const SessionFeaturesView: React.FC<{
     linkedFeatures: SessionFeatureLink[];
+    linkedFeatureDetailsById: Record<string, Feature>;
+    taskArtifacts: Array<{
+        taskId: string;
+        normalizedTaskId: string;
+    }>;
+    loadingFeatureDetails: boolean;
     onOpenFeature: (featureId: string) => void;
-}> = ({ linkedFeatures, onOpenFeature }) => {
+}> = ({ linkedFeatures, linkedFeatureDetailsById, taskArtifacts, loadingFeatureDetails, onOpenFeature }) => {
     const grouped = useMemo(() => {
         const primary = linkedFeatures.filter(feature => feature.isPrimaryLink);
         const related = linkedFeatures.filter(feature => !feature.isPrimaryLink);
         return { primary, related };
     }, [linkedFeatures]);
+
+    const taskHierarchy = useMemo(() => {
+        if (taskArtifacts.length === 0) return [];
+        const taskIdSet = new Set(taskArtifacts.map(task => task.normalizedTaskId));
+
+        const mapped = linkedFeatures.map(featureLink => {
+            const featureDetail = linkedFeatureDetailsById[featureLink.featureId];
+            if (!featureDetail) return null;
+
+            const phaseOrderByKey = new Map<string, number>();
+            (featureDetail.phases || []).forEach((phase, index) => {
+                const key = `${phase.id || ''}::${phase.phase || ''}`;
+                phaseOrderByKey.set(key, index);
+            });
+
+            const bestTaskByIdentity = new Map<string, { task: ProjectTask; phase: Feature['phases'][number] }>();
+            (featureDetail.phases || []).forEach(phase => {
+                const phaseTasks = dedupePhaseTasks(phase.tasks || []);
+                phaseTasks.forEach(task => {
+                    const identity = getTaskIdentity(task);
+                    if (!identity) return;
+
+                    const existing = bestTaskByIdentity.get(identity);
+                    if (!existing) {
+                        bestTaskByIdentity.set(identity, { task, phase });
+                        return;
+                    }
+
+                    const preferred = pickFresherTask(existing.task, task);
+                    if (preferred === existing.task) return;
+                    bestTaskByIdentity.set(identity, { task: preferred, phase });
+                });
+            });
+
+            const phasesByKey = new Map<string, { phase: Feature['phases'][number]; tasks: ProjectTask[] }>();
+            bestTaskByIdentity.forEach(({ task, phase }) => {
+                const normalizedTaskId = String(task.id || '').trim().toLowerCase();
+                if (!normalizedTaskId || !taskIdSet.has(normalizedTaskId)) return;
+
+                const key = `${phase.id || ''}::${phase.phase || ''}`;
+                const existing = phasesByKey.get(key);
+                if (existing) {
+                    existing.tasks.push(task);
+                } else {
+                    phasesByKey.set(key, { phase, tasks: [task] });
+                }
+            });
+
+            const phases = Array.from(phasesByKey.values())
+                .map(entry => ({
+                    phase: entry.phase,
+                    tasks: entry.tasks.sort((a, b) => String(a.id || '').localeCompare(String(b.id || ''))),
+                }))
+                .sort((a, b) => {
+                    const aKey = `${a.phase.id || ''}::${a.phase.phase || ''}`;
+                    const bKey = `${b.phase.id || ''}::${b.phase.phase || ''}`;
+                    return (phaseOrderByKey.get(aKey) ?? Number.MAX_SAFE_INTEGER) - (phaseOrderByKey.get(bKey) ?? Number.MAX_SAFE_INTEGER);
+                });
+
+            if (phases.length === 0) return null;
+            return { featureLink, phases };
+        }).filter(Boolean) as Array<{
+            featureLink: SessionFeatureLink;
+            phases: Array<{ phase: Feature['phases'][number]; tasks: ProjectTask[] }>;
+        }>;
+
+        return mapped.sort((a, b) => {
+            if (a.featureLink.isPrimaryLink !== b.featureLink.isPrimaryLink) {
+                return a.featureLink.isPrimaryLink ? -1 : 1;
+            }
+            return b.featureLink.confidence - a.featureLink.confidence;
+        });
+    }, [linkedFeatureDetailsById, linkedFeatures, taskArtifacts]);
+
+    const unresolvedTaskIds = useMemo(() => {
+        const resolved = new Set<string>();
+        taskHierarchy.forEach(entry => {
+            entry.phases.forEach(phaseEntry => {
+                phaseEntry.tasks.forEach(task => {
+                    const taskId = String(task.id || '').trim().toLowerCase();
+                    if (taskId) resolved.add(taskId);
+                });
+            });
+        });
+        return taskArtifacts
+            .filter(task => !resolved.has(task.normalizedTaskId))
+            .map(task => task.taskId)
+            .sort((a, b) => a.localeCompare(b));
+    }, [taskArtifacts, taskHierarchy]);
 
     const renderFeatureCard = (feature: SessionFeatureLink) => {
         const pct = feature.totalTasks > 0
@@ -1456,7 +1631,7 @@ const SessionFeaturesView: React.FC<{
         );
     };
 
-    if (linkedFeatures.length === 0) {
+    if (linkedFeatures.length === 0 && taskArtifacts.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <Box size={42} className="mb-3 opacity-30" />
@@ -1468,27 +1643,122 @@ const SessionFeaturesView: React.FC<{
 
     return (
         <div className="h-full overflow-y-auto pr-1 space-y-5">
-            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
-                    <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
+            {linkedFeatures.length > 0 && (
+                <>
+                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
+                            <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
+                        </div>
+                        <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+                    </div>
+
+                    {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
+                    {grouped.primary.length === 0 && (
+                        <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                            No primary links yet. Related feature matches are shown below.
+                        </div>
+                    )}
+
+                    {grouped.related.length > 0 && (
+                        <div className="space-y-3 pt-2">
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
+                            {grouped.related.map(renderFeatureCard)}
+                        </div>
+                    )}
+                </>
+            )}
+
+            <div className="space-y-3 pt-2">
+                <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Task Links (Feature &gt; Phase &gt; Tasks)</div>
+                        <div className="text-[11px] text-indigo-200/80">{taskArtifacts.length}</div>
+                    </div>
+                    <p className="text-[11px] text-indigo-200/70 mt-1">Task artifacts are mapped to their parent feature and phase using feature execution data.</p>
                 </div>
-                <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+
+                {taskArtifacts.length === 0 && (
+                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                        No task artifacts detected for this session.
+                    </div>
+                )}
+
+                {taskArtifacts.length > 0 && loadingFeatureDetails && (
+                    <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
+                        Loading feature phase/task details...
+                    </div>
+                )}
+
+                {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
+                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                        Task artifacts were found, but none mapped to linked feature phases yet.
+                    </div>
+                )}
+
+                {taskHierarchy.map(entry => (
+                    <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="text-sm font-semibold text-slate-100 truncate">
+                                    {entry.featureLink.featureName || entry.featureLink.featureId}
+                                </div>
+                                <button
+                                    onClick={() => onOpenFeature(entry.featureLink.featureId)}
+                                    className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
+                                >
+                                    {entry.featureLink.featureId}
+                                </button>
+                            </div>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                                {entry.phases.reduce((sum, phaseEntry) => sum + phaseEntry.tasks.length, 0)} tasks
+                            </span>
+                        </div>
+
+                        <div className="space-y-2">
+                            {entry.phases.map(phaseEntry => (
+                                <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="text-xs font-semibold text-slate-200">
+                                            Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-mono">
+                                            {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
+                                        </div>
+                                    </div>
+                                    <div className="mt-2 space-y-1.5">
+                                        {phaseEntry.tasks.map(task => {
+                                            const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
+                                            return (
+                                                <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
+                                                    <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
+                                                    <span className="text-slate-300 truncate">{task.title}</span>
+                                                    <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
+                                                        {statusStyle.label}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+
+                {unresolvedTaskIds.length > 0 && !loadingFeatureDetails && (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                        <div className="text-[11px] text-amber-300 font-semibold uppercase tracking-wider">Unmapped Task IDs</div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            {unresolvedTaskIds.map(taskId => (
+                                <span key={`unmapped-${taskId}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200">
+                                    {taskId}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
-
-            {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
-            {grouped.primary.length === 0 && (
-                <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                    No primary links yet. Related feature matches are shown below.
-                </div>
-            )}
-
-            {grouped.related.length > 0 && (
-                <div className="space-y-3 pt-2">
-                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
-                    {grouped.related.map(renderFeatureCard)}
-                </div>
-            )}
         </div>
     );
 };
@@ -3889,6 +4159,8 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
     const [threadSessionDetails, setThreadSessionDetails] = useState<Record<string, AgentSession>>({ [session.id]: session });
     const [linkedSourceLogId, setLinkedSourceLogId] = useState<string | null>(null);
     const [linkedFeatureLinks, setLinkedFeatureLinks] = useState<SessionFeatureLink[]>([]);
+    const [linkedFeatureDetailsById, setLinkedFeatureDetailsById] = useState<Record<string, Feature>>({});
+    const [linkedFeatureDetailsLoading, setLinkedFeatureDetailsLoading] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -3976,6 +4248,55 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         };
     }, [session.id]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const featureIds = Array.from(new Set(linkedFeatureLinks.map(link => link.featureId).filter(Boolean)));
+
+        if (featureIds.length === 0) {
+            setLinkedFeatureDetailsById({});
+            setLinkedFeatureDetailsLoading(false);
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        const load = async () => {
+            setLinkedFeatureDetailsLoading(true);
+            try {
+                const entries = await Promise.all(
+                    featureIds.map(async featureId => {
+                        try {
+                            const res = await fetch(`/api/features/${encodeURIComponent(featureId)}`);
+                            if (!res.ok) return null;
+                            const data = await res.json();
+                            return [featureId, data as Feature] as const;
+                        } catch {
+                            return null;
+                        }
+                    })
+                );
+                if (cancelled) return;
+
+                const next: Record<string, Feature> = {};
+                entries.forEach(entry => {
+                    if (!entry) return;
+                    const [featureId, featureDetail] = entry;
+                    next[featureId] = featureDetail;
+                });
+                setLinkedFeatureDetailsById(next);
+            } finally {
+                if (!cancelled) {
+                    setLinkedFeatureDetailsLoading(false);
+                }
+            }
+        };
+
+        void load();
+        return () => {
+            cancelled = true;
+        };
+    }, [linkedFeatureLinks]);
+
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
 
@@ -4028,6 +4349,38 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
         () => linkedFeatureLinks.find(link => link.isPrimaryLink) || null,
         [linkedFeatureLinks]
     );
+    const taskArtifacts = useMemo(() => {
+        const byNormalizedTaskId = new Map<string, string>();
+
+        const addTaskId = (candidate: string | null | undefined) => {
+            const value = String(candidate || '').trim();
+            if (!value) return;
+            const normalized = value.toLowerCase();
+            if (!byNormalizedTaskId.has(normalized)) {
+                byNormalizedTaskId.set(normalized, value);
+            }
+        };
+
+        (session.linkedArtifacts || []).forEach(artifact => {
+            if ((artifact.type || '').trim().toLowerCase() !== 'task') return;
+            const taskId = extractTaskIdFromText(
+                artifact.title,
+                artifact.description,
+                artifact.preview,
+                artifact.url,
+            );
+            addTaskId(taskId);
+        });
+
+        session.logs.forEach(log => {
+            const taskDetails = getTaskToolDetails(log);
+            addTaskId(taskDetails?.taskId);
+        });
+
+        return Array.from(byNormalizedTaskId.entries())
+            .sort((a, b) => a[1].localeCompare(b[1]))
+            .map(([normalizedTaskId, taskId]) => ({ normalizedTaskId, taskId }));
+    }, [session.linkedArtifacts, session.logs]);
     const sessionDisplayTitle = useMemo(
         () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
         [session.id, session.title, session.sessionMetadata]
@@ -4115,6 +4468,9 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                 {activeTab === 'features' && (
                     <SessionFeaturesView
                         linkedFeatures={linkedFeatureLinks}
+                        linkedFeatureDetailsById={linkedFeatureDetailsById}
+                        taskArtifacts={taskArtifacts}
+                        loadingFeatureDetails={linkedFeatureDetailsLoading}
                         onOpenFeature={handleOpenFeature}
                     />
                 )}

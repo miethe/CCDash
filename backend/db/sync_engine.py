@@ -70,7 +70,12 @@ _KEY_WORKFLOW_COMMANDS = (
     "/fix:debug",
 )
 _LINK_STATE_METADATA_KEY = "entity_link_state"
+_COMMIT_HEAD_METADATA_KEY = "session_commit_head"
 _PULL_REQUEST_RE = re.compile(r"(?:/pull/|/pulls/|#)(\d+)")
+_COMMIT_HASH_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
+_TASK_ID_TOKEN_RE = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
+_PHASE_TOKEN_RE = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
+_WORKING_TREE_COMMIT_HASH = "__working_tree__"
 
 
 def _file_hash(path: Path) -> str:
@@ -274,6 +279,404 @@ def _extract_pr_number_from_artifacts(artifacts: list[dict[str, Any]]) -> str:
             if match:
                 return match.group(1)
     return ""
+
+
+def _normalize_commit_hash(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if raw == _WORKING_TREE_COMMIT_HASH:
+        return raw
+    if not _COMMIT_HASH_RE.fullmatch(raw):
+        return ""
+    return raw
+
+
+def _collect_commit_hashes_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in _COMMIT_HASH_RE.finditer(text):
+        normalized = _normalize_commit_hash(match.group(0))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        values.append(normalized)
+    return values
+
+
+def _collect_commit_hashes_from_log(log: dict[str, Any], metadata: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+
+    def add_many(candidates: Any) -> None:
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                normalized = _normalize_commit_hash(candidate)
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    values.append(normalized)
+            return
+        normalized = _normalize_commit_hash(candidates)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            values.append(normalized)
+
+    for key in ("commitHashes", "gitCommitHashes"):
+        add_many(metadata.get(key))
+
+    for key in ("commitHash", "gitCommitHash", "gitCommit"):
+        add_many(metadata.get(key))
+
+    text_candidates = [
+        _first_non_empty(log, "content"),
+        _first_non_empty(log, "tool_output"),
+        _first_non_empty(log, "toolOutput"),
+        _first_non_empty(metadata, "bashCommand", "command"),
+    ]
+    tool_call = log.get("toolCall")
+    if isinstance(tool_call, dict):
+        text_candidates.append(_first_non_empty(tool_call, "output", "args"))
+    for candidate in text_candidates:
+        for commit_hash in _collect_commit_hashes_from_text(candidate):
+            if commit_hash in seen:
+                continue
+            seen.add(commit_hash)
+            values.append(commit_hash)
+
+    return values
+
+
+def _extract_task_ids(text: str) -> list[str]:
+    if not text:
+        return []
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in _TASK_ID_TOKEN_RE.finditer(text):
+        task_id = str(match.group(1) or "").strip()
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        values.append(task_id)
+    return values
+
+
+def _build_session_commit_correlations(
+    project_id: str,
+    session_payload: dict[str, Any],
+    logs: list[dict[str, Any]],
+    files: list[dict[str, Any]],
+    *,
+    source: str,
+    baseline_commit_hash: str = "",
+) -> tuple[list[dict[str, Any]], str]:
+    session_id = _first_non_empty(session_payload, "id")
+    if not session_id:
+        return [], _normalize_commit_hash(baseline_commit_hash)
+
+    root_session_id = _first_non_empty(
+        session_payload,
+        "rootSessionId",
+        "root_session_id",
+        default=session_id,
+    )
+    session_started_at = _first_non_empty(
+        session_payload,
+        "startedAt",
+        "started_at",
+        "createdAt",
+        "created_at",
+        default=datetime.now(timezone.utc).isoformat(),
+    )
+    session_total_cost = _coerce_float(session_payload.get("totalCost") or session_payload.get("total_cost"))
+    session_feature_id = _first_non_empty(session_payload, "featureId", "feature_id")
+    session_task_id = _first_non_empty(session_payload, "taskId", "task_id")
+    session_phase = _first_phase(session_payload)
+
+    session_hashes: list[str] = []
+    for key in ("gitCommitHashes", "git_commit_hashes"):
+        raw = session_payload.get(key)
+        if isinstance(raw, list):
+            for value in raw:
+                normalized = _normalize_commit_hash(value)
+                if normalized:
+                    session_hashes.append(normalized)
+    primary_hash = _normalize_commit_hash(
+        _first_non_empty(session_payload, "gitCommitHash", "git_commit_hash", "commit_hash")
+    )
+    if primary_hash:
+        session_hashes.insert(0, primary_hash)
+    dedup_session_hashes = list(dict.fromkeys(session_hashes))
+
+    active_commit = _normalize_commit_hash(baseline_commit_hash)
+    if not active_commit:
+        active_commit = dedup_session_hashes[0] if dedup_session_hashes else ""
+    seen_commits: set[str] = {value for value in dedup_session_hashes if value}
+    if active_commit:
+        seen_commits.add(active_commit)
+
+    def new_bucket(start_ts: str) -> dict[str, Any]:
+        return {
+            "windowStart": start_ts or session_started_at,
+            "windowEnd": start_ts or session_started_at,
+            "eventCount": 0,
+            "toolCallCount": 0,
+            "commandCount": 0,
+            "artifactCount": 0,
+            "tokenInput": 0,
+            "tokenOutput": 0,
+            "filePaths": set(),
+            "additions": 0,
+            "deletions": 0,
+            "features": [],
+            "featureSet": set(),
+            "phases": [],
+            "phaseSet": set(),
+            "tasks": [],
+            "taskSet": set(),
+        }
+
+    def append_unique(values: list[str], seen: set[str], candidate: str) -> None:
+        token = str(candidate or "").strip()
+        if not token or token in seen:
+            return
+        seen.add(token)
+        values.append(token)
+
+    rows: list[dict[str, Any]] = []
+    correlation_index = 1
+    bucket = new_bucket(session_started_at)
+
+    files_by_log_id: dict[str, list[dict[str, Any]]] = {}
+    unmatched_files: list[dict[str, Any]] = []
+    for update in files:
+        source_log_id = _first_non_empty(update, "sourceLogId", "source_log_id")
+        if source_log_id:
+            files_by_log_id.setdefault(source_log_id, []).append(update)
+        else:
+            unmatched_files.append(update)
+
+    def apply_file_update(target: dict[str, Any], update: dict[str, Any]) -> None:
+        path = _first_non_empty(update, "filePath", "file_path")
+        if path:
+            target["filePaths"].add(path)
+        target["additions"] += max(0, _coerce_int(update.get("additions")))
+        target["deletions"] += max(0, _coerce_int(update.get("deletions")))
+
+    def has_bucket_content(target: dict[str, Any]) -> bool:
+        return any(
+            (
+                target["eventCount"] > 0,
+                target["tokenInput"] > 0,
+                target["tokenOutput"] > 0,
+                target["toolCallCount"] > 0,
+                target["commandCount"] > 0,
+                target["artifactCount"] > 0,
+                bool(target["filePaths"]),
+                target["additions"] > 0,
+                target["deletions"] > 0,
+                bool(target["features"]),
+                bool(target["phases"]),
+                bool(target["tasks"]),
+            )
+        )
+
+    def finalize_bucket(commit_hash: str, ended_at: str, provisional: bool = False) -> None:
+        nonlocal correlation_index
+        normalized_commit = _normalize_commit_hash(commit_hash) or _WORKING_TREE_COMMIT_HASH
+        if not has_bucket_content(bucket):
+            return
+
+        payload = {
+            "featureIds": list(bucket["features"]),
+            "phases": list(bucket["phases"]),
+            "taskIds": list(bucket["tasks"]),
+            "filePaths": sorted(bucket["filePaths"])[:40],
+            "provisional": bool(provisional or normalized_commit == _WORKING_TREE_COMMIT_HASH),
+        }
+        rows.append(
+            {
+                "project_id": project_id,
+                "session_id": session_id,
+                "root_session_id": root_session_id,
+                "commit_hash": normalized_commit,
+                "feature_id": payload["featureIds"][0] if payload["featureIds"] else "",
+                "phase": payload["phases"][0] if payload["phases"] else "",
+                "task_id": payload["taskIds"][0] if payload["taskIds"] else "",
+                "window_start": bucket["windowStart"] or session_started_at,
+                "window_end": ended_at or bucket["windowEnd"] or session_started_at,
+                "event_count": bucket["eventCount"],
+                "tool_call_count": bucket["toolCallCount"],
+                "command_count": bucket["commandCount"],
+                "artifact_count": bucket["artifactCount"],
+                "token_input": bucket["tokenInput"],
+                "token_output": bucket["tokenOutput"],
+                "file_count": len(bucket["filePaths"]),
+                "additions": bucket["additions"],
+                "deletions": bucket["deletions"],
+                "cost_usd": 0.0,
+                "source": source,
+                "source_key": f"commit:{session_id}:{correlation_index}:{normalized_commit}",
+                "payload_json": json.dumps(payload),
+            }
+        )
+        correlation_index += 1
+
+    ordered_logs: list[tuple[int, int, dict[str, Any], str]] = []
+    for fallback_index, log in enumerate(logs, start=1):
+        raw_index = log.get("log_index")
+        if raw_index is None:
+            raw_index = log.get("logIndex")
+        source_index = _coerce_int(raw_index)
+        if source_index <= 0:
+            source_index = fallback_index
+        timestamp = _first_non_empty(log, "timestamp", default=session_started_at)
+        ordered_logs.append((source_index, fallback_index, log, timestamp))
+    ordered_logs.sort(key=lambda value: (value[0], value[1]))
+
+    for _, _, log, timestamp in ordered_logs:
+        metadata = _safe_json_dict(log.get("metadata_json") or log.get("metadata"))
+        bucket["windowEnd"] = timestamp or bucket["windowEnd"]
+        bucket["eventCount"] += 1
+        log_type = _first_non_empty(log, "type", default="log")
+        if log_type == "tool":
+            bucket["toolCallCount"] += 1
+        elif log_type == "command":
+            bucket["commandCount"] += 1
+        elif log_type == "system" and str(metadata.get("eventType") or "").strip().lower() == "artifact":
+            bucket["artifactCount"] += 1
+
+        bucket["tokenInput"] += _coerce_int(
+            metadata.get("inputTokens")
+            or metadata.get("input_tokens")
+            or metadata.get("promptTokens")
+            or metadata.get("prompt_tokens")
+        )
+        bucket["tokenOutput"] += _coerce_int(
+            metadata.get("outputTokens")
+            or metadata.get("output_tokens")
+            or metadata.get("completionTokens")
+            or metadata.get("completion_tokens")
+        )
+
+        parsed_command = metadata.get("parsedCommand") if isinstance(metadata.get("parsedCommand"), dict) else {}
+        if parsed_command:
+            for phase_value in parsed_command.get("phases", []):
+                append_unique(bucket["phases"], bucket["phaseSet"], str(phase_value))
+            phase_token = str(parsed_command.get("phaseToken") or "").strip()
+            if phase_token:
+                append_unique(bucket["phases"], bucket["phaseSet"], phase_token)
+            for key in ("featureId", "featureSlugCanonical", "featureSlug"):
+                feature_token = str(parsed_command.get(key) or "").strip()
+                if feature_token:
+                    append_unique(bucket["features"], bucket["featureSet"], canonical_slug(feature_token))
+
+        for phase_match in _PHASE_TOKEN_RE.findall(
+            " ".join(
+                [
+                    _first_non_empty(log, "content"),
+                    _first_non_empty(metadata, "args"),
+                    _first_non_empty(metadata, "taskName"),
+                    _first_non_empty(metadata, "taskDescription"),
+                ]
+            )
+        ):
+            append_unique(bucket["phases"], bucket["phaseSet"], str(phase_match))
+
+        task_text_parts = [
+            _first_non_empty(log, "content"),
+            _first_non_empty(metadata, "taskName"),
+            _first_non_empty(metadata, "taskDescription"),
+            _first_non_empty(metadata, "taskPromptPreview"),
+            _first_non_empty(metadata, "args"),
+        ]
+        for task_text in task_text_parts:
+            for task_id in _extract_task_ids(task_text):
+                append_unique(bucket["tasks"], bucket["taskSet"], task_id)
+
+        if session_feature_id:
+            append_unique(bucket["features"], bucket["featureSet"], canonical_slug(session_feature_id))
+        if session_phase:
+            append_unique(bucket["phases"], bucket["phaseSet"], session_phase)
+        if session_task_id:
+            append_unique(bucket["tasks"], bucket["taskSet"], session_task_id)
+
+        matched_file_keys: set[str] = set()
+        for candidate in (
+            _first_non_empty(log, "id"),
+            _first_non_empty(log, "logId"),
+            _first_non_empty(log, "tool_call_id"),
+            _first_non_empty(log, "toolCallId"),
+        ):
+            if candidate and candidate not in matched_file_keys:
+                matched_file_keys.add(candidate)
+
+        tool_call = log.get("toolCall")
+        if isinstance(tool_call, dict):
+            tool_call_id = _first_non_empty(tool_call, "id")
+            if tool_call_id and tool_call_id not in matched_file_keys:
+                matched_file_keys.add(tool_call_id)
+
+        for source_log_id in matched_file_keys:
+            for update in files_by_log_id.pop(source_log_id, []):
+                apply_file_update(bucket, update)
+
+        new_commits: list[str] = []
+        for commit_hash in _collect_commit_hashes_from_log(log, metadata):
+            if commit_hash in seen_commits:
+                continue
+            seen_commits.add(commit_hash)
+            new_commits.append(commit_hash)
+
+        if not new_commits:
+            continue
+
+        for commit_hash in new_commits:
+            finalize_bucket(commit_hash, timestamp)
+            active_commit = commit_hash
+            bucket = new_bucket(timestamp or session_started_at)
+
+    if files_by_log_id:
+        for pending_updates in files_by_log_id.values():
+            for update in pending_updates:
+                unmatched_files.append(update)
+    for update in unmatched_files:
+        apply_file_update(bucket, update)
+
+    trailing_commit = active_commit or (dedup_session_hashes[0] if dedup_session_hashes else "")
+    trailing_provisional = False
+    if not trailing_commit:
+        trailing_commit = _WORKING_TREE_COMMIT_HASH
+        trailing_provisional = True
+    finalize_bucket(trailing_commit, bucket["windowEnd"] or session_started_at, provisional=trailing_provisional)
+
+    if rows and session_total_cost > 0:
+        total_tokens = sum(max(0, int(row["token_input"]) + int(row["token_output"])) for row in rows)
+        total_events = sum(max(1, int(row["event_count"])) for row in rows)
+        allocated = 0.0
+        for index, row in enumerate(rows):
+            if total_tokens > 0:
+                share = (max(0, int(row["token_input"]) + int(row["token_output"])) / total_tokens)
+            else:
+                share = max(1, int(row["event_count"])) / total_events
+            if index == len(rows) - 1:
+                row_cost = max(0.0, session_total_cost - allocated)
+            else:
+                row_cost = round(session_total_cost * share, 6)
+                allocated += row_cost
+            row["cost_usd"] = round(row_cost, 6)
+
+    latest_commit = ""
+    for row in reversed(rows):
+        commit_hash = _normalize_commit_hash(row.get("commit_hash"))
+        if commit_hash and commit_hash != _WORKING_TREE_COMMIT_HASH:
+            latest_commit = commit_hash
+            break
+    if not latest_commit:
+        latest_commit = active_commit or _normalize_commit_hash(primary_hash) or _normalize_commit_hash(baseline_commit_hash)
+
+    return rows, latest_commit
 
 
 def _build_session_telemetry_events(
@@ -653,6 +1056,388 @@ class SyncEngine:
             )
         return len(events)
 
+    async def _load_commit_head_state(self, project_id: str) -> dict[str, Any]:
+        raw_value: str | None = None
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                """
+                SELECT value
+                FROM app_metadata
+                WHERE entity_type = ? AND entity_id = ? AND key = ?
+                LIMIT 1
+                """,
+                ("project", project_id, _COMMIT_HEAD_METADATA_KEY),
+            ) as cur:
+                row = await cur.fetchone()
+                raw_value = row[0] if row else None
+        else:
+            row = await self.db.fetchrow(
+                """
+                SELECT value
+                FROM app_metadata
+                WHERE entity_type = $1 AND entity_id = $2 AND key = $3
+                LIMIT 1
+                """,
+                "project",
+                project_id,
+                _COMMIT_HEAD_METADATA_KEY,
+            )
+            raw_value = row["value"] if row else None
+
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    async def _save_commit_head_state(
+        self,
+        project_id: str,
+        commit_hash: str,
+        *,
+        session_id: str = "",
+        occurred_at: str = "",
+    ) -> None:
+        normalized = _normalize_commit_hash(commit_hash)
+        if not normalized or normalized == _WORKING_TREE_COMMIT_HASH:
+            return
+        payload = json.dumps(
+            {
+                "currentCommitHash": normalized,
+                "sourceSessionId": session_id,
+                "observedAt": occurred_at or datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        if isinstance(self.db, aiosqlite.Connection):
+            await self.db.execute(
+                """
+                INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                ("project", project_id, _COMMIT_HEAD_METADATA_KEY, payload),
+            )
+            await self.db.commit()
+        else:
+            await self.db.execute(
+                """
+                INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+                VALUES ($1, $2, $3, $4, NOW()::text)
+                ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                "project",
+                project_id,
+                _COMMIT_HEAD_METADATA_KEY,
+                payload,
+            )
+
+    async def _resolve_prior_commit_hash(self, project_id: str, session_payload: dict[str, Any]) -> str:
+        session_id = _first_non_empty(session_payload, "id")
+        session_started_at = _first_non_empty(
+            session_payload,
+            "startedAt",
+            "started_at",
+            "createdAt",
+            "created_at",
+        )
+
+        row_value: Any = None
+        if isinstance(self.db, aiosqlite.Connection):
+            query = [
+                """
+                SELECT commit_hash
+                FROM commit_correlations
+                WHERE project_id = ?
+                  AND session_id != ?
+                  AND TRIM(COALESCE(commit_hash, '')) != ''
+                  AND commit_hash != ?
+                """
+            ]
+            params: list[Any] = [project_id, session_id, _WORKING_TREE_COMMIT_HASH]
+            if session_started_at:
+                query.append("AND window_end <= ?")
+                params.append(session_started_at)
+            query.append("ORDER BY window_end DESC LIMIT 1")
+            async with self.db.execute(" ".join(query), tuple(params)) as cur:
+                row = await cur.fetchone()
+                row_value = row[0] if row else None
+        else:
+            query = [
+                """
+                SELECT commit_hash
+                FROM commit_correlations
+                WHERE project_id = $1
+                  AND session_id != $2
+                  AND TRIM(COALESCE(commit_hash, '')) != ''
+                  AND commit_hash != $3
+                """
+            ]
+            params: list[Any] = [project_id, session_id, _WORKING_TREE_COMMIT_HASH]
+            if session_started_at:
+                query.append(f"AND window_end <= ${len(params) + 1}")
+                params.append(session_started_at)
+            query.append("ORDER BY window_end DESC LIMIT 1")
+            row = await self.db.fetchrow(" ".join(query), *params)
+            row_value = row["commit_hash"] if row else None
+
+        normalized = _normalize_commit_hash(row_value)
+        if normalized:
+            return normalized
+
+        if isinstance(self.db, aiosqlite.Connection):
+            query = [
+                """
+                SELECT git_commit_hash
+                FROM sessions
+                WHERE project_id = ?
+                  AND id != ?
+                  AND TRIM(COALESCE(git_commit_hash, '')) != ''
+                """
+            ]
+            params = [project_id, session_id]
+            if session_started_at:
+                query.append("AND started_at <= ?")
+                params.append(session_started_at)
+            query.append("ORDER BY started_at DESC LIMIT 1")
+            async with self.db.execute(" ".join(query), tuple(params)) as cur:
+                row = await cur.fetchone()
+                row_value = row[0] if row else None
+        else:
+            query = [
+                """
+                SELECT git_commit_hash
+                FROM sessions
+                WHERE project_id = $1
+                  AND id != $2
+                  AND TRIM(COALESCE(git_commit_hash, '')) != ''
+                """
+            ]
+            params = [project_id, session_id]
+            if session_started_at:
+                query.append(f"AND started_at <= ${len(params) + 1}")
+                params.append(session_started_at)
+            query.append("ORDER BY started_at DESC LIMIT 1")
+            row = await self.db.fetchrow(" ".join(query), *params)
+            row_value = row["git_commit_hash"] if row else None
+
+        normalized = _normalize_commit_hash(row_value)
+        if normalized:
+            return normalized
+
+        state = await self._load_commit_head_state(project_id)
+        return _normalize_commit_hash(state.get("currentCommitHash"))
+
+    async def _replace_session_commit_correlations(
+        self,
+        project_id: str,
+        session_payload: dict[str, Any],
+        logs: list[dict[str, Any]],
+        files: list[dict[str, Any]],
+        *,
+        source: str,
+    ) -> int:
+        session_id = _first_non_empty(session_payload, "id")
+        if not session_id:
+            return 0
+
+        baseline_commit_hash = await self._resolve_prior_commit_hash(project_id, session_payload)
+        correlations, latest_commit_hash = _build_session_commit_correlations(
+            project_id,
+            session_payload,
+            logs,
+            files,
+            source=source,
+            baseline_commit_hash=baseline_commit_hash,
+        )
+
+        if isinstance(self.db, aiosqlite.Connection):
+            await self.db.execute(
+                "DELETE FROM commit_correlations WHERE project_id = ? AND session_id = ?",
+                (project_id, session_id),
+            )
+            insert_query = """
+                INSERT INTO commit_correlations (
+                    project_id, session_id, root_session_id, commit_hash,
+                    feature_id, phase, task_id,
+                    window_start, window_end,
+                    event_count, tool_call_count, command_count, artifact_count,
+                    token_input, token_output,
+                    file_count, additions, deletions,
+                    cost_usd, source, source_key, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            for correlation in correlations:
+                await self.db.execute(
+                    insert_query,
+                    (
+                        correlation["project_id"],
+                        correlation["session_id"],
+                        correlation["root_session_id"],
+                        correlation["commit_hash"],
+                        correlation["feature_id"],
+                        correlation["phase"],
+                        correlation["task_id"],
+                        correlation["window_start"],
+                        correlation["window_end"],
+                        correlation["event_count"],
+                        correlation["tool_call_count"],
+                        correlation["command_count"],
+                        correlation["artifact_count"],
+                        correlation["token_input"],
+                        correlation["token_output"],
+                        correlation["file_count"],
+                        correlation["additions"],
+                        correlation["deletions"],
+                        correlation["cost_usd"],
+                        correlation["source"],
+                        correlation["source_key"],
+                        correlation["payload_json"],
+                    ),
+                )
+            await self.db.commit()
+        else:
+            await self.db.execute(
+                "DELETE FROM commit_correlations WHERE project_id = $1 AND session_id = $2",
+                project_id,
+                session_id,
+            )
+            insert_query = """
+                INSERT INTO commit_correlations (
+                    project_id, session_id, root_session_id, commit_hash,
+                    feature_id, phase, task_id,
+                    window_start, window_end,
+                    event_count, tool_call_count, command_count, artifact_count,
+                    token_input, token_output,
+                    file_count, additions, deletions,
+                    cost_usd, source, source_key, payload_json
+                ) VALUES (
+                    $1, $2, $3, $4,
+                    $5, $6, $7,
+                    $8, $9,
+                    $10, $11, $12, $13,
+                    $14, $15,
+                    $16, $17, $18,
+                    $19, $20, $21, $22
+                )
+            """
+            for correlation in correlations:
+                await self.db.execute(
+                    insert_query,
+                    correlation["project_id"],
+                    correlation["session_id"],
+                    correlation["root_session_id"],
+                    correlation["commit_hash"],
+                    correlation["feature_id"],
+                    correlation["phase"],
+                    correlation["task_id"],
+                    correlation["window_start"],
+                    correlation["window_end"],
+                    correlation["event_count"],
+                    correlation["tool_call_count"],
+                    correlation["command_count"],
+                    correlation["artifact_count"],
+                    correlation["token_input"],
+                    correlation["token_output"],
+                    correlation["file_count"],
+                    correlation["additions"],
+                    correlation["deletions"],
+                    correlation["cost_usd"],
+                    correlation["source"],
+                    correlation["source_key"],
+                    correlation["payload_json"],
+                )
+
+        if latest_commit_hash:
+            latest_window_end = ""
+            if correlations:
+                latest_window_end = str(correlations[-1].get("window_end") or "")
+            await self._save_commit_head_state(
+                project_id,
+                latest_commit_hash,
+                session_id=session_id,
+                occurred_at=latest_window_end,
+            )
+
+        return len(correlations)
+
+    async def _commit_correlation_count(self, project_id: str) -> int:
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM commit_correlations WHERE project_id = ?",
+                (project_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0] or 0) if row else 0
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*) AS count FROM commit_correlations WHERE project_id = $1",
+            project_id,
+        )
+        return int(row["count"] or 0) if row else 0
+
+    async def _load_commit_correlations_by_session(self, project_id: str) -> dict[str, list[dict[str, Any]]]:
+        rows: list[dict[str, Any]] = []
+        if isinstance(self.db, aiosqlite.Connection):
+            async with self.db.execute(
+                """
+                SELECT *
+                FROM commit_correlations
+                WHERE project_id = ?
+                ORDER BY window_start ASC, id ASC
+                """,
+                (project_id,),
+            ) as cur:
+                rows = [dict(row) for row in await cur.fetchall()]
+        else:
+            fetched = await self.db.fetch(
+                """
+                SELECT *
+                FROM commit_correlations
+                WHERE project_id = $1
+                ORDER BY window_start ASC, id ASC
+                """,
+                project_id,
+            )
+            rows = [dict(row) for row in fetched]
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            session_id = str(row.get("session_id") or "").strip()
+            if not session_id:
+                continue
+            payload = _safe_json_dict(row.get("payload_json"))
+            grouped.setdefault(session_id, []).append(
+                {
+                    "commitHash": str(row.get("commit_hash") or ""),
+                    "featureId": str(row.get("feature_id") or ""),
+                    "phase": str(row.get("phase") or ""),
+                    "taskId": str(row.get("task_id") or ""),
+                    "windowStart": str(row.get("window_start") or ""),
+                    "windowEnd": str(row.get("window_end") or ""),
+                    "eventCount": _coerce_int(row.get("event_count")),
+                    "toolCallCount": _coerce_int(row.get("tool_call_count")),
+                    "commandCount": _coerce_int(row.get("command_count")),
+                    "artifactCount": _coerce_int(row.get("artifact_count")),
+                    "tokenInput": _coerce_int(row.get("token_input")),
+                    "tokenOutput": _coerce_int(row.get("token_output")),
+                    "fileCount": _coerce_int(row.get("file_count")),
+                    "additions": _coerce_int(row.get("additions")),
+                    "deletions": _coerce_int(row.get("deletions")),
+                    "costUsd": _coerce_float(row.get("cost_usd")),
+                    "featureIds": [str(v) for v in payload.get("featureIds", []) if isinstance(v, str)],
+                    "phases": [str(v) for v in payload.get("phases", []) if isinstance(v, str)],
+                    "taskIds": [str(v) for v in payload.get("taskIds", []) if isinstance(v, str)],
+                    "filePaths": [str(v) for v in payload.get("filePaths", []) if isinstance(v, str)],
+                    "provisional": bool(payload.get("provisional", False)),
+                }
+            )
+        return grouped
+
     async def _telemetry_event_count(self, project_id: str) -> int:
         if isinstance(self.db, aiosqlite.Connection):
             async with self.db.execute(
@@ -726,6 +1511,48 @@ class SyncEngine:
         if await self._session_count(project_id) == 0:
             return {"sessions": 0, "events": 0}
         return await self._backfill_telemetry_events_for_project(project_id)
+
+    async def _backfill_commit_correlations_for_project(self, project_id: str, batch_size: int = 200) -> dict[str, int]:
+        offset = 0
+        sessions_backfilled = 0
+        correlations_written = 0
+
+        while True:
+            sessions = await self.session_repo.list_paginated(
+                offset,
+                batch_size,
+                project_id,
+                sort_by="started_at",
+                sort_order="desc",
+                filters={"include_subagents": True},
+            )
+            if not sessions:
+                break
+            for session in sessions:
+                session_id = _first_non_empty(session, "id")
+                if not session_id:
+                    continue
+                logs = await self.session_repo.get_logs(session_id)
+                files = await self.session_repo.get_file_updates(session_id)
+                correlations_written += await self._replace_session_commit_correlations(
+                    project_id,
+                    session,
+                    logs,
+                    files,
+                    source="backfill",
+                )
+                sessions_backfilled += 1
+            offset += len(sessions)
+
+        return {"sessions": sessions_backfilled, "correlations": correlations_written}
+
+    async def _maybe_backfill_commit_correlations(self, project_id: str) -> dict[str, int]:
+        existing = await self._commit_correlation_count(project_id)
+        if existing > 0:
+            return {"sessions": 0, "correlations": 0}
+        if await self._session_count(project_id) == 0:
+            return {"sessions": 0, "correlations": 0}
+        return await self._backfill_commit_correlations_for_project(project_id)
 
     async def _delete_tasks_for_feature(self, feature_id: str) -> None:
         """Delete all task rows attached to a feature id."""
@@ -956,7 +1783,13 @@ class SyncEngine:
             return True, "logic_version_changed"
         if any(
             int(stats.get(key, 0)) > 0
-            for key in ("sessions_synced", "documents_synced", "tasks_synced", "features_synced")
+            for key in (
+                "sessions_synced",
+                "documents_synced",
+                "tasks_synced",
+                "features_synced",
+                "commit_correlations_backfilled",
+            )
         ):
             return True, "entities_changed"
         return False, "up_to_date"
@@ -1200,6 +2033,9 @@ class SyncEngine:
                 backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
                 stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
                 stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
+                commit_backfill_stats = await self._maybe_backfill_commit_correlations(project.id)
+                stats["commit_correlations_backfilled_sessions"] = int(commit_backfill_stats.get("sessions", 0))
+                stats["commit_correlations_backfilled"] = int(commit_backfill_stats.get("correlations", 0))
                 await self._update_operation(
                     operation_id,
                     phase="documents",
@@ -1208,6 +2044,7 @@ class SyncEngine:
                         "sessionsSynced": stats["sessions_synced"],
                         "sessionsSkipped": stats["sessions_skipped"],
                         "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
+                        "commitCorrelationsBackfilled": stats["commit_correlations_backfilled"],
                     },
                 )
 
@@ -1810,6 +2647,13 @@ class SyncEngine:
                     tools,
                     files,
                     artifacts,
+                    source="sync",
+                )
+                await self._replace_session_commit_correlations(
+                    project_id,
+                    session_dict,
+                    logs,
+                    files,
                     source="sync",
                 )
 
@@ -2683,12 +3527,14 @@ class SyncEngine:
                         "sessionCount": int(total_sessions),
                     },
                 )
+        commit_windows_by_session = await self._load_commit_correlations_by_session(project_id)
 
         for session_index, s in enumerate(sessions_data, start=1):
             session_id = s["id"]
             file_updates = await self.session_repo.get_file_updates(session_id)
             artifacts = await self.session_repo.get_artifacts(session_id)
             logs = await self.session_repo.get_logs(session_id)
+            session_commit_windows = commit_windows_by_session.get(str(session_id), [])
 
             command_events: list[dict[str, Any]] = []
             tagged_commands: list[dict[str, Any]] = []
@@ -2932,6 +3778,46 @@ class SyncEngine:
             total_signal_weight = sum(candidate["rawSignalWeight"] for candidate in candidates)
             for candidate in candidates:
                 feature_id = candidate["featureId"]
+                feature_aliases = {alias for alias in feature_slug_aliases.get(feature_id, set()) if alias}
+                feature_alias_bases = {canonical_slug(alias) for alias in feature_aliases}
+                feature_alias_bases.add(canonical_slug(feature_id))
+                commit_correlations: list[dict[str, Any]] = []
+                for window in session_commit_windows:
+                    if not isinstance(window, dict):
+                        continue
+                    window_feature_ids = [
+                        canonical_slug(str(value))
+                        for value in (window.get("featureIds") or [])
+                        if isinstance(value, str) and str(value).strip()
+                    ]
+                    if window_feature_ids and not feature_alias_bases.intersection(window_feature_ids):
+                        continue
+                    commit_correlations.append(
+                        {
+                            "commitHash": str(window.get("commitHash") or ""),
+                            "windowStart": str(window.get("windowStart") or ""),
+                            "windowEnd": str(window.get("windowEnd") or ""),
+                            "eventCount": _coerce_int(window.get("eventCount")),
+                            "toolCallCount": _coerce_int(window.get("toolCallCount")),
+                            "commandCount": _coerce_int(window.get("commandCount")),
+                            "artifactCount": _coerce_int(window.get("artifactCount")),
+                            "tokenInput": _coerce_int(window.get("tokenInput")),
+                            "tokenOutput": _coerce_int(window.get("tokenOutput")),
+                            "fileCount": _coerce_int(window.get("fileCount")),
+                            "additions": _coerce_int(window.get("additions")),
+                            "deletions": _coerce_int(window.get("deletions")),
+                            "costUsd": _coerce_float(window.get("costUsd")),
+                            "featureIds": [str(v) for v in window.get("featureIds", []) if isinstance(v, str)],
+                            "phases": [str(v) for v in window.get("phases", []) if isinstance(v, str)],
+                            "taskIds": [str(v) for v in window.get("taskIds", []) if isinstance(v, str)],
+                            "provisional": bool(window.get("provisional", False)),
+                        }
+                    )
+                if commit_correlations:
+                    for commit_row in commit_correlations:
+                        commit_hash = _normalize_commit_hash(commit_row.get("commitHash"))
+                        if commit_hash and commit_hash != _WORKING_TREE_COMMIT_HASH:
+                            session_commit_hashes.add(commit_hash)
                 share = (
                     candidate["rawSignalWeight"] / total_signal_weight
                     if total_signal_weight > 0
@@ -2965,6 +3851,7 @@ class SyncEngine:
                     "titleConfidence": round(title_confidence, 3),
                     "prLinks": pr_links[:10],
                     "queueEvents": queue_events[:10],
+                    "commitCorrelations": commit_correlations[:60],
                 }
                 await self.link_repo.upsert({
                     "source_type": "feature",
