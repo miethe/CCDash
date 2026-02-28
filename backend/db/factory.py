@@ -13,6 +13,12 @@ from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.tasks import SqliteTaskRepository
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
+from backend.db.repositories.test_runs import SqliteTestRunRepository
+from backend.db.repositories.test_definitions import SqliteTestDefinitionRepository
+from backend.db.repositories.test_results import SqliteTestResultRepository
+from backend.db.repositories.test_domains import SqliteTestDomainRepository
+from backend.db.repositories.test_mappings import SqliteTestMappingRepository
+from backend.db.repositories.test_integrity import SqliteTestIntegrityRepository
 from backend.db.repositories.links import (
     SqliteEntityLinkRepository,
     SqliteTagRepository,
@@ -75,3 +81,45 @@ def get_alert_config_repository(db: Any):
         return SqliteAlertConfigRepository(db)
     from backend.db.repositories.postgres.links import PostgresAlertConfigRepository
     return PostgresAlertConfigRepository(db)
+
+
+def get_test_run_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestRunRepository(db)
+    from backend.db.repositories.postgres.test_runs import PostgresTestRunRepository
+    return PostgresTestRunRepository(db)
+
+
+def get_test_definition_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestDefinitionRepository(db)
+    from backend.db.repositories.postgres.test_definitions import PostgresTestDefinitionRepository
+    return PostgresTestDefinitionRepository(db)
+
+
+def get_test_result_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestResultRepository(db)
+    from backend.db.repositories.postgres.test_results import PostgresTestResultRepository
+    return PostgresTestResultRepository(db)
+
+
+def get_test_domain_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestDomainRepository(db)
+    from backend.db.repositories.postgres.test_domains import PostgresTestDomainRepository
+    return PostgresTestDomainRepository(db)
+
+
+def get_test_mapping_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestMappingRepository(db)
+    from backend.db.repositories.postgres.test_mappings import PostgresTestMappingRepository
+    return PostgresTestMappingRepository(db)
+
+
+def get_test_integrity_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteTestIntegrityRepository(db)
+    from backend.db.repositories.postgres.test_integrity import PostgresTestIntegrityRepository
+    return PostgresTestIntegrityRepository(db)
