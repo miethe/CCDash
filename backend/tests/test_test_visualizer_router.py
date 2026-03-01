@@ -18,10 +18,12 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._prev_enabled = router.config.CCDASH_TEST_VISUALIZER_ENABLED
         self._prev_integrity = router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED
+        self._prev_semantic = router.config.CCDASH_SEMANTIC_MAPPING_ENABLED
         self._prev_enabled_cfg = config.CCDASH_TEST_VISUALIZER_ENABLED
 
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = True
         router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED = True
+        router.config.CCDASH_SEMANTIC_MAPPING_ENABLED = True
         config.CCDASH_TEST_VISUALIZER_ENABLED = True
 
         self.db = await aiosqlite.connect(":memory:")
@@ -34,6 +36,7 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = self._prev_enabled
         router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED = self._prev_integrity
+        router.config.CCDASH_SEMANTIC_MAPPING_ENABLED = self._prev_semantic
         config.CCDASH_TEST_VISUALIZER_ENABLED = self._prev_enabled_cfg
 
     async def _seed_fixtures(self) -> None:
@@ -268,6 +271,48 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_import_mappings_endpoint(self) -> None:
+        request = self._json_request(
+            {
+                "project_id": "project-1",
+                "mapping_file": {
+                    "version": "1",
+                    "generated_by": "semantic-mapper",
+                    "mappings": [
+                        {
+                            "test_id": "test-1",
+                            "feature_id": "feature-1",
+                            "domain_id": "dom-1",
+                            "confidence": 0.92,
+                        }
+                    ],
+                },
+            }
+        )
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            payload = await router.import_mappings(request)
+
+        self.assertEqual(payload["project_id"], "project-1")
+        self.assertGreaterEqual(payload["stored_count"], 1)
+
+    async def test_import_mappings_rejects_invalid_payload_and_flag(self) -> None:
+        bad_request = self._json_request(
+            {
+                "project_id": "project-1",
+                "mapping_file": {"mappings": [{"test_id": "test-1"}]},
+            }
+        )
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            with self.assertRaises(HTTPException) as ctx:
+                await router.import_mappings(bad_request)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        router.config.CCDASH_SEMANTIC_MAPPING_ENABLED = False
+        request = self._json_request({"project_id": "project-1", "mapping_file": {"mappings": []}})
+        with self.assertRaises(HTTPException) as disabled_ctx:
+            await router.import_mappings(request)
+        self.assertEqual(disabled_ctx.exception.status_code, 503)
 
     async def test_get_endpoints_return_503_when_feature_flag_disabled(self) -> None:
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = False
