@@ -2,9 +2,9 @@
 title: "Phase 7: Domain Mapping & Integrity Signals - Test Visualizer"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: complete
 created: 2026-02-28
-updated: 2026-02-28
+updated: 2026-03-01
 feature_slug: "test-visualizer"
 feature_version: "v1"
 phase: 7
@@ -45,6 +45,27 @@ This phase implements the intelligence layer: the pluggable Domain Mapping Provi
 The mapping system answers: "Which features does this test belong to?" The integrity system answers: "Did someone weaken this test?"
 
 Both are designed to fail gracefully — if providers conflict, confidence scores resolve it. If Git is unavailable, integrity detection is skipped with a log message.
+
+## Execution Update (2026-03-01)
+
+- Implemented `backend/services/mapping_resolver.py` with:
+  - `@runtime_checkable MappingProvider` protocol
+  - `RepoHeuristicsProvider`, `TestMetadataProvider`, `SemanticLLMProvider`
+  - `MappingResolver` orchestration, conflict merge, confidence gating, and snapshot hashing
+- Implemented `backend/services/integrity_detector.py` with all 5 signal types:
+  - `assertion_removed`, `skip_introduced`, `xfail_added`, `broad_exception`, `edited_before_green`
+- Wired background tasks in `backend/routers/test_visualizer.py`:
+  - `_trigger_mapping_resolution()` now executes resolver
+  - `_trigger_integrity_check()` now executes detector and honors feature flag
+- Added semantic mapping import endpoint:
+  - `POST /api/tests/mappings/import`
+  - payload validation + `CCDASH_SEMANTIC_MAPPING_ENABLED` gate
+- Added config support for repo path discovery:
+  - `CCDASH_PROJECT_ROOT` in `backend/config.py`
+- Added/updated tests:
+  - `backend/tests/test_mapping_resolver.py`
+  - `backend/tests/test_integrity_detector.py`
+  - router import coverage in `backend/tests/test_test_visualizer_router.py`
 
 ---
 
