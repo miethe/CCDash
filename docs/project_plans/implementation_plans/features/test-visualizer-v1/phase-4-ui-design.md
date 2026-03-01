@@ -1,31 +1,42 @@
 ---
-title: "Phase 4: UI/UX Design - Test Visualizer"
+title: 'Phase 4: UI/UX Design - Test Visualizer'
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: in-progress
 created: 2026-02-28
-updated: 2026-02-28
-feature_slug: "test-visualizer"
-feature_version: "v1"
+updated: '2026-02-28'
+feature_slug: test-visualizer
+feature_version: v1
 phase: 4
-phase_title: "UI/UX Design"
+phase_title: UI/UX Design
 prd_ref: /docs/project_plans/PRDs/features/test-visualizer-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/test-visualizer-v1.md
-effort_estimate: "20 story points"
-duration: "1.5 weeks"
-assigned_subagents: [ui-designer, gemini-orchestrator, ux-researcher, ui-engineer]
+effort_estimate: 20 story points
+duration: 1.5 weeks
+assigned_subagents:
+- ui-designer
+- gemini-orchestrator
+- ux-researcher
+- ui-engineer
 entry_criteria:
-  - PRD approved
-  - Design spec reviewed
-  - CCDash design system understood (slate-dark theme, indigo accents, existing component patterns)
+- PRD approved
+- Design spec reviewed
+- CCDash design system understood (slate-dark theme, indigo accents, existing component
+  patterns)
 exit_criteria:
-  - Test status visual language defined (colors, icons, badges)
-  - Testing Page wireframes complete (full page, domain tree, drilldown panels)
-  - Feature Modal / Execution Page / Session Page tab designs complete
-  - Component library design spec for all 8 core components
-  - Interaction design spec for live updates, drilldown transitions, filter animations
-  - Design artifacts committed to docs/project_plans/designs/test-visualizer/
-tags: [implementation, ui-design, test-visualizer, ux, wireframes, components]
+- Test status visual language defined (colors, icons, badges)
+- Testing Page wireframes complete (full page, domain tree, drilldown panels)
+- Feature Modal / Execution Page / Session Page tab designs complete
+- Component library design spec for all 8 core components
+- Interaction design spec for live updates, drilldown transitions, filter animations
+- Design artifacts committed to docs/project_plans/designs/test-visualizer/
+tags:
+- implementation
+- ui-design
+- test-visualizer
+- ux
+- wireframes
+- components
 ---
 
 # Phase 4: UI/UX Design
