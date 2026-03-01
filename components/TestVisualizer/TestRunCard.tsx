@@ -98,7 +98,7 @@ export const TestRunCard: React.FC<TestRunCardProps> = ({ run, showSession = fal
         </span>
         {showSession && !compact && run.agentSessionId && (
           <Link
-            to={`/sessions/${encodeURIComponent(run.agentSessionId)}`}
+            to={`/sessions?session=${encodeURIComponent(run.agentSessionId)}`}
             className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
             onClick={event => event.stopPropagation()}
           >
