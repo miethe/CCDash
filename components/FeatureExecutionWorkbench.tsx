@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Search,
   Terminal,
+  TestTube2,
   Users,
 } from 'lucide-react';
 
@@ -32,15 +33,17 @@ import {
   ProjectTask,
 } from '../types';
 import { getFeatureExecutionContext, trackExecutionEvent } from '../services/execution';
+import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { DocumentModal } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
+import { TestStatusView } from './TestVisualizer/TestStatusView';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
 
-type WorkbenchTab = 'overview' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics';
+type WorkbenchTab = 'overview' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics' | 'test-status';
 type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 
@@ -73,7 +76,14 @@ const TAB_ITEMS: Array<{ id: WorkbenchTab; label: string; icon: React.ComponentT
   { id: 'artifacts', label: 'Artifacts', icon: Users },
   { id: 'history', label: 'History', icon: Calendar },
   { id: 'analytics', label: 'Analytics', icon: LineChart },
+  { id: 'test-status', label: 'Test Status', icon: TestTube2 },
 ];
+
+const WORKBENCH_TAB_IDS = new Set<WorkbenchTab>(TAB_ITEMS.map(item => item.id));
+
+const isWorkbenchTab = (value: string | null): value is WorkbenchTab => (
+  Boolean(value) && WORKBENCH_TAB_IDS.has(value as WorkbenchTab)
+);
 
 const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
   {
@@ -445,11 +455,14 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { features, refreshFeatures, documents, getSessionById } = useData();
+  const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
 
   const [selectedFeatureId, setSelectedFeatureId] = useState<string>(searchParams.get('feature') || '');
   const [query, setQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>('overview');
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => {
+    const tabParam = searchParams.get('tab');
+    return isWorkbenchTab(tabParam) ? tabParam : 'overview';
+  });
   const [context, setContext] = useState<FeatureExecutionContext | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
   const [loading, setLoading] = useState(false);
@@ -465,6 +478,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const [artifactSourceSessions, setArtifactSourceSessions] = useState<AgentSession[]>([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [hasFeatureTestRuns, setHasFeatureTestRuns] = useState(false);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
 
   useEffect(() => {
@@ -495,6 +509,26 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     }
   }, [features, searchParams, selectedFeatureId]);
 
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (isWorkbenchTab(tabParam) && tabParam !== activeTab) {
+      setActiveTab(tabParam);
+    }
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    const currentTab = searchParams.get('tab');
+    if (activeTab === 'overview' && !currentTab) return;
+    if (activeTab === currentTab) return;
+    const nextParams = new URLSearchParams(searchParams);
+    if (activeTab === 'overview') {
+      nextParams.delete('tab');
+    } else {
+      nextParams.set('tab', activeTab);
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [activeTab, searchParams, setSearchParams]);
+
   const selectFeature = useCallback(
     (featureId: string) => {
       setSelectedFeatureId(featureId);
@@ -513,6 +547,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     if (!selectedFeatureId) {
       setContext(null);
       setFullFeature(null);
+      setHasFeatureTestRuns(false);
       return;
     }
 
@@ -557,6 +592,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       cancelled = true;
     };
   }, [selectedFeatureId]);
+
+  useEffect(() => {
+    if (!selectedFeatureId || !activeProject?.id) {
+      setHasFeatureTestRuns(false);
+      return;
+    }
+
+    let cancelled = false;
+    void listTestRuns({
+      projectId: activeProject.id,
+      featureId: selectedFeatureId,
+      limit: 1,
+    })
+      .then(payload => {
+        if (!cancelled) {
+          setHasFeatureTestRuns(payload.items.length > 0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasFeatureTestRuns(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, selectedFeatureId]);
 
   useEffect(() => {
     const featureId = context?.feature.id || '';
@@ -1220,6 +1283,25 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     );
   }, [expandedSubthreadsBySessionId, renderSessionCard]);
 
+  const isSessionActive = useMemo(
+    () => executionSessions.some(session => {
+      const normalized = String(session.status || '').toLowerCase();
+      return normalized === 'active' || normalized === 'running';
+    }),
+    [executionSessions],
+  );
+
+  const visibleTabItems = useMemo(
+    () => TAB_ITEMS.filter(tab => tab.id !== 'test-status' || hasFeatureTestRuns),
+    [hasFeatureTestRuns],
+  );
+
+  useEffect(() => {
+    if (activeTab === 'test-status' && !hasFeatureTestRuns) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, hasFeatureTestRuns]);
+
   if (!loading && !context && !error) {
     return (
       <div className="space-y-5">
@@ -1445,7 +1527,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
             <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
-                {TAB_ITEMS.map(tab => (
+                {visibleTabItems.map(tab => (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
@@ -1843,6 +1925,24 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
                     <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'test-status' && context.feature && (
+                <div className="mt-4">
+                  {activeProject?.id ? (
+                    <TestStatusView
+                      projectId={activeProject.id}
+                      filter={{ featureId: context.feature.id }}
+                      mode="tab"
+                      isLive={isSessionActive}
+                      onNavigateToTestingPage={() => navigate(`/tests?featureId=${encodeURIComponent(context.feature.id)}`)}
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                      Select an active project to view test status.
+                    </div>
+                  )}
                 </div>
               )}
             </section>
