@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
-import { FeatureTestTimeline, TestRunDetail } from '../../types';
+import { FeatureTestTimeline, TestRunDetail, TestStatus } from '../../types';
 import { getFeatureTimeline, getIntegrityAlerts, getTestRun } from '../../services/testVisualizer';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
@@ -22,6 +22,15 @@ interface TestStatusViewProps {
   mode: 'full' | 'compact' | 'tab';
   isLive?: boolean;
   onNavigateToTestingPage?: () => void;
+  hideHeader?: boolean;
+  showDomainTree?: boolean;
+  uiFilter?: {
+    statuses?: TestStatus[];
+    searchQuery?: string;
+    branch?: string;
+    runDateFrom?: string;
+    runDateTo?: string;
+  };
 }
 
 export const TestStatusView: React.FC<TestStatusViewProps> = ({
@@ -30,6 +39,9 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   mode,
   isLive = false,
   onNavigateToTestingPage,
+  hideHeader = false,
+  showDomainTree = true,
+  uiFilter,
 }) => {
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(filter?.domainId ?? null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<TestRunDetail | null>(null);
@@ -55,6 +67,54 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     },
   );
 
+  useEffect(() => {
+    setSelectedDomainId(filter?.domainId ?? null);
+  }, [filter?.domainId]);
+
+  const selectedStatuses = uiFilter?.statuses || [];
+  const searchQuery = (uiFilter?.searchQuery || '').trim().toLowerCase();
+  const branchFilter = (uiFilter?.branch || '').trim().toLowerCase();
+  const runDateFrom = (uiFilter?.runDateFrom || '').trim();
+  const runDateTo = (uiFilter?.runDateTo || '').trim();
+
+  const filteredRuns = useMemo(() => {
+    const runDateFromEpoch = runDateFrom ? Date.parse(`${runDateFrom}T00:00:00`) : Number.NEGATIVE_INFINITY;
+    const runDateToEpoch = runDateTo ? Date.parse(`${runDateTo}T23:59:59.999`) : Number.POSITIVE_INFINITY;
+
+    return runs.runs.filter(run => {
+      const normalizedStatus: TestStatus = run.status === 'failed'
+        ? 'failed'
+        : run.status === 'running'
+          ? 'running'
+          : 'passed';
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(normalizedStatus)) {
+        return false;
+      }
+
+      const runEpoch = Date.parse(run.timestamp || '');
+      if (Number.isFinite(runEpoch)) {
+        if (runEpoch < runDateFromEpoch || runEpoch > runDateToEpoch) {
+          return false;
+        }
+      }
+
+      if (branchFilter && !String(run.branch || '').toLowerCase().includes(branchFilter)) {
+        return false;
+      }
+
+      if (!searchQuery) return true;
+      const haystack = [
+        run.runId,
+        run.gitSha,
+        run.branch,
+        run.agentSessionId,
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }, [branchFilter, runDateFrom, runDateTo, runs.runs, searchQuery, selectedStatuses]);
+
   const topDomain = useMemo(() => {
     const roots = status.domains;
     if (roots.length === 0) return null;
@@ -71,7 +131,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   useEffect(() => {
     let alive = true;
 
-    const runId = filter?.runId || runs.runs[0]?.runId;
+    const runId = filter?.runId || filteredRuns[0]?.runId;
     if (!runId) {
       setSelectedRunDetail(null);
       return;
@@ -92,7 +152,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     return () => {
       alive = false;
     };
-  }, [filter?.runId, projectId, runs.runs]);
+  }, [filter?.runId, filteredRuns, projectId]);
 
   useEffect(() => {
     let alive = true;
@@ -145,40 +205,66 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     };
   }, [filter?.featureId, projectId]);
 
+  const filteredRunResults = useMemo(() => {
+    const results = selectedRunDetail?.results || [];
+    if (results.length === 0) return [];
+
+    return results.filter(result => {
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(result.status)) {
+        return false;
+      }
+      if (!searchQuery) return true;
+      const definition = selectedRunDetail?.definitions?.[result.testId];
+      const haystack = [
+        result.testId,
+        definition?.name || '',
+        definition?.path || '',
+        result.errorMessage || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }, [searchQuery, selectedRunDetail, selectedStatuses]);
+
+  const showSplitLayout = mode === 'full' && showDomainTree;
+
   return (
     <section className="space-y-4">
-      <header className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-100">Test Status</h2>
-            <p className="text-sm text-slate-400">Shared status panel for features, sessions, and the testing page.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {isLive && (
-              <span className="inline-flex items-center gap-1 rounded border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-xs font-semibold text-indigo-300">
-                <Activity size={12} />
-                LIVE
-              </span>
-            )}
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
-              onClick={status.refresh}
-            >
-              <RefreshCw size={12} /> Refresh
-            </button>
-            {onNavigateToTestingPage && (
+      {!hideHeader && (
+        <header className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-100">Test Status</h2>
+              <p className="text-sm text-slate-400">Shared status panel for features, sessions, and the testing page.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {isLive && (
+                <span className="inline-flex items-center gap-1 rounded border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-xs font-semibold text-indigo-300">
+                  <Activity size={12} />
+                  LIVE
+                </span>
+              )}
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded border border-indigo-500/35 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20"
-                onClick={onNavigateToTestingPage}
+                className="inline-flex items-center gap-2 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
+                onClick={status.refresh}
               >
-                Open Testing Page <ArrowRight size={12} />
+                <RefreshCw size={12} /> Refresh
               </button>
-            )}
+              {onNavigateToTestingPage && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded border border-indigo-500/35 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20"
+                  onClick={onNavigateToTestingPage}
+                >
+                  Open Testing Page <ArrowRight size={12} />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {status.error && (
         <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-3 text-sm text-rose-200">
@@ -188,35 +274,42 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         </div>
       )}
 
-      <div className={`grid gap-4 ${mode === 'full' ? 'lg:grid-cols-[320px_1fr]' : 'grid-cols-1'}`}>
-        <aside className="space-y-4">
-          {topDomain && (
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Global Health</p>
-              <div className="mt-3 flex items-center justify-between">
-                <HealthGauge passRate={topDomain.passRate} integrityScore={topDomain.integrityScore} size="md" />
-                <div className="text-right text-xs text-slate-400">
-                  <p>{topDomain.totalTests.toLocaleString()} tests</p>
-                  {live.lastUpdated && <p>Updated {live.lastUpdated.toLocaleTimeString()}</p>}
+      <div className={`grid gap-4 ${showSplitLayout ? 'lg:grid-cols-[320px_1fr]' : 'grid-cols-1'}`}>
+        {showDomainTree && (
+          <aside className="space-y-4">
+            {topDomain && (
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Global Health</p>
+                <div className="mt-3 flex items-center justify-between">
+                  <HealthGauge passRate={topDomain.passRate} integrityScore={topDomain.integrityScore} size="md" />
+                  <div className="text-right text-xs text-slate-400">
+                    <p>{topDomain.totalTests.toLocaleString()} tests</p>
+                    {live.lastUpdated && <p>Updated {live.lastUpdated.toLocaleTimeString()}</p>}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <DomainTreeView
-            domains={status.domains}
-            selectedDomainId={selectedDomainId}
-            onSelectDomain={domain => setSelectedDomainId(domain?.domainId ?? null)}
-          />
-        </aside>
+            <DomainTreeView
+              domains={status.domains}
+              selectedDomainId={selectedDomainId}
+              onSelectDomain={domain => setSelectedDomainId(domain?.domainId ?? null)}
+            />
+          </aside>
+        )}
 
         <div className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-slate-300">Recent Runs</h3>
-              {runs.runs.map(run => (
+              {filteredRuns.map(run => (
                 <TestRunCard key={run.runId} run={run} showSession compact={mode === 'compact'} />
               ))}
+              {filteredRuns.length === 0 && (
+                <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+                  No runs match the current filters.
+                </p>
+              )}
               {runs.error && <p className="text-sm text-rose-300">{runs.error.message}</p>}
               {runs.hasMore && mode !== 'compact' && (
                 <button
@@ -241,7 +334,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
           {mode !== 'compact' && (
             <>
               <TestResultTable
-                results={selectedRunDetail?.results || []}
+                results={filteredRunResults}
                 definitions={selectedRunDetail?.definitions || {}}
                 isLoading={runs.isLoading || status.isLoading}
               />

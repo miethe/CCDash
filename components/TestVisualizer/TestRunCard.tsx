@@ -40,7 +40,7 @@ export const TestRunCard: React.FC<TestRunCardProps> = ({ run, showSession = fal
   const navigate = useNavigate();
 
   const onOpenRun = () => {
-    navigate(`/tests?run_id=${encodeURIComponent(run.runId)}`);
+    navigate(`/tests?runId=${encodeURIComponent(run.runId)}`);
   };
 
   const handleKeyDown: React.KeyboardEventHandler<HTMLElement> = event => {
