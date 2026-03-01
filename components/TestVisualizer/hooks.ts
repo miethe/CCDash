@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { DomainHealthRollup, TestRun } from '../../types';
 import { getDomainHealth, getTestRun, listTestRuns, TestRunsFilter } from '../../services/testVisualizer';
@@ -91,13 +91,17 @@ export function useTestRuns(
   projectId: string,
   filter: Omit<TestRunsFilter, 'projectId'> = {},
 ): UseTestRunsResult {
+  const agentSessionId = filter.agentSessionId;
+  const featureId = filter.featureId;
+  const gitSha = filter.gitSha;
+  const since = filter.since;
+  const limit = filter.limit;
+
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-
-  const filterKey = useMemo(() => JSON.stringify(filter), [filter]);
 
   const loadRuns = useCallback(
     async (cursor?: string | null) => {
@@ -106,7 +110,15 @@ export function useTestRuns(
       setIsLoading(true);
       setError(null);
       try {
-        const payload = await listTestRuns({ ...filter, projectId, cursor: cursor || undefined });
+        const payload = await listTestRuns({
+          projectId,
+          agentSessionId,
+          featureId,
+          gitSha,
+          since,
+          limit,
+          cursor: cursor || undefined,
+        });
         setRuns(prev => (cursor ? [...prev, ...payload.items] : payload.items));
         setNextCursor(payload.nextCursor);
         setHasMore(Boolean(payload.nextCursor));
@@ -116,15 +128,15 @@ export function useTestRuns(
         setIsLoading(false);
       }
     },
-    [filter, projectId],
+    [agentSessionId, featureId, gitSha, limit, projectId, since],
   );
 
   useEffect(() => {
     setRuns([]);
     setNextCursor(null);
     setHasMore(false);
-    loadRuns(null);
-  }, [loadRuns, filterKey]);
+    void loadRuns(null);
+  }, [loadRuns]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor || isLoading) return;

@@ -95,3 +95,56 @@ class PostgresTestRunRepository:
 
     async def delete_by_source(self, source_file: str) -> None:
         _ = source_file
+
+    async def list_by_project(self, project_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_runs
+            WHERE project_id = $1
+            ORDER BY timestamp DESC
+            LIMIT $2 OFFSET $3
+            """,
+            project_id,
+            limit,
+            offset,
+        )
+        return [dict(row) for row in rows]
+
+    async def list_by_session(
+        self,
+        project_id: str,
+        agent_session_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_runs
+            WHERE project_id = $1 AND agent_session_id = $2
+            ORDER BY timestamp DESC
+            LIMIT $3 OFFSET $4
+            """,
+            project_id,
+            agent_session_id,
+            limit,
+            offset,
+        )
+        return [dict(row) for row in rows]
+
+    async def get_latest_for_feature(self, project_id: str, feature_id: str) -> dict | None:
+        row = await self.db.fetchrow(
+            """
+            SELECT DISTINCT tr.*
+            FROM test_runs tr
+            JOIN test_results r ON r.run_id = tr.run_id
+            JOIN test_feature_mappings m ON m.test_id = r.test_id
+            WHERE tr.project_id = $1 AND m.project_id = $1 AND m.feature_id = $2
+            ORDER BY tr.timestamp DESC
+            LIMIT 1
+            """,
+            project_id,
+            feature_id,
+        )
+        return dict(row) if row else None
