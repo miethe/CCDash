@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid } from 'lucide-react';
+import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
@@ -11,6 +11,7 @@ import { SessionArtifactsView } from './SessionArtifactsView';
 import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
+import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -4149,10 +4150,10 @@ const SessionFilterBar: React.FC = () => {
 };
 
 const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpenSession: (sessionId: string) => void }> = ({ session, onBack, onOpenSession }) => {
-    const { getSessionById } = useData();
+    const { activeProject, getSessionById } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features'>('transcript');
+    const [activeTab, setActiveTab] = useState<'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status'>('transcript');
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
@@ -4420,6 +4421,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         { id: 'activity', icon: Activity, label: 'Activity' },
                         { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
                         { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
+                        { id: 'test-status', icon: TestTube2, label: 'Test Status' },
                         { id: 'files', icon: FileText, label: 'Files' },
                         { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
                         { id: 'impact', icon: TrendingUp, label: 'App Impact' },
@@ -4473,6 +4475,21 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         loadingFeatureDetails={linkedFeatureDetailsLoading}
                         onOpenFeature={handleOpenFeature}
                     />
+                )}
+                {activeTab === 'test-status' && (
+                    activeProject?.id ? (
+                        <SessionTestStatusView
+                            projectId={activeProject.id}
+                            sessionId={session.id}
+                            sessionStatus={session.status}
+                            sessionFileUpdates={session.updatedFiles || []}
+                            onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
+                        />
+                    ) : (
+                        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
+                            Select an active project to view session test status.
+                        </div>
+                    )
                 )}
                 {activeTab === 'forensics' && <SessionForensicsView session={session} />}
                 {activeTab === 'activity' && (

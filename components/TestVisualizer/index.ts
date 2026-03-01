@@ -5,6 +5,7 @@ export { IntegrityAlertCard } from './IntegrityAlertCard';
 export { TestFilters } from './TestFilters';
 export { TestResultTable } from './TestResultTable';
 export { TestRunCard } from './TestRunCard';
+export { SessionTestStatusView } from './SessionTestStatusView';
 export { TestStatusBadge } from './TestStatusBadge';
 export { TestStatusView } from './TestStatusView';
 export { TestingPage } from './TestingPage';
