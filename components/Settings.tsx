@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor } from 'lucide-react';
+import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { AlertConfig, Project, ProjectTestPlatformConfig, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
+import { generateProjectTestSetupScript } from '../services/testSetupScript';
 
 type SettingsTab = 'general' | 'projects' | 'alerts';
 
@@ -100,6 +101,9 @@ const ProjectsTab: React.FC = () => {
   const [testingActionError, setTestingActionError] = useState<string | null>(null);
   const [testingActionInfo, setTestingActionInfo] = useState<string | null>(null);
   const [testingBusy, setTestingBusy] = useState(false);
+  const [generatedScript, setGeneratedScript] = useState('');
+  const [generatedScriptName, setGeneratedScriptName] = useState('');
+  const [scriptCopied, setScriptCopied] = useState(false);
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -124,6 +128,9 @@ const ProjectsTab: React.FC = () => {
       setSourceStatus([]);
       setTestingActionError(null);
       setTestingActionInfo(null);
+      setGeneratedScript('');
+      setGeneratedScriptName('');
+      setScriptCopied(false);
     }
   }, [selectedProjectId, projects]);
 
@@ -198,6 +205,47 @@ const ProjectsTab: React.FC = () => {
       setTestingActionError(e.message || 'Failed to run test source sync');
     } finally {
       setTestingBusy(false);
+    }
+  };
+
+  const handleGenerateScript = () => {
+    if (!editData) return;
+    const output = generateProjectTestSetupScript(editData);
+    setGeneratedScript(output.content);
+    setGeneratedScriptName(output.filename);
+    setScriptCopied(false);
+    setTestingActionInfo(`Generated setup script: ${output.filename}`);
+    setTestingActionError(null);
+  };
+
+  const handleCopyScript = async () => {
+    if (!generatedScript) return;
+    try {
+      await navigator.clipboard.writeText(generatedScript);
+      setScriptCopied(true);
+      setTestingActionInfo('Setup script copied to clipboard.');
+      setTestingActionError(null);
+    } catch (e: any) {
+      setTestingActionError(e?.message || 'Failed to copy script to clipboard');
+    }
+  };
+
+  const handleDownloadScript = () => {
+    if (!generatedScript) return;
+    try {
+      const blob = new Blob([generatedScript], { type: 'text/x-shellscript;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = generatedScriptName || `${editData?.id || 'project'}-test-setup.sh`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setTestingActionInfo('Setup script downloaded.');
+      setTestingActionError(null);
+    } catch (e: any) {
+      setTestingActionError(e?.message || 'Failed to download setup script');
     }
   };
 
@@ -535,6 +583,13 @@ const ProjectsTab: React.FC = () => {
                 >
                   Run Sync Now
                 </button>
+                <button
+                  type="button"
+                  onClick={handleGenerateScript}
+                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                >
+                  Generate Setup Script
+                </button>
               </div>
 
               {testingActionError && (
@@ -560,6 +615,43 @@ const ProjectsTab: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {generatedScript && (
+                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-slate-300">
+                      Generated Script
+                      {generatedScriptName ? <span className="ml-2 text-slate-500 font-mono">{generatedScriptName}</span> : null}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyScript}
+                        className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:border-slate-600"
+                      >
+                        <Copy size={12} />
+                        {scriptCopied ? 'Copied' : 'Copy'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDownloadScript}
+                        className="inline-flex items-center gap-1 rounded border border-indigo-500/35 bg-indigo-500/10 px-2 py-1 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-500/20"
+                      >
+                        <Download size={12} />
+                        Export
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    value={generatedScript}
+                    readOnly
+                    className="h-56 w-full resize-y rounded border border-slate-800 bg-slate-900 p-2 font-mono text-[11px] text-slate-200"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    Export this script and run it locally in the target project workspace.
+                  </p>
                 </div>
               )}
 
