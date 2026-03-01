@@ -110,10 +110,11 @@ export async function getDomainHealth(projectId: string, since?: string): Promis
 
 export async function getFeatureHealth(
   projectId: string,
-  options?: { domainId?: string; since?: string; cursor?: string; limit?: number }
+  options?: { featureId?: string; domainId?: string; since?: string; cursor?: string; limit?: number }
 ): Promise<CursorPage<FeatureTestHealth>> {
   const query = buildQuery({
     project_id: projectId,
+    feature_id: options?.featureId,
     domain_id: options?.domainId,
     since: options?.since,
     cursor: options?.cursor,

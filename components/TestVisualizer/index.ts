@@ -1,4 +1,5 @@
 export { DomainTreeView } from './DomainTreeView';
+export { FeatureModalTestStatus } from './FeatureModalTestStatus';
 export { HealthGauge } from './HealthGauge';
 export { HealthSummaryBar } from './HealthSummaryBar';
 export { IntegrityAlertCard } from './IntegrityAlertCard';

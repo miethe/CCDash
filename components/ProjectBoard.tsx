@@ -2,16 +2,18 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
+import { Feature, FeaturePhase, FeatureTestHealth, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
 import { trackExecutionEvent } from '../services/execution';
+import { getFeatureHealth } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
+import { FeatureModalTestStatus } from './TestVisualizer/FeatureModalTestStatus';
 import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
-  Terminal, GitCommit, GitBranch, Play,
+  Terminal, GitCommit, GitBranch, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
@@ -159,7 +161,7 @@ interface GitCommitAggregate {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
-type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
+type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history' | 'test-status';
 
 interface CoreSessionGroupDefinition {
   id: CoreSessionGroupId;
@@ -1098,7 +1100,7 @@ const FeatureModal = ({
   initialTab?: FeatureModalTab;
 }) => {
   const navigate = useNavigate();
-  const { updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
+  const { activeProject, updateFeatureStatus, updatePhaseStatus, updateTaskStatus, documents } = useData();
   const [activeTab, setActiveTab] = useState<FeatureModalTab>(initialTab);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -1117,6 +1119,7 @@ const FeatureModal = ({
   const [gitHistoryCommitFilter, setGitHistoryCommitFilter] = useState<string>('');
   const [showSecondarySessions, setShowSecondarySessions] = useState(false);
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
+  const [featureTestHealth, setFeatureTestHealth] = useState<FeatureTestHealth | null>(null);
   const featureDetailRequestIdRef = useRef(0);
   const linkedSessionsRequestIdRef = useRef(0);
 
@@ -1159,6 +1162,7 @@ const FeatureModal = ({
   useEffect(() => {
     setFullFeature(null);
     setLinkedSessionLinks([]);
+    setFeatureTestHealth(null);
     setCoreSessionGroupExpanded({ ...DEFAULT_CORE_SESSION_GROUP_EXPANDED });
     setDocGroupExpanded({ ...DEFAULT_DOC_GROUP_EXPANDED });
     setGitHistoryCommitFilter('');
@@ -1175,15 +1179,43 @@ const FeatureModal = ({
     setActiveTab(initialTab);
   }, [feature.id, initialTab]);
 
+  const refreshFeatureTestHealth = useCallback(async () => {
+    if (!activeProject?.id) {
+      setFeatureTestHealth(null);
+      return;
+    }
+
+    try {
+      const payload = await getFeatureHealth(activeProject.id, { featureId: feature.id, limit: 200 });
+      const health = payload.items.find(item => item.featureId === feature.id) || null;
+      setFeatureTestHealth(health);
+    } catch {
+      setFeatureTestHealth(null);
+    }
+  }, [activeProject?.id, feature.id]);
+
+  useEffect(() => {
+    void refreshFeatureTestHealth();
+  }, [refreshFeatureTestHealth]);
+
+  useEffect(() => {
+    if (activeTab === 'test-status' && (!featureTestHealth || featureTestHealth.totalTests <= 0)) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, featureTestHealth]);
+
   useEffect(() => {
     const interval = setInterval(() => {
       void refreshFeatureDetail();
       if (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history') {
         void refreshLinkedSessions();
       }
+      if (activeTab === 'test-status') {
+        void refreshFeatureTestHealth();
+      }
     }, FEATURE_MODAL_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [activeTab, refreshFeatureDetail, refreshLinkedSessions]);
+  }, [activeTab, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {
@@ -1961,13 +1993,19 @@ const FeatureModal = ({
     });
   };
 
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: Box },
-    { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
-    { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
-    { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
-    { id: 'history', label: 'Git History', icon: Calendar },
-  ];
+  const tabs = useMemo(() => {
+    const base: Array<{ id: FeatureModalTab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
+      { id: 'overview', label: 'Overview', icon: Box },
+      { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
+      { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
+      { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
+      { id: 'history', label: 'Git History', icon: Calendar },
+    ];
+    if ((featureTestHealth?.totalTests || 0) > 0) {
+      base.push({ id: 'test-status', label: 'Test Status', icon: TestTube2 });
+    }
+    return base;
+  }, [featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length]);
 
   const renderSessionCard = (
     session: FeatureSessionLink,
@@ -2707,6 +2745,16 @@ const FeatureModal = ({
               )}
             </div>
           )}
+          {activeTab === 'test-status' && featureTestHealth && (
+            <FeatureModalTestStatus
+              featureId={activeFeature.id}
+              health={featureTestHealth}
+              onNavigateToExecution={() => {
+                onClose();
+                navigate(`/execution?feature=${encodeURIComponent(activeFeature.id)}&tab=test-status`);
+              }}
+            />
+          )}
           {activeTab === 'history' && (
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -3199,7 +3247,7 @@ export const ProjectBoard: React.FC = () => {
   useEffect(() => {
     const featureId = searchParams.get('feature');
     const tabParam = (searchParams.get('tab') || '').trim().toLowerCase();
-    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'sessions', 'history'];
+    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'sessions', 'history', 'test-status'];
     const requestedTab = validTabs.includes(tabParam as FeatureModalTab) ? (tabParam as FeatureModalTab) : 'overview';
     if (featureId && apiFeatures.length > 0) {
       const featureBase = getFeatureBaseSlug(featureId);
