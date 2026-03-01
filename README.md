@@ -104,6 +104,7 @@ The core debugging loop for AI interactions.
 ### 8. Settings
 *   **Alert Rules Engine**: Persisted alert CRUD (`POST/PATCH/DELETE /api/analytics/alerts`) for threshold-based monitoring.
 *   **Toggle System**: Activate/Deactivate alerts with backend persistence.
+*   **Project Testing Configuration**: Per-project Testing settings to configure platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export.
 
 ---
 
@@ -163,6 +164,10 @@ Represents Markdown documentation. Contains:
     *   `GEMINI_API_KEY`: Enables AI insight features.
     *   `CCDASH_BACKEND_HOST` / `CCDASH_BACKEND_PORT`: Backend bind host/port for startup scripts.
     *   `CCDASH_API_PROXY_TARGET`: Vite proxy target for `/api` requests.
+    *   `CCDASH_TEST_VISUALIZER_ENABLED`: Global hard gate for `/api/tests/*` and `/tests` data.
+    *   `CCDASH_INTEGRITY_SIGNALS_ENABLED`: Global hard gate for integrity signal features.
+    *   `CCDASH_LIVE_TEST_UPDATES_ENABLED`: Global hard gate for live test updates.
+    *   `CCDASH_SEMANTIC_MAPPING_ENABLED`: Global hard gate for semantic mapping.
     *   `CCDASH_LINKING_LOGIC_VERSION`: Link-rebuild version gate (default `1`). Bump when link inference logic changes to force one full relink.
     *   `CCDASH_STARTUP_SYNC_LIGHT_MODE`: run startup sync in lightweight mode first (default `true`).
     *   `CCDASH_STARTUP_SYNC_DELAY_SECONDS`: delay before startup sync starts (default `2`).
@@ -171,5 +176,6 @@ Represents Markdown documentation. Contains:
     *   `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS`: capture analytics during deferred rebuild (default `false`).
 
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).  
+For project-scoped Testing configuration and `/tests` ingestion flow, see [`docs/testing-user-guide.md`](docs/testing-user-guide.md).  
 For sync/rebuild operation behavior, see [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md).  
 For codebase explorer backend and scoring details, see [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md).
