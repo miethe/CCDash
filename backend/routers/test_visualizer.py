@@ -37,6 +37,12 @@ from backend.models import (
 from backend.observability import start_span
 from backend.parsers.test_results import parse_junit_xml
 from backend.project_manager import project_manager
+from backend.services.integrity_detector import IntegrityDetector
+from backend.services.mapping_resolver import (
+    MappingResolver,
+    SemanticLLMProvider,
+    validate_semantic_mapping_file,
+)
 from backend.services.test_health import TestHealthService
 from backend.services.test_ingest import ingest_run
 
@@ -272,20 +278,45 @@ async def _request_payload_from_json(request: Request) -> IngestRunRequest:
 
 
 async def _trigger_mapping_resolution(run_id: str, project_id: str, db: Any) -> None:
-    """Background hook stub for domain mapping resolution (Phase 7)."""
-    _ = db
-    logger.info("Queued mapping resolution stub run_id=%s project_id=%s", run_id, project_id)
+    """Background hook for domain mapping resolution."""
+    try:
+        resolver = MappingResolver(db)
+        result = await resolver.resolve_for_run(run_id=run_id, project_id=project_id)
+        logger.info(
+            "Mapping resolution completed run_id=%s project_id=%s stored=%s primary=%s errors=%s",
+            run_id,
+            project_id,
+            result.stored_count,
+            result.primary_count,
+            len(result.errors),
+        )
+    except Exception as exc:
+        logger.warning("Mapping resolution failed run_id=%s project_id=%s: %s", run_id, project_id, exc)
 
 
 async def _trigger_integrity_check(run_id: str, git_sha: str, project_id: str, db: Any) -> None:
-    """Background hook stub for integrity signal detection (Phase 7)."""
-    _ = db
-    logger.info(
-        "Queued integrity check stub run_id=%s project_id=%s git_sha=%s",
-        run_id,
-        project_id,
-        git_sha,
-    )
+    """Background hook for integrity signal detection."""
+    if not config.CCDASH_INTEGRITY_SIGNALS_ENABLED:
+        logger.info("Integrity signals disabled; skipping run_id=%s", run_id)
+        return
+    try:
+        detector = IntegrityDetector(db)
+        signals = await detector.check_run(run_id=run_id, git_sha=git_sha, project_id=project_id)
+        logger.info(
+            "Integrity check completed run_id=%s project_id=%s git_sha=%s signals=%s",
+            run_id,
+            project_id,
+            git_sha,
+            len(signals),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Integrity check failed run_id=%s project_id=%s git_sha=%s: %s",
+            run_id,
+            project_id,
+            git_sha,
+            exc,
+        )
 
 
 @test_visualizer_router.post("/ingest", response_model=IngestRunResponse)
@@ -448,6 +479,90 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
         if span is not None:
             span.set_attribute("result_count", len(response.results))
         return response
+
+
+@test_visualizer_router.post("/mappings/import")
+async def import_mappings(request: Request) -> dict[str, Any]:
+    """Import externally generated semantic mappings."""
+    _require_feature_enabled()
+    if not config.CCDASH_SEMANTIC_MAPPING_ENABLED:
+        raise _error(
+            503,
+            error="semantic_mapping_disabled",
+            message="Semantic mapping import is not enabled.",
+            hint="Set CCDASH_SEMANTIC_MAPPING_ENABLED=true in environment.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise _error(
+            400,
+            error="invalid_body",
+            message="Invalid JSON body.",
+            hint="Send a JSON object with project_id and mapping_file.",
+        ) from exc
+
+    if not isinstance(body, dict):
+        raise _error(
+            400,
+            error="invalid_body",
+            message="Body must be a JSON object.",
+            hint="Send a JSON object with project_id and mapping_file.",
+        )
+
+    project_id = str(body.get("project_id") or "").strip()
+    mapping_file = body.get("mapping_file")
+    if not project_id:
+        raise _error(
+            400,
+            error="missing_project_id",
+            message="project_id is required.",
+            hint="Set project_id to the active project identifier.",
+        )
+    valid, error = validate_semantic_mapping_file(mapping_file if isinstance(mapping_file, dict) else {})
+    if not valid:
+        raise _error(
+            400,
+            error="invalid_mapping_file",
+            message=error,
+            hint="Provide mapping_file with a mappings array and required fields.",
+        )
+
+    db = await connection.get_connection()
+    definition_repo = get_test_definition_repository(db)
+    definitions: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 200
+    while True:
+        page = await definition_repo.list_by_project(project_id=project_id, limit=page_size, offset=offset)
+        if not page:
+            break
+        definitions.extend(page)
+        if len(page) < page_size:
+            break
+        offset += len(page)
+
+    provider = SemanticLLMProvider(mapping_file)
+    resolver = MappingResolver(db, providers=[provider])
+    with start_span(
+        "test_visualizer.import_mappings",
+        attributes={"project_id": project_id, "definition_count": len(definitions)},
+    ):
+        result = await resolver.resolve(
+            project_id=project_id,
+            test_definitions=definitions,
+            context={"source": "import_api", "version": 1},
+        )
+
+    return {
+        "project_id": project_id,
+        "provider": provider.name,
+        "stored_count": result.stored_count,
+        "primary_count": result.primary_count,
+        "candidate_count": result.candidate_count,
+        "errors": result.errors,
+    }
 
 
 @test_visualizer_router.get("/runs", response_model=CursorPaginatedResponse[TestRunDTO])

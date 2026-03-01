@@ -78,11 +78,7 @@ class SqliteTestMappingRepository:
             row = await cur.fetchone()
             mapping_id = int(row[0]) if row else 0
 
-        await self._refresh_primary(
-            project_id=resolved_project_id,
-            test_id=test_id,
-            feature_id=feature_id,
-        )
+        await self._refresh_primary(project_id=resolved_project_id, test_id=test_id)
         await self.db.commit()
         return mapping_id
 
@@ -190,28 +186,36 @@ class SqliteTestMappingRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
-    async def _refresh_primary(self, project_id: str, test_id: str, feature_id: str) -> None:
+    async def _refresh_primary(self, project_id: str, test_id: str) -> None:
         async with self.db.execute(
             """
             SELECT mapping_id
             FROM test_feature_mappings
-            WHERE project_id = ? AND test_id = ? AND feature_id = ?
+            WHERE project_id = ? AND test_id = ? AND confidence >= 0.5
             ORDER BY confidence DESC, mapping_id DESC
             """,
-            (project_id, test_id, feature_id),
+            (project_id, test_id),
         ) as cur:
             rows = await cur.fetchall()
 
         if not rows:
+            await self.db.execute(
+                """
+                UPDATE test_feature_mappings
+                SET is_primary = 0
+                WHERE project_id = ? AND test_id = ?
+                """,
+                (project_id, test_id),
+            )
             return
         primary_id = int(rows[0][0])
         await self.db.execute(
             """
             UPDATE test_feature_mappings
             SET is_primary = CASE WHEN mapping_id = ? THEN 1 ELSE 0 END
-            WHERE project_id = ? AND test_id = ? AND feature_id = ?
+            WHERE project_id = ? AND test_id = ?
             """,
-            (primary_id, project_id, test_id, feature_id),
+            (primary_id, project_id, test_id),
         )
 
     def _row_to_dict(self, row: aiosqlite.Row | None) -> dict:
