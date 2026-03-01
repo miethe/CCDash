@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
+import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 
 export interface SessionFilters {
     status?: string;
@@ -327,10 +328,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const refreshProjects = useCallback(async () => {
         try {
             const data = await fetchJson<Project[]>('/projects');
-            setProjects(data);
+            setProjects(data.map(project => ({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) })));
             try {
                 const active = await fetchJson<Project>('/projects/active');
-                setActiveProject(active);
+                setActiveProject({ ...active, testConfig: ensureProjectTestConfig(active.testConfig) });
             } catch (e) {
                 setActiveProject(null);
             }

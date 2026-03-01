@@ -4,12 +4,13 @@ import { useSearchParams } from 'react-router-dom';
 
 import { useData } from '../../contexts/DataContext';
 import { TestStatus } from '../../types';
+import { getTestMetricsSummary } from '../../services/testVisualizer';
 import { SidebarFiltersPortal } from '../SidebarFilters';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
 import { TestFilters } from './TestFilters';
 import { TestStatusView } from './TestStatusView';
-import { useTestStatus } from './hooks';
+import { useTestStatus, useTestVisualizerConfig } from './hooks';
 
 const getParam = (params: URLSearchParams, camelCase: string, snakeCase: string): string | null => (
   params.get(camelCase) || params.get(snakeCase)
@@ -30,6 +31,7 @@ export const TestingPage: React.FC = () => {
   const [draftSearchQuery, setDraftSearchQuery] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [metricTotal, setMetricTotal] = useState(0);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -39,7 +41,31 @@ export const TestingPage: React.FC = () => {
   }, [draftSearchQuery]);
 
   const projectId = activeProject?.id || '';
-  const status = useTestStatus(projectId, { enabled: Boolean(projectId) });
+  const testConfig = useTestVisualizerConfig(projectId, Boolean(projectId));
+  const visualizerEnabled = Boolean(testConfig.config?.effectiveFlags?.testVisualizerEnabled);
+  const status = useTestStatus(projectId, { enabled: Boolean(projectId && visualizerEnabled) });
+
+  useEffect(() => {
+    if (!projectId || !visualizerEnabled) {
+      setMetricTotal(0);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      try {
+        const summary = await getTestMetricsSummary(projectId);
+        if (!alive) return;
+        setMetricTotal(summary.totalMetrics || 0);
+      } catch {
+        if (!alive) return;
+        setMetricTotal(0);
+      }
+    };
+    void load();
+    return () => {
+      alive = false;
+    };
+  }, [projectId, refreshNonce, visualizerEnabled]);
 
   const updateQueryParam = useCallback(
     (key: 'domainId' | 'featureId' | 'runId', value: string | null) => {
@@ -99,6 +125,7 @@ export const TestingPage: React.FC = () => {
   }, [domainNameById, selectedDomainId, selectedFeatureId]);
 
   const refreshPage = () => {
+    testConfig.refresh();
     status.refresh();
     setRefreshNonce(prev => prev + 1);
   };
@@ -107,6 +134,33 @@ export const TestingPage: React.FC = () => {
     return (
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-300">
         Select an active project to view test status.
+      </div>
+    );
+  }
+
+  if (testConfig.isLoading) {
+    return (
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-300">
+        Loading test visualizer configuration...
+      </div>
+    );
+  }
+
+  if (testConfig.error) {
+    return (
+      <div className="rounded-xl border border-rose-600/40 bg-rose-600/10 p-6 text-rose-200">
+        Failed to load test visualizer configuration: {testConfig.error.message}
+      </div>
+    );
+  }
+
+  if (!visualizerEnabled) {
+    return (
+      <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-6 text-amber-100">
+        <p className="text-sm font-semibold">Test Visualizer is disabled for this project.</p>
+        <p className="mt-2 text-sm text-amber-200/90">
+          Enable it in Settings - Projects - Testing, then click Refresh.
+        </p>
       </div>
     );
   }
@@ -127,6 +181,8 @@ export const TestingPage: React.FC = () => {
               <span className="font-medium text-rose-400">{totals.failed}</span> failing
               {' • '}
               <span className="font-medium text-slate-300">{totals.totalTests}</span> total
+              {' • '}
+              <span className="font-medium text-indigo-300">{metricTotal}</span> metrics
               {totals.skipped > 0 && (
                 <>
                   {' • '}

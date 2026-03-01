@@ -3,8 +3,13 @@ import {
   DomainHealthRollup,
   FeatureTestHealth,
   FeatureTestTimeline,
+  TestMetricSummary,
+  TestPlatformId,
+  TestSourceStatus,
+  TestSyncResponse,
   TestIntegritySignal,
   TestRun,
+  TestVisualizerConfig,
   TestRunDetail,
   TestResult,
 } from '../types';
@@ -33,6 +38,24 @@ interface RequestOptions {
 
 type JsonRecord = Record<string, unknown>;
 
+export class TestVisualizerApiError extends Error {
+  status: number;
+  code: string;
+  hint: string;
+
+  constructor(message: string, status: number, code = '', hint = '') {
+    super(message);
+    this.name = 'TestVisualizerApiError';
+    this.status = status;
+    this.code = code;
+    this.hint = hint;
+  }
+
+  get isFeatureDisabled(): boolean {
+    return this.status === 503 && this.code === 'feature_disabled';
+  }
+}
+
 const toCamelKey = (key: string): string => key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 
 const toCamelValue = <T>(value: unknown): T => {
@@ -48,12 +71,6 @@ const toCamelValue = <T>(value: unknown): T => {
   }
   return value as T;
 };
-
-const emptyCursorPage = <T>(items: T[] = []): CursorPage<T> => ({
-  items,
-  nextCursor: null,
-  total: 0,
-});
 
 const resolveErrorMessage = (payload: unknown, fallback: string): string => {
   const asRecord = payload as JsonRecord | null;
@@ -82,10 +99,20 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   }
 
   if (!res.ok) {
-    if (res.status === 503 && options.emptyOn503 !== undefined) {
+    const asRecord = payload as JsonRecord | null;
+    const detail = (asRecord?.detail || null) as JsonRecord | string | null;
+    const detailRecord = detail && typeof detail === 'object' ? detail as JsonRecord : null;
+    const code = typeof detailRecord?.error === 'string' ? detailRecord.error : '';
+    const hint = typeof detailRecord?.hint === 'string' ? detailRecord.hint : '';
+    if (res.status === 503 && options.emptyOn503 !== undefined && code !== 'feature_disabled') {
       return options.emptyOn503 as T;
     }
-    throw new Error(resolveErrorMessage(payload, `Request failed (${res.status})`));
+    throw new TestVisualizerApiError(
+      resolveErrorMessage(payload, `Request failed (${res.status})`),
+      res.status,
+      code,
+      hint,
+    );
   }
 
   return toCamelValue<T>(payload);
@@ -105,7 +132,7 @@ const buildQuery = (params: Record<string, string | number | boolean | null | un
 
 export async function getDomainHealth(projectId: string, since?: string): Promise<DomainHealthRollup[]> {
   const query = buildQuery({ project_id: projectId, since });
-  return requestJson<DomainHealthRollup[]>(`/health/domains${query}`, { emptyOn503: [] });
+  return requestJson<DomainHealthRollup[]>(`/health/domains${query}`);
 }
 
 export async function getFeatureHealth(
@@ -120,16 +147,12 @@ export async function getFeatureHealth(
     cursor: options?.cursor,
     limit: options?.limit,
   });
-  return requestJson<CursorPage<FeatureTestHealth>>(`/health/features${query}`, {
-    emptyOn503: emptyCursorPage<FeatureTestHealth>(),
-  });
+  return requestJson<CursorPage<FeatureTestHealth>>(`/health/features${query}`);
 }
 
 export async function getTestRun(runId: string, projectId: string): Promise<TestRunDetail | null> {
   const query = buildQuery({ project_id: projectId });
-  return requestJson<TestRunDetail | null>(`/runs/${encodeURIComponent(runId)}${query}`, {
-    emptyOn503: null,
-  });
+  return requestJson<TestRunDetail | null>(`/runs/${encodeURIComponent(runId)}${query}`);
 }
 
 export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<TestRun>> {
@@ -142,9 +165,7 @@ export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<T
     cursor: filter.cursor,
     limit: filter.limit,
   });
-  return requestJson<CursorPage<TestRun>>(`/runs${query}`, {
-    emptyOn503: emptyCursorPage<TestRun>(),
-  });
+  return requestJson<CursorPage<TestRun>>(`/runs${query}`);
 }
 
 export async function getTestHistory(
@@ -158,9 +179,7 @@ export async function getTestHistory(
     since: options?.since,
     cursor: options?.cursor,
   });
-  return requestJson<CursorPage<TestResult>>(`/${encodeURIComponent(testId)}/history${query}`, {
-    emptyOn503: emptyCursorPage<TestResult>(),
-  });
+  return requestJson<CursorPage<TestResult>>(`/${encodeURIComponent(testId)}/history${query}`);
 }
 
 export async function getFeatureTimeline(
@@ -174,9 +193,7 @@ export async function getFeatureTimeline(
     until: options?.until,
     include_signals: options?.includeSignals,
   });
-  return requestJson<FeatureTestTimeline | null>(`/features/${encodeURIComponent(featureId)}/timeline${query}`, {
-    emptyOn503: null,
-  });
+  return requestJson<FeatureTestTimeline | null>(`/features/${encodeURIComponent(featureId)}/timeline${query}`);
 }
 
 export async function getIntegrityAlerts(
@@ -199,14 +216,68 @@ export async function getIntegrityAlerts(
     cursor: options?.cursor,
     limit: options?.limit,
   });
-  return requestJson<CursorPage<TestIntegritySignal>>(`/integrity/alerts${query}`, {
-    emptyOn503: emptyCursorPage<TestIntegritySignal>(),
-  });
+  return requestJson<CursorPage<TestIntegritySignal>>(`/integrity/alerts${query}`);
 }
 
 export async function correlateRun(runId: string, projectId: string): Promise<CorrelatedTestRun | null> {
   const query = buildQuery({ run_id: runId, project_id: projectId });
-  return requestJson<CorrelatedTestRun | null>(`/correlate${query}`, {
-    emptyOn503: null,
+  return requestJson<CorrelatedTestRun | null>(`/correlate${query}`);
+}
+
+export async function getTestVisualizerConfig(projectId: string): Promise<TestVisualizerConfig> {
+  const query = buildQuery({ project_id: projectId });
+  return requestJson<TestVisualizerConfig>(`/config${query}`);
+}
+
+export async function getTestSourcesStatus(projectId: string): Promise<TestSourceStatus[]> {
+  const query = buildQuery({ project_id: projectId });
+  return requestJson<TestSourceStatus[]>(`/sources/status${query}`);
+}
+
+export async function syncTestSources(
+  projectId: string,
+  options?: { platforms?: TestPlatformId[]; force?: boolean }
+): Promise<TestSyncResponse> {
+  const res = await fetch(`${API_BASE}/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: projectId,
+      platforms: options?.platforms || [],
+      force: Boolean(options?.force),
+    }),
+  });
+
+  let payload: unknown = null;
+  try {
+    payload = await res.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!res.ok) {
+    const asRecord = payload as JsonRecord | null;
+    const detail = (asRecord?.detail || null) as JsonRecord | string | null;
+    const detailRecord = detail && typeof detail === 'object' ? detail as JsonRecord : null;
+    throw new TestVisualizerApiError(
+      resolveErrorMessage(payload, `Request failed (${res.status})`),
+      res.status,
+      typeof detailRecord?.error === 'string' ? detailRecord.error : '',
+      typeof detailRecord?.hint === 'string' ? detailRecord.hint : '',
+    );
+  }
+  return toCamelValue<TestSyncResponse>(payload);
+}
+
+export async function getTestMetricsSummary(projectId: string): Promise<TestMetricSummary> {
+  const query = buildQuery({ project_id: projectId });
+  return requestJson<TestMetricSummary>(`/metrics/summary${query}`, {
+    emptyOn503: {
+      projectId,
+      totalMetrics: 0,
+      byPlatform: {},
+      byMetricType: {},
+      latestCollectedAt: '',
+    },
   });
 }

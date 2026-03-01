@@ -707,6 +707,41 @@ export interface Notification {
   isRead: boolean;
 }
 
+export type TestPlatformId =
+  | 'pytest'
+  | 'jest'
+  | 'playwright'
+  | 'coverage'
+  | 'benchmark'
+  | 'lighthouse'
+  | 'locust'
+  | 'triage';
+
+export interface ProjectTestFlags {
+  testVisualizerEnabled: boolean;
+  integritySignalsEnabled: boolean;
+  liveTestUpdatesEnabled: boolean;
+  semanticMappingEnabled: boolean;
+}
+
+export interface ProjectTestPlatformConfig {
+  id: TestPlatformId;
+  enabled: boolean;
+  resultsDir: string;
+  watch: boolean;
+  patterns: string[];
+}
+
+export interface ProjectTestConfig {
+  flags: ProjectTestFlags;
+  platforms: ProjectTestPlatformConfig[];
+  autoSyncOnStartup: boolean;
+  maxFilesPerScan: number;
+  maxParseConcurrency: number;
+  instructionProfile: string;
+  instructionNotes: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -717,6 +752,7 @@ export interface Project {
   planDocsPath: string;
   sessionsPath: string;
   progressPath: string;
+  testConfig: ProjectTestConfig;
 }
 
 export interface LinkedDocument {
@@ -1070,6 +1106,55 @@ export interface CorrelatedTestRun {
   features: FeatureTestHealth[];
   integritySignals: TestIntegritySignal[];
   links: Record<string, string>;
+}
+
+export interface TestSourceStatus {
+  platformId: string;
+  enabled: boolean;
+  watch: boolean;
+  resultsDir: string;
+  resolvedDir: string;
+  patterns: string[];
+  exists: boolean;
+  readable: boolean;
+  matchedFiles: number;
+  sampleFiles: string[];
+  lastError: string;
+  lastSyncedAt: string;
+}
+
+export interface EffectiveTestFlags {
+  testVisualizerEnabled: boolean;
+  integritySignalsEnabled: boolean;
+  liveTestUpdatesEnabled: boolean;
+  semanticMappingEnabled: boolean;
+}
+
+export interface TestVisualizerConfig {
+  projectId: string;
+  flags: ProjectTestFlags;
+  effectiveFlags: EffectiveTestFlags;
+  autoSyncOnStartup: boolean;
+  maxFilesPerScan: number;
+  maxParseConcurrency: number;
+  instructionProfile: string;
+  instructionNotes: string;
+  parserHealth: Record<string, boolean>;
+  sources: TestSourceStatus[];
+}
+
+export interface TestSyncResponse {
+  projectId: string;
+  stats: Record<string, unknown>;
+  sources: TestSourceStatus[];
+}
+
+export interface TestMetricSummary {
+  projectId: string;
+  totalMetrics: number;
+  byPlatform: Record<string, number>;
+  byMetricType: Record<string, number>;
+  latestCollectedAt: string;
 }
 
 export interface PaginatedResponse<T> {

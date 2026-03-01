@@ -1,10 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
-import { AlertConfig, Project } from '../types';
+import { AlertConfig, Project, ProjectTestPlatformConfig, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
+import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
+import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 
 type SettingsTab = 'general' | 'projects' | 'alerts';
+
+const SKILLMEAT_SETUP_COMMANDS: string[] = [
+  'pytest -v --junitxml test-results/pytest-junit.xml --cov=skillmeat --cov-report=xml --cov-report=json',
+  'cd skillmeat/web && pnpm test --json --outputFile test-results/jest-results.json && pnpm test:coverage',
+  'cd skillmeat/web && pnpm test:e2e',
+  'python tests/performance/benchmark_api.py --output benchmark_api_results.json',
+  'python tests/performance/benchmark_operations.py --output benchmark_ops_results.json',
+  'cd skillmeat/web && pnpm test:lighthouse --url http://localhost:3000',
+  'locust -f tests/performance/locustfile.py --headless --users 50 --spawn-rate 5 --run-time 3m --host http://localhost:8000 --html locust_report.html --csv locust_results',
+  'python scripts/parse_test_failures.py --input-dir test-results --output test-failures.json',
+];
 
 // ── Tab Button ─────────────────────────────────────────────────────
 
@@ -83,6 +96,10 @@ const ProjectsTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dirtyPaths, setDirtyPaths] = useState(false);
+  const [sourceStatus, setSourceStatus] = useState<TestSourceStatus[]>([]);
+  const [testingActionError, setTestingActionError] = useState<string | null>(null);
+  const [testingActionInfo, setTestingActionInfo] = useState<string | null>(null);
+  const [testingBusy, setTestingBusy] = useState(false);
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -100,10 +117,13 @@ const ProjectsTab: React.FC = () => {
 
     const project = projects.find(p => p.id === selectedProjectId);
     if (project) {
-      setEditData({ ...project });
+      setEditData({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) });
       setDirtyPaths(false);
       setSaved(false);
       setError(null);
+      setSourceStatus([]);
+      setTestingActionError(null);
+      setTestingActionInfo(null);
     }
   }, [selectedProjectId, projects]);
 
@@ -119,6 +139,65 @@ const ProjectsTab: React.FC = () => {
       if (orig && value !== (orig as any)[field]) {
         setDirtyPaths(true);
       }
+    }
+  };
+
+  const updateTestConfig = (updater: (prev: Project['testConfig']) => Project['testConfig']) => {
+    if (!editData) return;
+    const nextConfig = updater(ensureProjectTestConfig(editData.testConfig));
+    setEditData({ ...editData, testConfig: nextConfig });
+    setSaved(false);
+  };
+
+  const updateFlag = (key: keyof Project['testConfig']['flags'], value: boolean) => {
+    updateTestConfig(prev => ({
+      ...prev,
+      flags: {
+        ...prev.flags,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updatePlatform = (platformId: string, updater: (prev: ProjectTestPlatformConfig) => ProjectTestPlatformConfig) => {
+    updateTestConfig(prev => ({
+      ...prev,
+      platforms: prev.platforms.map(platform => platform.id === platformId ? updater(platform) : platform),
+    }));
+  };
+
+  const handleValidatePaths = async () => {
+    if (!editData) return;
+    setTestingBusy(true);
+    setTestingActionError(null);
+    setTestingActionInfo(null);
+    try {
+      const rows = await getTestSourcesStatus(editData.id);
+      setSourceStatus(rows);
+      setTestingActionInfo(`Validated ${rows.length} source configuration entries.`);
+    } catch (e: any) {
+      setTestingActionError(e.message || 'Failed to validate testing paths');
+    } finally {
+      setTestingBusy(false);
+    }
+  };
+
+  const handleRunSync = async () => {
+    if (!editData) return;
+    setTestingBusy(true);
+    setTestingActionError(null);
+    setTestingActionInfo(null);
+    try {
+      const result = await syncTestSources(editData.id, { force: true });
+      setSourceStatus(result.sources || []);
+      const synced = Number((result.stats as any)?.synced || 0);
+      const metrics = Number((result.stats as any)?.metrics || 0);
+      const errors = Number((result.stats as any)?.errors || 0);
+      setTestingActionInfo(`Sync complete: ${synced} files synced, ${metrics} metrics captured, ${errors} errors.`);
+    } catch (e: any) {
+      setTestingActionError(e.message || 'Failed to run test source sync');
+    } finally {
+      setTestingBusy(false);
     }
   };
 
@@ -320,6 +399,179 @@ const ProjectsTab: React.FC = () => {
                     placeholder="progress"
                   />
                   <p className="text-xs text-slate-500 mt-1">Relative to project root</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-800 pt-5 space-y-5">
+              <h4 className="text-sm font-semibold text-slate-300 mb-1">Testing Configuration</h4>
+              <p className="text-xs text-slate-500">
+                Configure test platforms, result directories, and feature flags for this project.
+              </p>
+
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  ['testVisualizerEnabled', 'Test Visualizer'],
+                  ['integritySignalsEnabled', 'Integrity Signals'],
+                  ['liveTestUpdatesEnabled', 'Live Updates'],
+                  ['semanticMappingEnabled', 'Semantic Mapping'],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                    <span className="text-sm text-slate-200">{label}</span>
+                    <input
+                      type="checkbox"
+                      checked={(editData.testConfig?.flags as any)?.[key] ?? false}
+                      onChange={e => updateFlag(key as keyof Project['testConfig']['flags'], e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Auto Sync on Startup</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editData.testConfig?.autoSyncOnStartup)}
+                    onChange={e => updateTestConfig(prev => ({ ...prev, autoSyncOnStartup: e.target.checked }))}
+                    className="h-4 w-4"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Max Files per Scan</span>
+                  <input
+                    type="number"
+                    min={10}
+                    max={5000}
+                    value={editData.testConfig?.maxFilesPerScan ?? 500}
+                    onChange={e => updateTestConfig(prev => ({ ...prev, maxFilesPerScan: Number(e.target.value || 500) }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Max Parse Concurrency</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={64}
+                    value={editData.testConfig?.maxParseConcurrency ?? 4}
+                    onChange={e => updateTestConfig(prev => ({ ...prev, maxParseConcurrency: Number(e.target.value || 4) }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                {(editData.testConfig?.platforms || []).map(platform => (
+                  <div key={platform.id} className="rounded-lg border border-slate-700 bg-slate-950 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-200">{platform.id}</p>
+                        <p className="text-xs text-slate-500">Watch: {platform.watch ? 'enabled' : 'disabled'}</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <label className="text-xs text-slate-300 flex items-center gap-2">
+                          Enabled
+                          <input
+                            type="checkbox"
+                            checked={platform.enabled}
+                            onChange={e => updatePlatform(platform.id, prev => ({ ...prev, enabled: e.target.checked }))}
+                            className="h-4 w-4"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-300 flex items-center gap-2">
+                          Watch
+                          <input
+                            type="checkbox"
+                            checked={platform.watch}
+                            onChange={e => updatePlatform(platform.id, prev => ({ ...prev, watch: e.target.checked }))}
+                            className="h-4 w-4"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label>
+                        <span className="block text-xs text-slate-400 mb-1">Results Dir</span>
+                        <input
+                          type="text"
+                          value={platform.resultsDir}
+                          onChange={e => updatePlatform(platform.id, prev => ({ ...prev, resultsDir: e.target.value }))}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
+                        />
+                      </label>
+                      <label>
+                        <span className="block text-xs text-slate-400 mb-1">Patterns (comma separated)</span>
+                        <input
+                          type="text"
+                          value={platform.patterns.join(', ')}
+                          onChange={e => updatePlatform(platform.id, prev => ({
+                            ...prev,
+                            patterns: e.target.value.split(',').map(item => item.trim()).filter(Boolean),
+                          }))}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={testingBusy}
+                  onClick={handleValidatePaths}
+                  className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600 disabled:opacity-50"
+                >
+                  Validate Paths
+                </button>
+                <button
+                  type="button"
+                  disabled={testingBusy}
+                  onClick={handleRunSync}
+                  className="rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+                >
+                  Run Sync Now
+                </button>
+              </div>
+
+              {testingActionError && (
+                <div className="rounded-lg border border-rose-600/50 bg-rose-600/10 px-3 py-2 text-xs text-rose-200">
+                  {testingActionError}
+                </div>
+              )}
+              {testingActionInfo && !testingActionError && (
+                <div className="rounded-lg border border-emerald-600/40 bg-emerald-600/10 px-3 py-2 text-xs text-emerald-200">
+                  {testingActionInfo}
+                </div>
+              )}
+
+              {sourceStatus.length > 0 && (
+                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                  <p className="text-xs font-semibold text-slate-300 mb-2">Source Status</p>
+                  <div className="space-y-2">
+                    {sourceStatus.map(row => (
+                      <div key={`${row.platformId}-${row.resolvedDir}`} className="rounded border border-slate-800 px-2 py-1.5 text-xs text-slate-300">
+                        <p className="font-mono text-slate-200">{row.platformId}: {row.resolvedDir}</p>
+                        <p>exists={String(row.exists)} readable={String(row.readable)} matched={row.matchedFiles}</p>
+                        {row.lastError && <p className="text-rose-300">{row.lastError}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                <p className="text-xs font-semibold text-slate-300 mb-2">SkillMeat Setup Instructions</p>
+                <p className="text-xs text-slate-500 mb-2">
+                  Configure your SkillMeat project to emit machine-readable test artifacts:
+                </p>
+                <div className="space-y-1.5">
+                  {SKILLMEAT_SETUP_COMMANDS.map(cmd => (
+                    <code key={cmd} className="block rounded bg-slate-900 px-2 py-1 text-[11px] text-indigo-200 overflow-x-auto">{cmd}</code>
+                  ))}
                 </div>
               </div>
             </div>
