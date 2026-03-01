@@ -574,6 +574,27 @@ CREATE INDEX IF NOT EXISTS idx_integrity_test
     ON test_integrity_signals(test_id) WHERE test_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_integrity_type
     ON test_integrity_signals(project_id, signal_type, severity);
+
+CREATE TABLE IF NOT EXISTS test_metrics (
+    metric_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id           TEXT NOT NULL,
+    run_id               TEXT DEFAULT '',
+    platform             TEXT NOT NULL,
+    metric_type          TEXT NOT NULL,
+    metric_name          TEXT NOT NULL,
+    metric_value         REAL DEFAULT 0,
+    unit                 TEXT DEFAULT '',
+    metadata_json        TEXT DEFAULT '{}',
+    source_file          TEXT DEFAULT '',
+    collected_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_metrics_project
+    ON test_metrics(project_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_platform
+    ON test_metrics(project_id, platform, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_metric_type
+    ON test_metrics(project_id, metric_type, collected_at DESC);
 """
 
 _SEED_METRIC_TYPES = """

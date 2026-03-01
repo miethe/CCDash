@@ -326,6 +326,106 @@ class Notification(BaseModel):
     isRead: bool = False
 
 
+# ── Project test config models ─────────────────────────────────────
+
+TestPlatformId = Literal[
+    "pytest",
+    "jest",
+    "playwright",
+    "coverage",
+    "benchmark",
+    "lighthouse",
+    "locust",
+    "triage",
+]
+
+
+class ProjectTestFlags(BaseModel):
+    testVisualizerEnabled: bool = True
+    integritySignalsEnabled: bool = True
+    liveTestUpdatesEnabled: bool = True
+    semanticMappingEnabled: bool = True
+
+
+class ProjectTestPlatformConfig(BaseModel):
+    id: TestPlatformId
+    enabled: bool = False
+    resultsDir: str = ""
+    watch: bool = False
+    patterns: list[str] = Field(default_factory=list)
+
+
+def _default_project_test_platforms() -> list["ProjectTestPlatformConfig"]:
+    return [
+        ProjectTestPlatformConfig(
+            id="pytest",
+            enabled=True,
+            resultsDir="test-results",
+            watch=True,
+            patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
+        ),
+        ProjectTestPlatformConfig(
+            id="jest",
+            enabled=False,
+            resultsDir="skillmeat/web",
+            watch=True,
+            patterns=["**/jest-results*.json", "**/coverage/coverage-final.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="playwright",
+            enabled=False,
+            resultsDir="skillmeat/web/test-results",
+            watch=True,
+            patterns=["**/results.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="coverage",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/coverage.xml", "**/coverage.json", "**/lcov.info", "**/coverage-final.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="benchmark",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/benchmark*_results.json", "**/benchmark*.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="lighthouse",
+            enabled=False,
+            resultsDir="skillmeat/web/lighthouse-reports",
+            watch=False,
+            patterns=["**/*.json", "**/*.html"],
+        ),
+        ProjectTestPlatformConfig(
+            id="locust",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/locust_report.html", "**/locust_results*.csv"],
+        ),
+        ProjectTestPlatformConfig(
+            id="triage",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/test-failures.json", "**/test-failures-summary.txt", "**/test-failures.md"],
+        ),
+    ]
+
+
+class ProjectTestConfig(BaseModel):
+    flags: ProjectTestFlags = Field(default_factory=ProjectTestFlags)
+    platforms: list[ProjectTestPlatformConfig] = Field(default_factory=_default_project_test_platforms)
+    autoSyncOnStartup: bool = True
+    maxFilesPerScan: int = 500
+    maxParseConcurrency: int = 4
+    instructionProfile: str = "skillmeat"
+    instructionNotes: str = ""
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):
@@ -338,6 +438,7 @@ class Project(BaseModel):
     planDocsPath: str = "docs/project_plans/"
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
     progressPath: str = "progress"  # relative to project root
+    testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
 
 
 # ── Feature models ─────────────────────────────────────────────────
@@ -643,3 +744,58 @@ class IngestRunResponse(BaseModel):
     mapping_trigger_queued: bool = False
     integrity_check_queued: bool = False
     errors: list[str] = Field(default_factory=list)
+
+
+class EffectiveTestFlagsDTO(BaseModel):
+    testVisualizerEnabled: bool = False
+    integritySignalsEnabled: bool = False
+    liveTestUpdatesEnabled: bool = False
+    semanticMappingEnabled: bool = False
+
+
+class TestSourceStatusDTO(BaseModel):
+    platformId: str
+    enabled: bool = False
+    watch: bool = False
+    resultsDir: str = ""
+    resolvedDir: str = ""
+    patterns: list[str] = Field(default_factory=list)
+    exists: bool = False
+    readable: bool = False
+    matchedFiles: int = 0
+    sampleFiles: list[str] = Field(default_factory=list)
+    lastError: str = ""
+    lastSyncedAt: str = ""
+
+
+class TestVisualizerConfigDTO(BaseModel):
+    projectId: str
+    flags: ProjectTestFlags = Field(default_factory=ProjectTestFlags)
+    effectiveFlags: EffectiveTestFlagsDTO = Field(default_factory=EffectiveTestFlagsDTO)
+    autoSyncOnStartup: bool = True
+    maxFilesPerScan: int = 500
+    maxParseConcurrency: int = 4
+    instructionProfile: str = "skillmeat"
+    instructionNotes: str = ""
+    parserHealth: dict[str, bool] = Field(default_factory=dict)
+    sources: list[TestSourceStatusDTO] = Field(default_factory=list)
+
+
+class SyncTestsRequest(BaseModel):
+    project_id: str
+    platforms: list[TestPlatformId] = Field(default_factory=list)
+    force: bool = False
+
+
+class SyncTestsResponse(BaseModel):
+    project_id: str
+    stats: dict[str, Any] = Field(default_factory=dict)
+    sources: list[TestSourceStatusDTO] = Field(default_factory=list)
+
+
+class TestMetricSummaryDTO(BaseModel):
+    project_id: str
+    total_metrics: int = 0
+    by_platform: dict[str, int] = Field(default_factory=dict)
+    by_metric_type: dict[str, int] = Field(default_factory=dict)
+    latest_collected_at: str = ""

@@ -29,6 +29,7 @@ from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
 from backend.project_manager import project_manager
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
+from backend.services.test_config import effective_test_flags, resolve_test_sources
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ccdash")
@@ -54,10 +55,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting initial project sync...")
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
     active_project = project_manager.get_active_project()
-    test_results_dir: Optional[Path] = None
-    if active_project and config.TEST_RESULTS_DIR:
-        configured = Path(config.TEST_RESULTS_DIR)
-        test_results_dir = configured if configured.is_absolute() else (Path(active_project.path) / configured)
+    test_sources = resolve_test_sources(active_project) if active_project else []
+    flags = effective_test_flags(active_project)
+    test_results_dir: Optional[Path] = test_sources[0].resolved_dir if test_sources else None
     
     if active_project:
         async def _run_startup_sync_pipeline() -> None:
@@ -75,8 +75,13 @@ async def lifespan(app: FastAPI):
                 rebuild_links=not light_mode,
                 capture_analytics=not light_mode,
             )
-            if test_results_dir and config.CCDASH_TEST_VISUALIZER_ENABLED:
-                test_stats = await sync.sync_test_results(active_project.id, test_results_dir)
+            if flags.testVisualizerEnabled and active_project.testConfig.autoSyncOnStartup:
+                test_stats = await sync.sync_test_sources(
+                    active_project.id,
+                    test_sources,
+                    max_files_per_scan=active_project.testConfig.maxFilesPerScan,
+                    max_parse_concurrency=active_project.testConfig.maxParseConcurrency,
+                )
                 logger.info("Startup test result sync stats: %s", test_stats)
 
             if light_mode and bool(getattr(config, "STARTUP_DEFERRED_REBUILD_LINKS", True)):
@@ -103,6 +108,7 @@ async def lifespan(app: FastAPI):
             docs_dir,
             progress_dir,
             test_results_dir=test_results_dir,
+            test_sources=test_sources,
         )
     
     yield

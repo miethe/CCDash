@@ -580,6 +580,29 @@ CREATE INDEX IF NOT EXISTS idx_integrity_details_json
     ON test_integrity_signals USING GIN (details_json);
 CREATE INDEX IF NOT EXISTS idx_integrity_linked_runs_json
     ON test_integrity_signals USING GIN (linked_run_ids_json);
+
+CREATE TABLE IF NOT EXISTS test_metrics (
+    metric_id            BIGSERIAL PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    run_id               TEXT DEFAULT '',
+    platform             TEXT NOT NULL,
+    metric_type          TEXT NOT NULL,
+    metric_name          TEXT NOT NULL,
+    metric_value         DOUBLE PRECISION DEFAULT 0,
+    unit                 TEXT DEFAULT '',
+    metadata_json        JSONB DEFAULT '{}'::jsonb,
+    source_file          TEXT DEFAULT '',
+    collected_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_metrics_project
+    ON test_metrics(project_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_platform
+    ON test_metrics(project_id, platform, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_metric_type
+    ON test_metrics(project_id, metric_type, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_metadata_json
+    ON test_metrics USING GIN (metadata_json);
 """
 
 _SEED_METRIC_TYPES = """

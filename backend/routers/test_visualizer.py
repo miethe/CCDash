@@ -5,6 +5,8 @@ import asyncio
 import base64
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -24,19 +26,30 @@ from backend.models import (
     DomainHealthRollupDTO,
     FeatureTestHealthDTO,
     FeatureTimelineResponseDTO,
+    Project,
+    TestMetricSummaryDTO,
     IngestRunRequest,
     IngestRunResponse,
+    SyncTestsRequest,
+    SyncTestsResponse,
     TestCorrelationResponseDTO,
+    TestVisualizerConfigDTO,
     TestDefinitionDTO,
     TestIntegritySignalDTO,
     TestResultDTO,
     TestResultHistoryDTO,
     TestRunDTO,
     TestRunDetailDTO,
+    TestSourceStatusDTO,
 )
 from backend.observability import start_span
 from backend.parsers.test_results import parse_junit_xml
 from backend.project_manager import project_manager
+from backend.services.test_config import (
+    effective_test_flags,
+    parser_health_map,
+    resolve_test_sources,
+)
 from backend.services.integrity_detector import IntegrityDetector
 from backend.services.mapping_resolver import (
     MappingResolver,
@@ -58,7 +71,7 @@ def _error(status_code: int, *, error: str, message: str, hint: str) -> HTTPExce
     )
 
 
-def _require_feature_enabled() -> None:
+def _require_env_feature_enabled() -> None:
     if not config.CCDASH_TEST_VISUALIZER_ENABLED:
         raise _error(
             503,
@@ -66,6 +79,110 @@ def _require_feature_enabled() -> None:
             message="Test Visualizer is not enabled.",
             hint="Set CCDASH_TEST_VISUALIZER_ENABLED=true in environment.",
         )
+
+
+def _resolve_project(project_id: str | None) -> Any:
+    if project_id:
+        project = project_manager.get_project(project_id)
+        if not project:
+            project = Project(
+                id=project_id,
+                name=f"Project {project_id}",
+                path=config.CCDASH_PROJECT_ROOT,
+                description="",
+                repoUrl="",
+                agentPlatforms=["Claude Code"],
+                planDocsPath="docs/project_plans/",
+                sessionsPath="",
+                progressPath="progress",
+            )
+        return project
+    active = project_manager.get_active_project()
+    if not active:
+        raise _error(
+            404,
+            error="project_not_found",
+            message="No active project is configured.",
+            hint="Select an active project in Settings.",
+        )
+    return active
+
+
+def _require_feature_enabled(project_id: str | None) -> tuple[Any, Any]:
+    _require_env_feature_enabled()
+    project = _resolve_project(project_id)
+    flags = effective_test_flags(project)
+    if not flags.testVisualizerEnabled:
+        raise _error(
+            503,
+            error="feature_disabled",
+            message="Test Visualizer is disabled for this project.",
+            hint="Enable Test Visualizer in Project Settings > Testing.",
+        )
+    return project, flags
+
+
+def _discover_source_files(base_dir: Path, patterns: list[str], max_scan: int = 400) -> list[Path]:
+    if not base_dir.exists():
+        return []
+    found: list[Path] = []
+    if patterns:
+        for pattern in patterns:
+            for path in base_dir.glob(pattern):
+                if path.is_file():
+                    found.append(path)
+                if len(found) >= max_scan:
+                    break
+            if len(found) >= max_scan:
+                break
+    else:
+        for path in base_dir.rglob("*"):
+            if path.is_file():
+                found.append(path)
+            if len(found) >= max_scan:
+                break
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in found:
+        key = os.path.realpath(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+def _source_status_rows(project: Any, request: Request | None = None) -> list[TestSourceStatusDTO]:
+    sources = resolve_test_sources(project, include_disabled=True)
+    sync = getattr(request.app.state, "sync_engine", None) if request else None
+    rows: list[TestSourceStatusDTO] = []
+    for source in sources:
+        files = _discover_source_files(source.resolved_dir, source.patterns, max_scan=250)
+        last_error = ""
+        last_synced = ""
+        if sync and hasattr(sync, "get_source_runtime_state"):
+            try:
+                last_error, last_synced = sync.get_source_runtime_state(source)
+            except Exception:
+                last_error = ""
+                last_synced = ""
+        rows.append(
+            TestSourceStatusDTO(
+                platformId=source.platform_id,
+                enabled=source.enabled,
+                watch=source.watch,
+                resultsDir=source.results_dir,
+                resolvedDir=str(source.resolved_dir),
+                patterns=source.patterns,
+                exists=source.resolved_dir.exists(),
+                readable=os.access(source.resolved_dir, os.R_OK) if source.resolved_dir.exists() else False,
+                matchedFiles=len(files),
+                sampleFiles=[str(path) for path in files[:8]],
+                lastError=last_error,
+                lastSyncedAt=last_synced,
+            )
+        )
+    return rows
 
 
 def _extract_meta(raw: Any) -> dict[str, Any]:
@@ -277,6 +394,63 @@ async def _request_payload_from_json(request: Request) -> IngestRunRequest:
         raise HTTPException(status_code=400, detail=exc.errors()) from exc
 
 
+async def _load_metric_summary(project_id: str, db: Any) -> TestMetricSummaryDTO:
+    by_platform: dict[str, int] = {}
+    by_metric_type: dict[str, int] = {}
+    latest_collected_at = ""
+    total_metrics = 0
+
+    import aiosqlite
+
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(
+            "SELECT COUNT(*) AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = ?",
+            (project_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                total_metrics = int(row[0] or 0)
+                latest_collected_at = str(row[1] or "")
+        async with db.execute(
+            "SELECT platform, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY platform",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            by_platform = {str(item[0] or ""): int(item[1] or 0) for item in rows if str(item[0] or "").strip()}
+        async with db.execute(
+            "SELECT metric_type, COUNT(*) AS count FROM test_metrics WHERE project_id = ? GROUP BY metric_type",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            by_metric_type = {str(item[0] or ""): int(item[1] or 0) for item in rows if str(item[0] or "").strip()}
+    else:
+        row = await db.fetchrow(
+            "SELECT COUNT(*)::int AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = $1",
+            project_id,
+        )
+        if row:
+            total_metrics = int(row.get("count") or 0)
+            latest_collected_at = str(row.get("latest") or "")
+        rows = await db.fetch(
+            "SELECT platform, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY platform",
+            project_id,
+        )
+        by_platform = {str(item["platform"] or ""): int(item["count"] or 0) for item in rows if str(item["platform"] or "").strip()}
+        rows = await db.fetch(
+            "SELECT metric_type, COUNT(*)::int AS count FROM test_metrics WHERE project_id = $1 GROUP BY metric_type",
+            project_id,
+        )
+        by_metric_type = {str(item["metric_type"] or ""): int(item["count"] or 0) for item in rows if str(item["metric_type"] or "").strip()}
+
+    return TestMetricSummaryDTO(
+        project_id=project_id,
+        total_metrics=total_metrics,
+        by_platform=by_platform,
+        by_metric_type=by_metric_type,
+        latest_collected_at=latest_collected_at,
+    )
+
+
 async def _trigger_mapping_resolution(run_id: str, project_id: str, db: Any) -> None:
     """Background hook for domain mapping resolution."""
     try:
@@ -294,9 +468,16 @@ async def _trigger_mapping_resolution(run_id: str, project_id: str, db: Any) -> 
         logger.warning("Mapping resolution failed run_id=%s project_id=%s: %s", run_id, project_id, exc)
 
 
-async def _trigger_integrity_check(run_id: str, git_sha: str, project_id: str, db: Any) -> None:
+async def _trigger_integrity_check(
+    run_id: str,
+    git_sha: str,
+    project_id: str,
+    db: Any,
+    *,
+    enabled: bool,
+) -> None:
     """Background hook for integrity signal detection."""
-    if not config.CCDASH_INTEGRITY_SIGNALS_ENABLED:
+    if not enabled:
         logger.info("Integrity signals disabled; skipping run_id=%s", run_id)
         return
     try:
@@ -319,10 +500,70 @@ async def _trigger_integrity_check(run_id: str, git_sha: str, project_id: str, d
         )
 
 
+@test_visualizer_router.get("/config", response_model=TestVisualizerConfigDTO)
+async def get_test_config(request: Request, project_id: str | None = None) -> TestVisualizerConfigDTO:
+    project = _resolve_project(project_id)
+    flags = effective_test_flags(project)
+    cfg = project.testConfig
+    return TestVisualizerConfigDTO(
+        projectId=project.id,
+        flags=cfg.flags,
+        effectiveFlags=flags,
+        autoSyncOnStartup=cfg.autoSyncOnStartup,
+        maxFilesPerScan=cfg.maxFilesPerScan,
+        maxParseConcurrency=cfg.maxParseConcurrency,
+        instructionProfile=cfg.instructionProfile,
+        instructionNotes=cfg.instructionNotes,
+        parserHealth=parser_health_map(),
+        sources=_source_status_rows(project, request),
+    )
+
+
+@test_visualizer_router.get("/sources/status", response_model=list[TestSourceStatusDTO])
+async def get_source_status(request: Request, project_id: str | None = None) -> list[TestSourceStatusDTO]:
+    project = _resolve_project(project_id)
+    return _source_status_rows(project, request)
+
+
+@test_visualizer_router.post("/sync", response_model=SyncTestsResponse)
+async def sync_test_sources_endpoint(request: Request, body: SyncTestsRequest) -> SyncTestsResponse:
+    project, flags = _require_feature_enabled(body.project_id)
+    if not flags.testVisualizerEnabled:
+        raise _error(
+            503,
+            error="feature_disabled",
+            message="Test Visualizer is disabled for this project.",
+            hint="Enable Test Visualizer in Project Settings > Testing.",
+        )
+    sync = getattr(request.app.state, "sync_engine", None)
+    if sync is None:
+        db = await connection.get_connection()
+        from backend.db.sync_engine import SyncEngine
+        sync = SyncEngine(db)
+    selected = set(body.platforms or [])
+    sources = resolve_test_sources(project, platform_filter=selected or None)
+    stats = await sync.sync_test_sources(
+        project.id,
+        sources,
+        force=body.force,
+        max_files_per_scan=project.testConfig.maxFilesPerScan,
+        max_parse_concurrency=project.testConfig.maxParseConcurrency,
+    )
+    return SyncTestsResponse(project_id=project.id, stats=stats, sources=_source_status_rows(project, request))
+
+
+@test_visualizer_router.get("/metrics/summary", response_model=TestMetricSummaryDTO)
+async def get_metrics_summary(request: Request, project_id: str) -> TestMetricSummaryDTO:
+    _ = request
+    _require_feature_enabled(project_id)
+    db = await connection.get_connection()
+    return await _load_metric_summary(project_id, db)
+
+
 @test_visualizer_router.post("/ingest", response_model=IngestRunResponse)
 async def ingest_test_run(request: Request) -> IngestRunResponse:
     """Ingest test results from JSON payload or multipart JUnit XML upload."""
-    _require_feature_enabled()
+    _require_env_feature_enabled()
 
     content_type = str(request.headers.get("content-type") or "").lower()
     parser_errors: list[str] = []
@@ -330,6 +571,7 @@ async def ingest_test_run(request: Request) -> IngestRunResponse:
         payload, parser_errors = await _request_payload_from_multipart(request)
     else:
         payload = await _request_payload_from_json(request)
+    _, flags = _require_feature_enabled(payload.project_id)
 
     db = await connection.get_connection()
     with start_span(
@@ -350,10 +592,16 @@ async def ingest_test_run(request: Request) -> IngestRunResponse:
         logger.warning("Failed to queue mapping resolution: %s", exc)
         errors.append(f"Failed to queue mapping resolution: {exc}")
 
-    if config.CCDASH_INTEGRITY_SIGNALS_ENABLED and payload.git_sha:
+    if flags.integritySignalsEnabled and payload.git_sha:
         try:
             asyncio.create_task(
-                _trigger_integrity_check(payload.run_id, payload.git_sha, payload.project_id, db)
+                _trigger_integrity_check(
+                    payload.run_id,
+                    payload.git_sha,
+                    payload.project_id,
+                    db,
+                    enabled=flags.integritySignalsEnabled,
+                )
             )
             integrity_queued = True
         except Exception as exc:
@@ -377,7 +625,7 @@ async def get_domain_health(
     include_children: bool = True,
 ) -> list[DomainHealthRollupDTO]:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     db = await connection.get_connection()
     service = TestHealthService(db)
     with start_span(
@@ -400,7 +648,7 @@ async def get_feature_health(
     limit: int = Query(50, ge=1, le=200),
 ) -> CursorPaginatedResponse[FeatureTestHealthDTO]:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     page = _decode_cursor(cursor)
     offset = int(page.get("offset", 0))
 
@@ -432,7 +680,7 @@ async def get_feature_health(
 @test_visualizer_router.get("/runs/{run_id}", response_model=TestRunDetailDTO)
 async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
     _ = request
-    _require_feature_enabled()
+    _require_env_feature_enabled()
     db = await connection.get_connection()
     run_repo = get_test_run_repository(db)
     result_repo = get_test_result_repository(db)
@@ -448,6 +696,7 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
                 message=f"No run found with id={run_id}",
                 hint="Check run_id is correct and was ingested successfully.",
             )
+        _require_feature_enabled(str(run.get("project_id") or ""))
 
         results = await result_repo.get_by_run(run_id)
         test_ids = [str(row.get("test_id") or "").strip() for row in results]
@@ -484,14 +733,7 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
 @test_visualizer_router.post("/mappings/import")
 async def import_mappings(request: Request) -> dict[str, Any]:
     """Import externally generated semantic mappings."""
-    _require_feature_enabled()
-    if not config.CCDASH_SEMANTIC_MAPPING_ENABLED:
-        raise _error(
-            503,
-            error="semantic_mapping_disabled",
-            message="Semantic mapping import is not enabled.",
-            hint="Set CCDASH_SEMANTIC_MAPPING_ENABLED=true in environment.",
-        )
+    _require_env_feature_enabled()
 
     try:
         body = await request.json()
@@ -519,6 +761,14 @@ async def import_mappings(request: Request) -> dict[str, Any]:
             error="missing_project_id",
             message="project_id is required.",
             hint="Set project_id to the active project identifier.",
+        )
+    _, flags = _require_feature_enabled(project_id)
+    if not flags.semanticMappingEnabled:
+        raise _error(
+            503,
+            error="semantic_mapping_disabled",
+            message="Semantic mapping import is disabled for this project.",
+            hint="Enable Semantic Mapping in Project Settings > Testing.",
         )
     valid, error = validate_semantic_mapping_file(mapping_file if isinstance(mapping_file, dict) else {})
     if not valid:
@@ -577,7 +827,7 @@ async def list_runs(
     limit: int = Query(20, ge=1, le=200),
 ) -> CursorPaginatedResponse[TestRunDTO]:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
     offset = int(cursor_data.get("offset", 0))
 
@@ -628,7 +878,7 @@ async def get_test_history(
     cursor: str | None = None,
 ) -> CursorPaginatedResponse[TestResultHistoryDTO]:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
     offset = int(cursor_data.get("offset", 0))
 
@@ -682,7 +932,7 @@ async def get_feature_timeline(
     include_signals: bool = True,
 ) -> FeatureTimelineResponseDTO:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     db = await connection.get_connection()
     service = TestHealthService(db)
     with start_span(
@@ -718,7 +968,7 @@ async def list_integrity_alerts(
     cursor: str | None = None,
 ) -> CursorPaginatedResponse[TestIntegritySignalDTO]:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
     cursor_data = _decode_cursor(cursor)
     offset = int(cursor_data.get("offset", 0))
 
@@ -762,7 +1012,7 @@ async def correlate_run(
     project_id: str,
 ) -> TestCorrelationResponseDTO:
     _ = request
-    _require_feature_enabled()
+    _require_feature_enabled(project_id)
 
     db = await connection.get_connection()
     service = TestHealthService(db)

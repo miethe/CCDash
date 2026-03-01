@@ -10,6 +10,7 @@ from typing import Optional
 
 from backend import config
 from backend.models import Project
+from backend.services.test_config import normalize_project_test_config
 
 logger = logging.getLogger("ccdash")
 
@@ -48,6 +49,7 @@ class ProjectManager:
             for p_data in data.get("projects", []):
                 try:
                     p = Project(**p_data)
+                    normalize_project_test_config(p, legacy_test_results_dir=config.TEST_RESULTS_DIR)
                     self._projects[p.id] = p
                 except Exception as e:
                     logger.error(f"Failed to load project: {e}")
@@ -84,6 +86,7 @@ class ProjectManager:
         return self._projects.get(project_id)
 
     def add_project(self, project: Project):
+        normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
         self._projects[project.id] = project
         self._save()
 
@@ -92,6 +95,7 @@ class ProjectManager:
         if project_id not in self._projects:
             raise ValueError(f"Project {project_id} not found")
         project.id = project_id  # ensure ID is preserved
+        normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
         self._projects[project_id] = project
         self._save()
         logger.info(f"Updated project: {project.name}")
