@@ -542,6 +542,7 @@ class DomainHealthRollupDTO(BaseModel):
     skipped: int = 0
     pass_rate: float = 0.0
     integrity_score: float = 1.0
+    confidence_score: float = 0.0
     last_run_at: Optional[str] = None
     children: list["DomainHealthRollupDTO"] = Field(default_factory=list)
 
@@ -556,8 +557,67 @@ class FeatureTestHealthDTO(BaseModel):
     skipped: int = 0
     pass_rate: float = 0.0
     integrity_score: float = 1.0
+    confidence_score: float = 0.0
     last_run_at: Optional[str] = None
     open_signals: int = 0
+
+
+class CursorPaginatedResponse(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    limit: int
+    next_cursor: Optional[str] = None
+
+
+class TestResultHistoryDTO(BaseModel):
+    run_id: str
+    test_id: str
+    status: str
+    duration_ms: int = 0
+    error_fingerprint: str = ""
+    error_message: str = ""
+    artifact_refs: list[str] = Field(default_factory=list)
+    stdout_ref: str = ""
+    stderr_ref: str = ""
+    created_at: str = ""
+    run_timestamp: str = ""
+    git_sha: str = ""
+    agent_session_id: str = ""
+
+
+class TestRunDetailDTO(BaseModel):
+    run: TestRunDTO
+    results: list[TestResultDTO] = Field(default_factory=list)
+    definitions: dict[str, TestDefinitionDTO] = Field(default_factory=dict)
+    integrity_signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+
+
+class FeatureTimelinePointDTO(BaseModel):
+    date: str
+    pass_rate: float = 0.0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    run_ids: list[str] = Field(default_factory=list)
+    signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+
+
+class FeatureTimelineResponseDTO(BaseModel):
+    feature_id: str
+    feature_name: str = ""
+    timeline: list[FeatureTimelinePointDTO] = Field(default_factory=list)
+    first_green: Optional[str] = None
+    last_red: Optional[str] = None
+    last_known_good: Optional[str] = None
+
+
+class TestCorrelationResponseDTO(BaseModel):
+    run: TestRunDTO
+    agent_session: Optional[AgentSession] = None
+    commit_correlation: Optional[dict[str, Any]] = None
+    features: list[FeatureTestHealthDTO] = Field(default_factory=list)
+    integrity_signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)
 
 
 class IngestRunRequest(BaseModel):

@@ -2,8 +2,14 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import aiosqlite
+
 from fastapi import HTTPException
 
+from backend import config
+from backend.db.repositories.features import SqliteFeatureRepository
+from backend.db.repositories.sessions import SqliteSessionRepository
+from backend.db.sqlite_migrations import run_migrations
 from backend.models import IngestRunResponse
 from backend.routers import test_visualizer as router
 
@@ -12,10 +18,109 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._prev_enabled = router.config.CCDASH_TEST_VISUALIZER_ENABLED
         self._prev_integrity = router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED
+        self._prev_enabled_cfg = config.CCDASH_TEST_VISUALIZER_ENABLED
+
+        router.config.CCDASH_TEST_VISUALIZER_ENABLED = True
+        router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED = True
+        config.CCDASH_TEST_VISUALIZER_ENABLED = True
+
+        self.db = await aiosqlite.connect(":memory:")
+        self.db.row_factory = aiosqlite.Row
+        await run_migrations(self.db)
+
+        await self._seed_fixtures()
 
     async def asyncTearDown(self) -> None:
+        await self.db.close()
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = self._prev_enabled
         router.config.CCDASH_INTEGRITY_SIGNALS_ENABLED = self._prev_integrity
+        config.CCDASH_TEST_VISUALIZER_ENABLED = self._prev_enabled_cfg
+
+    async def _seed_fixtures(self) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO test_domains (domain_id, project_id, name, tier)
+            VALUES ('dom-1', 'project-1', 'Core', 'core')
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_definitions (test_id, project_id, path, name, framework)
+            VALUES ('test-1', 'project-1', 'tests/test_core.py', 'test_core', 'pytest')
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_runs (
+                run_id, project_id, timestamp, git_sha, branch, agent_session_id,
+                status, total_tests, passed_tests, failed_tests, skipped_tests, duration_ms
+            ) VALUES
+                ('run-1', 'project-1', '2026-02-28T10:00:00Z', 'sha-1', 'main', 'session-1', 'complete', 1, 1, 0, 0, 11),
+                ('run-2', 'project-1', '2026-02-28T11:00:00Z', 'sha-1', 'main', 'session-1', 'failed', 1, 0, 1, 0, 12)
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_results (run_id, test_id, status, duration_ms)
+            VALUES
+                ('run-1', 'test-1', 'passed', 11),
+                ('run-2', 'test-1', 'failed', 12)
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_feature_mappings (
+                project_id, test_id, feature_id, domain_id, provider_source, confidence, version, is_primary
+            ) VALUES ('project-1', 'test-1', 'feature-1', 'dom-1', 'repo_heuristics', 0.9, 1, 1)
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_integrity_signals (
+                signal_id, project_id, git_sha, file_path, test_id, signal_type,
+                severity, linked_run_ids_json, agent_session_id, created_at
+            ) VALUES
+                (
+                    'sig-1', 'project-1', 'sha-1', 'tests/test_core.py', 'test-1',
+                    'assertion_removed', 'high', '["run-2"]', 'session-1', '2026-02-28T11:00:00Z'
+                )
+            """
+        )
+
+        feature_repo = SqliteFeatureRepository(self.db)
+        await feature_repo.upsert(
+            {
+                "id": "feature-1",
+                "name": "Feature One",
+                "status": "in-progress",
+            },
+            project_id="project-1",
+        )
+
+        session_repo = SqliteSessionRepository(self.db)
+        await session_repo.upsert(
+            {
+                "id": "session-1",
+                "status": "completed",
+                "startedAt": "2026-02-28T09:00:00Z",
+                "endedAt": "2026-02-28T12:00:00Z",
+                "sourceFile": "fixtures/session-1.jsonl",
+            },
+            project_id="project-1",
+        )
+
+        await self.db.execute(
+            """
+            INSERT INTO commit_correlations (
+                project_id, session_id, root_session_id, commit_hash, feature_id,
+                window_start, window_end, source_key, payload_json
+            ) VALUES (
+                'project-1', 'session-1', 'session-1', 'sha-1', 'feature-1',
+                '2026-02-28T09:00:00Z', '2026-02-28T12:00:00Z', 'corr-1', '{}'
+            )
+            """
+        )
+        await self.db.commit()
 
     def _json_request(self, payload: dict) -> types.SimpleNamespace:
         async def _json() -> dict:
@@ -41,7 +146,7 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_returns_400_for_invalid_json_payload(self) -> None:
         router.config.CCDASH_TEST_VISUALIZER_ENABLED = True
-        request = self._json_request({"project_id": "project-1"})  # missing run_id + timestamp
+        request = self._json_request({"project_id": "project-1"})
 
         with self.assertRaises(HTTPException) as ctx:
             await router.ingest_test_run(request)
@@ -84,6 +189,93 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload.integrity_check_queued)
         self.assertEqual(create_task.call_count, 1)
         self.assertEqual(len(created_coroutines), 1)
+
+    async def test_get_domain_health_and_feature_health(self) -> None:
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            domains = await router.get_domain_health(types.SimpleNamespace(), project_id="project-1")
+            features = await router.get_feature_health(
+                types.SimpleNamespace(),
+                project_id="project-1",
+                limit=10,
+                cursor=None,
+            )
+
+        self.assertEqual(len(domains), 1)
+        self.assertEqual(domains[0].domain_id, "dom-1")
+        self.assertEqual(domains[0].failed, 1)
+        self.assertEqual(features.total, 1)
+        self.assertEqual(len(features.items), 1)
+        self.assertEqual(features.items[0].feature_id, "feature-1")
+
+    async def test_run_detail_runs_history_timeline_and_integrity_endpoints(self) -> None:
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            run_detail = await router.get_run_detail(types.SimpleNamespace(), run_id="run-2")
+            runs = await router.list_runs(types.SimpleNamespace(), project_id="project-1", limit=1)
+            history = await router.get_test_history(
+                types.SimpleNamespace(),
+                test_id="test-1",
+                project_id="project-1",
+                limit=10,
+            )
+            timeline = await router.get_feature_timeline(
+                types.SimpleNamespace(),
+                feature_id="feature-1",
+                project_id="project-1",
+            )
+            alerts = await router.list_integrity_alerts(
+                types.SimpleNamespace(),
+                project_id="project-1",
+                limit=10,
+            )
+
+        self.assertEqual(run_detail.run.run_id, "run-2")
+        self.assertEqual(len(run_detail.results), 1)
+        self.assertEqual(runs.total, 2)
+        self.assertEqual(len(runs.items), 1)
+        self.assertIsNotNone(runs.next_cursor)
+        self.assertEqual(history.total, 2)
+        self.assertEqual(len(timeline.timeline), 1)
+        self.assertEqual(alerts.total, 1)
+
+    async def test_correlate_endpoint_and_missing_run(self) -> None:
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            correlation = await router.correlate_run(
+                types.SimpleNamespace(),
+                run_id="run-2",
+                project_id="project-1",
+            )
+
+            self.assertEqual(correlation.run.run_id, "run-2")
+            self.assertEqual(correlation.links["testing_page_url"], "/#/tests?run_id=run-2")
+            self.assertEqual(len(correlation.features), 1)
+
+            with self.assertRaises(HTTPException) as ctx:
+                await router.correlate_run(
+                    types.SimpleNamespace(),
+                    run_id="run-missing",
+                    project_id="project-1",
+                )
+
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_invalid_cursor_returns_400(self) -> None:
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            with self.assertRaises(HTTPException) as ctx:
+                await router.list_runs(
+                    types.SimpleNamespace(),
+                    project_id="project-1",
+                    cursor="not-base64",
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_get_endpoints_return_503_when_feature_flag_disabled(self) -> None:
+        router.config.CCDASH_TEST_VISUALIZER_ENABLED = False
+
+        with self.assertRaises(HTTPException) as ctx:
+            await router.get_domain_health(types.SimpleNamespace(), project_id="project-1")
+
+        self.assertEqual(ctx.exception.status_code, 503)
 
 
 if __name__ == "__main__":
