@@ -908,6 +908,170 @@ export interface FeatureExecutionContext {
   generatedAt: string;
 }
 
+// ── Test Visualizer Types ──────────────────────────────────────────
+
+export type TestStatus =
+  | 'passed'
+  | 'failed'
+  | 'skipped'
+  | 'error'
+  | 'xfailed'
+  | 'xpassed'
+  | 'unknown'
+  | 'running';
+
+export type TestRunStatus = 'running' | 'complete' | 'failed';
+
+export interface TestRun {
+  runId: string;
+  projectId: string;
+  timestamp: string;
+  gitSha: string;
+  branch: string;
+  agentSessionId: string;
+  envFingerprint: string;
+  trigger: 'local' | 'ci' | string;
+  status: TestRunStatus;
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  skippedTests: number;
+  durationMs: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface TestDefinition {
+  testId: string;
+  projectId: string;
+  path: string;
+  name: string;
+  framework: string;
+  tags: string[];
+  owner: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestResult {
+  runId: string;
+  testId: string;
+  status: TestStatus;
+  durationMs: number;
+  errorFingerprint: string;
+  errorMessage: string;
+  artifactRefs: string[];
+  stdoutRef: string;
+  stderrRef: string;
+  createdAt: string;
+}
+
+export interface TestDomain {
+  domainId: string;
+  projectId: string;
+  name: string;
+  parentId: string | null;
+  description: string;
+  tier: 'core' | 'extras' | 'nonfunc' | string;
+  sortOrder: number;
+}
+
+export interface TestFeatureMapping {
+  mappingId: number;
+  projectId: string;
+  testId: string;
+  featureId: string;
+  domainId: string | null;
+  providerSource: string;
+  confidence: number;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface TestIntegritySignal {
+  signalId: string;
+  projectId: string;
+  gitSha: string;
+  filePath: string;
+  testId: string | null;
+  signalType:
+    | 'assertion_removed'
+    | 'skip_introduced'
+    | 'xfail_added'
+    | 'broad_exception'
+    | 'edited_before_green'
+    | string;
+  severity: 'low' | 'medium' | 'high' | string;
+  details: Record<string, unknown>;
+  linkedRunIds: string[];
+  agentSessionId: string;
+  createdAt: string;
+}
+
+export interface DomainHealthRollup {
+  domainId: string;
+  domainName: string;
+  tier: 'core' | 'extras' | 'nonfunc' | string;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  passRate: number;
+  integrityScore: number;
+  confidenceScore?: number;
+  lastRunAt: string | null;
+  children: DomainHealthRollup[];
+}
+
+export interface FeatureTestHealth {
+  featureId: string;
+  featureName: string;
+  domainId: string | null;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  passRate: number;
+  integrityScore: number;
+  confidenceScore?: number;
+  lastRunAt: string | null;
+  openSignals: number;
+}
+
+export interface TestTimelinePoint {
+  date: string;
+  passRate: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  runIds: string[];
+  signals: TestIntegritySignal[];
+}
+
+export interface FeatureTestTimeline {
+  featureId: string;
+  featureName: string;
+  timeline: TestTimelinePoint[];
+  firstGreen: string | null;
+  lastRed: string | null;
+  lastKnownGood: string | null;
+}
+
+export interface TestRunDetail {
+  run: TestRun;
+  results: TestResult[];
+  definitions: Record<string, TestDefinition>;
+  integritySignals: TestIntegritySignal[];
+}
+
+export interface CorrelatedTestRun {
+  run: TestRun;
+  agentSession: AgentSession | null;
+  features: FeatureTestHealth[];
+  integritySignals: TestIntegritySignal[];
+  links: Record<string, string>;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
