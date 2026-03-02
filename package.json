@@ -8,6 +8,7 @@
     "dev": "node ./scripts/dev.mjs",
     "dev:frontend": "vite",
     "dev:backend": "node ./scripts/backend.mjs --reload --host 127.0.0.1 --port 8000",
+    "discover:sessions": "python3 backend/scripts/session_data_discovery.py --platform claude_code",
     "build": "vite build",
     "preview": "vite preview",
     "start:backend": "node ./scripts/backend.mjs --host 0.0.0.0",

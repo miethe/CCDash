@@ -9,6 +9,12 @@
 2.  **Forensics & Debugging**: Detailed introspection into Agent "thought processes," tool usage, and costs.
 3.  **Local Context**: Tightly coupled with the local filesystem, Git history, and Markdown frontmatter.
 
+## 🔌 Session Ingestion Platforms
+
+- **Claude Code**: native JSONL parsing plus sidecar enrichment (`todos`, `tasks`, `teams`, `session-env`, `tool-results`).
+- **Codex**: JSONL payload parsing (`response_item`, `event_msg`, `turn_context`) with tool/result correlation and payload signal extraction.
+- **Platform registry**: parser routing is centralized so additional platforms can be added without changing API/UI contracts.
+
 ---
 
 ## 🛠️ Technology Stack
@@ -91,6 +97,14 @@ The core debugging loop for AI interactions.
     7.  **Agents**:
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
+    8.  **Forensics**:
+        *   Full forensic payload exploration from parser-derived telemetry.
+        *   **Queue Pressure**: queue operation/status/task-type distributions and `waiting_for_task` signals.
+        *   **Resource Footprint**: command-derived external/internal targets (`api`, `database`, `docker`, `ssh`, `service`).
+        *   **Subagent Topology**: task fan-out, linked subagent sessions, and orphan linkage tracking.
+        *   **Tool Result Intensity**: `tool-results` sidecar file volume and largest file inspection.
+        *   **Platform Telemetry**: project-level platform config telemetry (for example MCP server inventory for Claude).
+        *   **Codex Payload Signals**: payload/tool distributions for Codex sessions.
 
 ### 7. Codebase Explorer
 *   **Route**: `/codebase` with a 3-pane explorer (tree, file list, detail).
@@ -124,6 +138,10 @@ The atomic unit of work. Contains:
 *   `updatedFiles`: List of file modifications.
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
 *   `dates` / `timeline`: Persisted date metadata and event timeline.
+*   `sessionForensics`: Structured platform-aware forensic payload including:
+    *   `entryContext`, `sidecars`, `analysisSignals`
+    *   `queuePressure`, `resourceFootprint`, `subagentTopology`, `toolResultIntensity`
+    *   `platformTelemetry` (Claude) and `codexPayloadSignals` (Codex)
 
 ### ProjectTask
 Represents a specific unit of implementation.
@@ -156,6 +174,7 @@ Represents Markdown documentation. Contains:
 4.  **Useful scripts**:
     *   `npm run dev:backend` - backend only (reload mode)
     *   `npm run dev:frontend` - frontend only
+    *   `npm run discover:sessions` - run session signal discovery (default profile: `claude_code`)
     *   `npm run build` - build frontend assets
     *   `npm run start:backend` - production-style backend startup
     *   `npm run start:frontend` - serve built frontend (`vite preview`)

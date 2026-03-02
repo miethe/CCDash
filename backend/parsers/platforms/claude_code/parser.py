@@ -98,6 +98,14 @@ _TERMINAL_SYSTEM_SUBTYPES = {
 
 _THINKING_LEVELS = {"low", "medium", "high"}
 
+_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "0.0.0.0", "::1"}
+_URL_PATTERN = re.compile(r"https?://([a-zA-Z0-9.-]+)(?::(\d+))?")
+_SSH_TARGET_PATTERN = re.compile(r"\b(?:ssh|scp|rsync)\b[^\n]*?\b([A-Za-z0-9._-]+@[A-Za-z0-9.-]+)")
+_DB_TOOL_PATTERN = re.compile(r"\b(psql|mysql|sqlite3|mongosh|mongo|redis-cli|pg_dump|pg_restore)\b")
+_DOCKER_PATTERN = re.compile(r"\bdocker(?:\s+compose|[- ]compose|\s+\w+)")
+_SERVICE_PATTERN = re.compile(r"\b(pm2|systemctl)\b")
+_MAX_TOOL_RESULT_PREVIEW_BYTES = 1024 * 32
+
 
 @lru_cache(maxsize=1)
 def _load_forensics_schema() -> dict[str, Any]:
@@ -114,6 +122,188 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_host(raw_host: str) -> str:
+    return str(raw_host or "").strip().strip("[]").lower()
+
+
+def _is_local_host(raw_host: str) -> bool:
+    return _normalize_host(raw_host) in _LOCAL_HOSTS
+
+
+def _split_command_segments(command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    depth = 0
+
+    for ch in command:
+        if escaped:
+            current.append(ch)
+            escaped = False
+            continue
+
+        if ch == "\\":
+            current.append(ch)
+            escaped = True
+            continue
+
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+            continue
+
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+            continue
+
+        if in_single or in_double:
+            current.append(ch)
+            continue
+
+        if ch in "({":
+            depth += 1
+            current.append(ch)
+            continue
+
+        if ch in ")}":
+            depth = max(0, depth - 1)
+            current.append(ch)
+            continue
+
+        if depth == 0 and ch in ";|":
+            chunk = "".join(current).strip()
+            if chunk:
+                segments.append(chunk)
+            current = []
+            continue
+
+        current.append(ch)
+
+    chunk = "".join(current).strip()
+    if chunk:
+        segments.append(chunk)
+    return segments
+
+
+def _extract_resources_from_command(command: str) -> list[dict[str, str]]:
+    resources: list[dict[str, str]] = []
+    if not command.strip():
+        return resources
+
+    for segment in _split_command_segments(command):
+        db_match = _DB_TOOL_PATTERN.search(segment)
+        if db_match:
+            tool = db_match.group(1)
+            db_system_map = {
+                "psql": "postgresql",
+                "pg_dump": "postgresql",
+                "pg_restore": "postgresql",
+                "mysql": "mysql",
+                "sqlite3": "sqlite",
+                "mongosh": "mongodb",
+                "mongo": "mongodb",
+                "redis-cli": "redis",
+            }
+            db_system = db_system_map.get(tool, tool)
+            host_match = re.search(r"(?:-h|--host)\s+([^\s]+)", segment)
+            host = _normalize_host(host_match.group(1)) if host_match else "localhost"
+            if "docker exec" in segment:
+                host = "docker"
+            scope = "internal" if _is_local_host(host) or host == "docker" else "external"
+            resources.append({
+                "category": "database",
+                "target": f"{db_system}:{host or 'localhost'}",
+                "scope": scope,
+                "dbSystem": db_system,
+            })
+
+        for url_match in _URL_PATTERN.finditer(segment):
+            host = _normalize_host(url_match.group(1))
+            port = url_match.group(2)
+            target = f"{host}:{port}" if port else host
+            resources.append({
+                "category": "api",
+                "target": target,
+                "scope": "internal" if _is_local_host(host) else "external",
+            })
+
+        for ssh_match in _SSH_TARGET_PATTERN.finditer(segment):
+            resources.append({
+                "category": "ssh",
+                "target": ssh_match.group(1),
+                "scope": "external",
+            })
+
+        if _DOCKER_PATTERN.search(segment):
+            resources.append({
+                "category": "docker",
+                "target": "docker",
+                "scope": "internal",
+            })
+
+        service_match = _SERVICE_PATTERN.search(segment)
+        if service_match:
+            resources.append({
+                "category": "service",
+                "target": service_match.group(1),
+                "scope": "internal",
+            })
+
+    return resources
+
+
+def _estimate_line_count(path: Path) -> int:
+    try:
+        size = path.stat().st_size
+    except Exception:
+        return 0
+    if size > _MAX_TOOL_RESULT_PREVIEW_BYTES:
+        return -1
+
+    try:
+        with path.open("rb") as handle:
+            data = handle.read()
+        if not data:
+            return 0
+        return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+    except Exception:
+        return -1
+
+
+def _sha1_sample(path: Path) -> str:
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(_MAX_TOOL_RESULT_PREVIEW_BYTES)
+        return hashlib.sha1(data).hexdigest()
+    except Exception:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _load_global_claude_config() -> dict[str, Any]:
+    config_path = Path.home() / ".claude.json"
+    if not config_path.exists():
+        return {}
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    payload["_path"] = str(config_path)
+    return payload
 
 
 def _detect_claude_root(path: Path) -> Path | None:
@@ -435,6 +625,159 @@ def _collect_session_env_sidecar(
         "exists": True,
         "fileCount": len(files),
         "files": [str(path) for path in files[:100]],
+    }
+
+
+def _resolve_session_sidecar_root(path: Path, raw_session_id: str, is_subagent: bool) -> Path:
+    if is_subagent:
+        return path.parent.parent
+    return path.parent / raw_session_id
+
+
+def _collect_tool_results_sidecar(
+    path: Path,
+    raw_session_id: str,
+    is_subagent: bool,
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    if not raw_session_id:
+        return {
+            "directory": "",
+            "exists": False,
+            "fileCount": 0,
+            "totalBytes": 0,
+            "totalLines": 0,
+            "maxFileBytes": 0,
+            "avgFileBytes": 0.0,
+            "largeFileCount": 0,
+            "files": [],
+            "largestFiles": [],
+            "checksumSample": [],
+        }
+
+    root = _resolve_session_sidecar_root(path, raw_session_id, is_subagent)
+    cfg = schema.get("sidecars", {}).get("tool_results", {})
+    rel_dir = str(cfg.get("dir") or "tool-results").strip() or "tool-results"
+    results_dir = root / rel_dir
+    if not results_dir.exists():
+        return {
+            "directory": str(results_dir),
+            "exists": False,
+            "fileCount": 0,
+            "totalBytes": 0,
+            "totalLines": 0,
+            "maxFileBytes": 0,
+            "avgFileBytes": 0.0,
+            "largeFileCount": 0,
+            "files": [],
+            "largestFiles": [],
+            "checksumSample": [],
+        }
+
+    glob_pattern = str(cfg.get("glob") or "*.txt")
+    max_files = _coerce_int(cfg.get("max_files"), 500)
+    checksum_limit = _coerce_int(cfg.get("checksum_sample_limit"), 8)
+    result_files = [item for item in sorted(results_dir.glob(glob_pattern)) if item.is_file()][:max(1, max_files)]
+
+    total_bytes = 0
+    total_lines = 0
+    max_file_bytes = 0
+    large_file_count = 0
+    file_rows: list[dict[str, Any]] = []
+    for file_path in result_files:
+        try:
+            size = int(file_path.stat().st_size)
+        except Exception:
+            size = 0
+        total_bytes += size
+        max_file_bytes = max(max_file_bytes, size)
+        if size > _MAX_TOOL_RESULT_PREVIEW_BYTES:
+            large_file_count += 1
+        line_count = _estimate_line_count(file_path)
+        if line_count >= 0:
+            total_lines += line_count
+        file_rows.append({
+            "path": str(file_path),
+            "name": file_path.name,
+            "bytes": size,
+            "lines": line_count,
+        })
+
+    checksum_rows: list[dict[str, Any]] = []
+    for item in sorted(file_rows, key=lambda row: int(row.get("bytes") or 0), reverse=True)[: max(1, checksum_limit)]:
+        sample_path = Path(str(item.get("path") or ""))
+        checksum = _sha1_sample(sample_path)
+        if checksum:
+            checksum_rows.append({
+                "name": str(item.get("name") or ""),
+                "bytes": int(item.get("bytes") or 0),
+                "sha1": checksum,
+            })
+
+    file_count = len(file_rows)
+    avg_file_bytes = round(total_bytes / file_count, 2) if file_count else 0.0
+    largest_files = sorted(file_rows, key=lambda row: int(row.get("bytes") or 0), reverse=True)[:20]
+
+    return {
+        "directory": str(results_dir),
+        "exists": True,
+        "fileCount": file_count,
+        "totalBytes": total_bytes,
+        "totalLines": total_lines,
+        "maxFileBytes": max_file_bytes,
+        "avgFileBytes": avg_file_bytes,
+        "largeFileCount": large_file_count,
+        "files": [str(item.get("path") or "") for item in file_rows[:120]],
+        "largestFiles": largest_files,
+        "checksumSample": checksum_rows,
+    }
+
+
+def _platform_telemetry_summary(working_directories: list[str]) -> dict[str, Any]:
+    payload = _load_global_claude_config()
+    if not payload:
+        return {}
+
+    projects = payload.get("projects")
+    projects_dict = projects if isinstance(projects, dict) else {}
+    project_match: dict[str, Any] = {}
+    for cwd in working_directories:
+        candidate = projects_dict.get(cwd)
+        if isinstance(candidate, dict):
+            project_match = candidate
+            break
+
+    mcp_servers = project_match.get("mcpServers") if isinstance(project_match.get("mcpServers"), dict) else {}
+    disabled_servers = project_match.get("disabledMcpServers") if isinstance(project_match.get("disabledMcpServers"), list) else []
+    enabled_mcpjson = project_match.get("enabledMcpjsonServers") if isinstance(project_match.get("enabledMcpjsonServers"), list) else []
+    growth_features = payload.get("cachedGrowthBookFeatures") if isinstance(payload.get("cachedGrowthBookFeatures"), dict) else {}
+    statsig_gates = payload.get("cachedStatsigGates") if isinstance(payload.get("cachedStatsigGates"), dict) else {}
+    tips_history = payload.get("tipsHistory") if isinstance(payload.get("tipsHistory"), dict) else {}
+    tool_usage = payload.get("toolUsage") if isinstance(payload.get("toolUsage"), dict) else {}
+    skill_usage = payload.get("skillUsage") if isinstance(payload.get("skillUsage"), dict) else {}
+
+    return {
+        "source": str(payload.get("_path") or ""),
+        "numStartups": _coerce_int(payload.get("numStartups")),
+        "promptQueueUseCount": _coerce_int(payload.get("promptQueueUseCount")),
+        "firstStartTime": str(payload.get("firstStartTime") or ""),
+        "lastReleaseNotesSeen": str(payload.get("lastReleaseNotesSeen") or ""),
+        "projectCount": len(projects_dict),
+        "tipsCount": len(tips_history),
+        "growthFeatureCount": len(growth_features),
+        "statsigGateCount": len(statsig_gates),
+        "toolUsageCount": len(tool_usage),
+        "skillUsageCount": len(skill_usage),
+        "project": {
+            "path": str(next((cwd for cwd in working_directories if projects_dict.get(cwd)), "")),
+            "mcpServerCount": len(mcp_servers),
+            "mcpServerNames": sorted(str(name) for name in mcp_servers.keys())[:40],
+            "disabledMcpServerCount": len(disabled_servers),
+            "enabledMcpjsonServerCount": len(enabled_mcpjson),
+            "lastTotalWebSearchRequests": _coerce_int(project_match.get("lastTotalWebSearchRequests")),
+            "projectOnboardingSeenCount": _coerce_int(project_match.get("projectOnboardingSeenCount")),
+            "hasCompletedProjectOnboarding": bool(project_match.get("hasCompletedProjectOnboarding", False)),
+        },
     }
 
 
@@ -1075,6 +1418,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "planStatusUpdates": [],
         "batchExecutions": [],
     }
+    resource_observations: list[dict[str, Any]] = []
+    resource_observation_seen: set[tuple[str, str, str, str]] = set()
 
     tool_logs_by_id: dict[str, int] = {}
     tool_started_at_by_id: dict[str, str] = {}
@@ -1095,6 +1440,37 @@ def parse_session_file(path: Path) -> AgentSession | None:
         logs.append(log)
         log_idx += 1
         return len(logs) - 1
+
+    def register_command_resources(
+        command_text: str,
+        source_log_id: str,
+        source: str,
+        timestamp: str,
+    ) -> list[dict[str, str]]:
+        stripped = str(command_text or "").strip()
+        if not stripped:
+            return []
+        extracted = _extract_resources_from_command(stripped)
+        for item in extracted:
+            category = str(item.get("category") or "").strip()
+            target = str(item.get("target") or "").strip()
+            scope = str(item.get("scope") or "").strip()
+            if not category or not target:
+                continue
+            unique_key = (category, target, scope, source_log_id)
+            if unique_key in resource_observation_seen:
+                continue
+            resource_observation_seen.add(unique_key)
+            resource_observations.append({
+                "timestamp": timestamp,
+                "source": source,
+                "sourceLogId": source_log_id,
+                "category": category,
+                "target": target,
+                "scope": scope or "unknown",
+                "dbSystem": str(item.get("dbSystem") or ""),
+            })
+        return extracted
 
     def track_file(
         path_value: str,
@@ -1644,6 +2020,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     related_log = logs[related_idx]
                     if command_text:
                         related_log.metadata["bashCommand"] = command_text[:4000]
+                        resource_signals = register_command_resources(
+                            command_text,
+                            related_log.id,
+                            "progress.bash_progress",
+                            current_ts,
+                        )
+                        if resource_signals:
+                            related_log.metadata["resourceSignals"] = resource_signals[:20]
                     bash_command = str(related_log.metadata.get("bashCommand") or command_text)
                     if bash_command:
                         category, label = _classify_bash_command(bash_command)
@@ -2032,6 +2416,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_log.metadata["bashCommand"] = command_text[:4000]
                         tool_log.metadata["toolCategory"] = category
                         tool_log.metadata["toolLabel"] = label
+                        resource_signals = register_command_resources(
+                            command_text,
+                            tool_log.id,
+                            "tool.Bash",
+                            current_ts,
+                        )
+                        if resource_signals:
+                            tool_log.metadata["resourceSignals"] = resource_signals[:20]
                         plan_status_details = _parse_manage_plan_status_command(command_text)
                         if plan_status_details:
                             tool_log.metadata["planStatus"] = plan_status_details
@@ -2218,6 +2610,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             raw = related_log.metadata.get("bashCommand")
                             if isinstance(raw, str):
                                 command_text = raw
+                        if command_text:
+                            resource_signals = register_command_resources(
+                                command_text,
+                                related_log.id,
+                                "tool_result.Bash",
+                                current_ts,
+                            )
+                            if resource_signals and "resourceSignals" not in related_log.metadata:
+                                related_log.metadata["resourceSignals"] = resource_signals[:20]
                         related_log.metadata["bashResult"] = _classify_bash_result(output_text, is_error)
                         commit_candidates = _extract_commit_hashes(f"{command_text}\n{output_text}")
                         if commit_candidates:
@@ -2350,6 +2751,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     task_sidecar = _collect_task_sidecar(claude_root, raw_session_id, forensics_schema)
     team_sidecar = _collect_team_sidecar(claude_root, raw_session_id, forensics_schema)
     session_env_sidecar = _collect_session_env_sidecar(claude_root, raw_session_id, forensics_schema)
+    tool_results_sidecar = _collect_tool_results_sidecar(path, raw_session_id, is_subagent, forensics_schema)
 
     if embedded_todos:
         embedded_counts: Counter[str] = Counter(item.get("status", "unknown") for item in embedded_todos)
@@ -2414,6 +2816,32 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 source_tool_name=None,
                 url=str(env_file),
             )
+    if tool_results_sidecar.get("exists", False):
+        add_artifact(
+            kind="tool_results",
+            title=Path(str(tool_results_sidecar.get("directory", ""))).name or "tool-results",
+            description="Session-linked tool results directory",
+            source="sidecar",
+            source_log_id=None,
+            source_tool_name=None,
+            url=str(tool_results_sidecar.get("directory", "")),
+        )
+        for item in tool_results_sidecar.get("largestFiles", [])[:20]:
+            row = item if isinstance(item, dict) else {}
+            file_name = str(row.get("name") or "")
+            file_path = str(row.get("path") or "")
+            file_size = _coerce_int(row.get("bytes"), 0)
+            if not file_name:
+                continue
+            add_artifact(
+                kind="tool_result_file",
+                title=file_name,
+                description=f"Tool result sidecar file ({file_size} bytes)",
+                source="sidecar",
+                source_log_id=None,
+                source_tool_name=None,
+                url=file_path or None,
+            )
 
     if not thinking_level and int(thinking_meta.get("maxThinkingTokens") or 0) > 0:
         thinking_level = _thinking_level_from_tokens(int(thinking_meta.get("maxThinkingTokens") or 0), forensics_schema)
@@ -2423,6 +2851,66 @@ def parse_session_file(path: Path) -> AgentSession | None:
             forensics_schema.get("thinking", {}).get("defaults", {}).get("disabled_level", "low")
         ).strip().lower()
         thinking_level = _normalize_thinking_level(default_disabled) or "low"
+
+    resource_category_counts: Counter[str] = Counter()
+    resource_scope_counts: Counter[str] = Counter()
+    resource_target_counts: Counter[str] = Counter()
+    for observation in resource_observations:
+        category = str(observation.get("category") or "").strip()
+        target = str(observation.get("target") or "").strip()
+        scope = str(observation.get("scope") or "").strip()
+        if category:
+            resource_category_counts[category] += 1
+        if scope:
+            resource_scope_counts[scope] += 1
+        if category and target:
+            resource_target_counts[f"{category}:{target}"] += 1
+
+    queue_operation_counts: Counter[str] = Counter()
+    queue_status_counts: Counter[str] = Counter()
+    queue_task_type_counts: Counter[str] = Counter()
+    distinct_queue_tasks: set[str] = set()
+    for operation in session_context.get("queueOperations", []):
+        if not isinstance(operation, dict):
+            continue
+        operation_name = str(operation.get("operation") or "").strip().lower() or "unknown"
+        status_name = str(operation.get("status") or "").strip().lower() or "unknown"
+        task_type = str(operation.get("taskType") or "").strip().lower() or "unknown"
+        task_id_value = str(operation.get("taskId") or "").strip()
+        queue_operation_counts[operation_name] += 1
+        queue_status_counts[status_name] += 1
+        queue_task_type_counts[task_type] += 1
+        if task_id_value:
+            distinct_queue_tasks.add(task_id_value)
+
+    waiting_for_task_count = _coerce_int(
+        session_context.get("progressTypeCounts", Counter()).get("waiting_for_task", 0),
+        0,
+    )
+
+    task_tool_logs = [
+        log for log in logs
+        if log.type == "tool" and log.toolCall and str(log.toolCall.name or "") == "Task"
+    ]
+    linked_subagent_ids = {
+        str(log.linkedSessionId)
+        for log in logs
+        if log.type == "subagent_start" and str(log.linkedSessionId or "").strip()
+    }
+    linked_task_tool_count = sum(1 for log in task_tool_logs if str(log.linkedSessionId or "").strip())
+    subagent_root_dir = _resolve_session_sidecar_root(path, raw_session_id, is_subagent)
+    subagent_transcript_files = [
+        item for item in sorted((subagent_root_dir / "subagents").glob("*.jsonl"))
+        if item.is_file()
+    ] if (subagent_root_dir / "subagents").exists() else []
+
+    tool_result_file_count = _coerce_int(tool_results_sidecar.get("fileCount"), 0)
+    tool_result_total_bytes = _coerce_int(tool_results_sidecar.get("totalBytes"), 0)
+    tool_result_max_file_bytes = _coerce_int(tool_results_sidecar.get("maxFileBytes"), 0)
+    tool_result_avg_file_bytes = _coerce_float(tool_results_sidecar.get("avgFileBytes"), 0.0)
+    tool_result_large_file_count = _coerce_int(tool_results_sidecar.get("largeFileCount"), 0)
+
+    platform_telemetry = _platform_telemetry_summary(sorted(session_context.get("workingDirectories", set())))
 
     session_forensics = {
         "platform": str(forensics_schema.get("platform") or "claude_code"),
@@ -2476,6 +2964,50 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "tasks": task_sidecar,
             "teams": team_sidecar,
             "sessionEnv": session_env_sidecar,
+            "toolResults": tool_results_sidecar,
+        },
+        "subagentTopology": {
+            "isSubagentSession": bool(is_subagent),
+            "taskToolCallCount": len(task_tool_logs),
+            "linkedTaskToolCallCount": linked_task_tool_count,
+            "orphanTaskToolCallCount": max(0, len(task_tool_logs) - linked_task_tool_count),
+            "subagentStartCount": len(linked_subagent_ids),
+            "linkedSessionIds": sorted(linked_subagent_ids)[:200],
+            "agentIdsSeen": sorted(session_context.get("agentIds", set())),
+            "subagentTranscriptFileCount": len(subagent_transcript_files),
+        },
+        "queuePressure": {
+            "queueOperationCount": sum(queue_operation_counts.values()),
+            "waitingForTaskCount": waiting_for_task_count,
+            "distinctTaskCount": len(distinct_queue_tasks),
+            "operationCounts": dict(queue_operation_counts),
+            "statusCounts": dict(queue_status_counts),
+            "taskTypeCounts": dict(queue_task_type_counts),
+        },
+        "resourceFootprint": {
+            "totalObservations": len(resource_observations),
+            "categories": dict(resource_category_counts),
+            "scopes": dict(resource_scope_counts),
+            "topTargets": [
+                {"target": target, "count": count}
+                for target, count in resource_target_counts.most_common(40)
+            ],
+            "observations": resource_observations[:200],
+        },
+        "toolResultIntensity": {
+            "fileCount": tool_result_file_count,
+            "totalBytes": tool_result_total_bytes,
+            "maxFileBytes": tool_result_max_file_bytes,
+            "avgFileBytes": tool_result_avg_file_bytes,
+            "largeFileCount": tool_result_large_file_count,
+            "largestFiles": list(tool_results_sidecar.get("largestFiles") or [])[:20],
+        },
+        "platformTelemetry": platform_telemetry,
+        "analysisSignals": {
+            "hasQueuePressureSignals": bool(waiting_for_task_count > 0 or queue_operation_counts),
+            "hasResourceSignals": bool(resource_observations),
+            "hasToolResultSignals": bool(tool_result_file_count > 0),
+            "hasSubagentSignals": bool(task_tool_logs or linked_subagent_ids),
         },
     }
 

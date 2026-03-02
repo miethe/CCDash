@@ -4,8 +4,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.parsers.sessions import parse_session_file
+from backend.parsers.platforms.claude_code import parser as claude_parser
 
 
 class SessionParserTests(unittest.TestCase):
@@ -1044,6 +1046,152 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("task_dir", artifact_types)
         self.assertIn("team_inbox", artifact_types)
         self.assertIn("session_env", artifact_types)
+
+    def test_extended_forensics_signals_include_resources_queue_tool_results_and_platform_telemetry(self) -> None:
+        raw_session_id = "99999999-aaaa-bbbb-cccc-111111111111"
+        working_directory = "/tmp/ccdash/workspace"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T17:00:00Z",
+                    "cwd": working_directory,
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_task_forensics",
+                                "name": "Task",
+                                "input": {"description": "F-1: analyze forensics"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_bash_forensics",
+                                "name": "Bash",
+                                "input": {
+                                    "command": (
+                                        "curl http://localhost:3000/health && "
+                                        "psql -h db.example.com -U app appdb && "
+                                        "docker compose ps"
+                                    )
+                                },
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "progress",
+                    "timestamp": "2026-02-16T17:00:01Z",
+                    "parentToolUseID": "toolu_task_forensics",
+                    "data": {
+                        "type": "agent_progress",
+                        "agentId": "agent-77",
+                    },
+                },
+                {
+                    "type": "progress",
+                    "timestamp": "2026-02-16T17:00:02Z",
+                    "data": {"type": "waiting_for_task"},
+                },
+                {
+                    "type": "queue-operation",
+                    "timestamp": "2026-02-16T17:00:03Z",
+                    "operation": "enqueue",
+                    "data": {
+                        "taskId": "QUEUE-1",
+                        "status": "queued",
+                        "summary": "Queued analysis task",
+                        "taskType": "analysis",
+                        "outputFile": "task-output.log",
+                        "toolUseId": "toolu_task_forensics",
+                    },
+                },
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+
+        sidecar_root = path.parent / raw_session_id
+        tool_results_dir = sidecar_root / "tool-results"
+        tool_results_dir.mkdir(parents=True, exist_ok=True)
+        (tool_results_dir / "result-1.txt").write_text("ok\nline2\n", encoding="utf-8")
+
+        tmp_home = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_home.cleanup)
+        home_path = Path(tmp_home.name)
+        (home_path / ".claude.json").write_text(
+            json.dumps(
+                {
+                    "numStartups": 5,
+                    "promptQueueUseCount": 2,
+                    "projects": {
+                        working_directory: {
+                            "mcpServers": {"postgres": {"type": "stdio"}, "github": {"type": "stdio"}},
+                            "disabledMcpServers": ["legacy"],
+                            "enabledMcpjsonServers": ["filesystem"],
+                            "lastTotalWebSearchRequests": 7,
+                            "projectOnboardingSeenCount": 2,
+                            "hasCompletedProjectOnboarding": True,
+                        }
+                    },
+                    "cachedGrowthBookFeatures": {"f1": True},
+                    "cachedStatsigGates": {"g1": True},
+                    "tipsHistory": {"tip-1": True},
+                    "toolUsage": {"Bash": 4},
+                    "skillUsage": {"symbols": 3},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        claude_parser._load_global_claude_config.cache_clear()
+        with patch.dict(os.environ, {"HOME": str(home_path)}):
+            claude_parser._load_global_claude_config.cache_clear()
+            session = parse_session_file(path)
+        claude_parser._load_global_claude_config.cache_clear()
+
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        forensics = session.sessionForensics
+        sidecars = forensics.get("sidecars", {})
+        tool_results = sidecars.get("toolResults", {})
+        self.assertTrue(tool_results.get("exists"))
+        self.assertEqual(tool_results.get("fileCount"), 1)
+        self.assertGreater(tool_results.get("totalBytes", 0), 0)
+
+        queue_pressure = forensics.get("queuePressure", {})
+        self.assertEqual(queue_pressure.get("waitingForTaskCount"), 1)
+        self.assertEqual(queue_pressure.get("operationCounts", {}).get("enqueue"), 1)
+        self.assertEqual(queue_pressure.get("taskTypeCounts", {}).get("analysis"), 1)
+
+        resources = forensics.get("resourceFootprint", {})
+        self.assertGreaterEqual(resources.get("totalObservations", 0), 3)
+        self.assertEqual(resources.get("categories", {}).get("database"), 1)
+        self.assertEqual(resources.get("categories", {}).get("api"), 1)
+        self.assertEqual(resources.get("categories", {}).get("docker"), 1)
+
+        subagent_topology = forensics.get("subagentTopology", {})
+        self.assertEqual(subagent_topology.get("taskToolCallCount"), 1)
+        self.assertEqual(subagent_topology.get("subagentStartCount"), 1)
+        self.assertIn("S-agent-77", subagent_topology.get("linkedSessionIds", []))
+
+        tool_result_intensity = forensics.get("toolResultIntensity", {})
+        self.assertEqual(tool_result_intensity.get("fileCount"), 1)
+        self.assertGreater(tool_result_intensity.get("totalBytes", 0), 0)
+
+        telemetry = forensics.get("platformTelemetry", {})
+        project_telemetry = telemetry.get("project", {})
+        self.assertEqual(telemetry.get("numStartups"), 5)
+        self.assertEqual(project_telemetry.get("mcpServerCount"), 2)
+        self.assertIn("postgres", project_telemetry.get("mcpServerNames", []))
+        self.assertEqual(project_telemetry.get("lastTotalWebSearchRequests"), 7)
+
+        analysis_signals = forensics.get("analysisSignals", {})
+        self.assertTrue(analysis_signals.get("hasQueuePressureSignals"))
+        self.assertTrue(analysis_signals.get("hasResourceSignals"))
+        self.assertTrue(analysis_signals.get("hasToolResultSignals"))
+        self.assertTrue(analysis_signals.get("hasSubagentSignals"))
 
 
 if __name__ == "__main__":

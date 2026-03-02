@@ -1,0 +1,187 @@
+{
+  "platforms": {
+    "claude_code": {
+      "description": "Claude Code session discovery profile (JSONL + sidecars + ~/.claude.json).",
+      "roots": [
+        "${HOME}/.claude/projects",
+        "${WORKSPACE_ROOT}/examples/skillmeat/claude-sessions"
+      ],
+      "envRoots": [
+        "CCDASH_SESSION_DISCOVERY_ROOT",
+        "CCDASH_CLAUDE_PROJECTS_ROOT"
+      ],
+      "fileGlobs": [
+        "**/*.jsonl",
+        "**/*.json",
+        "**/*.txt"
+      ],
+      "sidecarPatterns": [
+        {
+          "name": "subagents",
+          "glob": "**/subagents/*.jsonl"
+        },
+        {
+          "name": "tool_results",
+          "glob": "**/tool-results/*.txt"
+        },
+        {
+          "name": "tasks",
+          "glob": "tasks/*/*.json"
+        },
+        {
+          "name": "todos",
+          "glob": "todos/*.json"
+        },
+        {
+          "name": "teams",
+          "glob": "teams/*/inboxes/*.json"
+        },
+        {
+          "name": "session_env",
+          "glob": "session-env/*/*"
+        }
+      ],
+      "schema": {
+        "entryTypeField": "type",
+        "messageField": "message",
+        "contentField": "content",
+        "progressField": "data",
+        "progressTypeField": "type",
+        "knownEntryKeys": [
+          "type",
+          "uuid",
+          "parentUuid",
+          "sessionId",
+          "agentId",
+          "timestamp",
+          "cwd",
+          "gitBranch",
+          "gitAuthor",
+          "gitCommit",
+          "slug",
+          "version",
+          "userType",
+          "permissionMode",
+          "requestId",
+          "messageId",
+          "message",
+          "content",
+          "toolUseID",
+          "parentToolUseID",
+          "sourceToolUseID",
+          "sourceToolAssistantUUID",
+          "toolUseResult",
+          "data",
+          "subtype",
+          "durationMs",
+          "thinkingMetadata",
+          "todos",
+          "summary",
+          "level",
+          "operation",
+          "isMeta",
+          "isSidechain",
+          "isSnapshotUpdate",
+          "snapshot",
+          "leafUuid",
+          "error",
+          "isApiErrorMessage",
+          "prNumber",
+          "prUrl",
+          "prRepository",
+          "planContent"
+        ]
+      },
+      "globalConfigFiles": [
+        "${HOME}/.claude.json"
+      ]
+    },
+    "codex": {
+      "description": "Codex/Codex-CLI profile template. Update roots/known keys to match your environment.",
+      "roots": [
+        "${HOME}/.codex/sessions",
+        "${HOME}/.codex/projects"
+      ],
+      "envRoots": [
+        "CCDASH_SESSION_DISCOVERY_ROOT",
+        "CCDASH_CODEX_SESSIONS_ROOT"
+      ],
+      "fileGlobs": [
+        "**/*.jsonl",
+        "**/*.json"
+      ],
+      "sidecarPatterns": [
+        {
+          "name": "subsessions",
+          "glob": "**/subsessions/*.jsonl"
+        }
+      ],
+      "schema": {
+        "entryTypeField": "type",
+        "messageField": "message",
+        "contentField": "content",
+        "progressField": "data",
+        "progressTypeField": "type",
+        "knownEntryKeys": [
+          "type",
+          "timestamp",
+          "sessionId",
+          "payload",
+          "message",
+          "data",
+          "metadata",
+          "tool",
+          "toolName",
+          "toolInput",
+          "toolOutput",
+          "usage"
+        ],
+        "knownPayloadKeys": [
+          "type",
+          "id",
+          "timestamp",
+          "cwd",
+          "originator",
+          "cli_version",
+          "source",
+          "model_provider",
+          "base_instructions",
+          "git",
+          "role",
+          "content",
+          "turn_id",
+          "model_context_window",
+          "collaboration_mode_kind",
+          "message",
+          "images",
+          "local_images",
+          "text_elements",
+          "info",
+          "rate_limits",
+          "summary",
+          "encrypted_content",
+          "status",
+          "call_id",
+          "name",
+          "arguments",
+          "output",
+          "input",
+          "approval_policy",
+          "sandbox_policy",
+          "model",
+          "personality",
+          "collaboration_mode",
+          "effort",
+          "user_instructions",
+          "developer_instructions",
+          "truncation_policy",
+          "text"
+        ]
+      },
+      "globalConfigFiles": [
+        "${HOME}/.codex/config.json",
+        "${HOME}/.codex/settings.json"
+      ]
+    }
+  }
+}

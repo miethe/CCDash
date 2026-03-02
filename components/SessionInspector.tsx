@@ -1136,6 +1136,11 @@ const TranscriptView: React.FC<{
     const forensicsThinking = useMemo(() => asRecord(sessionForensics.thinking), [sessionForensics]);
     const forensicsEntryContext = useMemo(() => asRecord(sessionForensics.entryContext), [sessionForensics]);
     const forensicsSidecars = useMemo(() => asRecord(sessionForensics.sidecars), [sessionForensics]);
+    const forensicsResourceFootprint = useMemo(() => asRecord(sessionForensics.resourceFootprint), [sessionForensics]);
+    const forensicsQueuePressure = useMemo(() => asRecord(sessionForensics.queuePressure), [sessionForensics]);
+    const forensicsSubagentTopology = useMemo(() => asRecord(sessionForensics.subagentTopology), [sessionForensics]);
+    const forensicsToolResultIntensity = useMemo(() => asRecord(sessionForensics.toolResultIntensity), [sessionForensics]);
+    const forensicsPlatformTelemetry = useMemo(() => asRecord(sessionForensics.platformTelemetry), [sessionForensics]);
     const thinkingLevel = takeString(forensicsThinking.level, session.thinkingLevel)?.toUpperCase() || 'Unknown';
     const permissionModes = useMemo(
         () => asStringArray(forensicsEntryContext.permissionModes),
@@ -1156,10 +1161,24 @@ const TranscriptView: React.FC<{
     const todosSidecar = useMemo(() => asRecord(forensicsSidecars.todos), [forensicsSidecars]);
     const tasksSidecar = useMemo(() => asRecord(forensicsSidecars.tasks), [forensicsSidecars]);
     const teamsSidecar = useMemo(() => asRecord(forensicsSidecars.teams), [forensicsSidecars]);
+    const toolResultsSidecar = useMemo(() => asRecord(forensicsSidecars.toolResults), [forensicsSidecars]);
     const todosCount = asNumber(todosSidecar.totalItems, 0);
     const tasksCount = Array.isArray(tasksSidecar.tasks) ? tasksSidecar.tasks.length : asNumber(tasksSidecar.taskFileCount, 0);
     const teamMessagesCount = asNumber(teamsSidecar.totalMessages, 0);
     const teamUnreadCount = asNumber(teamsSidecar.unreadMessages, 0);
+    const resourceObservationCount = asNumber(forensicsResourceFootprint.totalObservations, 0);
+    const waitingForTaskCount = asNumber(forensicsQueuePressure.waitingForTaskCount, 0);
+    const subagentStartCount = asNumber(forensicsSubagentTopology.subagentStartCount, 0);
+    const toolResultFileCount = asNumber(
+        toolResultsSidecar.fileCount,
+        asNumber(forensicsToolResultIntensity.fileCount, 0),
+    );
+    const toolResultTotalBytes = asNumber(
+        toolResultsSidecar.totalBytes,
+        asNumber(forensicsToolResultIntensity.totalBytes, 0),
+    );
+    const telemetryProject = useMemo(() => asRecord(forensicsPlatformTelemetry.project), [forensicsPlatformTelemetry]);
+    const telemetryMcpServerCount = asNumber(telemetryProject.mcpServerCount, 0);
     const hasDetailedForensics = Object.keys(sessionForensics).length > 0;
 
     return (
@@ -1327,11 +1346,33 @@ const TranscriptView: React.FC<{
                                 <span className="text-[10px] font-mono text-slate-200">{queueOperations.length}</span>
                             </div>
                             <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Activity size={14} /> Waiting Tasks</div>
+                                <span className={`text-[10px] font-mono ${waitingForTaskCount > 0 ? 'text-amber-300' : 'text-slate-200'}`}>{waitingForTaskCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Resources</div>
+                                <span className="text-[10px] font-mono text-slate-200">{resourceObservationCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Users size={14} /> Subagents</div>
+                                <span className="text-[10px] font-mono text-slate-200">{subagentStartCount}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-xs text-slate-400"><HardDrive size={14} /> Sidecars</div>
-                                <span className="text-[10px] font-mono text-slate-200" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount}`}>
-                                    {todosCount}/{tasksCount}/{teamMessagesCount}
+                                <span className="text-[10px] font-mono text-slate-200" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount} · ToolResults ${toolResultFileCount}`}>
+                                    {todosCount}/{tasksCount}/{teamMessagesCount}/{toolResultFileCount}
                                 </span>
                             </div>
+                            {(toolResultFileCount > 0 || toolResultTotalBytes > 0) && (
+                                <div className="text-[10px] text-sky-300 font-mono">
+                                    Tool results: {(toolResultTotalBytes / (1024 * 1024)).toFixed(2)} MB
+                                </div>
+                            )}
+                            {telemetryMcpServerCount > 0 && (
+                                <div className="text-[10px] text-emerald-300 font-mono">
+                                    MCP servers configured: {telemetryMcpServerCount}
+                                </div>
+                            )}
                             {teamUnreadCount > 0 && (
                                 <div className="text-[10px] text-amber-300 font-mono">Team unread: {teamUnreadCount}</div>
                             )}
@@ -3197,10 +3238,17 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     const thinking = useMemo(() => asRecord(forensics.thinking), [forensics]);
     const entryContext = useMemo(() => asRecord(forensics.entryContext), [forensics]);
     const sidecars = useMemo(() => asRecord(forensics.sidecars), [forensics]);
+    const queuePressure = useMemo(() => asRecord(forensics.queuePressure), [forensics]);
+    const resourceFootprint = useMemo(() => asRecord(forensics.resourceFootprint), [forensics]);
+    const subagentTopology = useMemo(() => asRecord(forensics.subagentTopology), [forensics]);
+    const toolResultIntensity = useMemo(() => asRecord(forensics.toolResultIntensity), [forensics]);
+    const platformTelemetry = useMemo(() => asRecord(forensics.platformTelemetry), [forensics]);
+    const codexPayloadSignals = useMemo(() => asRecord(forensics.codexPayloadSignals), [forensics]);
     const todosSidecar = useMemo(() => asRecord(sidecars.todos), [sidecars]);
     const tasksSidecar = useMemo(() => asRecord(sidecars.tasks), [sidecars]);
     const teamsSidecar = useMemo(() => asRecord(sidecars.teams), [sidecars]);
     const sessionEnvSidecar = useMemo(() => asRecord(sidecars.sessionEnv), [sidecars]);
+    const toolResultsSidecar = useMemo(() => asRecord(sidecars.toolResults), [sidecars]);
 
     const permissionModes = asStringArray(entryContext.permissionModes);
     const workingDirectories = asStringArray(entryContext.workingDirectories);
@@ -3211,6 +3259,17 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     const entryTypeCounts = asCountEntries(entryContext.entryTypeCounts, 12);
     const contentBlockTypeCounts = asCountEntries(entryContext.contentBlockTypeCounts, 12);
     const progressTypeCounts = asCountEntries(entryContext.progressTypeCounts, 12);
+    const queueOperationCounts = asCountEntries(queuePressure.operationCounts, 12);
+    const queueStatusCounts = asCountEntries(queuePressure.statusCounts, 12);
+    const queueTaskTypeCounts = asCountEntries(queuePressure.taskTypeCounts, 12);
+    const resourceCategoryCounts = asCountEntries(resourceFootprint.categories, 12);
+    const resourceScopeCounts = asCountEntries(resourceFootprint.scopes, 12);
+    const resourceTopTargets = Array.isArray(resourceFootprint.topTargets) ? resourceFootprint.topTargets : [];
+    const subagentLinkedSessionIds = asStringArray(subagentTopology.linkedSessionIds);
+    const telemetryProject = asRecord(platformTelemetry.project);
+    const telemetryMcpServerNames = asStringArray(telemetryProject.mcpServerNames);
+    const codexPayloadTypeCounts = asCountEntries(codexPayloadSignals.payloadTypeCounts, 12);
+    const codexToolNameCounts = asCountEntries(codexPayloadSignals.toolNameCounts, 12);
 
     if (Object.keys(forensics).length === 0) {
         return (
@@ -3253,7 +3312,7 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
                 <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><HardDrive size={16} /> Sidecars</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
                         <div className="text-[10px] uppercase tracking-wider text-slate-500">Todos</div>
                         <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(todosSidecar.fileCount, 0)} files · {asNumber(todosSidecar.totalItems, 0)} items</div>
@@ -3269,6 +3328,12 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                     <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
                         <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Env</div>
                         <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(sessionEnvSidecar.fileCount, 0)} files</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Tool Results</div>
+                        <div className="text-xs text-slate-200 mt-1 font-mono">
+                            {asNumber(toolResultsSidecar.fileCount, 0)} files · {(asNumber(toolResultsSidecar.totalBytes, 0) / (1024 * 1024)).toFixed(2)} MB
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3375,6 +3440,259 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                     </div>
                 </div>
             </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Queue Pressure</h3>
+                    <div className="space-y-3 text-[11px]">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Operations</div>
+                                <div className="text-slate-200 font-mono mt-1">{asNumber(queuePressure.queueOperationCount, 0)}</div>
+                            </div>
+                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Waiting Tasks</div>
+                                <div className={`font-mono mt-1 ${asNumber(queuePressure.waitingForTaskCount, 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
+                                    {asNumber(queuePressure.waitingForTaskCount, 0)}
+                                </div>
+                            </div>
+                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Distinct Tasks</div>
+                                <div className="text-slate-200 font-mono mt-1">{asNumber(queuePressure.distinctTaskCount, 0)}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Operation Mix</div>
+                            <div className="space-y-1">
+                                {queueOperationCounts.length === 0 && <div className="text-xs text-slate-500">No queue pressure counts</div>}
+                                {queueOperationCounts.map(item => (
+                                    <div key={`op-${item.key}`} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Status Mix</div>
+                                <div className="space-y-1">
+                                    {queueStatusCounts.length === 0 && <div className="text-xs text-slate-500">No status counts</div>}
+                                    {queueStatusCounts.map(item => (
+                                        <div key={`status-${item.key}`} className="flex justify-between">
+                                            <span className="text-slate-400 font-mono">{item.key}</span>
+                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Task Type Mix</div>
+                                <div className="space-y-1">
+                                    {queueTaskTypeCounts.length === 0 && <div className="text-xs text-slate-500">No task type counts</div>}
+                                    {queueTaskTypeCounts.map(item => (
+                                        <div key={`task-type-${item.key}`} className="flex justify-between">
+                                            <span className="text-slate-400 font-mono">{item.key}</span>
+                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Resource Footprint</h3>
+                    <div className="space-y-3 text-[11px]">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Categories</div>
+                                <div className="space-y-1">
+                                    {resourceCategoryCounts.length === 0 && <div className="text-xs text-slate-500">No resource categories</div>}
+                                    {resourceCategoryCounts.map(item => (
+                                        <div key={`resource-category-${item.key}`} className="flex justify-between">
+                                            <span className="text-slate-400 font-mono">{item.key}</span>
+                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Scopes</div>
+                                <div className="space-y-1">
+                                    {resourceScopeCounts.length === 0 && <div className="text-xs text-slate-500">No scope counts</div>}
+                                    {resourceScopeCounts.map(item => (
+                                        <div key={`resource-scope-${item.key}`} className="flex justify-between">
+                                            <span className="text-slate-400 font-mono">{item.key}</span>
+                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Top Targets</div>
+                            <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                                {resourceTopTargets.length === 0 && <div className="text-xs text-slate-500">No targets captured</div>}
+                                {resourceTopTargets.slice(0, 20).map((row, idx) => {
+                                    const item = asRecord(row);
+                                    return (
+                                        <div key={`target-${idx}`} className="flex justify-between gap-2">
+                                            <span className="text-slate-400 font-mono break-all">{String(item.target || '')}</span>
+                                            <span className="text-slate-200 font-mono shrink-0">{asNumber(item.count, 0)}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 mb-1">Subagent Topology</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Task Calls</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.taskToolCallCount, 0)}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Calls</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.linkedTaskToolCallCount, 0)}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Orphan Calls</div>
+                            <div className={`font-mono mt-1 ${asNumber(subagentTopology.orphanTaskToolCallCount, 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
+                                {asNumber(subagentTopology.orphanTaskToolCallCount, 0)}
+                            </div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Subagent Starts</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.subagentStartCount, 0)}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Subagent Files</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.subagentTranscriptFileCount, 0)}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Is Subagent</div>
+                            <div className="text-slate-200 font-mono mt-1">{String(Boolean(subagentTopology.isSubagentSession))}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Linked Session IDs</div>
+                        <div className="max-h-24 overflow-y-auto pr-1 space-y-1">
+                            {subagentLinkedSessionIds.length === 0 && <div className="text-xs text-slate-500">No linked subagent sessions</div>}
+                            {subagentLinkedSessionIds.slice(0, 40).map(linkedId => (
+                                <div key={linkedId} className="text-[10px] text-slate-300 font-mono break-all">{linkedId}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-slate-300 mb-1">Tool Result Intensity</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Files</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.fileCount, asNumber(toolResultsSidecar.fileCount, 0))}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Total Bytes</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.totalBytes, asNumber(toolResultsSidecar.totalBytes, 0)).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Avg File Bytes</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.avgFileBytes, asNumber(toolResultsSidecar.avgFileBytes, 0)).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Large Files</div>
+                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.largeFileCount, asNumber(toolResultsSidecar.largeFileCount, 0))}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Largest Files</div>
+                        <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                            {(Array.isArray(toolResultIntensity.largestFiles) ? toolResultIntensity.largestFiles : []).length === 0 && (
+                                <div className="text-xs text-slate-500">No tool result files captured</div>
+                            )}
+                            {(Array.isArray(toolResultIntensity.largestFiles) ? toolResultIntensity.largestFiles : []).slice(0, 20).map((row, idx) => {
+                                const item = asRecord(row);
+                                return (
+                                    <div key={`tool-file-${idx}`} className="flex justify-between gap-2">
+                                        <span className="text-slate-400 font-mono break-all">{String(item.name || item.path || '')}</span>
+                                        <span className="text-slate-200 font-mono shrink-0">{asNumber(item.bytes, 0).toLocaleString()}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Cpu size={16} /> Platform Telemetry</h3>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-1.5">
+                        <div className="flex justify-between"><span className="text-slate-500">Config Source</span><span className="text-slate-300 font-mono truncate max-w-[65%]" title={String(platformTelemetry.source || '')}>{String(platformTelemetry.source || 'n/a')}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Projects</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.projectCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Startups</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.numStartups, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Prompt Queue Uses</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.promptQueueUseCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Tool Usage Keys</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.toolUsageCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Skill Usage Keys</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.skillUsageCount, 0)}</span></div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <div className="flex justify-between"><span className="text-slate-500">Matched Project</span><span className="text-slate-300 font-mono truncate max-w-[65%]" title={String(telemetryProject.path || '')}>{String(telemetryProject.path || 'n/a')}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">MCP Servers</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.mcpServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Disabled MCP</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.disabledMcpServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Enabled MCPJSON</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.enabledMcpjsonServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Web Search Requests</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.lastTotalWebSearchRequests, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Project Onboarding</span><span className="text-slate-200 font-mono">{String(Boolean(telemetryProject.hasCompletedProjectOnboarding))}</span></div>
+                    </div>
+                </div>
+                {telemetryMcpServerNames.length > 0 && (
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">MCP Server Names</div>
+                        <div className="flex flex-wrap gap-1">
+                            {telemetryMcpServerNames.slice(0, 20).map(name => (
+                                <span key={name} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-emerald-300 font-mono">{name}</span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {(codexPayloadTypeCounts.length > 0 || codexToolNameCounts.length > 0) && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3">Codex Payload Signals</h3>
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 text-[11px]">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Payload Types</div>
+                            <div className="space-y-1">
+                                {codexPayloadTypeCounts.map(item => (
+                                    <div key={`codex-payload-${item.key}`} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Tool Names</div>
+                            <div className="space-y-1">
+                                {codexToolNameCounts.map(item => (
+                                    <div key={`codex-tool-${item.key}`} className="flex justify-between">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <h3 className="text-sm font-bold text-slate-300 mb-3">API Errors</h3>
