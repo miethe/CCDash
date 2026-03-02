@@ -32,6 +32,15 @@ class CodexSessionParserTests(unittest.TestCase):
                     "type": "response_item",
                     "timestamp": "2026-02-17T10:00:01Z",
                     "payload": {
+                        "type": "user_message",
+                        "role": "user",
+                        "content": "/dev:implement-story docs/project_plans/implementation_plans/features/sample-feature-v1.md",
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-02-17T10:00:01Z",
+                    "payload": {
                         "type": "function_call",
                         "name": "exec_command",
                         "call_id": "call-1",
@@ -90,6 +99,10 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertEqual(tool_logs[0].toolCall.id, "call-1")
         self.assertEqual(tool_logs[0].toolCall.output, "command complete")
         self.assertEqual(tool_logs[0].toolCall.status, "success")
+        command_logs = [log for log in session.logs if log.type == "command"]
+        self.assertEqual(len(command_logs), 1)
+        self.assertEqual(command_logs[0].content, "/dev:implement-story")
+        self.assertEqual(command_logs[0].metadata.get("args"), "docs/project_plans/implementation_plans/features/sample-feature-v1.md")
 
         file_changes = {item.filePath: item.action for item in session.updatedFiles}
         self.assertEqual(file_changes.get("src/old.ts"), "delete")

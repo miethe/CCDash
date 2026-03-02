@@ -18,10 +18,13 @@ from backend.db import connection
 from backend.db.factory import (
     get_test_definition_repository,
     get_test_integrity_repository,
+    get_test_mapping_repository,
     get_test_result_repository,
     get_test_run_repository,
 )
 from backend.models import (
+    BackfillTestMappingsRequest,
+    BackfillTestMappingsResponse,
     CursorPaginatedResponse,
     DomainHealthRollupDTO,
     FeatureTestHealthDTO,
@@ -322,6 +325,52 @@ def _to_test_definition_dto(row: dict[str, Any]) -> TestDefinitionDTO:
         created_at=str(row.get("created_at") or ""),
         updated_at=str(row.get("updated_at") or ""),
     )
+
+
+async def _load_definitions_for_test_ids(
+    db: Any,
+    *,
+    project_id: str,
+    test_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    unique_ids = sorted({str(test_id).strip() for test_id in test_ids if str(test_id).strip()})
+    if not unique_ids:
+        return {}
+
+    import aiosqlite
+
+    if isinstance(db, aiosqlite.Connection):
+        placeholders = ",".join("?" for _ in unique_ids)
+        query = f"""
+            SELECT *
+            FROM test_definitions
+            WHERE project_id = ?
+              AND test_id IN ({placeholders})
+        """
+        params: list[Any] = [project_id, *unique_ids]
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+        return {
+            str(dict(row).get("test_id") or ""): dict(row)
+            for row in rows
+            if str(dict(row).get("test_id") or "").strip()
+        }
+
+    rows = await db.fetch(
+        """
+        SELECT *
+        FROM test_definitions
+        WHERE project_id = $1
+          AND test_id = ANY($2::text[])
+        """,
+        project_id,
+        unique_ids,
+    )
+    return {
+        str(dict(row).get("test_id") or ""): dict(row)
+        for row in rows
+        if str(dict(row).get("test_id") or "").strip()
+    }
 
 
 def _to_test_signal_dto(row: dict[str, Any]) -> TestIntegritySignalDTO:
@@ -684,7 +733,6 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
     db = await connection.get_connection()
     run_repo = get_test_run_repository(db)
     result_repo = get_test_result_repository(db)
-    definition_repo = get_test_definition_repository(db)
     integrity_repo = get_test_integrity_repository(db)
 
     with start_span("test_visualizer.get_run_detail", attributes={"run_id": run_id}) as span:
@@ -699,17 +747,20 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
         _require_feature_enabled(str(run.get("project_id") or ""))
 
         results = await result_repo.get_by_run(run_id)
+        project_id = str(run.get("project_id") or "")
         test_ids = [str(row.get("test_id") or "").strip() for row in results]
-        definitions: dict[str, TestDefinitionDTO] = {}
-        for test_id in test_ids:
-            if not test_id:
-                continue
-            definition = await definition_repo.get_by_id(test_id)
-            if definition:
-                definitions[test_id] = _to_test_definition_dto(definition)
+        definition_rows = await _load_definitions_for_test_ids(
+            db,
+            project_id=project_id,
+            test_ids=test_ids,
+        )
+        definitions = {
+            test_id: _to_test_definition_dto(row)
+            for test_id, row in definition_rows.items()
+        }
 
         signals = await integrity_repo.list_by_sha(
-            project_id=str(run.get("project_id") or ""),
+            project_id=project_id,
             git_sha=str(run.get("git_sha") or ""),
             limit=500,
         )
@@ -813,6 +864,56 @@ async def import_mappings(request: Request) -> dict[str, Any]:
         "candidate_count": result.candidate_count,
         "errors": result.errors,
     }
+
+
+@test_visualizer_router.post("/mappings/backfill", response_model=BackfillTestMappingsResponse)
+async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest) -> BackfillTestMappingsResponse:
+    _ = request
+    _require_feature_enabled(body.project_id)
+
+    db = await connection.get_connection()
+    run_repo = get_test_run_repository(db)
+    result_repo = get_test_result_repository(db)
+    mapping_repo = get_test_mapping_repository(db)
+
+    runs = await run_repo.list_by_project(project_id=body.project_id, limit=body.run_limit, offset=0)
+    resolver = MappingResolver(db)
+    runs_processed = 0
+    mappings_stored = 0
+    primary_mappings = 0
+    errors: list[str] = []
+
+    for run in runs:
+        run_id = str(run.get("run_id") or "").strip()
+        if not run_id:
+            continue
+        run_results = await result_repo.get_by_run(run_id)
+        if not run_results:
+            continue
+
+        test_ids = [str(row.get("test_id") or "").strip() for row in run_results if str(row.get("test_id") or "").strip()]
+        existing_primary = 0
+        if test_ids:
+            for test_id in sorted(set(test_ids)):
+                existing_primary += len(await mapping_repo.get_primary_for_test(body.project_id, test_id))
+        if existing_primary > 0:
+            continue
+
+        result = await resolver.resolve_for_run(run_id=run_id, project_id=body.project_id)
+        runs_processed += 1
+        mappings_stored += int(result.stored_count or 0)
+        primary_mappings += int(result.primary_count or 0)
+        errors.extend(result.errors or [])
+
+    return BackfillTestMappingsResponse(
+        project_id=body.project_id,
+        run_limit=body.run_limit,
+        runs_processed=runs_processed,
+        mappings_stored=mappings_stored,
+        primary_mappings=primary_mappings,
+        total_errors=len(errors),
+        errors=errors[:100],
+    )
 
 
 @test_visualizer_router.get("/runs", response_model=CursorPaginatedResponse[TestRunDTO])

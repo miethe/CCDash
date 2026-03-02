@@ -296,6 +296,27 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["project_id"], "project-1")
         self.assertGreaterEqual(payload["stored_count"], 1)
 
+    async def test_backfill_mappings_endpoint(self) -> None:
+        await self.db.execute("DELETE FROM test_feature_mappings WHERE project_id = 'project-1'")
+        await self.db.execute(
+            """
+            UPDATE test_definitions
+            SET path = 'tests/test_feature_1.py', name = 'test_feature_1'
+            WHERE test_id = 'test-1'
+            """
+        )
+        await self.db.commit()
+
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            payload = await router.backfill_mappings(
+                types.SimpleNamespace(),
+                body=router.BackfillTestMappingsRequest(project_id="project-1", run_limit=10),
+            )
+
+        self.assertEqual(payload.project_id, "project-1")
+        self.assertGreaterEqual(payload.runs_processed, 1)
+        self.assertGreaterEqual(payload.mappings_stored, 1)
+
     async def test_import_mappings_rejects_invalid_payload_and_flag(self) -> None:
         bad_request = self._json_request(
             {

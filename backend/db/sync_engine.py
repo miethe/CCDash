@@ -48,6 +48,11 @@ from backend.document_linking import (
     slug_from_path,
 )
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
+from backend.session_mappings import (
+    load_session_mappings,
+    workflow_command_exemptions,
+    workflow_command_markers,
+)
 
 from backend.db.factory import (
     get_session_repository,
@@ -64,16 +69,6 @@ logger = logging.getLogger("ccdash.sync")
 
 _COMMAND_NAME_TAG_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
-_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
-_KEY_WORKFLOW_COMMANDS = (
-    "/dev:execute-phase",
-    "/recovering-sessions",
-    "/dev:quick-feature",
-    "/plan:plan-feature",
-    "/dev:implement-story",
-    "/dev:complete-user-story",
-    "/fix:debug",
-)
 _LINK_STATE_METADATA_KEY = "entity_link_state"
 _COMMIT_HEAD_METADATA_KEY = "session_commit_head"
 _PULL_REQUEST_RE = re.compile(r"(?:/pull/|/pulls/|#)(\d+)")
@@ -137,46 +132,60 @@ def _command_token(command_name: str) -> str:
     return normalized.split()[0]
 
 
-def _is_non_consequential_command(command_name: str) -> bool:
-    return _command_token(command_name) in _NON_CONSEQUENTIAL_COMMAND_PREFIXES
+def _is_non_consequential_command(command_name: str, exclusions: set[str] | None = None) -> bool:
+    allowed_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
+    return _command_token(command_name) in allowed_exclusions
 
 
-def _command_priority_rank(command_name: str) -> int:
+def _command_priority_rank(command_name: str, workflow_markers: tuple[str, ...] | None = None) -> int:
+    markers = workflow_markers or workflow_command_markers()
     lowered = _normalize_command_label(command_name).lower()
     if not lowered:
-        return len(_KEY_WORKFLOW_COMMANDS) + 1
-    for idx, marker in enumerate(_KEY_WORKFLOW_COMMANDS):
+        return len(markers) + 1
+    for idx, marker in enumerate(markers):
         if marker in lowered:
             return idx
-    return len(_KEY_WORKFLOW_COMMANDS)
+    return len(markers)
 
 
-def _select_linking_commands(command_names: set[str]) -> list[str]:
+def _select_linking_commands(
+    command_names: set[str],
+    workflow_markers: tuple[str, ...] | None = None,
+    exclusions: set[str] | None = None,
+) -> list[str]:
+    markers = workflow_markers or workflow_command_markers()
+    command_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
     unique: list[str] = []
     seen: set[str] = set()
     for raw in command_names:
         normalized = _normalize_command_label(raw)
-        if not normalized or _is_non_consequential_command(normalized):
+        if not normalized or _is_non_consequential_command(normalized, command_exclusions):
             continue
         key = normalized.lower()
         if key in seen:
             continue
         seen.add(key)
         unique.append(normalized)
-    unique.sort(key=lambda value: (_command_priority_rank(value), value.lower()))
+    unique.sort(key=lambda value: (_command_priority_rank(value, markers), value.lower()))
     return unique
 
 
-def _select_preferred_command_event(command_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _select_preferred_command_event(
+    command_events: list[dict[str, Any]],
+    workflow_markers: tuple[str, ...] | None = None,
+    exclusions: set[str] | None = None,
+) -> dict[str, Any] | None:
+    markers = workflow_markers or workflow_command_markers()
+    command_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
     meaningful = [
         event
         for event in command_events
-        if isinstance(event, dict) and not _is_non_consequential_command(str(event.get("name") or ""))
+        if isinstance(event, dict) and not _is_non_consequential_command(str(event.get("name") or ""), command_exclusions)
     ]
     if not meaningful:
         return None
 
-    for marker in _KEY_WORKFLOW_COMMANDS:
+    for marker in markers:
         for event in meaningful:
             command_name = _normalize_command_label(str(event.get("name") or ""))
             if marker in command_name.lower():
@@ -3548,7 +3557,11 @@ class SyncEngine:
             if latest_summary:
                 return latest_summary[:160], "summary", 0.92
 
-            preferred = _select_preferred_command_event(command_events)
+            preferred = _select_preferred_command_event(
+                command_events,
+                workflow_markers,
+                command_exclusions,
+            )
             if preferred:
                 command_name = str(preferred.get("name") or "")
                 parsed = preferred.get("parsed") if isinstance(preferred.get("parsed"), dict) else {}
@@ -3601,7 +3614,11 @@ class SyncEngine:
                         return f"Debug - {basis}", "command-template", 0.62
                     return "Debug", "command-template", 0.55
 
-            ordered_commands = _select_linking_commands(command_names)
+            ordered_commands = _select_linking_commands(
+                command_names,
+                workflow_markers,
+                command_exclusions,
+            )
             if ordered_commands:
                 primary = ordered_commands[0]
                 if evidence_feature_slug:
@@ -3846,6 +3863,9 @@ class SyncEngine:
                 )
 
         # Build feature ↔ session links from session evidence.
+        session_mapping_rules = await load_session_mappings(self.db, project_id)
+        workflow_markers = workflow_command_markers(session_mapping_rules)
+        command_exclusions = workflow_command_exemptions()
         total_sessions = await self.session_repo.count(project_id, {"include_subagents": True})
         await self._update_operation(
             operation_id,
@@ -3981,7 +4001,11 @@ class SyncEngine:
                 for event in command_events
                 if isinstance(event.get("name"), str) and event.get("name", "").strip()
             )
-            ordered_commands = _select_linking_commands(command_name_candidates)
+            ordered_commands = _select_linking_commands(
+                command_name_candidates,
+                workflow_markers,
+                command_exclusions,
+            )
             command_names = set(ordered_commands)
 
             session_commit_hashes: set[str] = set()

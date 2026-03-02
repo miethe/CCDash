@@ -22,6 +22,12 @@ _DB_TOOL_PATTERN = re.compile(r"\b(psql|mysql|sqlite3|mongosh|mongo|redis-cli|pg
 _DOCKER_PATTERN = re.compile(r"\bdocker(?:\s+compose|[- ]compose|\s+\w+)")
 _SERVICE_PATTERN = re.compile(r"\b(pm2|systemctl)\b")
 _COMMAND_TOOL_NAMES = {"exec_command", "shell_command", "shell"}
+_COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
+_COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
+_SLASH_COMMAND_LINE_PATTERN = re.compile(
+    r"(?m)^\s*(/[a-z][a-z0-9_-]*(?::[a-z0-9_-]+)?)\b(?:\s+([^\n]+))?\s*$",
+    re.IGNORECASE,
+)
 _FILE_READ_MARKERS = ("cat ", "sed -n", "head ", "tail ", "grep ", "rg ")
 _FILE_UPDATE_MARKERS = ("apply_patch", "tee ", "echo ", "printf ", "cp ", "mv ", "touch ")
 _FILE_DELETE_MARKERS = ("rm ", "unlink ")
@@ -215,6 +221,42 @@ def _extract_message_text(content: Any) -> str:
                 parts.append(value.strip())
                 break
     return "\n".join(parts).strip()
+
+
+def _extract_command_invocations(text: str) -> list[tuple[str, str]]:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return []
+
+    tag_names = [
+        str(match.group(1) or "").strip()
+        for match in _COMMAND_NAME_PATTERN.finditer(raw_text)
+        if str(match.group(1) or "").strip()
+    ]
+    if tag_names:
+        tag_args = [str(match.group(1) or "").strip() for match in _COMMAND_ARGS_PATTERN.finditer(raw_text)]
+        pairs: list[tuple[str, str]] = []
+        for idx, command_name in enumerate(tag_names):
+            if not command_name.startswith("/"):
+                continue
+            args_text = tag_args[idx] if idx < len(tag_args) else ""
+            pairs.append((command_name, args_text))
+        if pairs:
+            return pairs
+
+    pairs = []
+    seen: set[tuple[str, str]] = set()
+    for match in _SLASH_COMMAND_LINE_PATTERN.finditer(raw_text):
+        command_name = str(match.group(1) or "").strip()
+        args_text = str(match.group(2) or "").strip()
+        if not command_name.startswith("/"):
+            continue
+        key = (command_name.lower(), args_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((command_name, args_text))
+    return pairs
 
 
 def _looks_like_codex(path: Path, entries: list[dict[str, Any]]) -> bool:
@@ -426,6 +468,22 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     content=text[:8000],
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type},
                 )
+                command_invocations = _extract_command_invocations(text)
+                for command_name, args_text in command_invocations:
+                    command_metadata: dict[str, Any] = {
+                        "entryType": entry_type_lower,
+                        "payloadType": payload_type,
+                        "origin": "codex-message",
+                    }
+                    if args_text:
+                        command_metadata["args"] = args_text[:4000]
+                    append_log(
+                        timestamp=timestamp,
+                        speaker=speaker,
+                        type="command",
+                        content=command_name[:200],
+                        metadata=command_metadata,
+                    )
             continue
 
         if payload_type in {"agent_reasoning", "reasoning"}:
@@ -678,4 +736,3 @@ def parse_session_file(path: Path) -> AgentSession | None:
         dates=session_dates,
         timeline=timeline,
     )
-

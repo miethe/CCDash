@@ -1,13 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
-import { FeatureTestTimeline, TestRunDetail, TestStatus } from '../../types';
+import { FeatureTestTimeline, TestRun, TestRunDetail, TestStatus } from '../../types';
 import { getFeatureTimeline, getIntegrityAlerts, getTestRun } from '../../services/testVisualizer';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
+import { HealthSummaryBar } from './HealthSummaryBar';
 import { IntegrityAlertCard } from './IntegrityAlertCard';
 import { TestResultTable } from './TestResultTable';
 import { TestRunCard } from './TestRunCard';
+import { TestStatusBadge } from './TestStatusBadge';
 import { TestTimeline } from './TestTimeline';
 import { useLiveTestUpdates, useTestRuns, useTestStatus } from './hooks';
 
@@ -22,6 +24,12 @@ interface TestStatusViewProps {
   mode: 'full' | 'compact' | 'tab';
   isLive?: boolean;
   onNavigateToTestingPage?: () => void;
+  onRunSelect?: (runId: string) => void;
+  onRunSelectionChange?: (selection: {
+    run: TestRun | null;
+    detail: TestRunDetail | null;
+    isLoading: boolean;
+  }) => void;
   hideHeader?: boolean;
   showDomainTree?: boolean;
   uiFilter?: {
@@ -39,15 +47,20 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   mode,
   isLive = false,
   onNavigateToTestingPage,
+  onRunSelect,
+  onRunSelectionChange,
   hideHeader = false,
   showDomainTree = true,
   uiFilter,
 }) => {
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(filter?.domainId ?? null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(filter?.runId ?? null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<TestRunDetail | null>(null);
+  const [isRunDetailLoading, setIsRunDetailLoading] = useState(false);
   const [timeline, setTimeline] = useState<FeatureTestTimeline | null>(null);
   const [timelineError, setTimelineError] = useState<Error | null>(null);
   const [alerts, setAlerts] = useState<Awaited<ReturnType<typeof getIntegrityAlerts>>['items']>([]);
+  const runDetailCacheRef = useRef<Record<string, TestRunDetail>>({});
 
   const status = useTestStatus(projectId, { enabled: Boolean(projectId) });
   const runs = useTestRuns(projectId, {
@@ -70,6 +83,12 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   useEffect(() => {
     setSelectedDomainId(filter?.domainId ?? null);
   }, [filter?.domainId]);
+
+  useEffect(() => {
+    runDetailCacheRef.current = {};
+    setSelectedRunDetail(null);
+    setSelectedRunId(null);
+  }, [projectId]);
 
   const selectedStatuses = uiFilter?.statuses || [];
   const searchQuery = (uiFilter?.searchQuery || '').trim().toLowerCase();
@@ -115,6 +134,32 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     });
   }, [branchFilter, runDateFrom, runDateTo, runs.runs, searchQuery, selectedStatuses]);
 
+  useEffect(() => {
+    if (filter?.runId) {
+      setSelectedRunId(filter.runId);
+      return;
+    }
+
+    if (filteredRuns.length === 0) {
+      setSelectedRunId(null);
+      return;
+    }
+
+    if (selectedRunId && filteredRuns.some(run => run.runId === selectedRunId)) {
+      return;
+    }
+    setSelectedRunId(filteredRuns[0].runId);
+  }, [filter?.runId, filteredRuns, selectedRunId]);
+
+  const activeRunId = filter?.runId ?? selectedRunId ?? filteredRuns[0]?.runId ?? null;
+
+  const activeRun = useMemo(() => {
+    if (!activeRunId) return null;
+    return filteredRuns.find(run => run.runId === activeRunId)
+      || runs.runs.find(run => run.runId === activeRunId)
+      || null;
+  }, [activeRunId, filteredRuns, runs.runs]);
+
   const topDomain = useMemo(() => {
     const roots = status.domains;
     if (roots.length === 0) return null;
@@ -131,28 +176,44 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   useEffect(() => {
     let alive = true;
 
-    const runId = filter?.runId || filteredRuns[0]?.runId;
-    if (!runId) {
+    if (!activeRunId) {
       setSelectedRunDetail(null);
+      setIsRunDetailLoading(false);
+      return;
+    }
+
+    const cached = runDetailCacheRef.current[activeRunId];
+    if (cached) {
+      setSelectedRunDetail(cached);
+      setIsRunDetailLoading(false);
       return;
     }
 
     const loadDetail = async () => {
+      setIsRunDetailLoading(true);
+      setSelectedRunDetail(null);
       try {
-        const detail = await getTestRun(runId, projectId);
+        const detail = await getTestRun(activeRunId, projectId);
         if (!alive) return;
+        if (detail) {
+          runDetailCacheRef.current[activeRunId] = detail;
+        }
         setSelectedRunDetail(detail);
       } catch {
         if (!alive) return;
         setSelectedRunDetail(null);
+      } finally {
+        if (alive) {
+          setIsRunDetailLoading(false);
+        }
       }
     };
 
-    loadDetail();
+    void loadDetail();
     return () => {
       alive = false;
     };
-  }, [filter?.runId, filteredRuns, projectId]);
+  }, [activeRunId, projectId]);
 
   useEffect(() => {
     let alive = true;
@@ -226,6 +287,14 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       return haystack.includes(searchQuery);
     });
   }, [searchQuery, selectedRunDetail, selectedStatuses]);
+
+  useEffect(() => {
+    onRunSelectionChange?.({
+      run: activeRun,
+      detail: selectedRunDetail,
+      isLoading: isRunDetailLoading,
+    });
+  }, [activeRun, isRunDetailLoading, onRunSelectionChange, selectedRunDetail]);
 
   const showSplitLayout = mode === 'full' && showDomainTree;
 
@@ -302,8 +371,23 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-slate-300">Recent Runs</h3>
+              {activeRun && (
+                <p className="text-xs text-indigo-300">
+                  Viewing run <span className="font-mono">{activeRun.runId}</span>
+                </p>
+              )}
               {filteredRuns.map(run => (
-                <TestRunCard key={run.runId} run={run} showSession compact={mode === 'compact'} />
+                <TestRunCard
+                  key={run.runId}
+                  run={run}
+                  showSession
+                  compact={mode === 'compact'}
+                  selected={activeRunId === run.runId}
+                  onSelect={nextRun => {
+                    setSelectedRunId(nextRun.runId);
+                    onRunSelect?.(nextRun.runId);
+                  }}
+                />
               ))}
               {filteredRuns.length === 0 && (
                 <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
@@ -333,10 +417,49 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
 
           {mode !== 'compact' && (
             <>
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-slate-200">Run Details</h3>
+                  {isRunDetailLoading && (
+                    <span className="text-xs text-indigo-300">Loading selected run...</span>
+                  )}
+                </div>
+                {activeRun ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <TestStatusBadge
+                        status={activeRun.status === 'failed' ? 'failed' : activeRun.status === 'running' ? 'running' : 'passed'}
+                        size="sm"
+                      />
+                      <span className="font-mono text-slate-200">{activeRun.runId}</span>
+                      <span>{new Date(activeRun.timestamp).toLocaleString()}</span>
+                      {activeRun.gitSha && (
+                        <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                          {activeRun.gitSha.slice(0, 12)}
+                        </span>
+                      )}
+                      {activeRun.branch && (
+                        <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                          {activeRun.branch}
+                        </span>
+                      )}
+                    </div>
+                    <HealthSummaryBar
+                      passed={activeRun.passedTests}
+                      failed={activeRun.failedTests}
+                      skipped={activeRun.skippedTests}
+                      total={activeRun.totalTests}
+                      className="pt-1"
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">Select a run to view details.</p>
+                )}
+              </div>
               <TestResultTable
                 results={filteredRunResults}
                 definitions={selectedRunDetail?.definitions || {}}
-                isLoading={runs.isLoading || status.isLoading}
+                isLoading={runs.isLoading || status.isLoading || isRunDetailLoading}
               />
               {filter?.featureId && <TestTimeline timeline={timeline} />}
               {timelineError && <p className="text-sm text-rose-300">{timelineError.message}</p>}

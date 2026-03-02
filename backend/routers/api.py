@@ -24,6 +24,8 @@ from backend.session_mappings import (
     classify_bash_command,
     classify_session_key_metadata,
     load_session_mappings,
+    workflow_command_exemptions,
+    workflow_command_markers,
 )
 from backend.model_identity import derive_model_identity
 from backend.session_badges import derive_session_badges
@@ -36,15 +38,7 @@ from backend.document_linking import (
 )
 from backend.date_utils import make_date_value
 
-_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
-_KEY_WORKFLOW_COMMAND_MARKERS = (
-    "/dev:execute-phase",
-    "/dev:quick-feature",
-    "/plan:plan-feature",
-    "/dev:implement-story",
-    "/dev:complete-user-story",
-    "/fix:debug",
-)
+_SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -111,7 +105,12 @@ def _command_token(command_name: str) -> str:
     return normalized.split()[0]
 
 
-def _normalize_link_commands(commands: list[str]) -> list[str]:
+def _normalize_link_commands(
+    commands: list[str],
+    workflow_markers: tuple[str, ...] | None = None,
+) -> list[str]:
+    markers = workflow_markers or workflow_command_markers()
+    exclusions = workflow_command_exemptions()
     seen: set[str] = set()
     deduped: list[str] = []
     for raw in commands:
@@ -119,7 +118,7 @@ def _normalize_link_commands(commands: list[str]) -> list[str]:
         if not command:
             continue
         token = _command_token(command)
-        if token in _NON_CONSEQUENTIAL_COMMAND_PREFIXES:
+        if token in exclusions:
             continue
         lowered = command.lower()
         if lowered in seen:
@@ -128,7 +127,7 @@ def _normalize_link_commands(commands: list[str]) -> list[str]:
         deduped.append(command)
     deduped.sort(
         key=lambda command: (
-            next((idx for idx, marker in enumerate(_KEY_WORKFLOW_COMMAND_MARKERS) if marker in command.lower()), len(_KEY_WORKFLOW_COMMAND_MARKERS)),
+            next((idx for idx, marker in enumerate(markers) if marker in command.lower()), len(markers)),
             command.lower(),
         )
     )
@@ -288,6 +287,7 @@ async def list_sessions(
     # Hydrate items (minimal for list view)
     results = []
     for s in sessions_data:
+        platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
         logs = await repo.get_logs(s["id"])
         badge_data = derive_session_badges(
             logs,
@@ -308,10 +308,13 @@ async def list_sessions(
                 text = str(log.get("content") or "").strip()
                 if text:
                     latest_summary = text
-        session_metadata = classify_session_key_metadata(command_events, mappings)
+        session_metadata = classify_session_key_metadata(
+            command_events,
+            mappings,
+            platform_type=platform_type_value,
+        )
         model_identity = derive_model_identity(s.get("model"))
         session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
-        platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
         platform_versions: list[str] = []
@@ -461,6 +464,7 @@ async def get_session(session_id: str):
     # Transform details to model format
     
     # Logs
+    platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
     session_logs = []
     command_events: list[dict] = []
     latest_summary = ""
@@ -487,11 +491,15 @@ async def get_session(session_id: str):
             summary_text = str(l.get("content") or "").strip()
             if summary_text:
                 latest_summary = summary_text
-        if tc and tc.get("name") == "Bash":
+        if tc and str(tc.get("name") or "").strip().lower() in _SHELL_TOOL_NAMES:
             command_text = _extract_bash_command(metadata, l.get("tool_args"))
-            mapping = classify_bash_command(command_text, mappings)
+            mapping = classify_bash_command(
+                command_text,
+                mappings,
+                platform_type=platform_type_value,
+            )
             if mapping:
-                metadata["originalToolName"] = "Bash"
+                metadata["originalToolName"] = tc.get("name")
                 metadata["toolCategory"] = mapping.get("category", "bash")
                 metadata["toolMappingId"] = mapping.get("id", "")
                 mapped_label = str(mapping.get("transcriptLabel") or mapping.get("label") or "Shell")
@@ -513,10 +521,13 @@ async def get_session(session_id: str):
             "toolCall": tc,
         })
 
-    session_metadata = classify_session_key_metadata(command_events, mappings)
+    session_metadata = classify_session_key_metadata(
+        command_events,
+        mappings,
+        platform_type=platform_type_value,
+    )
     model_identity = derive_model_identity(s.get("model"))
     session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
-    platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
     platform_version_value = str(s.get("platform_version") or "").strip()
     raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
     platform_versions: list[str] = []
@@ -653,6 +664,9 @@ async def get_session(session_id: str):
 async def get_session_linked_features(session_id: str):
     """Return linked features for a session using the same confidence logic as feature→session links."""
     db = await connection.get_connection()
+    project = project_manager.get_active_project()
+    mappings = await load_session_mappings(db, project.id) if project else []
+    workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
     session_repo = get_session_repository(db)
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
@@ -699,7 +713,10 @@ async def get_session_linked_features(session_id: str):
         commands = metadata.get("commands", [])
         if not isinstance(commands, list):
             commands = []
-        normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
+        normalized_commands = _normalize_link_commands(
+            [str(v) for v in commands if isinstance(v, str)],
+            workflow_markers,
+        )
         commit_hashes = metadata.get("commitHashes", [])
         if not isinstance(commit_hashes, list):
             commit_hashes = []

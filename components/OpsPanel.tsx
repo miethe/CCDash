@@ -8,6 +8,7 @@ import {
   Play,
   RefreshCw,
   Server,
+  TestTube2,
   Wrench,
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
@@ -76,6 +77,7 @@ export const OpsPanel: React.FC = () => {
   const [auditFanoutFloor, setAuditFanoutFloor] = useState(10);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string>('');
   const [pathSyncRaw, setPathSyncRaw] = useState('');
   const [pathSyncChangeType, setPathSyncChangeType] = useState<'modified' | 'added' | 'deleted'>('modified');
@@ -192,6 +194,53 @@ export const OpsPanel: React.FC = () => {
     }
   };
 
+  const runTestIngestAndMapping = async () => {
+    const projectId = status?.projectId || activeProject?.id || '';
+    if (!projectId) {
+      setError('No active project selected for test ingest/mapping.');
+      return;
+    }
+
+    setBusyAction('test-ingest-mapping');
+    setError(null);
+    setNotice(null);
+    try {
+      const syncRes = await fetch(`${API_BASE}/tests/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, force: true, platforms: [] }),
+      });
+      if (!syncRes.ok) throw new Error(`Test sync failed (${syncRes.status})`);
+      const syncPayload = await syncRes.json() as { stats?: { synced?: number; errors?: number } };
+
+      const mapRes = await fetch(`${API_BASE}/tests/mappings/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, run_limit: 250 }),
+      });
+      if (!mapRes.ok) throw new Error(`Mapping backfill failed (${mapRes.status})`);
+      const mapPayload = await mapRes.json() as {
+        runs_processed?: number;
+        mappings_stored?: number;
+        primary_mappings?: number;
+        total_errors?: number;
+      };
+
+      setNotice(
+        `Test sync complete (synced ${Number(syncPayload.stats?.synced || 0)} files). `
+        + `Mapping backfill processed ${Number(mapPayload.runs_processed || 0)} runs, `
+        + `stored ${Number(mapPayload.mappings_stored || 0)} mappings `
+        + `(${Number(mapPayload.primary_mappings || 0)} primary, `
+        + `${Number(mapPayload.total_errors || 0)} errors).`
+      );
+      await loadOverview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to run test ingest/mapping');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     const run = async () => {
@@ -273,6 +322,11 @@ export const OpsPanel: React.FC = () => {
           {error}
         </div>
       )}
+      {notice && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {notice}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
         {snapshotCards.map(({ label, value, icon: Icon }) => (
@@ -316,6 +370,14 @@ export const OpsPanel: React.FC = () => {
             >
               <Wrench size={14} />
               Rebuild Links
+            </button>
+            <button
+              onClick={runTestIngestAndMapping}
+              disabled={busyAction !== null}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-700/80 border border-cyan-500/30 text-cyan-100 hover:bg-cyan-700 disabled:opacity-60"
+            >
+              <TestTube2 size={14} />
+              Test Ingest + Mapping
             </button>
           </div>
 

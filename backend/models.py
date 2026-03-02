@@ -793,6 +793,21 @@ class SyncTestsResponse(BaseModel):
     sources: list[TestSourceStatusDTO] = Field(default_factory=list)
 
 
+class BackfillTestMappingsRequest(BaseModel):
+    project_id: str
+    run_limit: int = Field(default=100, ge=1, le=5000)
+
+
+class BackfillTestMappingsResponse(BaseModel):
+    project_id: str
+    run_limit: int
+    runs_processed: int = 0
+    mappings_stored: int = 0
+    primary_mappings: int = 0
+    total_errors: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
 class TestMetricSummaryDTO(BaseModel):
     project_id: str
     total_metrics: int = 0

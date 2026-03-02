@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any
 
+from backend.session_mappings import workflow_command_markers
+
 
 def canonical_slug(value: str) -> str:
     token = (value or "").strip().lower()
@@ -60,6 +62,7 @@ def analyze_suspect_links(
     fanout_floor: int,
 ) -> list[LinkAuditSuspect]:
     """Return suspect feature<->session links from raw entity link rows."""
+    markers = workflow_command_markers()
     suspects: list[LinkAuditSuspect] = []
     for row in rows:
         feature_id = str(row.get("feature_id") or "")
@@ -88,9 +91,7 @@ def analyze_suspect_links(
         has_feature_title_hint = contains_feature_hint(feature_id, title)
         primary_like = confidence >= primary_floor
         key_command = any(
-            cmd.startswith("/dev:execute-phase")
-            or cmd.startswith("/dev:quick-feature")
-            or cmd.startswith("/plan:plan-feature")
+            any(str(cmd).strip().lower().startswith(marker) for marker in markers)
             for cmd in commands
         )
 

@@ -11,6 +11,8 @@ interface TestRunCardProps {
   showSession?: boolean;
   compact?: boolean;
   className?: string;
+  selected?: boolean;
+  onSelect?: (run: TestRun) => void;
 }
 
 const shortHash = (value: string, length = 7): string => (value || '').slice(0, length);
@@ -36,10 +38,21 @@ const triggerChipClass = (trigger: string): string => {
   return 'border-indigo-500/35 bg-indigo-500/10 text-indigo-300';
 };
 
-export const TestRunCard: React.FC<TestRunCardProps> = ({ run, showSession = false, compact = false, className = '' }) => {
+export const TestRunCard: React.FC<TestRunCardProps> = ({
+  run,
+  showSession = false,
+  compact = false,
+  className = '',
+  selected = false,
+  onSelect,
+}) => {
   const navigate = useNavigate();
 
   const onOpenRun = () => {
+    if (onSelect) {
+      onSelect(run);
+      return;
+    }
     navigate(`/tests?runId=${encodeURIComponent(run.runId)}`);
   };
 
@@ -54,10 +67,11 @@ export const TestRunCard: React.FC<TestRunCardProps> = ({ run, showSession = fal
     <article
       role="article"
       aria-label={`Test run ${shortHash(run.runId)}, ${run.passedTests} passed, ${run.failedTests} failed, ${run.skippedTests} skipped`}
+      aria-current={selected ? 'true' : undefined}
       tabIndex={0}
       onClick={onOpenRun}
       onKeyDown={handleKeyDown}
-      className={`min-w-[280px] rounded-xl border border-slate-800 bg-slate-900 p-4 transition-colors duration-150 hover:border-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${run.status === 'running' ? 'border-l-2 border-l-indigo-400 motion-safe:animate-pulse motion-reduce:animate-none' : ''} ${className}`.trim()}
+      className={`min-w-[280px] rounded-xl border bg-slate-900 p-4 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${selected ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-800 hover:border-slate-700'} ${run.status === 'running' ? 'border-l-2 border-l-indigo-400 motion-safe:animate-pulse motion-reduce:animate-none' : ''} ${className}`.trim()}
     >
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">

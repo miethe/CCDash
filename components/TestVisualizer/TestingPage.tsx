@@ -3,7 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 import { useData } from '../../contexts/DataContext';
-import { TestStatus } from '../../types';
+import { TestRun, TestRunDetail, TestStatus } from '../../types';
 import { getTestMetricsSummary } from '../../services/testVisualizer';
 import { SidebarFiltersPortal } from '../SidebarFilters';
 import { DomainTreeView } from './DomainTreeView';
@@ -32,6 +32,15 @@ export const TestingPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [metricTotal, setMetricTotal] = useState(0);
+  const [selectedRunContext, setSelectedRunContext] = useState<{
+    run: TestRun | null;
+    detail: TestRunDetail | null;
+    isLoading: boolean;
+  }>({
+    run: null,
+    detail: null,
+    isLoading: false,
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -44,6 +53,10 @@ export const TestingPage: React.FC = () => {
   const testConfig = useTestVisualizerConfig(projectId, Boolean(projectId));
   const visualizerEnabled = Boolean(testConfig.config?.effectiveFlags?.testVisualizerEnabled);
   const status = useTestStatus(projectId, { enabled: Boolean(projectId && visualizerEnabled) });
+
+  useEffect(() => {
+    setSelectedRunContext({ run: null, detail: null, isLoading: false });
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId || !visualizerEnabled) {
@@ -113,6 +126,22 @@ export const TestingPage: React.FC = () => {
     };
   }, [status.domains]);
 
+  const viewingRunTotals = useMemo(() => {
+    if (!selectedRunContext.run) return totals;
+    const run = selectedRunContext.run;
+    const totalTests = run.totalTests;
+    const passed = run.passedTests;
+    const failed = run.failedTests;
+    const skipped = run.skippedTests;
+    return {
+      totalTests,
+      passed,
+      failed,
+      skipped,
+      passRate: totalTests > 0 ? passed / totalTests : 0,
+    };
+  }, [selectedRunContext.run, totals]);
+
   const breadcrumb = useMemo(() => {
     const parts = ['Testing'];
     if (selectedDomainId && domainNameById.has(selectedDomainId)) {
@@ -172,21 +201,29 @@ export const TestingPage: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-100">Test Visualizer</h1>
             <p className="text-sm text-slate-400">{breadcrumb}</p>
+            {selectedRunContext.run && (
+              <p className="mt-1 text-xs text-indigo-300">
+                Viewing run <span className="font-mono">{selectedRunContext.run.runId}</span>
+                {' • '}
+                {new Date(selectedRunContext.run.timestamp).toLocaleString()}
+                {selectedRunContext.isLoading ? ' • loading details...' : ''}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-4 text-sm">
-            <HealthGauge passRate={totals.passRate} size="sm" />
+            <HealthGauge passRate={viewingRunTotals.passRate} size="sm" />
             <div className="text-slate-400">
-              <span className="font-medium text-emerald-400">{totals.passed}</span> passing
+              <span className="font-medium text-emerald-400">{viewingRunTotals.passed}</span> passing
               {' • '}
-              <span className="font-medium text-rose-400">{totals.failed}</span> failing
+              <span className="font-medium text-rose-400">{viewingRunTotals.failed}</span> failing
               {' • '}
-              <span className="font-medium text-slate-300">{totals.totalTests}</span> total
+              <span className="font-medium text-slate-300">{viewingRunTotals.totalTests}</span> total
               {' • '}
               <span className="font-medium text-indigo-300">{metricTotal}</span> metrics
-              {totals.skipped > 0 && (
+              {viewingRunTotals.skipped > 0 && (
                 <>
                   {' • '}
-                  <span className="font-medium text-amber-300">{totals.skipped}</span> skipped
+                  <span className="font-medium text-amber-300">{viewingRunTotals.skipped}</span> skipped
                 </>
               )}
             </div>
@@ -214,7 +251,6 @@ export const TestingPage: React.FC = () => {
 
         <div className="min-w-0 flex-1">
           <TestStatusView
-            key={`tests-${refreshNonce}-${selectedDomainId || ''}-${selectedFeatureId || ''}-${selectedRunId || ''}`}
             projectId={activeProject.id}
             filter={{
               domainId: selectedDomainId || undefined,
@@ -224,6 +260,8 @@ export const TestingPage: React.FC = () => {
             mode="full"
             hideHeader
             showDomainTree={false}
+            onRunSelect={runId => updateQueryParam('runId', runId)}
+            onRunSelectionChange={selection => setSelectedRunContext(selection)}
             uiFilter={{
               statuses: statusFilter,
               searchQuery,
