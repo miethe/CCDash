@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
-import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask } from '../types';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
@@ -16,6 +16,32 @@ import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
 const LIVE_IN_FLIGHT_WINDOW_MS = 10 * 60 * 1000;
+type SessionInspectorTab = 'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status';
+
+const isSessionInspectorTab = (value: string | null): value is SessionInspectorTab => (
+    value === 'transcript'
+    || value === 'activity'
+    || value === 'forensics'
+    || value === 'analytics'
+    || value === 'agents'
+    || value === 'impact'
+    || value === 'files'
+    || value === 'artifacts'
+    || value === 'features'
+    || value === 'test-status'
+);
+
+const getSessionIdFromQuery = (searchParams: URLSearchParams): string => {
+    const direct = (searchParams.get('session') || '').trim();
+    if (direct) return direct;
+    return (searchParams.get('session_id') || '').trim();
+};
+
+const formatUsd = (value: number | string | null | undefined, digits = 2): string => {
+    const parsed = typeof value === 'number' ? value : Number(value ?? 0);
+    if (!Number.isFinite(parsed)) return (0).toFixed(digits);
+    return parsed.toFixed(digits);
+};
 
 const toShortCommitHash = (hash: string): string => hash.slice(0, SHORT_COMMIT_LENGTH);
 
@@ -1499,6 +1525,7 @@ const TranscriptView: React.FC<{
 };
 
 const SessionFeaturesView: React.FC<{
+    currentSessionId: string;
     linkedFeatures: SessionFeatureLink[];
     linkedFeatureDetailsById: Record<string, Feature>;
     taskArtifacts: Array<{
@@ -1507,12 +1534,55 @@ const SessionFeaturesView: React.FC<{
     }>;
     loadingFeatureDetails: boolean;
     onOpenFeature: (featureId: string) => void;
-}> = ({ linkedFeatures, linkedFeatureDetailsById, taskArtifacts, loadingFeatureDetails, onOpenFeature }) => {
+    onOpenSession: (sessionId: string) => void;
+}> = ({ currentSessionId, linkedFeatures, linkedFeatureDetailsById, taskArtifacts, loadingFeatureDetails, onOpenFeature, onOpenSession }) => {
     const grouped = useMemo(() => {
         const primary = linkedFeatures.filter(feature => feature.isPrimaryLink);
         const related = linkedFeatures.filter(feature => !feature.isPrimaryLink);
         return { primary, related };
     }, [linkedFeatures]);
+    const [expandedMainThreadsByFeatureId, setExpandedMainThreadsByFeatureId] = useState<Set<string>>(new Set());
+    const [mainThreadSessionsByFeatureId, setMainThreadSessionsByFeatureId] = useState<Record<string, FeatureExecutionSessionLink[]>>({});
+    const [mainThreadSessionsLoadingByFeatureId, setMainThreadSessionsLoadingByFeatureId] = useState<Record<string, boolean>>({});
+
+    const loadRelatedMainThreadSessions = useCallback(async (featureId: string) => {
+        if (!featureId) return;
+        if (mainThreadSessionsByFeatureId[featureId]) return;
+        if (mainThreadSessionsLoadingByFeatureId[featureId]) return;
+
+        setMainThreadSessionsLoadingByFeatureId(prev => ({ ...prev, [featureId]: true }));
+        try {
+            const res = await fetch(`/api/features/${encodeURIComponent(featureId)}/linked-sessions`);
+            if (!res.ok) throw new Error(`Failed to load linked sessions (${res.status})`);
+            const data = await res.json();
+            const sessions = (Array.isArray(data) ? data : []) as FeatureExecutionSessionLink[];
+            const normalizedCurrentId = currentSessionId.trim();
+            const mainThreads = sessions
+                .filter(session => !session?.isSubthread)
+                .filter(session => String(session?.sessionId || '').trim() !== normalizedCurrentId)
+                .sort((a, b) => toEpoch(b?.startedAt || '') - toEpoch(a?.startedAt || ''));
+
+            setMainThreadSessionsByFeatureId(prev => ({ ...prev, [featureId]: mainThreads }));
+        } catch (error) {
+            console.error(`Failed to load related main-thread sessions for feature ${featureId}:`, error);
+            setMainThreadSessionsByFeatureId(prev => ({ ...prev, [featureId]: [] }));
+        } finally {
+            setMainThreadSessionsLoadingByFeatureId(prev => ({ ...prev, [featureId]: false }));
+        }
+    }, [currentSessionId, mainThreadSessionsByFeatureId, mainThreadSessionsLoadingByFeatureId]);
+
+    const toggleRelatedMainThreadSessions = useCallback((featureId: string) => {
+        const isExpanded = expandedMainThreadsByFeatureId.has(featureId);
+        if (!isExpanded && !mainThreadSessionsByFeatureId[featureId] && !mainThreadSessionsLoadingByFeatureId[featureId]) {
+            void loadRelatedMainThreadSessions(featureId);
+        }
+        setExpandedMainThreadsByFeatureId(prev => {
+            const next = new Set(prev);
+            if (next.has(featureId)) next.delete(featureId);
+            else next.add(featureId);
+            return next;
+        });
+    }, [expandedMainThreadsByFeatureId, loadRelatedMainThreadSessions, mainThreadSessionsByFeatureId, mainThreadSessionsLoadingByFeatureId]);
 
     const taskHierarchy = useMemo(() => {
         if (taskArtifacts.length === 0) return [];
@@ -1607,6 +1677,9 @@ const SessionFeaturesView: React.FC<{
         const pct = feature.totalTasks > 0
             ? Math.round((feature.completedTasks / feature.totalTasks) * 100)
             : 0;
+        const isExpanded = expandedMainThreadsByFeatureId.has(feature.featureId);
+        const mainThreads = mainThreadSessionsByFeatureId[feature.featureId] || [];
+        const isLoadingMainThreads = Boolean(mainThreadSessionsLoadingByFeatureId[feature.featureId]);
         return (
             <div key={feature.featureId} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1668,6 +1741,56 @@ const SessionFeaturesView: React.FC<{
                             style={{ width: `${pct}%` }}
                         />
                     </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-800/80">
+                    <button
+                        onClick={() => toggleRelatedMainThreadSessions(feature.featureId)}
+                        className="w-full inline-flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/60 px-2.5 py-2 text-[11px] text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
+                    >
+                        <span className="inline-flex items-center gap-1.5">
+                            {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                            Related Main-Thread Sessions
+                        </span>
+                        <span className="font-mono text-[10px] text-slate-500">
+                            {isLoadingMainThreads ? '...' : mainThreads.length}
+                        </span>
+                    </button>
+
+                    {isExpanded && (
+                        <div className="mt-2 space-y-1.5">
+                            {isLoadingMainThreads && (
+                                <div className="rounded-md border border-slate-800 bg-slate-950/50 px-2.5 py-2 text-[11px] text-slate-500">
+                                    Loading related main-thread sessions...
+                                </div>
+                            )}
+                            {!isLoadingMainThreads && mainThreads.length === 0 && (
+                                <div className="rounded-md border border-dashed border-slate-800 bg-slate-950/50 px-2.5 py-2 text-[11px] text-slate-500">
+                                    No other main-thread sessions are linked to this feature yet.
+                                </div>
+                            )}
+                            {!isLoadingMainThreads && mainThreads.map(session => (
+                                <button
+                                    key={`${feature.featureId}-${session.sessionId}`}
+                                    onClick={() => onOpenSession(session.sessionId)}
+                                    className="w-full text-left rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2 hover:border-indigo-500/40 transition-colors"
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="truncate text-[11px] text-indigo-300 font-mono">{session.sessionId}</div>
+                                        <div className="text-[10px] text-slate-500">
+                                            {Math.round((session.confidence || 0) * 100)}%
+                                        </div>
+                                    </div>
+                                    <div className="truncate text-[11px] text-slate-300 mt-0.5">
+                                        {session.title || session.sessionId}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        {(session.workflowType || session.sessionType || 'session')} · {session.startedAt ? new Date(session.startedAt).toLocaleString() : 'Unknown start'}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -3038,11 +3161,11 @@ const AnalyticsView: React.FC<{
                 <div className="flex items-center gap-8">
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Total Cost</div>
-                        <div className="text-3xl font-mono text-emerald-400 font-bold">${session.totalCost.toFixed(4)}</div>
+                        <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(session.totalCost, 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Cost / Step</div>
-                        <div className="text-3xl font-mono text-indigo-400 font-bold">${(session.totalCost / session.logs.length).toFixed(4)}</div>
+                        <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd((Number(session.totalCost) || 0) / Math.max(session.logs.length, 1), 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Tokens / Step</div>
@@ -4467,11 +4590,17 @@ const SessionFilterBar: React.FC = () => {
     );
 };
 
-const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpenSession: (sessionId: string) => void }> = ({ session, onBack, onOpenSession }) => {
+const SessionDetail: React.FC<{
+    session: AgentSession;
+    onBack: () => void;
+    onOpenSession: (sessionId: string) => void;
+    initialTab: SessionInspectorTab;
+    onTabChange: (tab: SessionInspectorTab) => void;
+}> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
     const { activeProject, getSessionById } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status'>('transcript');
+    const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
@@ -4480,6 +4609,15 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
     const [linkedFeatureLinks, setLinkedFeatureLinks] = useState<SessionFeatureLink[]>([]);
     const [linkedFeatureDetailsById, setLinkedFeatureDetailsById] = useState<Record<string, Feature>>({});
     const [linkedFeatureDetailsLoading, setLinkedFeatureDetailsLoading] = useState(false);
+
+    useEffect(() => {
+        setActiveTab(initialTab);
+    }, [initialTab]);
+
+    const setActiveTabWithSync = useCallback((tab: SessionInspectorTab) => {
+        setActiveTab(tab);
+        onTabChange(tab);
+    }, [onTabChange]);
 
     useEffect(() => {
         let cancelled = false;
@@ -4650,18 +4788,18 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
 
     const handleSelectAgent = (agent: string) => {
         setFilterAgent(agent || null); // Empty string resets filter
-        setActiveTab('transcript');
+        setActiveTabWithSync('transcript');
     };
 
     const handleJumpToTranscript = (agentName?: string) => {
         if (agentName) setFilterAgent(agentName);
         else setFilterAgent(null);
-        setActiveTab('transcript');
+        setActiveTabWithSync('transcript');
     }
 
     const handleShowLinked = (tab: 'activity' | 'artifacts', sourceLogId: string) => {
         setLinkedSourceLogId(sourceLogId);
-        setActiveTab(tab);
+        setActiveTabWithSync(tab);
     };
 
     const primaryFeatureLink = useMemo(
@@ -4748,7 +4886,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                     ].map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id as any)}
+                            onClick={() => setActiveTabWithSync(tab.id as SessionInspectorTab)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                 ? 'bg-indigo-600 text-white shadow'
                                 : 'text-slate-400 hover:text-slate-200'
@@ -4763,7 +4901,7 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                 <div className="flex items-center gap-6">
                     <div className="text-right">
                         <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                        <div className="text-emerald-400 font-mono font-bold text-lg">${session.totalCost.toFixed(2)}</div>
+                        <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
                     </div>
                 </div>
             </div>
@@ -4782,16 +4920,18 @@ const SessionDetail: React.FC<{ session: AgentSession; onBack: () => void; onOpe
                         onShowLinked={handleShowLinked}
                         primaryFeatureLink={primaryFeatureLink}
                         onOpenFeature={handleOpenFeature}
-                        onOpenForensics={() => setActiveTab('forensics')}
+                        onOpenForensics={() => setActiveTabWithSync('forensics')}
                     />
                 )}
                 {activeTab === 'features' && (
                     <SessionFeaturesView
+                        currentSessionId={session.id}
                         linkedFeatures={linkedFeatureLinks}
                         linkedFeatureDetailsById={linkedFeatureDetailsById}
                         taskArtifacts={taskArtifacts}
                         loadingFeatureDetails={linkedFeatureDetailsLoading}
                         onOpenFeature={handleOpenFeature}
+                        onOpenSession={onOpenSession}
                     />
                 )}
                 {activeTab === 'test-status' && (
@@ -4863,8 +5003,43 @@ export const SessionInspector: React.FC = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const [selectedSession, setSelectedSession] = useState<AgentSession | null>(null);
     const [sessionBackStack, setSessionBackStack] = useState<AgentSession[]>([]);
+    const [activeSessionTab, setActiveSessionTab] = useState<SessionInspectorTab>('transcript');
+    const [sessionOpenLoading, setSessionOpenLoading] = useState(false);
+    const [sessionOpenError, setSessionOpenError] = useState<string | null>(null);
+    const openSessionRequestRef = useRef(0);
 
-    const openSession = useCallback(async (sessionId: string, fallback?: AgentSession, options?: { pushCurrent?: boolean }) => {
+    const updateSessionSearchParams = useCallback((
+        sessionId: string | null,
+        tab: SessionInspectorTab = 'transcript',
+        options?: { replace?: boolean }
+    ) => {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('session_id');
+        if (sessionId && sessionId.trim()) {
+            nextParams.set('session', sessionId.trim());
+            nextParams.set('tab', tab);
+        } else {
+            nextParams.delete('session');
+            nextParams.delete('tab');
+        }
+        if (nextParams.toString() === searchParams.toString()) return;
+        setSearchParams(nextParams, { replace: options?.replace ?? false });
+    }, [searchParams, setSearchParams]);
+
+    const openSession = useCallback(async (
+        sessionId: string,
+        fallback?: AgentSession,
+        options?: {
+            pushCurrent?: boolean;
+            syncUrl?: boolean;
+            replaceUrl?: boolean;
+            tab?: SessionInspectorTab;
+        }
+    ) => {
+        const normalizedSessionId = sessionId.trim();
+        if (!normalizedSessionId) return;
+
+        const nextTab = options?.tab || activeSessionTab;
         if (options?.pushCurrent && selectedSession) {
             setSessionBackStack(prev => {
                 if (prev.length > 0 && prev[prev.length - 1].id === selectedSession.id) {
@@ -4873,38 +5048,94 @@ export const SessionInspector: React.FC = () => {
                 return [...prev, selectedSession];
             });
         }
-        const full = await getSessionById(sessionId);
-        if (full) {
-            setSelectedSession(full);
+
+        setSessionOpenError(null);
+        setSessionOpenLoading(true);
+        const requestId = openSessionRequestRef.current + 1;
+        openSessionRequestRef.current = requestId;
+
+        const full = await getSessionById(normalizedSessionId);
+        if (openSessionRequestRef.current !== requestId) {
             return;
         }
+
+        if (full) {
+            setSelectedSession(full);
+            setActiveSessionTab(nextTab);
+            setSessionOpenLoading(false);
+            if (options?.syncUrl !== false) {
+                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
+            }
+            return;
+        }
+
         if (fallback) {
             setSelectedSession(fallback);
+            setActiveSessionTab(nextTab);
+            setSessionOpenLoading(false);
+            if (options?.syncUrl !== false) {
+                updateSessionSearchParams(normalizedSessionId, nextTab, { replace: options?.replaceUrl });
+            }
+            return;
         }
-    }, [getSessionById, selectedSession]);
+
+        setSelectedSession(null);
+        setSessionOpenLoading(false);
+        setSessionOpenError(`Unable to load session ${normalizedSessionId}.`);
+    }, [activeSessionTab, getSessionById, selectedSession, updateSessionSearchParams]);
 
     const handleBackFromSession = useCallback(() => {
-        setSessionBackStack(prev => {
-            if (prev.length === 0) {
-                setSelectedSession(null);
-                return prev;
-            }
-            const parent = prev[prev.length - 1];
-            setSelectedSession(parent);
-            return prev.slice(0, -1);
-        });
-    }, []);
-
-    // Deep-link: auto-select session from URL params
-    useEffect(() => {
-        const sessionParam = searchParams.get('session');
-        if (sessionParam) {
-            const exists = sessions.find(s => s.id === sessionParam);
+        if (sessionBackStack.length === 0) {
+            setSelectedSession(null);
             setSessionBackStack([]);
-            void openSession(sessionParam, exists);
-            setSearchParams({}, { replace: true });
+            setSessionOpenError(null);
+            setSessionOpenLoading(false);
+            updateSessionSearchParams(null, 'transcript');
+            return;
         }
-    }, [searchParams, sessions, setSearchParams, openSession]);
+
+        const parent = sessionBackStack[sessionBackStack.length - 1];
+        setSessionBackStack(prev => prev.slice(0, -1));
+        setSelectedSession(parent);
+        setSessionOpenError(null);
+        setSessionOpenLoading(false);
+        updateSessionSearchParams(parent.id, activeSessionTab);
+    }, [activeSessionTab, sessionBackStack, updateSessionSearchParams]);
+
+    // Deep-link sync: open session from URL and preserve shareable query params.
+    useEffect(() => {
+        const requestedSessionId = getSessionIdFromQuery(searchParams);
+        const tabParam = searchParams.get('tab');
+        const requestedTab = isSessionInspectorTab(tabParam) ? tabParam : 'transcript';
+
+        if (!requestedSessionId) {
+            setSessionOpenLoading(false);
+            if (selectedSession) {
+                setSelectedSession(null);
+                setSessionBackStack([]);
+            }
+            return;
+        }
+
+        if (!searchParams.get('session') && searchParams.get('session_id')) {
+            updateSessionSearchParams(requestedSessionId, requestedTab, { replace: true });
+            return;
+        }
+
+        if (selectedSession?.id === requestedSessionId) {
+            if (activeSessionTab !== requestedTab) {
+                setActiveSessionTab(requestedTab);
+            }
+            return;
+        }
+
+        const existing = sessions.find(session => session.id === requestedSessionId);
+        setSessionBackStack([]);
+        void openSession(requestedSessionId, existing, {
+            syncUrl: false,
+            tab: requestedTab,
+        });
+    }, [activeSessionTab, openSession, searchParams, selectedSession, sessions, updateSessionSearchParams]);
 
     const [sessionsViewMode, setSessionsViewMode] = useState<'threaded' | 'cards'>('threaded');
     const [expandedThreadSessionIds, setExpandedThreadSessionIds] = useState<Set<string>>(new Set());
@@ -4931,8 +5162,18 @@ export const SessionInspector: React.FC = () => {
 
     const openSessionFromList = useCallback((session: AgentSession) => {
         setSessionBackStack([]);
-        void openSession(session.id, session);
+        setActiveSessionTab('transcript');
+        void openSession(session.id, session, {
+            syncUrl: true,
+            tab: 'transcript',
+        });
     }, [openSession]);
+
+    const handleSessionTabChange = useCallback((tab: SessionInspectorTab) => {
+        setActiveSessionTab(tab);
+        if (!selectedSession) return;
+        updateSessionSearchParams(selectedSession.id, tab, { replace: true });
+    }, [selectedSession, updateSessionSearchParams]);
 
     const toggleThreadChildren = useCallback((sessionId: string) => {
         setExpandedThreadSessionIds(prev => {
@@ -4981,8 +5222,48 @@ export const SessionInspector: React.FC = () => {
             <SessionDetail
                 session={selectedSession}
                 onBack={handleBackFromSession}
-                onOpenSession={(sessionId) => { void openSession(sessionId, undefined, { pushCurrent: true }); }}
+                onOpenSession={(sessionId) => {
+                    void openSession(sessionId, undefined, {
+                        pushCurrent: true,
+                        syncUrl: true,
+                        tab: activeSessionTab,
+                    });
+                }}
+                initialTab={activeSessionTab}
+                onTabChange={handleSessionTabChange}
             />
+        );
+    }
+
+    const requestedSessionId = getSessionIdFromQuery(searchParams);
+    if (!selectedSession && requestedSessionId && sessionOpenLoading) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+                <Activity size={24} className="animate-spin text-indigo-400" />
+                <div className="text-sm">Loading session <span className="font-mono text-slate-300">{requestedSessionId}</span>...</div>
+            </div>
+        );
+    }
+
+    if (!selectedSession && requestedSessionId && sessionOpenError) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-6">
+                <div className="text-sm text-rose-300">{sessionOpenError}</div>
+                <button
+                    onClick={() => {
+                        const tabParam = searchParams.get('tab');
+                        const requestedTab = isSessionInspectorTab(tabParam) ? tabParam : 'transcript';
+                        const fallback = sessions.find(session => session.id === requestedSessionId);
+                        void openSession(requestedSessionId, fallback, {
+                            syncUrl: false,
+                            tab: requestedTab,
+                        });
+                    }}
+                    className="px-3 py-1.5 rounded-md border border-slate-700 bg-slate-900 text-xs text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
+                >
+                    Retry
+                </button>
+            </div>
         );
     }
 
@@ -5169,7 +5450,7 @@ const SessionSummaryCard: React.FC<{
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
                 <div className="text-right">
-                    <div className="text-emerald-400 font-mono font-bold text-sm">${session.totalCost.toFixed(2)}</div>
+                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(session.totalCost, 2)}</div>
                 </div>
             )}
             infoBadges={(
