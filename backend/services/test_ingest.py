@@ -197,6 +197,7 @@ async def ingest_run(payload: IngestRunRequest, db: Any) -> IngestRunResponse:
     existing_result_ids = await _load_existing_result_ids(db, run_id)
     inserted = 0
     skipped = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     normalized_results: list[dict[str, Any]] = []
     for raw_row in payload.test_results:
@@ -214,6 +215,30 @@ async def ingest_run(payload: IngestRunRequest, db: Any) -> IngestRunResponse:
         await definition_repo.upsert(row, project_id=project_id)
         definition_upserts += 1
 
+    # Ensure parent run row exists before inserting child test_results rows.
+    # In production SQLite connections we enforce PRAGMA foreign_keys=ON.
+    await run_repo.upsert(
+        {
+            "run_id": run_id,
+            "project_id": project_id,
+            "timestamp": timestamp,
+            "git_sha": str(payload.git_sha or "").strip(),
+            "branch": str(payload.branch or "").strip(),
+            "agent_session_id": str(payload.agent_session_id or "").strip(),
+            "env_fingerprint": str(payload.env_fingerprint or "").strip(),
+            "trigger": str(payload.trigger or "local").strip() or "local",
+            "status": "ingesting",
+            "total_tests": int((existing_run or {}).get("total_tests") or 0),
+            "passed_tests": int((existing_run or {}).get("passed_tests") or 0),
+            "failed_tests": int((existing_run or {}).get("failed_tests") or 0),
+            "skipped_tests": int((existing_run or {}).get("skipped_tests") or 0),
+            "duration_ms": int((existing_run or {}).get("duration_ms") or 0),
+            "metadata": payload.metadata,
+            "created_at": str((existing_run or {}).get("created_at") or now_iso),
+        },
+        project_id=project_id,
+    )
+
     for row in normalized_results:
         test_id = row["test_id"]
         if test_id in existing_result_ids:
@@ -228,7 +253,6 @@ async def ingest_run(payload: IngestRunRequest, db: Any) -> IngestRunResponse:
         errors.append(f"Unknown agent_session_id '{session_id}' (ingestion accepted).")
 
     total_tests, passed_tests, failed_tests, skipped_tests = await _load_status_counts(db, run_id)
-    now_iso = datetime.now(timezone.utc).isoformat()
     run_status = "failed" if failed_tests > 0 else "complete"
     duration_ms = sum(_safe_int(row.get("duration_ms")) for row in normalized_results)
 

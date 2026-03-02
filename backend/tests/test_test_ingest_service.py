@@ -14,6 +14,7 @@ class TestIngestServiceTests(unittest.IsolatedAsyncioTestCase):
         config.CCDASH_TEST_VISUALIZER_ENABLED = True
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
+        await self.db.execute("PRAGMA foreign_keys=ON")
         await run_migrations(self.db)
 
     async def asyncTearDown(self) -> None:
