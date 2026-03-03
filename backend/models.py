@@ -546,6 +546,108 @@ class FeatureExecutionContext(BaseModel):
     generatedAt: str = ""
 
 
+ExecutionPolicyVerdict = Literal["allow", "requires_approval", "deny"]
+ExecutionRunStatus = Literal["queued", "running", "succeeded", "failed", "canceled", "blocked"]
+ExecutionRiskLevel = Literal["low", "medium", "high"]
+ExecutionApprovalDecision = Literal["pending", "approved", "denied"]
+ExecutionEventStream = Literal["stdout", "stderr", "system"]
+
+
+class ExecutionPolicyResultDTO(BaseModel):
+    verdict: ExecutionPolicyVerdict
+    riskLevel: ExecutionRiskLevel
+    requiresApproval: bool = False
+    normalizedCommand: str = ""
+    commandTokens: list[str] = Field(default_factory=list)
+    resolvedCwd: str = ""
+    reasonCodes: list[str] = Field(default_factory=list)
+
+
+class ExecutionPolicyCheckRequest(BaseModel):
+    command: str
+    cwd: str = "."
+    envProfile: str = "default"
+
+
+class ExecutionRunCreateRequest(BaseModel):
+    command: str
+    cwd: str = "."
+    envProfile: str = "default"
+    featureId: str = ""
+    recommendationRuleId: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionRunDTO(BaseModel):
+    id: str
+    projectId: str
+    featureId: str = ""
+    provider: str = "local"
+    sourceCommand: str
+    normalizedCommand: str
+    cwd: str
+    envProfile: str = "default"
+    recommendationRuleId: str = ""
+    riskLevel: ExecutionRiskLevel = "medium"
+    policyVerdict: ExecutionPolicyVerdict = "allow"
+    requiresApproval: bool = False
+    approvedBy: str = ""
+    approvedAt: str = ""
+    status: ExecutionRunStatus = "queued"
+    exitCode: Optional[int] = None
+    startedAt: str = ""
+    endedAt: str = ""
+    retryOfRunId: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class ExecutionRunEventDTO(BaseModel):
+    id: Optional[int] = None
+    runId: str
+    sequenceNo: int
+    stream: ExecutionEventStream = "system"
+    eventType: str = "status"
+    payloadText: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurredAt: str = ""
+
+
+class ExecutionRunEventPageDTO(BaseModel):
+    runId: str
+    items: list[ExecutionRunEventDTO] = Field(default_factory=list)
+    nextSequence: int = 0
+
+
+class ExecutionApprovalDTO(BaseModel):
+    id: Optional[int] = None
+    runId: str
+    decision: ExecutionApprovalDecision = "pending"
+    reason: str = ""
+    requestedAt: str = ""
+    resolvedAt: str = ""
+    requestedBy: str = ""
+    resolvedBy: str = ""
+
+
+class ExecutionApprovalRequest(BaseModel):
+    decision: Literal["approved", "denied"]
+    reason: str = ""
+    actor: str = "user"
+
+
+class ExecutionCancelRequest(BaseModel):
+    reason: str = ""
+    actor: str = "user"
+
+
+class ExecutionRetryRequest(BaseModel):
+    acknowledgeFailure: bool = False
+    actor: str = "user"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ── Test Visualizer DTOs ───────────────────────────────────────────
 
 class TestRunDTO(BaseModel):
@@ -804,14 +906,22 @@ class SyncTestsResponse(BaseModel):
 class BackfillTestMappingsRequest(BaseModel):
     project_id: str
     run_limit: int = Field(default=100, ge=1, le=5000)
+    force_recompute: bool = False
+    provider_sources: list[str] = Field(default_factory=list)
+    source: str = "backfill"
 
 
 class BackfillTestMappingsResponse(BaseModel):
     project_id: str
     run_limit: int
     runs_processed: int = 0
+    tests_considered: int = 0
+    tests_resolved: int = 0
+    tests_reused_cached: int = 0
     mappings_stored: int = 0
     primary_mappings: int = 0
+    resolver_version: str = ""
+    cache_state: dict[str, Any] = Field(default_factory=dict)
     total_errors: int = 0
     errors: list[str] = Field(default_factory=list)
 

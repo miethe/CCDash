@@ -19,6 +19,7 @@ from backend.db.repositories.test_results import SqliteTestResultRepository
 from backend.db.repositories.test_domains import SqliteTestDomainRepository
 from backend.db.repositories.test_mappings import SqliteTestMappingRepository
 from backend.db.repositories.test_integrity import SqliteTestIntegrityRepository
+from backend.db.repositories.execution import SqliteExecutionRepository
 from backend.db.repositories.links import (
     SqliteEntityLinkRepository,
     SqliteTagRepository,
@@ -123,3 +124,10 @@ def get_test_integrity_repository(db: Any):
         return SqliteTestIntegrityRepository(db)
     from backend.db.repositories.postgres.test_integrity import PostgresTestIntegrityRepository
     return PostgresTestIntegrityRepository(db)
+
+
+def get_execution_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteExecutionRepository(db)
+    from backend.db.repositories.postgres.execution import PostgresExecutionRepository
+    return PostgresExecutionRepository(db)

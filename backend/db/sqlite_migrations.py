@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -443,6 +443,67 @@ CREATE TABLE IF NOT EXISTS alert_configs (
     is_active  INTEGER DEFAULT 1,
     scope      TEXT DEFAULT 'session'
 );
+
+-- ── 12. Execution Workbench Runs ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS execution_runs (
+    id                    TEXT PRIMARY KEY,
+    project_id            TEXT NOT NULL,
+    feature_id            TEXT DEFAULT '',
+    provider              TEXT NOT NULL DEFAULT 'local',
+    source_command        TEXT NOT NULL,
+    normalized_command    TEXT NOT NULL,
+    cwd                   TEXT NOT NULL,
+    env_profile           TEXT NOT NULL DEFAULT 'default',
+    recommendation_rule_id TEXT DEFAULT '',
+    risk_level            TEXT NOT NULL DEFAULT 'medium',
+    policy_verdict        TEXT NOT NULL DEFAULT 'allow',
+    requires_approval     INTEGER NOT NULL DEFAULT 0,
+    approved_by           TEXT DEFAULT '',
+    approved_at           TEXT DEFAULT '',
+    status                TEXT NOT NULL DEFAULT 'queued',
+    exit_code             INTEGER,
+    started_at            TEXT DEFAULT '',
+    ended_at              TEXT DEFAULT '',
+    retry_of_run_id       TEXT DEFAULT '',
+    metadata_json         TEXT DEFAULT '{}',
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_feature_created
+    ON execution_runs(project_id, feature_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_status_updated
+    ON execution_runs(project_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS execution_run_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    sequence_no   INTEGER NOT NULL,
+    stream        TEXT NOT NULL DEFAULT 'system',
+    event_type    TEXT NOT NULL DEFAULT 'status',
+    payload_text  TEXT DEFAULT '',
+    payload_json  TEXT DEFAULT '{}',
+    occurred_at   TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_run_events_seq
+    ON execution_run_events(run_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_execution_run_events_lookup
+    ON execution_run_events(run_id, sequence_no);
+
+CREATE TABLE IF NOT EXISTS execution_approvals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    decision      TEXT NOT NULL DEFAULT 'pending',
+    reason        TEXT DEFAULT '',
+    requested_at  TEXT NOT NULL,
+    resolved_at   TEXT DEFAULT '',
+    requested_by  TEXT DEFAULT '',
+    resolved_by   TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
+    ON execution_approvals(run_id, requested_at DESC);
 """
 
 _TEST_VISUALIZER_TABLES = """
