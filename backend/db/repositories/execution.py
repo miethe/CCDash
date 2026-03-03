@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 import aiosqlite
 
@@ -30,6 +31,13 @@ def _parse_json_dict(value: object) -> dict:
 
 
 _RUN_EVENT_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCK_RETRY_ATTEMPTS = 8
+_LOCK_RETRY_BASE_SECONDS = 0.05
+
+
+def _is_locked_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database table is locked" in message
 
 
 class SqliteExecutionRepository:
@@ -38,10 +46,30 @@ class SqliteExecutionRepository:
     def __init__(self, db: aiosqlite.Connection):
         self.db = db
 
+    async def _execute_write(self, sql: str, params: tuple[Any, ...]) -> None:
+        for attempt in range(_LOCK_RETRY_ATTEMPTS):
+            try:
+                await self.db.execute(sql, params)
+                return
+            except aiosqlite.OperationalError as exc:
+                if not _is_locked_error(exc) or attempt >= _LOCK_RETRY_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(_LOCK_RETRY_BASE_SECONDS * (2 ** attempt))
+
+    async def _commit_with_retry(self) -> None:
+        for attempt in range(_LOCK_RETRY_ATTEMPTS):
+            try:
+                await self.db.commit()
+                return
+            except aiosqlite.OperationalError as exc:
+                if not _is_locked_error(exc) or attempt >= _LOCK_RETRY_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(_LOCK_RETRY_BASE_SECONDS * (2 ** attempt))
+
     async def create_run(self, run_data: dict) -> dict:
         now = _now_iso()
         metadata = _parse_json_dict(run_data.get("metadata_json", run_data.get("metadata", {})))
-        await self.db.execute(
+        await self._execute_write(
             """
             INSERT INTO execution_runs (
                 id, project_id, feature_id, provider, source_command, normalized_command, cwd,
@@ -75,7 +103,7 @@ class SqliteExecutionRepository:
                 str(run_data.get("updated_at") or now),
             ),
         )
-        await self.db.commit()
+        await self._commit_with_retry()
         created = await self.get_run(str(run_data.get("id") or ""))
         return created or {}
 
@@ -97,11 +125,11 @@ class SqliteExecutionRepository:
         assignments = ", ".join(f"{column} = ?" for column in normalized.keys())
         params = [normalized[column] for column in normalized.keys()]
         params.append(run_id)
-        await self.db.execute(
+        await self._execute_write(
             f"UPDATE execution_runs SET {assignments} WHERE id = ?",
             tuple(params),
         )
-        await self.db.commit()
+        await self._commit_with_retry()
         return await self.get_run(run_id)
 
     async def get_run(self, run_id: str) -> dict | None:
@@ -152,7 +180,7 @@ class SqliteExecutionRepository:
                 sequence += 1
                 occurred_at = str(event.get("occurred_at") or _now_iso())
                 payload_json = _parse_json_dict(event.get("payload_json", event.get("payload", {})))
-                await self.db.execute(
+                await self._execute_write(
                     """
                     INSERT INTO execution_run_events (
                         run_id, sequence_no, stream, event_type, payload_text, payload_json, occurred_at
@@ -179,7 +207,7 @@ class SqliteExecutionRepository:
                         "occurred_at": occurred_at,
                     }
                 )
-            await self.db.commit()
+            await self._commit_with_retry()
             return inserted
 
     async def list_events_after_sequence(
@@ -203,7 +231,7 @@ class SqliteExecutionRepository:
 
     async def create_approval(self, approval_data: dict) -> dict:
         now = _now_iso()
-        await self.db.execute(
+        await self._execute_write(
             """
             INSERT INTO execution_approvals (
                 run_id, decision, reason, requested_at, resolved_at, requested_by, resolved_by
@@ -219,7 +247,7 @@ class SqliteExecutionRepository:
                 str(approval_data.get("resolved_by") or ""),
             ),
         )
-        await self.db.commit()
+        await self._commit_with_retry()
         async with self.db.execute(
             "SELECT * FROM execution_approvals WHERE run_id = ? ORDER BY id DESC LIMIT 1",
             (str(approval_data.get("run_id") or ""),),
@@ -253,7 +281,7 @@ class SqliteExecutionRepository:
             return None
 
         now = _now_iso()
-        await self.db.execute(
+        await self._execute_write(
             """
             UPDATE execution_approvals
             SET decision = ?, reason = ?, resolved_at = ?, resolved_by = ?
@@ -267,7 +295,7 @@ class SqliteExecutionRepository:
                 int(pending.get("id") or 0),
             ),
         )
-        await self.db.commit()
+        await self._commit_with_retry()
         async with self.db.execute(
             "SELECT * FROM execution_approvals WHERE id = ? LIMIT 1",
             (int(pending.get("id") or 0),),
