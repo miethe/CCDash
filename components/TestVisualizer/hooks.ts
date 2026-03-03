@@ -30,6 +30,7 @@ interface UseTestRunsResult {
   isLoading: boolean;
   hasMore: boolean;
   loadMore: () => void;
+  refresh: () => void;
   error: Error | null;
   featureDisabled: boolean;
 }
@@ -156,9 +157,10 @@ export function useTestStatus(projectId: string, options: UseTestStatusOptions =
 export function useTestRuns(
   projectId: string,
   filter: Omit<TestRunsFilter, 'projectId'> = {},
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; refreshToken?: number } = {},
 ): UseTestRunsResult {
   const enabled = options.enabled ?? true;
+  const externalRefreshToken = options.refreshToken ?? 0;
   const agentSessionId = filter.agentSessionId;
   const featureId = filter.featureId;
   const gitSha = filter.gitSha;
@@ -171,6 +173,12 @@ export function useTestRuns(
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [featureDisabled, setFeatureDisabled] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const refresh = useCallback(() => {
+    setFeatureDisabled(false);
+    setRefreshTick(prev => prev + 1);
+  }, []);
 
   const loadRuns = useCallback(
     async (cursor?: string | null) => {
@@ -211,20 +219,22 @@ export function useTestRuns(
       setRuns([]);
       setNextCursor(null);
       setHasMore(false);
+      setFeatureDisabled(false);
       return;
     }
     setRuns([]);
     setNextCursor(null);
     setHasMore(false);
+    setFeatureDisabled(false);
     void loadRuns(null);
-  }, [enabled, loadRuns]);
+  }, [enabled, externalRefreshToken, loadRuns, refreshTick]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor || isLoading) return;
     loadRuns(nextCursor);
   }, [isLoading, loadRuns, nextCursor]);
 
-  return { runs, isLoading, hasMore, loadMore, error, featureDisabled };
+  return { runs, isLoading, hasMore, loadMore, refresh, error, featureDisabled };
 }
 
 export function useLiveTestUpdates(

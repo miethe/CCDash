@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { useData } from '../../contexts/DataContext';
 import { TestRun, TestRunDetail, TestStatus } from '../../types';
-import { getTestMetricsSummary } from '../../services/testVisualizer';
+import { getTestMetricsSummary, invalidateTestVisualizerProjectCache } from '../../services/testVisualizer';
 import { SidebarFiltersPortal } from '../SidebarFilters';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
@@ -154,6 +154,7 @@ export const TestingPage: React.FC = () => {
   }, [domainNameById, selectedDomainId, selectedFeatureId]);
 
   const refreshPage = () => {
+    invalidateTestVisualizerProjectCache(projectId, 'testing_page_refresh');
     testConfig.refresh();
     status.refresh();
     setRefreshNonce(prev => prev + 1);
@@ -262,6 +263,7 @@ export const TestingPage: React.FC = () => {
             showDomainTree={false}
             onRunSelect={runId => updateQueryParam('runId', runId)}
             onRunSelectionChange={selection => setSelectedRunContext(selection)}
+            refreshToken={refreshNonce}
             uiFilter={{
               statuses: statusFilter,
               searchQuery,

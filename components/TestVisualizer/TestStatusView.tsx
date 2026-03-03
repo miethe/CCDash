@@ -2,7 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
 import { FeatureTestTimeline, TestDefinition, TestRun, TestRunDetail, TestStatus } from '../../types';
-import { getFeatureTimeline, getIntegrityAlerts, getTestRun, listRunResults } from '../../services/testVisualizer';
+import {
+  getFeatureTimeline,
+  getIntegrityAlerts,
+  getTestRun,
+  invalidateTestVisualizerProjectCache,
+  listRunResults,
+} from '../../services/testVisualizer';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
 import { HealthSummaryBar } from './HealthSummaryBar';
@@ -32,6 +38,7 @@ interface TestStatusViewProps {
   }) => void;
   hideHeader?: boolean;
   showDomainTree?: boolean;
+  refreshToken?: number;
   uiFilter?: {
     statuses?: TestStatus[];
     searchQuery?: string;
@@ -53,6 +60,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   onRunSelectionChange,
   hideHeader = false,
   showDomainTree = true,
+  refreshToken = 0,
   uiFilter,
 }) => {
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(filter?.domainId ?? null);
@@ -71,7 +79,9 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   const [runResultsError, setRunResultsError] = useState<string | null>(null);
   const [resultSortKey, setResultSortKey] = useState<'status' | 'duration' | 'name' | 'test_id'>('status');
   const [resultSortOrder, setResultSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [localRefreshToken, setLocalRefreshToken] = useState(0);
   const runResultsRequestIdRef = useRef(0);
+  const effectiveRefreshToken = refreshToken + localRefreshToken;
 
   const shouldFetchStatus = showDomainTree || !hideHeader;
   const status = useTestStatus(projectId, { enabled: Boolean(projectId && shouldFetchStatus) });
@@ -79,6 +89,8 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     featureId: filter?.featureId,
     agentSessionId: filter?.sessionId,
     limit: mode === 'compact' ? 3 : 12,
+  }, {
+    refreshToken: effectiveRefreshToken,
   });
   const live = useLiveTestUpdates(
     projectId,
@@ -230,7 +242,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     return () => {
       alive = false;
     };
-  }, [activeRunId, projectId]);
+  }, [activeRunId, effectiveRefreshToken, projectId]);
 
   useEffect(() => {
     let alive = true;
@@ -253,7 +265,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     return () => {
       alive = false;
     };
-  }, [filter?.sessionId, mode, projectId]);
+  }, [effectiveRefreshToken, filter?.sessionId, mode, projectId]);
 
   useEffect(() => {
     let alive = true;
@@ -281,7 +293,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     return () => {
       alive = false;
     };
-  }, [filter?.featureId, projectId]);
+  }, [effectiveRefreshToken, filter?.featureId, projectId]);
 
   useEffect(() => {
     if (!activeRunId || !projectId) {
@@ -336,7 +348,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     };
 
     void loadFirstPage();
-  }, [activeRunId, projectId, resultSortKey, resultSortOrder, searchQuery, selectedStatusesParam]);
+  }, [activeRunId, effectiveRefreshToken, projectId, resultSortKey, resultSortOrder, searchQuery, selectedStatusesParam]);
 
   const loadMoreRunResults = async () => {
     if (!activeRunId || !projectId || !resultsNextCursor || isRunResultsLoadingMore) {
@@ -380,6 +392,13 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     });
   }, [resolvedActiveRun, isRunDetailLoading, onRunSelectionChange, selectedRunDetail]);
 
+  const handleRefresh = () => {
+    invalidateTestVisualizerProjectCache(projectId, 'test_status_view_refresh');
+    status.refresh();
+    runs.refresh();
+    setLocalRefreshToken(prev => prev + 1);
+  };
+
   const showSplitLayout = mode === 'full' && showDomainTree;
 
   return (
@@ -401,7 +420,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
               <button
                 type="button"
                 className="inline-flex items-center gap-2 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
-                onClick={status.refresh}
+                onClick={handleRefresh}
               >
                 <RefreshCw size={12} /> Refresh
               </button>
