@@ -94,6 +94,8 @@ export const TestingPage: React.FC = () => {
   const [resultSortKey, setResultSortKey] = useState<'status' | 'duration' | 'name' | 'test_id'>('status');
   const [resultSortOrder, setResultSortOrder] = useState<'asc' | 'desc'>('asc');
   const runResultsRequestIdRef = useRef(0);
+  const rightColumnRef = useRef<HTMLElement | null>(null);
+  const [mappedPaneMaxHeight, setMappedPaneMaxHeight] = useState<number | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -150,14 +152,17 @@ export const TestingPage: React.FC = () => {
     };
   }, [projectId, refreshNonce, visualizerEnabled]);
 
-  const updateQueryParam = useCallback(
-    (key: 'domainId' | 'featureId' | 'runId', value: string | null) => {
+  const updateQueryParams = useCallback(
+    (updates: Partial<Record<'domainId' | 'featureId' | 'runId', string | null>>) => {
       const next = new URLSearchParams(searchParams);
-      next.delete(key);
-      next.delete(key.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`));
-      if (value) {
-        next.set(key, value);
-      }
+      (Object.keys(updates) as Array<'domainId' | 'featureId' | 'runId'>).forEach(key => {
+        const value = updates[key];
+        next.delete(key);
+        next.delete(key.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`));
+        if (value) {
+          next.set(key, value);
+        }
+      });
       setSearchParams(next, { replace: true });
     },
     [searchParams, setSearchParams],
@@ -220,8 +225,8 @@ export const TestingPage: React.FC = () => {
     if (selectedRunId === nextRunId) {
       return;
     }
-    updateQueryParam('runId', nextRunId);
-  }, [filteredRuns, runs.isLoading, runs.runs.length, selectedRunId, updateQueryParam]);
+    updateQueryParams({ runId: nextRunId });
+  }, [filteredRuns, runs.isLoading, runs.runs.length, selectedRunId, updateQueryParams]);
 
   const activeRunId = selectedRunId || filteredRuns[0]?.runId || null;
 
@@ -402,15 +407,29 @@ export const TestingPage: React.FC = () => {
     return totals;
   }, [selectedDomain, totals]);
 
-  const breadcrumb = useMemo(() => {
-    const parts = ['Testing'];
+  const breadcrumbs = useMemo(() => {
+    const parts: Array<{
+      label: string;
+      scope: Partial<Record<'domainId' | 'featureId' | 'runId', string | null>>;
+    }> = [
+      {
+        label: 'Testing',
+        scope: { domainId: null, featureId: null },
+      },
+    ];
     if (selectedDomainId && domainNameById.has(selectedDomainId)) {
-      parts.push(domainNameById.get(selectedDomainId) || selectedDomainId);
+      parts.push({
+        label: domainNameById.get(selectedDomainId) || selectedDomainId,
+        scope: { domainId: selectedDomainId, featureId: null },
+      });
     }
     if (selectedFeatureId) {
-      parts.push(selectedFeatureId);
+      parts.push({
+        label: selectedFeatureId,
+        scope: { domainId: selectedDomainId || null, featureId: selectedFeatureId },
+      });
     }
-    return parts.join(' > ');
+    return parts;
   }, [domainNameById, selectedDomainId, selectedFeatureId]);
 
   const viewingDomainLabel = selectedDomain ? selectedDomain.domainName : 'All mapped domains';
@@ -422,6 +441,21 @@ export const TestingPage: React.FC = () => {
     runs.refresh();
     setRefreshNonce(prev => prev + 1);
   };
+
+  useEffect(() => {
+    const rightColumn = rightColumnRef.current;
+    if (!rightColumn || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const updateHeight = () => {
+      const next = Math.max(0, Math.round(rightColumn.getBoundingClientRect().height));
+      setMappedPaneMaxHeight(next || null);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(rightColumn);
+    return () => observer.disconnect();
+  }, []);
 
   if (!activeProject) {
     return (
@@ -464,7 +498,20 @@ export const TestingPage: React.FC = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-100">Test Visualizer</h1>
-            <p className="text-sm text-slate-400">{breadcrumb}</p>
+            <nav className="mt-1 flex flex-wrap items-center gap-1 text-sm text-slate-400">
+              {breadcrumbs.map((item, index) => (
+                <React.Fragment key={`${item.label}-${index}`}>
+                  {index > 0 && <span className="text-slate-500">›</span>}
+                  <button
+                    type="button"
+                    onClick={() => updateQueryParams(item.scope)}
+                    className="rounded px-1 py-0.5 hover:bg-slate-800/70 hover:text-slate-200"
+                  >
+                    {item.label}
+                  </button>
+                </React.Fragment>
+              ))}
+            </nav>
             {activeRun && (
               <p className="mt-1 text-xs text-indigo-300">
                 Viewing run <span className="font-mono">{activeRun.runId}</span>
@@ -480,7 +527,7 @@ export const TestingPage: React.FC = () => {
               <span className="uppercase tracking-wider text-slate-500">Recent Run</span>
               <select
                 value={activeRunId || ''}
-                onChange={event => updateQueryParam('runId', event.target.value || null)}
+                onChange={event => updateQueryParams({ runId: event.target.value || null })}
                 className="max-w-[420px] rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
                 disabled={filteredRuns.length === 0}
               >
@@ -589,17 +636,20 @@ export const TestingPage: React.FC = () => {
       )}
 
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="h-[38rem] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-3">
+        <aside
+          className="overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-3"
+          style={mappedPaneMaxHeight ? { maxHeight: `${mappedPaneMaxHeight}px` } : undefined}
+        >
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Mapped Domains</h2>
           <DomainTreeView
             domains={status.domains}
             selectedDomainId={selectedDomainId}
-            onSelectDomain={domain => updateQueryParam('domainId', domain?.domainId || null)}
+            onSelectDomain={domain => updateQueryParams({ domainId: domain?.domainId || null })}
             className="border-0 bg-transparent p-0"
           />
         </aside>
 
-        <section className="min-w-0 space-y-4">
+        <section ref={rightColumnRef} className="min-w-0 space-y-4">
           <article className="rounded-xl border border-slate-800 bg-slate-900 p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
@@ -658,7 +708,16 @@ export const TestingPage: React.FC = () => {
 
           <article className="rounded-xl border border-slate-800 bg-slate-900 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-slate-200">Domain Drilldown</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-slate-200">Domain Drilldown</h3>
+                <button
+                  type="button"
+                  onClick={() => updateQueryParams({ domainId: null })}
+                  className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:border-slate-600"
+                >
+                  Reset View
+                </button>
+              </div>
               <span className="text-xs text-slate-500">
                 {selectedDomain ? `${selectedDomain.children.length} sub-domains` : `${status.domains.length} top-level domains`}
               </span>
@@ -670,7 +729,7 @@ export const TestingPage: React.FC = () => {
                   <button
                     key={domain.domainId}
                     type="button"
-                    onClick={() => updateQueryParam('domainId', domain.domainId)}
+                    onClick={() => updateQueryParams({ domainId: domain.domainId })}
                     className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left text-xs text-slate-300 hover:border-slate-700"
                   >
                     <p className="font-medium text-slate-200">{domain.domainName}</p>
@@ -687,7 +746,7 @@ export const TestingPage: React.FC = () => {
                   <button
                     key={child.domainId}
                     type="button"
-                    onClick={() => updateQueryParam('domainId', child.domainId)}
+                    onClick={() => updateQueryParams({ domainId: child.domainId })}
                     className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left text-xs text-slate-300 hover:border-slate-700"
                   >
                     <p className="font-medium text-slate-200">{child.domainName}</p>
