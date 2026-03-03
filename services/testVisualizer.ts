@@ -46,6 +46,37 @@ interface RequestOptions {
 }
 
 type JsonRecord = Record<string, unknown>;
+type CacheScope = 'domainHealth' | 'featureHealth' | 'testRuns' | 'runResults';
+type CacheOutcome = 'hit' | 'stale' | 'miss' | 'inflight' | 'revalidateSuccess' | 'revalidateError' | 'missError';
+
+interface CacheEntry<T> {
+  value?: T;
+  fetchedAt: number;
+  staleAt: number;
+  expiresAt: number;
+  inFlight?: Promise<T>;
+}
+
+interface CachePolicy {
+  scope: CacheScope;
+  freshMs: number;
+  staleMs: number;
+  lruLimit?: number;
+}
+
+interface ProjectCacheStore {
+  domainHealth: Map<string, CacheEntry<DomainHealthRollup[]>>;
+  featureHealth: Map<string, CacheEntry<CursorPage<FeatureTestHealth>>>;
+  testRuns: Map<string, CacheEntry<CursorPage<TestRun>>>;
+  runResults: Map<string, CacheEntry<RunResultPage>>;
+}
+
+type CacheStats = Record<CacheScope, Record<CacheOutcome, number>>;
+
+export interface TestVisualizerCacheStatsSnapshot {
+  stats: CacheStats;
+  projectsCached: number;
+}
 
 export class TestVisualizerApiError extends Error {
   status: number;
@@ -139,9 +170,231 @@ const buildQuery = (params: Record<string, string | number | boolean | null | un
   return serialized ? `?${serialized}` : '';
 };
 
+const DEFAULT_FRESH_MS = 30_000;
+const DEFAULT_STALE_MS = 120_000;
+const RUN_RESULTS_FRESH_MS = 45_000;
+const RUN_RESULTS_STALE_MS = 240_000;
+const RUN_RESULTS_LRU_LIMIT = 60;
+const PROJECT_CACHE = new Map<string, ProjectCacheStore>();
+const CACHE_SCOPES: CacheScope[] = ['domainHealth', 'featureHealth', 'testRuns', 'runResults'];
+const CACHE_OUTCOMES: CacheOutcome[] = ['hit', 'stale', 'miss', 'inflight', 'revalidateSuccess', 'revalidateError', 'missError'];
+const IS_DEV = typeof window !== 'undefined'
+  && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+const DOMAIN_HEALTH_CACHE_POLICY: CachePolicy = {
+  scope: 'domainHealth',
+  freshMs: DEFAULT_FRESH_MS,
+  staleMs: DEFAULT_STALE_MS,
+};
+
+const FEATURE_HEALTH_CACHE_POLICY: CachePolicy = {
+  scope: 'featureHealth',
+  freshMs: DEFAULT_FRESH_MS,
+  staleMs: DEFAULT_STALE_MS,
+};
+
+const TEST_RUNS_CACHE_POLICY: CachePolicy = {
+  scope: 'testRuns',
+  freshMs: DEFAULT_FRESH_MS,
+  staleMs: DEFAULT_STALE_MS,
+};
+
+const RUN_RESULTS_CACHE_POLICY: CachePolicy = {
+  scope: 'runResults',
+  freshMs: RUN_RESULTS_FRESH_MS,
+  staleMs: RUN_RESULTS_STALE_MS,
+  lruLimit: RUN_RESULTS_LRU_LIMIT,
+};
+
+const CACHE_STATS: CacheStats = CACHE_SCOPES.reduce(
+  (acc, scope) => {
+    acc[scope] = CACHE_OUTCOMES.reduce((outcomeAcc, outcome) => {
+      outcomeAcc[outcome] = 0;
+      return outcomeAcc;
+    }, {} as Record<CacheOutcome, number>);
+    return acc;
+  },
+  {} as CacheStats,
+);
+
+const createProjectCacheStore = (): ProjectCacheStore => ({
+  domainHealth: new Map<string, CacheEntry<DomainHealthRollup[]>>(),
+  featureHealth: new Map<string, CacheEntry<CursorPage<FeatureTestHealth>>>(),
+  testRuns: new Map<string, CacheEntry<CursorPage<TestRun>>>(),
+  runResults: new Map<string, CacheEntry<RunResultPage>>(),
+});
+
+const getProjectCacheStore = (projectId: string): ProjectCacheStore => {
+  const existing = PROJECT_CACHE.get(projectId);
+  if (existing) {
+    return existing;
+  }
+  const created = createProjectCacheStore();
+  PROJECT_CACHE.set(projectId, created);
+  return created;
+};
+
+const noteCacheEvent = (scope: CacheScope, outcome: CacheOutcome, projectId: string): void => {
+  CACHE_STATS[scope][outcome] += 1;
+  if (!IS_DEV) {
+    return;
+  }
+  if (outcome === 'hit' || outcome === 'stale' || outcome === 'miss') {
+    console.debug('[test-visualizer-cache]', `${scope}:${outcome}`, { projectId });
+  }
+};
+
+const touchCacheKey = <T>(
+  bucket: Map<string, CacheEntry<T>>,
+  key: string,
+  lruLimit: number | undefined,
+): void => {
+  const entry = bucket.get(key);
+  if (!entry) {
+    return;
+  }
+  bucket.delete(key);
+  bucket.set(key, entry);
+  if (lruLimit === undefined) {
+    return;
+  }
+  while (bucket.size > lruLimit) {
+    const oldestKey = bucket.keys().next().value as string | undefined;
+    if (!oldestKey) {
+      break;
+    }
+    bucket.delete(oldestKey);
+  }
+};
+
+async function readThroughProjectCache<T>(
+  projectId: string,
+  key: string,
+  bucket: Map<string, CacheEntry<T>>,
+  policy: CachePolicy,
+  loader: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const existing = bucket.get(key);
+
+  const startFetch = (mode: 'miss' | 'revalidate', previous?: CacheEntry<T>): Promise<T> => {
+    const current = bucket.get(key);
+    if (current?.inFlight) {
+      noteCacheEvent(policy.scope, 'inflight', projectId);
+      return current.inFlight;
+    }
+
+    const pending = loader()
+      .then(value => {
+        const fetchedAt = Date.now();
+        bucket.set(key, {
+          value,
+          fetchedAt,
+          staleAt: fetchedAt + policy.freshMs,
+          expiresAt: fetchedAt + policy.freshMs + policy.staleMs,
+        });
+        touchCacheKey(bucket, key, policy.lruLimit);
+        noteCacheEvent(policy.scope, mode === 'miss' ? 'miss' : 'revalidateSuccess', projectId);
+        return value;
+      })
+      .catch(error => {
+        if (mode === 'revalidate' && previous?.value !== undefined) {
+          noteCacheEvent(policy.scope, 'revalidateError', projectId);
+          return previous.value;
+        }
+        noteCacheEvent(policy.scope, 'missError', projectId);
+        throw error;
+      })
+      .finally(() => {
+        const latest = bucket.get(key);
+        if (!latest || latest.inFlight !== pending) {
+          return;
+        }
+        if (latest.value === undefined) {
+          bucket.delete(key);
+          return;
+        }
+        latest.inFlight = undefined;
+        bucket.set(key, latest);
+        touchCacheKey(bucket, key, policy.lruLimit);
+      });
+
+    bucket.set(key, {
+      value: previous?.value,
+      fetchedAt: previous?.fetchedAt ?? 0,
+      staleAt: previous?.staleAt ?? 0,
+      expiresAt: previous?.expiresAt ?? 0,
+      inFlight: pending,
+    });
+    touchCacheKey(bucket, key, policy.lruLimit);
+    return pending;
+  };
+
+  if (existing?.value !== undefined) {
+    if (existing.staleAt > now) {
+      touchCacheKey(bucket, key, policy.lruLimit);
+      noteCacheEvent(policy.scope, 'hit', projectId);
+      return existing.value;
+    }
+    if (existing.expiresAt > now) {
+      touchCacheKey(bucket, key, policy.lruLimit);
+      noteCacheEvent(policy.scope, 'stale', projectId);
+      void startFetch('revalidate', existing);
+      return existing.value;
+    }
+  }
+
+  if (existing?.inFlight) {
+    touchCacheKey(bucket, key, policy.lruLimit);
+    noteCacheEvent(policy.scope, 'inflight', projectId);
+    return existing.inFlight;
+  }
+
+  return startFetch('miss', existing);
+}
+
+export function invalidateTestVisualizerProjectCache(projectId?: string, reason = 'manual'): void {
+  if (projectId && projectId.trim()) {
+    PROJECT_CACHE.delete(projectId);
+    if (IS_DEV) {
+      console.debug('[test-visualizer-cache]', 'invalidate:project', { projectId, reason });
+    }
+    return;
+  }
+  PROJECT_CACHE.clear();
+  if (IS_DEV) {
+    console.debug('[test-visualizer-cache]', 'invalidate:all', { reason });
+  }
+}
+
+export function getTestVisualizerCacheStats(): TestVisualizerCacheStatsSnapshot {
+  const stats = CACHE_SCOPES.reduce(
+    (scopeAcc, scope) => {
+      scopeAcc[scope] = CACHE_OUTCOMES.reduce((outcomeAcc, outcome) => {
+        outcomeAcc[outcome] = CACHE_STATS[scope][outcome];
+        return outcomeAcc;
+      }, {} as Record<CacheOutcome, number>);
+      return scopeAcc;
+    },
+    {} as CacheStats,
+  );
+  return {
+    stats,
+    projectsCached: PROJECT_CACHE.size,
+  };
+}
+
 export async function getDomainHealth(projectId: string, since?: string): Promise<DomainHealthRollup[]> {
   const query = buildQuery({ project_id: projectId, since });
-  return requestJson<DomainHealthRollup[]>(`/health/domains${query}`);
+  const path = `/health/domains${query}`;
+  const projectCache = getProjectCacheStore(projectId);
+  return readThroughProjectCache(
+    projectId,
+    path,
+    projectCache.domainHealth,
+    DOMAIN_HEALTH_CACHE_POLICY,
+    () => requestJson<DomainHealthRollup[]>(path),
+  );
 }
 
 export async function getFeatureHealth(
@@ -156,7 +409,15 @@ export async function getFeatureHealth(
     cursor: options?.cursor,
     limit: options?.limit,
   });
-  return requestJson<CursorPage<FeatureTestHealth>>(`/health/features${query}`);
+  const path = `/health/features${query}`;
+  const projectCache = getProjectCacheStore(projectId);
+  return readThroughProjectCache(
+    projectId,
+    path,
+    projectCache.featureHealth,
+    FEATURE_HEALTH_CACHE_POLICY,
+    () => requestJson<CursorPage<FeatureTestHealth>>(path),
+  );
 }
 
 export async function getTestRun(
@@ -187,7 +448,15 @@ export async function listRunResults(options: {
     cursor: options.cursor,
     limit: options.limit,
   });
-  return requestJson<RunResultPage>(`/runs/${encodeURIComponent(options.runId)}/results${query}`);
+  const path = `/runs/${encodeURIComponent(options.runId)}/results${query}`;
+  const projectCache = getProjectCacheStore(options.projectId);
+  return readThroughProjectCache(
+    options.projectId,
+    path,
+    projectCache.runResults,
+    RUN_RESULTS_CACHE_POLICY,
+    () => requestJson<RunResultPage>(path),
+  );
 }
 
 export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<TestRun>> {
@@ -200,7 +469,15 @@ export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<T
     cursor: filter.cursor,
     limit: filter.limit,
   });
-  return requestJson<CursorPage<TestRun>>(`/runs${query}`);
+  const path = `/runs${query}`;
+  const projectCache = getProjectCacheStore(filter.projectId);
+  return readThroughProjectCache(
+    filter.projectId,
+    path,
+    projectCache.testRuns,
+    TEST_RUNS_CACHE_POLICY,
+    () => requestJson<CursorPage<TestRun>>(path),
+  );
 }
 
 export async function getTestHistory(
@@ -301,7 +578,9 @@ export async function syncTestSources(
       typeof detailRecord?.hint === 'string' ? detailRecord.hint : '',
     );
   }
-  return toCamelValue<TestSyncResponse>(payload);
+  const response = toCamelValue<TestSyncResponse>(payload);
+  invalidateTestVisualizerProjectCache(projectId, 'sync_test_sources');
+  return response;
 }
 
 export async function getTestMetricsSummary(projectId: string): Promise<TestMetricSummary> {
