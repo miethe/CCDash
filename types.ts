@@ -944,6 +944,75 @@ export interface FeatureExecutionContext {
   generatedAt: string;
 }
 
+export type ExecutionPolicyVerdict = 'allow' | 'requires_approval' | 'deny';
+export type ExecutionRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'blocked';
+export type ExecutionRiskLevel = 'low' | 'medium' | 'high';
+export type ExecutionApprovalDecision = 'pending' | 'approved' | 'denied';
+export type ExecutionEventStream = 'stdout' | 'stderr' | 'system';
+
+export interface ExecutionPolicyResult {
+  verdict: ExecutionPolicyVerdict;
+  riskLevel: ExecutionRiskLevel;
+  requiresApproval: boolean;
+  normalizedCommand: string;
+  commandTokens: string[];
+  resolvedCwd: string;
+  reasonCodes: string[];
+}
+
+export interface ExecutionRun {
+  id: string;
+  projectId: string;
+  featureId: string;
+  provider: string;
+  sourceCommand: string;
+  normalizedCommand: string;
+  cwd: string;
+  envProfile: string;
+  recommendationRuleId: string;
+  riskLevel: ExecutionRiskLevel;
+  policyVerdict: ExecutionPolicyVerdict;
+  requiresApproval: boolean;
+  approvedBy: string;
+  approvedAt: string;
+  status: ExecutionRunStatus;
+  exitCode: number | null;
+  startedAt: string;
+  endedAt: string;
+  retryOfRunId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionRunEvent {
+  id: number | null;
+  runId: string;
+  sequenceNo: number;
+  stream: ExecutionEventStream;
+  eventType: string;
+  payloadText: string;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+}
+
+export interface ExecutionRunEventPage {
+  runId: string;
+  items: ExecutionRunEvent[];
+  nextSequence: number;
+}
+
+export interface ExecutionApproval {
+  id: number | null;
+  runId: string;
+  decision: ExecutionApprovalDecision;
+  reason: string;
+  requestedAt: string;
+  resolvedAt: string;
+  requestedBy: string;
+  resolvedBy: string;
+}
+
 // ── Test Visualizer Types ──────────────────────────────────────────
 
 export type TestStatus =
