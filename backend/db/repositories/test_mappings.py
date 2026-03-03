@@ -186,6 +186,29 @@ class SqliteTestMappingRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_primary_by_tests(self, project_id: str, test_ids: list[str]) -> dict[str, dict]:
+        normalized = sorted({str(test_id).strip() for test_id in test_ids if str(test_id).strip()})
+        if not normalized:
+            return {}
+        placeholders = ", ".join("?" for _ in normalized)
+        query = f"""
+            SELECT *
+            FROM test_feature_mappings
+            WHERE project_id = ? AND is_primary = 1 AND test_id IN ({placeholders})
+            ORDER BY test_id ASC, confidence DESC, mapping_id DESC
+        """
+        async with self.db.execute(query, (project_id, *normalized)) as cur:
+            rows = await cur.fetchall()
+
+        by_test: dict[str, dict] = {}
+        for row in rows:
+            item = self._row_to_dict(row)
+            test_id = str(item.get("test_id") or "").strip()
+            if not test_id or test_id in by_test:
+                continue
+            by_test[test_id] = item
+        return by_test
+
     async def list_primary_by_project(self, project_id: str, domain_id: str | None = None) -> list[dict]:
         if domain_id:
             query = """

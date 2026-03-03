@@ -972,7 +972,7 @@ async def import_mappings(request: Request) -> dict[str, Any]:
         result = await resolver.resolve(
             project_id=project_id,
             test_definitions=definitions,
-            context={"source": "import_api", "version": 1},
+            context={"source": "import_api", "version": 2, "force_recompute": True},
         )
 
     return {
@@ -992,15 +992,13 @@ async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest)
 
     db = await connection.get_connection()
     run_repo = get_test_run_repository(db)
+    definition_repo = get_test_definition_repository(db)
     result_repo = get_test_result_repository(db)
-    mapping_repo = get_test_mapping_repository(db)
 
     runs = await run_repo.list_by_project(project_id=body.project_id, limit=body.run_limit, offset=0)
-    resolver = MappingResolver(db)
+    resolver = MappingResolver(db, provider_sources=body.provider_sources or None)
     runs_processed = 0
-    mappings_stored = 0
-    primary_mappings = 0
-    errors: list[str] = []
+    definitions: dict[str, dict[str, Any]] = {}
 
     for run in runs:
         run_id = str(run.get("run_id") or "").strip()
@@ -1009,29 +1007,55 @@ async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest)
         run_results = await result_repo.get_by_run(run_id)
         if not run_results:
             continue
-
-        test_ids = [str(row.get("test_id") or "").strip() for row in run_results if str(row.get("test_id") or "").strip()]
-        existing_primary = 0
-        if test_ids:
-            for test_id in sorted(set(test_ids)):
-                existing_primary += len(await mapping_repo.get_primary_for_test(body.project_id, test_id))
-        if existing_primary > 0:
-            continue
-
-        result = await resolver.resolve_for_run(run_id=run_id, project_id=body.project_id)
         runs_processed += 1
-        mappings_stored += int(result.stored_count or 0)
-        primary_mappings += int(result.primary_count or 0)
-        errors.extend(result.errors or [])
+
+        for row in run_results:
+            test_id = str(row.get("test_id") or "").strip()
+            if not test_id or test_id in definitions:
+                continue
+            definition = await definition_repo.get_by_id(test_id)
+            if definition is not None:
+                definitions[test_id] = definition
+                continue
+            definitions[test_id] = {
+                "test_id": test_id,
+                "project_id": body.project_id,
+                "path": str(row.get("path") or "").strip(),
+                "name": str(row.get("name") or "").strip(),
+                "framework": str(row.get("framework") or "pytest").strip() or "pytest",
+                "tags": row.get("tags") if isinstance(row.get("tags"), list) else [],
+                "owner": str(row.get("owner") or "").strip(),
+            }
+
+    result = await resolver.resolve(
+        project_id=body.project_id,
+        test_definitions=list(definitions.values()),
+        context={
+            "version": 2,
+            "source": str(body.source or "backfill_api").strip() or "backfill_api",
+            "force_recompute": bool(body.force_recompute),
+            "project_root": str(config.CCDASH_PROJECT_ROOT or "").strip(),
+        },
+    )
+    cache_state = dict(result.cache_state or {})
+    cache_state["runs_processed"] = runs_processed
+    cache_state["run_limit"] = body.run_limit
+    if body.provider_sources:
+        cache_state["provider_sources"] = [str(source).strip() for source in body.provider_sources if str(source).strip()]
 
     return BackfillTestMappingsResponse(
         project_id=body.project_id,
         run_limit=body.run_limit,
         runs_processed=runs_processed,
-        mappings_stored=mappings_stored,
-        primary_mappings=primary_mappings,
-        total_errors=len(errors),
-        errors=errors[:100],
+        tests_considered=result.tests_considered,
+        tests_resolved=result.tests_resolved,
+        tests_reused_cached=result.tests_reused_cached,
+        mappings_stored=result.stored_count,
+        primary_mappings=result.primary_count,
+        resolver_version=result.resolver_version,
+        cache_state=cache_state,
+        total_errors=len(result.errors),
+        errors=result.errors[:100],
     )
 
 

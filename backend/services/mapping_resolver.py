@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -28,6 +29,16 @@ _FEATURE_MARKER_PATTERN = re.compile(r'@pytest\.mark\.feature\(["\']([^"\']+)["\
 _DOMAIN_MARKER_PATTERN = re.compile(r'@pytest\.mark\.domain\(["\']([^"\']+)["\']\)')
 _GENERIC_MARKER_PATTERN = re.compile(r"@pytest\.mark\.([A-Za-z_][A-Za-z0-9_]*)")
 _TEST_FUNC_PATTERN = re.compile(r"\btest[_\-.]([A-Za-z0-9_\-.]+)")
+_DOMAIN_SPLIT_PATTERN = re.compile(r"[/:>.\\]+")
+
+_MAPPINGS_RESOLVER_VERSION = "2.0.0"
+_DEFAULT_DOMAIN_MAX_DEPTH = 3
+_DEFAULT_DOMAIN_DEPTH2_MIN_TESTS = 40
+_DEFAULT_DOMAIN_DEPTH3_MIN_TESTS = 120
+
+_KNOWN_TEST_ROOTS = {"tests", "test"}
+_KNOWN_TEST_GROUPS = {"unit", "integration", "e2e", "functional", "smoke", "regression"}
+_IGNORED_DOMAIN_SEGMENTS = {"src", "python", "spec", "specs", "suite", "suites"}
 
 
 def _slug(value: str) -> str:
@@ -48,6 +59,147 @@ def _clamp_confidence(value: Any, default: float = 0.0) -> float:
     if numeric > 1.0:
         return 1.0
     return round(numeric, 4)
+
+
+def _extract_mapping_metadata(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    metadata = row.get("metadata_json", row.get("metadata", {}))
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, str) and metadata.strip():
+        try:
+            parsed = json.loads(metadata)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
+def _definition_signature(row: dict[str, Any]) -> str:
+    tags = row.get("tags")
+    if not isinstance(tags, list):
+        tags = []
+    payload = {
+        "test_id": str(row.get("test_id") or "").strip(),
+        "path": str(row.get("path") or "").strip(),
+        "name": str(row.get("name") or "").strip(),
+        "framework": str(row.get("framework") or "pytest").strip() or "pytest",
+        "tags": sorted({_slug(str(tag)) for tag in tags if _slug(str(tag))}),
+        "owner": str(row.get("owner") or "").strip(),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+class _DomainHierarchyAssigner:
+    """Build adaptive domain hierarchies and resolve persisted domain IDs."""
+
+    def __init__(
+        self,
+        domain_repo: Any,
+        test_definitions: list[dict[str, Any]],
+        context: dict[str, Any],
+    ):
+        self.domain_repo = domain_repo
+        self.context = context
+        self.max_depth = max(1, int(context.get("domain_max_depth") or _DEFAULT_DOMAIN_MAX_DEPTH))
+        self.depth2_min_tests = max(2, int(context.get("domain_depth2_min_tests") or _DEFAULT_DOMAIN_DEPTH2_MIN_TESTS))
+        self.depth3_min_tests = max(3, int(context.get("domain_depth3_min_tests") or _DEFAULT_DOMAIN_DEPTH3_MIN_TESTS))
+        self.prefix_counts = self._prefix_counts(test_definitions)
+        self._cache: dict[tuple[str, str | None, str], dict[str, Any]] = {}
+
+    def path_segments(self, test_path: str) -> list[str]:
+        path = str(test_path or "").strip().replace("\\", "/")
+        if not path:
+            return []
+
+        parts = [segment for segment in path.split("/") if segment]
+        if not parts:
+            return []
+        if _slug(parts[0]) in _KNOWN_TEST_ROOTS:
+            parts = parts[1:]
+        if not parts:
+            return []
+
+        directories = parts[:-1]
+        if directories and _slug(directories[0]) in _KNOWN_TEST_GROUPS and len(directories) > 1:
+            directories = directories[1:]
+
+        segments: list[str] = []
+        for segment in directories:
+            token = _slug(segment)
+            if not token or token in _IGNORED_DOMAIN_SEGMENTS:
+                continue
+            segments.append(token)
+        return segments[: self.max_depth]
+
+    def marker_segments(self, marker: str) -> list[str]:
+        raw_parts = [part for part in _DOMAIN_SPLIT_PATTERN.split(str(marker or "").strip()) if part]
+        segments: list[str] = []
+        for part in raw_parts:
+            token = _slug(part)
+            if not token or token in _IGNORED_DOMAIN_SEGMENTS:
+                continue
+            segments.append(token)
+        return segments[: self.max_depth]
+
+    def select_segments(self, segments: list[str], *, explicit: bool = False) -> list[str]:
+        if not segments:
+            return []
+        capped = segments[: self.max_depth]
+        if explicit:
+            return capped
+
+        depth = 1
+        if len(capped) >= 2 and self._prefix_count(capped[:1]) >= self.depth2_min_tests:
+            depth = 2
+        if len(capped) >= 3 and self._prefix_count(capped[:2]) >= self.depth3_min_tests:
+            depth = 3
+        return capped[:depth]
+
+    async def ensure_domain(self, project_id: str, segments: list[str]) -> tuple[str | None, str]:
+        if not project_id or not segments:
+            return None, ""
+
+        parent_id: str | None = None
+        created_path: list[str] = []
+        for index, name in enumerate(segments):
+            key = (project_id, parent_id, name)
+            domain = self._cache.get(key)
+            if domain is None:
+                tier = "core" if index == 0 else "support" if index == 1 else "leaf"
+                domain = await self.domain_repo.get_or_create_by_name(
+                    project_id,
+                    name,
+                    parent_id=parent_id,
+                    tier=tier,
+                )
+                self._cache[key] = domain or {}
+            domain_id = str((domain or {}).get("domain_id") or "").strip()
+            if not domain_id:
+                break
+            parent_id = domain_id
+            created_path.append(name)
+
+        return parent_id, "/".join(created_path)
+
+    def _prefix_counts(self, test_definitions: list[dict[str, Any]]) -> dict[tuple[str, ...], int]:
+        counts: dict[tuple[str, ...], int] = {}
+        for row in test_definitions:
+            segments = self.path_segments(str(row.get("path") or ""))
+            if not segments:
+                continue
+            for depth in range(1, min(len(segments), self.max_depth) + 1):
+                key = tuple(segments[:depth])
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    def _prefix_count(self, prefix: list[str]) -> int:
+        if not prefix:
+            return 0
+        return int(self.prefix_counts.get(tuple(prefix), 0))
 
 
 @runtime_checkable
@@ -89,6 +241,11 @@ class MappingResolutionResult:
     candidate_count: int = 0
     stored_count: int = 0
     primary_count: int = 0
+    tests_considered: int = 0
+    tests_resolved: int = 0
+    tests_reused_cached: int = 0
+    resolver_version: str = _MAPPINGS_RESOLVER_VERSION
+    cache_state: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -108,6 +265,7 @@ class RepoHeuristicsProvider:
         context: dict[str, Any],
     ) -> list[MappingCandidate]:
         features = await self.feature_repo.list_all(project_id)
+        domain_assigner = _DomainHierarchyAssigner(self.domain_repo, test_definitions, context)
         candidates: list[MappingCandidate] = []
 
         for row in test_definitions:
@@ -124,11 +282,9 @@ class RepoHeuristicsProvider:
             if not matched_feature_id or confidence <= 0.3:
                 continue
 
-            domain_id = None
-            domain_hint = self._extract_domain_hint(path)
-            if domain_hint:
-                domain = await self.domain_repo.get_or_create_by_name(project_id, domain_hint)
-                domain_id = str(domain.get("domain_id") or "").strip() or None
+            raw_segments = domain_assigner.path_segments(path)
+            selected_segments = domain_assigner.select_segments(raw_segments, explicit=False)
+            domain_id, domain_path = await domain_assigner.ensure_domain(project_id, selected_segments)
 
             candidates.append(
                 MappingCandidate(
@@ -139,26 +295,13 @@ class RepoHeuristicsProvider:
                     provider_source=self.name,
                     metadata={
                         "feature_hint": feature_hint,
-                        "domain_hint": domain_hint,
+                        "domain_path": domain_path,
+                        "domain_segments": selected_segments,
+                        "domain_strategy": "path_adaptive",
                     },
                 )
             )
         return candidates
-
-    def _extract_domain_hint(self, test_path: str) -> str:
-        path = str(test_path or "").strip().replace("\\", "/")
-        if not path:
-            return ""
-        segments = [segment for segment in path.split("/") if segment]
-        if not segments:
-            return ""
-        if segments[0] == "tests":
-            segments = segments[1:]
-        if not segments:
-            return ""
-        if segments[0] in {"unit", "integration", "e2e", "functional"} and len(segments) > 1:
-            return _slug(segments[1])
-        return _slug(segments[0])
 
     def _extract_feature_hint(self, *, path: str, test_name: str) -> str:
         filename = Path(path).name
@@ -234,6 +377,7 @@ class TestMetadataProvider:
             feature_lookup[_slug(feature_id)] = feature_id
             feature_lookup[_slug(str(feature.get("name") or ""))] = feature_id
 
+        domain_assigner = _DomainHierarchyAssigner(self.domain_repo, test_definitions, context)
         candidates: list[MappingCandidate] = []
         for row in test_definitions:
             test_id = str(row.get("test_id") or "").strip()
@@ -244,9 +388,20 @@ class TestMetadataProvider:
                 continue
 
             domain_id = None
+            domain_path = ""
+            selected_segments: list[str] = []
             if markers["domains"]:
-                domain = await self.domain_repo.get_or_create_by_name(project_id, markers["domains"][0])
-                domain_id = str(domain.get("domain_id") or "").strip() or None
+                selected_segments = domain_assigner.select_segments(
+                    domain_assigner.marker_segments(markers["domains"][0]),
+                    explicit=True,
+                )
+            else:
+                selected_segments = domain_assigner.select_segments(
+                    domain_assigner.path_segments(str(row.get("path") or "")),
+                    explicit=False,
+                )
+            if selected_segments:
+                domain_id, domain_path = await domain_assigner.ensure_domain(project_id, selected_segments)
 
             for token in markers["features"]:
                 feature_id = feature_lookup.get(_slug(token))
@@ -259,7 +414,12 @@ class TestMetadataProvider:
                         domain_id=domain_id,
                         confidence=0.9,
                         provider_source=self.name,
-                        metadata={"source": "feature_marker", "token": token},
+                        metadata={
+                            "source": "feature_marker",
+                            "token": token,
+                            "domain_path": domain_path,
+                            "domain_segments": selected_segments,
+                        },
                     )
                 )
 
@@ -274,7 +434,12 @@ class TestMetadataProvider:
                         domain_id=domain_id,
                         confidence=0.8,
                         provider_source=self.name,
-                        metadata={"source": "tag", "token": token},
+                        metadata={
+                            "source": "tag",
+                            "token": token,
+                            "domain_path": domain_path,
+                            "domain_segments": selected_segments,
+                        },
                     )
                 )
         return candidates
@@ -312,7 +477,7 @@ class TestMetadataProvider:
 
         return {
             "features": [value for value in feature_markers if value],
-            "domains": [_slug(value) for value in domain_markers if _slug(value)],
+            "domains": [value for value in domain_markers if str(value).strip()],
             "feature_tags": [value for value in feature_tags if value],
         }
 
@@ -407,21 +572,39 @@ class SemanticLLMProvider:
 class MappingResolver:
     """Orchestrates providers, resolves conflicts, and stores mapping snapshots."""
 
-    def __init__(self, db: Any, providers: list[MappingProvider] | None = None):
+    def __init__(
+        self,
+        db: Any,
+        providers: list[MappingProvider] | None = None,
+        provider_sources: list[str] | None = None,
+    ):
         self.db = db
         self.run_repo = get_test_run_repository(db)
         self.result_repo = get_test_result_repository(db)
         self.definition_repo = get_test_definition_repository(db)
         self.mapping_repo = get_test_mapping_repository(db)
-        self.providers = providers or self._default_providers()
+        self.providers = providers or self._default_providers(provider_sources=provider_sources)
 
-    def _default_providers(self) -> list[MappingProvider]:
-        return [
-            TestMetadataProvider(self.db),
-            RepoHeuristicsProvider(self.db),
-        ]
+    def _default_providers(self, provider_sources: list[str] | None = None) -> list[MappingProvider]:
+        provider_by_name = {
+            "test_metadata": TestMetadataProvider(self.db),
+            "repo_heuristics": RepoHeuristicsProvider(self.db),
+        }
+        if not provider_sources:
+            order = ["test_metadata", "repo_heuristics"]
+        else:
+            normalized = [str(source).strip().lower() for source in provider_sources if str(source).strip()]
+            order = [name for name in normalized if name in provider_by_name]
+        return [provider_by_name[name] for name in order]
 
-    async def resolve_for_run(self, run_id: str, project_id: str) -> MappingResolutionResult:
+    async def resolve_for_run(
+        self,
+        run_id: str,
+        project_id: str,
+        *,
+        force_recompute: bool = False,
+        source: str = "run_ingest",
+    ) -> MappingResolutionResult:
         run = await self.run_repo.get_by_id(run_id)
         resolved_project = project_id or str((run or {}).get("project_id") or "").strip()
         if not resolved_project:
@@ -460,8 +643,10 @@ class MappingResolver:
             context={
                 "run_id": run_id,
                 "git_sha": str((run or {}).get("git_sha") or "").strip(),
-                "version": 1,
+                "version": 2,
                 "project_root": str(config.CCDASH_PROJECT_ROOT or "").strip(),
+                "force_recompute": force_recompute,
+                "source": source,
             },
         )
         result.run_id = run_id
@@ -475,11 +660,79 @@ class MappingResolver:
         context: dict[str, Any] | None = None,
     ) -> MappingResolutionResult:
         context = dict(context or {})
+        force_recompute = bool(context.get("force_recompute"))
+
+        by_test_id: dict[str, dict[str, Any]] = {}
+        for row in test_definitions:
+            test_id = str(row.get("test_id") or "").strip()
+            if not test_id:
+                continue
+            if test_id not in by_test_id:
+                by_test_id[test_id] = row
+        tests_considered = len(by_test_id)
+
         providers = sorted(self.providers, key=lambda provider: int(getattr(provider, "priority", 100)))
         provider_priority = {
             str(provider.name): int(getattr(provider, "priority", 100))
             for provider in providers
         }
+
+        if not providers:
+            return MappingResolutionResult(
+                run_id=str(context.get("run_id") or ""),
+                project_id=project_id,
+                provider_count=0,
+                tests_considered=tests_considered,
+                tests_resolved=0,
+                tests_reused_cached=0,
+                resolver_version=_MAPPINGS_RESOLVER_VERSION,
+                cache_state={
+                    "force_recompute": force_recompute,
+                    "reuse_enabled": False,
+                    "requested_tests": tests_considered,
+                },
+                errors=["No mapping providers are configured."],
+            )
+
+        signature_by_test: dict[str, str] = {
+            test_id: _definition_signature(row)
+            for test_id, row in by_test_id.items()
+        }
+
+        definitions_to_resolve: list[dict[str, Any]] = []
+        reused_cached: set[str] = set()
+        if force_recompute:
+            definitions_to_resolve = list(by_test_id.values())
+        else:
+            existing_primary = await self.mapping_repo.list_primary_by_tests(project_id, list(by_test_id.keys()))
+            for test_id, definition in by_test_id.items():
+                cached = existing_primary.get(test_id)
+                if self._is_cache_hit(cached, signature_by_test[test_id]):
+                    reused_cached.add(test_id)
+                    continue
+                definitions_to_resolve.append(definition)
+
+        if not definitions_to_resolve:
+            return MappingResolutionResult(
+                run_id=str(context.get("run_id") or ""),
+                project_id=project_id,
+                provider_count=len(providers),
+                candidate_count=0,
+                stored_count=0,
+                primary_count=0,
+                tests_considered=tests_considered,
+                tests_resolved=0,
+                tests_reused_cached=len(reused_cached),
+                resolver_version=_MAPPINGS_RESOLVER_VERSION,
+                cache_state={
+                    "force_recompute": force_recompute,
+                    "reuse_enabled": not force_recompute,
+                    "requested_tests": tests_considered,
+                    "resolved_now": 0,
+                    "reused_cached": len(reused_cached),
+                },
+                errors=[],
+            )
 
         errors: list[str] = []
         all_candidates: list[MappingCandidate] = []
@@ -488,7 +741,7 @@ class MappingResolver:
                 errors.append(f"Provider {provider!r} does not satisfy MappingProvider protocol.")
                 continue
             try:
-                rows = await provider.resolve(test_definitions, project_id, context)
+                rows = await provider.resolve(definitions_to_resolve, project_id, context)
                 all_candidates.extend(
                     self._sanitize_candidate(
                         row,
@@ -506,7 +759,10 @@ class MappingResolver:
             project_id=project_id,
             candidates=merged,
             context=context,
+            signature_by_test=signature_by_test,
         )
+
+        resolved_tests = len({candidate.test_id for candidate in merged})
         return MappingResolutionResult(
             run_id=str(context.get("run_id") or ""),
             project_id=project_id,
@@ -514,8 +770,29 @@ class MappingResolver:
             candidate_count=len(merged),
             stored_count=stored_count,
             primary_count=primary_count,
+            tests_considered=tests_considered,
+            tests_resolved=resolved_tests,
+            tests_reused_cached=len(reused_cached),
+            resolver_version=_MAPPINGS_RESOLVER_VERSION,
+            cache_state={
+                "force_recompute": force_recompute,
+                "reuse_enabled": not force_recompute,
+                "requested_tests": tests_considered,
+                "resolved_now": len(definitions_to_resolve),
+                "reused_cached": len(reused_cached),
+            },
             errors=errors,
         )
+
+    def _is_cache_hit(self, cached_row: dict[str, Any] | None, signature: str) -> bool:
+        if not isinstance(cached_row, dict):
+            return False
+        metadata = _extract_mapping_metadata(cached_row)
+        cached_signature = str(metadata.get("definition_signature") or "").strip()
+        cached_version = str(metadata.get("resolver_version") or "").strip()
+        if not cached_signature or not cached_version:
+            return False
+        return cached_signature == signature and cached_version == _MAPPINGS_RESOLVER_VERSION
 
     def _sanitize_candidate(
         self,
@@ -634,16 +911,20 @@ class MappingResolver:
         project_id: str,
         candidates: list[MappingCandidate],
         context: dict[str, Any],
+        signature_by_test: dict[str, str],
     ) -> tuple[int, int]:
         if not candidates:
             return 0, 0
 
-        version = int(context.get("version") or 1)
+        version = int(context.get("version") or 2)
         snapshot_hash = self._snapshot_hash(
             candidates=candidates,
             run_id=str(context.get("run_id") or ""),
             version=version,
         )
+
+        mapped_at = datetime.now(timezone.utc).isoformat()
+        source = str(context.get("source") or "").strip()
 
         stored = 0
         primary = 0
@@ -651,6 +932,14 @@ class MappingResolver:
             is_primary = bool(row.metadata.get("is_primary"))
             if is_primary:
                 primary += 1
+
+            metadata = dict(row.metadata or {})
+            metadata["definition_signature"] = signature_by_test.get(row.test_id, "")
+            metadata["resolver_version"] = _MAPPINGS_RESOLVER_VERSION
+            metadata["mapped_at"] = mapped_at
+            if source:
+                metadata.setdefault("source", source)
+
             await self.mapping_repo.upsert(
                 {
                     "project_id": project_id,
@@ -662,7 +951,7 @@ class MappingResolver:
                     "version": version,
                     "snapshot_hash": snapshot_hash,
                     "is_primary": 1 if is_primary else 0,
-                    "metadata": row.metadata,
+                    "metadata": metadata,
                 },
                 project_id=project_id,
             )
@@ -691,7 +980,12 @@ class MappingResolver:
             )
         ]
         encoded = json.dumps(
-            {"run_id": run_id, "version": version, "mappings": payload},
+            {
+                "run_id": run_id,
+                "version": version,
+                "resolver_version": _MAPPINGS_RESOLVER_VERSION,
+                "mappings": payload,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

@@ -198,6 +198,57 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(primary), 1)
         self.assertEqual(primary[0]["feature_id"], "login")
 
+    async def test_resolver_reuses_cached_mapping_when_definition_unchanged(self) -> None:
+        class _Provider:
+            name = "provider_cache"
+            priority = 10
+
+            async def resolve(self, test_definitions, project_id, context):
+                _ = test_definitions, project_id, context
+                return [MappingCandidate("test-cache-1", "login", "dom-cache", 0.91, self.name)]
+
+        resolver = MappingResolver(self.db, providers=[_Provider()])
+        definition = [{"test_id": "test-cache-1", "path": "tests/auth/test_login.py", "name": "test_login"}]
+
+        first = await resolver.resolve(
+            project_id="project-1",
+            test_definitions=definition,
+            context={"source": "unit_test", "version": 2},
+        )
+        second = await resolver.resolve(
+            project_id="project-1",
+            test_definitions=definition,
+            context={"source": "unit_test", "version": 2},
+        )
+
+        self.assertEqual(first.stored_count, 1)
+        self.assertEqual(second.stored_count, 0)
+        self.assertEqual(second.tests_reused_cached, 1)
+
+    async def test_repo_heuristics_provider_creates_subdomain_for_large_domain_group(self) -> None:
+        provider = RepoHeuristicsProvider(self.db)
+        definitions = [
+            {
+                "test_id": f"test-hier-{i}",
+                "path": "tests/auth/api/test_login.py",
+                "name": f"test_login_case_{i}",
+                "framework": "pytest",
+                "tags": [],
+            }
+            for i in range(45)
+        ]
+
+        rows = await provider.resolve(definitions, project_id="project-1", context={})
+        self.assertGreaterEqual(len(rows), 1)
+
+        domain_id = rows[0].domain_id or ""
+        leaf = await self.domain_repo.get_by_id(domain_id)
+        self.assertEqual(str((leaf or {}).get("name") or "").lower(), "api")
+
+        parent_id = str((leaf or {}).get("parent_id") or "")
+        parent = await self.domain_repo.get_by_id(parent_id)
+        self.assertEqual(str((parent or {}).get("name") or "").lower(), "auth")
+
     async def test_resolve_for_run_uses_run_results(self) -> None:
         await self.db.execute(
             """
@@ -223,8 +274,11 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
 
         resolver = MappingResolver(self.db)
         result = await resolver.resolve_for_run(run_id="run-phase-7", project_id="project-1")
+        rerun = await resolver.resolve_for_run(run_id="run-phase-7", project_id="project-1")
 
         self.assertGreaterEqual(result.stored_count, 1)
+        self.assertEqual(rerun.stored_count, 0)
+        self.assertGreaterEqual(rerun.tests_reused_cached, 1)
         mappings = await self.mapping_repo.list_by_test("project-1", "test-run-1")
         self.assertTrue(mappings)
 

@@ -4,7 +4,7 @@ schema_version: 2
 doc_type: phase_plan
 status: complete
 created: 2026-02-28
-updated: 2026-03-01
+updated: 2026-03-03
 feature_slug: "test-visualizer"
 feature_version: "v1"
 phase: 7
@@ -66,6 +66,21 @@ Both are designed to fail gracefully — if providers conflict, confidence score
   - `backend/tests/test_mapping_resolver.py`
   - `backend/tests/test_integrity_detector.py`
   - router import coverage in `backend/tests/test_test_visualizer_router.py`
+
+## Post-Phase Update (2026-03-03)
+
+- Added incremental mapping cache reuse in `MappingResolver`:
+  - definition-signature based cache hits skip provider recomputation for unchanged tests.
+  - stored mapping metadata now includes `definition_signature`, `resolver_version`, and `mapped_at`.
+- Upgraded `POST /api/tests/mappings/backfill` to project-level incremental processing:
+  - gathers unique tests across selected runs.
+  - resolves only new/changed tests unless `force_recompute=true`.
+  - returns reuse/coverage telemetry (`tests_considered`, `tests_resolved`, `tests_reused_cached`, `cache_state`).
+- Added adaptive domain hierarchy behavior:
+  - providers create parent/child sub-domains instead of only flat first-level domains.
+  - depth expands for large domains to improve drilldown utility on high-volume test areas.
+- Added provider-source selection support for backfill payloads:
+  - `provider_sources` can constrain provider execution for batch operations.
 
 ---
 

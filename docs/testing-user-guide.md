@@ -124,3 +124,50 @@ The frontend includes a circuit breaker for `feature_disabled` responses to prev
 ### High CPU or constant polling previously observed
 
 Current behavior gates polling by effective project config and halts retry loops on `feature_disabled` 503 responses. If you still see churn, re-check env/project flags and browser console errors.
+
+## 9) Mapping Coverage and Reuse Workflow
+
+Use this workflow to get high mapping coverage without remapping every run:
+
+1. Bootstrap once per project:
+   - Run `POST /api/tests/mappings/backfill` with your target `project_id`.
+   - Optionally increase `run_limit` to cover older runs.
+2. Let normal ingestion run incrementally:
+   - New runs call the resolver with definition-signature caching.
+   - Unchanged tests reuse cached primary mappings.
+   - Only new/changed tests are remapped.
+3. Use full remap only when needed:
+   - Set `force_recompute=true` in backfill when mapping logic or feature taxonomy changes.
+
+Backfill response now reports cache and resolver state:
+
+- `tests_considered`
+- `tests_resolved`
+- `tests_reused_cached`
+- `resolver_version`
+- `cache_state`
+
+## 10) Domain and Sub-domain Mapping
+
+Mapping providers now support hierarchical domains:
+
+1. `RepoHeuristicsProvider`
+   - derives domain path segments from test file location.
+   - creates parent/child domain rows (`core` -> `support` -> `leaf`).
+   - automatically maps deeper sub-domains when a top-level domain contains many tests.
+2. `TestMetadataProvider`
+   - honors explicit `@pytest.mark.domain(...)` or `domain:<token>` tags.
+   - supports hierarchical markers (for example `auth/api`).
+   - falls back to adaptive path-derived domain hierarchy if no explicit domain marker is present.
+
+## 11) Extensible Mapping Methods
+
+The resolver is provider-driven to support future mapping strategies:
+
+1. Built-in providers:
+   - `test_metadata`
+   - `repo_heuristics`
+2. External/semantic provider path:
+   - use `POST /api/tests/mappings/import` with a precomputed mapping file (`semantic_llm` source).
+3. Provider selection for bulk backfill:
+   - use `provider_sources` in `POST /api/tests/mappings/backfill` to constrain enabled providers.

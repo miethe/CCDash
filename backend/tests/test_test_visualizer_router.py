@@ -414,7 +414,10 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload.project_id, "project-1")
         self.assertGreaterEqual(payload.runs_processed, 1)
+        self.assertGreaterEqual(payload.tests_considered, 1)
+        self.assertGreaterEqual(payload.tests_resolved, 1)
         self.assertGreaterEqual(payload.mappings_stored, 1)
+        self.assertTrue(payload.resolver_version)
 
     async def test_mapping_resolver_detail_endpoint(self) -> None:
         with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
