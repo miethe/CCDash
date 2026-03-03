@@ -163,6 +163,7 @@ export function useTestRuns(
   const externalRefreshToken = options.refreshToken ?? 0;
   const agentSessionId = filter.agentSessionId;
   const featureId = filter.featureId;
+  const domainId = filter.domainId;
   const gitSha = filter.gitSha;
   const since = filter.since;
   const limit = filter.limit;
@@ -191,6 +192,7 @@ export function useTestRuns(
           projectId,
           agentSessionId,
           featureId,
+          domainId,
           gitSha,
           since,
           limit,
@@ -211,7 +213,7 @@ export function useTestRuns(
         setIsLoading(false);
       }
     },
-    [agentSessionId, enabled, featureDisabled, featureId, gitSha, limit, projectId, since],
+    [agentSessionId, domainId, enabled, featureDisabled, featureId, gitSha, limit, projectId, since],
   );
 
   useEffect(() => {

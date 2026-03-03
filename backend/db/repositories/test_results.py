@@ -103,6 +103,7 @@ class SqliteTestResultRepository:
         self,
         run_id: str,
         *,
+        domain_id: str | None = None,
         statuses: list[str] | None = None,
         query: str | None = None,
         sort_by: str = "status",
@@ -136,6 +137,25 @@ class SqliteTestResultRepository:
 
         where_clauses = ["r.run_id = ?"]
         params: list[object] = [run_id]
+        if domain_id:
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM test_feature_mappings m
+                    WHERE m.test_id = r.test_id
+                      AND m.project_id = (
+                          SELECT tr.project_id
+                          FROM test_runs tr
+                          WHERE tr.run_id = r.run_id
+                          LIMIT 1
+                      )
+                      AND m.is_primary = 1
+                      AND m.domain_id = ?
+                )
+                """
+            )
+            params.append(domain_id)
         if status_tokens:
             placeholders = ",".join("?" for _ in status_tokens)
             where_clauses.append(f"LOWER(r.status) IN ({placeholders})")

@@ -100,6 +100,14 @@ export const TestingPage: React.FC = () => {
     [updateQueryParam],
   );
 
+  const handleRunSelectionChange = useCallback((selection: {
+    run: TestRun | null;
+    detail: TestRunDetail | null;
+    isLoading: boolean;
+  }) => {
+    setSelectedRunContext(selection);
+  }, []);
+
   const domainNameById = useMemo(() => {
     const mapping = new Map<string, string>();
     const visit = (nodes: typeof status.domains) => {
@@ -262,7 +270,7 @@ export const TestingPage: React.FC = () => {
             hideHeader
             showDomainTree={false}
             onRunSelect={runId => updateQueryParam('runId', runId)}
-            onRunSelectionChange={selection => setSelectedRunContext(selection)}
+            onRunSelectionChange={handleRunSelectionChange}
             refreshToken={refreshNonce}
             uiFilter={{
               statuses: statusFilter,

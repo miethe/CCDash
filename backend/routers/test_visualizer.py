@@ -814,6 +814,7 @@ async def list_run_results(
     request: Request,
     run_id: str,
     project_id: str | None = None,
+    domain_id: str | None = None,
     statuses: str | None = None,
     query: str | None = None,
     sort_by: str = Query("status", pattern="^(status|duration|name|test_id)$"),
@@ -865,6 +866,7 @@ async def list_run_results(
         ]
         rows, total = await result_repo.list_by_run_filtered(
             run_id,
+            domain_id=domain_id,
             statuses=status_tokens or None,
             query=query,
             sort_by=sort_by,
@@ -1093,6 +1095,7 @@ async def list_runs(
     project_id: str,
     agent_session_id: str | None = None,
     feature_id: str | None = None,
+    domain_id: str | None = None,
     git_sha: str | None = None,
     since: str | None = None,
     cursor: str | None = None,
@@ -1114,6 +1117,7 @@ async def list_runs(
             project_id=project_id,
             agent_session_id=agent_session_id,
             feature_id=feature_id,
+            domain_id=domain_id,
             git_sha=git_sha,
             since=since,
             limit=limit,

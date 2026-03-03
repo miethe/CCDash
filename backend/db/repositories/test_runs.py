@@ -109,6 +109,7 @@ class SqliteTestRunRepository:
         *,
         agent_session_id: str | None = None,
         feature_id: str | None = None,
+        domain_id: str | None = None,
         git_sha: str | None = None,
         since: str | None = None,
         limit: int = 100,
@@ -142,6 +143,22 @@ class SqliteTestRunRepository:
                 """
             )
             params.append(feature_id)
+        if domain_id:
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM test_results r
+                    JOIN test_feature_mappings m
+                      ON m.project_id = tr.project_id
+                     AND m.test_id = r.test_id
+                     AND m.is_primary = 1
+                    WHERE r.run_id = tr.run_id
+                      AND m.domain_id = ?
+                )
+                """
+            )
+            params.append(domain_id)
 
         where_sql = " AND ".join(where_clauses)
         count_query = f"SELECT COUNT(*) FROM test_runs tr WHERE {where_sql}"

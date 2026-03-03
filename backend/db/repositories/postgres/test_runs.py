@@ -117,6 +117,7 @@ class PostgresTestRunRepository:
         *,
         agent_session_id: str | None = None,
         feature_id: str | None = None,
+        domain_id: str | None = None,
         git_sha: str | None = None,
         since: str | None = None,
         limit: int = 100,
@@ -154,6 +155,23 @@ class PostgresTestRunRepository:
                 """
             )
             params.append(feature_id)
+            bind_index += 1
+        if domain_id:
+            where_clauses.append(
+                f"""
+                EXISTS (
+                    SELECT 1
+                    FROM test_results r
+                    JOIN test_feature_mappings m
+                      ON m.project_id = tr.project_id
+                     AND m.test_id = r.test_id
+                     AND m.is_primary = 1
+                    WHERE r.run_id = tr.run_id
+                      AND m.domain_id = ${bind_index}
+                )
+                """
+            )
+            params.append(domain_id)
             bind_index += 1
 
         where_sql = " AND ".join(where_clauses)

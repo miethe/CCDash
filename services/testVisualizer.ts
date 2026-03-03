@@ -21,6 +21,7 @@ export interface TestRunsFilter {
   projectId: string;
   agentSessionId?: string;
   featureId?: string;
+  domainId?: string;
   gitSha?: string;
   since?: string;
   cursor?: string;
@@ -432,6 +433,7 @@ export async function getTestRun(
 export async function listRunResults(options: {
   runId: string;
   projectId: string;
+  domainId?: string;
   statuses?: string[];
   query?: string;
   sortBy?: 'status' | 'duration' | 'name' | 'test_id';
@@ -441,6 +443,7 @@ export async function listRunResults(options: {
 }): Promise<RunResultPage> {
   const query = buildQuery({
     project_id: options.projectId,
+    domain_id: options.domainId,
     statuses: (options.statuses || []).join(','),
     query: options.query,
     sort_by: options.sortBy,
@@ -464,6 +467,7 @@ export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<T
     project_id: filter.projectId,
     agent_session_id: filter.agentSessionId,
     feature_id: filter.featureId,
+    domain_id: filter.domainId,
     git_sha: filter.gitSha,
     since: filter.since,
     cursor: filter.cursor,

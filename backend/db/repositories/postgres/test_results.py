@@ -100,6 +100,7 @@ class PostgresTestResultRepository:
         self,
         run_id: str,
         *,
+        domain_id: str | None = None,
         statuses: list[str] | None = None,
         query: str | None = None,
         sort_by: str = "status",
@@ -133,6 +134,27 @@ class PostgresTestResultRepository:
         where_clauses = ["r.run_id = $1"]
         params: list[object] = [run_id]
         bind_index = 2
+
+        if domain_id:
+            where_clauses.append(
+                f"""
+                EXISTS (
+                    SELECT 1
+                    FROM test_feature_mappings m
+                    WHERE m.test_id = r.test_id
+                      AND m.project_id = (
+                          SELECT tr.project_id
+                          FROM test_runs tr
+                          WHERE tr.run_id = r.run_id
+                          LIMIT 1
+                      )
+                      AND m.is_primary = 1
+                      AND m.domain_id = ${bind_index}
+                )
+                """
+            )
+            params.append(domain_id)
+            bind_index += 1
 
         if status_tokens:
             where_clauses.append(f"LOWER(r.status) = ANY(${bind_index}::text[])")

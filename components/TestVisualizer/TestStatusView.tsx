@@ -112,11 +112,13 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   const [localRefreshToken, setLocalRefreshToken] = useState(0);
   const runResultsRequestIdRef = useRef(0);
   const effectiveRefreshToken = refreshToken + localRefreshToken;
+  const effectiveDomainId = filter?.domainId ?? selectedDomainId ?? undefined;
 
   const shouldFetchStatus = showDomainTree || !hideHeader;
   const status = useTestStatus(projectId, { enabled: Boolean(projectId && shouldFetchStatus) });
   const runs = useTestRuns(projectId, {
     featureId: filter?.featureId,
+    domainId: effectiveDomainId,
     agentSessionId: filter?.sessionId,
     limit: mode === 'compact' ? 3 : 12,
   }, {
@@ -355,6 +357,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         const payload = await listRunResults({
           runId: activeRunId,
           projectId,
+          domainId: effectiveDomainId,
           statuses: selectedStatusesParam,
           query: searchQuery || undefined,
           sortBy: resultSortKey,
@@ -382,7 +385,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     };
 
     void loadFirstPage();
-  }, [activeRunId, effectiveRefreshToken, projectId, resultSortKey, resultSortOrder, searchQuery, selectedStatusesParam]);
+  }, [activeRunId, effectiveDomainId, effectiveRefreshToken, projectId, resultSortKey, resultSortOrder, searchQuery, selectedStatusesParam]);
 
   const loadMoreRunResults = async () => {
     if (!activeRunId || !projectId || !resultsNextCursor || isRunResultsLoadingMore) {
@@ -397,6 +400,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       const payload = await listRunResults({
         runId: activeRunId,
         projectId,
+        domainId: effectiveDomainId,
         statuses: selectedStatusesParam,
         query: searchQuery || undefined,
         sortBy: resultSortKey,

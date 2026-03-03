@@ -258,6 +258,87 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(timeline.timeline), 1)
         self.assertEqual(alerts.total, 1)
 
+    async def test_domain_filters_apply_to_runs_and_run_results(self) -> None:
+        await self.db.execute(
+            """
+            INSERT INTO test_domains (domain_id, project_id, name, tier)
+            VALUES ('dom-2', 'project-1', 'UX', 'support')
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_definitions (test_id, project_id, path, name, framework)
+            VALUES ('test-2', 'project-1', 'tests/test_ui.py', 'test_ui', 'pytest')
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_runs (
+                run_id, project_id, timestamp, git_sha, branch, agent_session_id,
+                status, total_tests, passed_tests, failed_tests, skipped_tests, duration_ms
+            ) VALUES
+                ('run-3', 'project-1', '2026-02-28T12:00:00Z', 'sha-2', 'main', 'session-2', 'complete', 1, 1, 0, 0, 15)
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_results (run_id, test_id, status, duration_ms)
+            VALUES ('run-3', 'test-2', 'passed', 15)
+            """
+        )
+        await self.db.execute(
+            """
+            INSERT INTO test_feature_mappings (
+                project_id, test_id, feature_id, domain_id, provider_source, confidence, version, is_primary
+            ) VALUES ('project-1', 'test-2', 'feature-2', 'dom-2', 'repo_heuristics', 0.85, 1, 1)
+            """
+        )
+        await self.db.commit()
+
+        with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
+            dom1_runs = await router.list_runs(
+                types.SimpleNamespace(),
+                project_id="project-1",
+                domain_id="dom-1",
+                limit=10,
+            )
+            dom2_runs = await router.list_runs(
+                types.SimpleNamespace(),
+                project_id="project-1",
+                domain_id="dom-2",
+                limit=10,
+            )
+            dom1_results = await router.list_run_results(
+                types.SimpleNamespace(),
+                run_id="run-2",
+                project_id="project-1",
+                domain_id="dom-1",
+                limit=10,
+            )
+            dom2_results = await router.list_run_results(
+                types.SimpleNamespace(),
+                run_id="run-2",
+                project_id="project-1",
+                domain_id="dom-2",
+                limit=10,
+            )
+            run3_dom2_results = await router.list_run_results(
+                types.SimpleNamespace(),
+                run_id="run-3",
+                project_id="project-1",
+                domain_id="dom-2",
+                limit=10,
+            )
+
+        self.assertEqual({item.run_id for item in dom1_runs.items}, {"run-1", "run-2"})
+        self.assertEqual({item.run_id for item in dom2_runs.items}, {"run-3"})
+        self.assertEqual(dom1_results.total, 1)
+        self.assertEqual(len(dom1_results.items), 1)
+        self.assertEqual(dom2_results.total, 0)
+        self.assertEqual(len(dom2_results.items), 0)
+        self.assertEqual(run3_dom2_results.total, 1)
+        self.assertEqual(len(run3_dom2_results.items), 1)
+
     async def test_correlate_endpoint_and_missing_run(self) -> None:
         with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
             correlation = await router.correlate_run(
