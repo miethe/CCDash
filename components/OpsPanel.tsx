@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -57,6 +57,8 @@ function opKindLabel(kind: string): string {
       return 'Link Rebuild';
     case 'sync_changed_files':
       return 'Changed-Path Sync';
+    case 'test_mapping_backfill':
+      return 'Mapping Backfill';
     default:
       return kind || 'Operation';
   }
@@ -68,10 +70,28 @@ interface MappingBackfillResponse {
   project_id: string;
   run_limit: number;
   runs_processed: number;
+  tests_considered: number;
+  tests_resolved: number;
+  tests_reused_cached: number;
   mappings_stored: number;
   primary_mappings: number;
+  resolver_version: string;
+  cache_state: Record<string, any>;
   total_errors: number;
   errors: string[];
+}
+
+interface MappingBackfillStartResponse {
+  status: string;
+  mode: string;
+  message: string;
+  operationId: string;
+}
+
+interface OpsToast {
+  id: string;
+  message: string;
+  tone: 'success' | 'error' | 'info';
 }
 
 interface MappingResolverRunDetail {
@@ -93,8 +113,57 @@ interface MappingResolverDetailResponse {
   runs: MappingResolverRunDetail[];
 }
 
+function isTerminalOperationStatus(status: string): boolean {
+  const normalized = (status || '').trim().toLowerCase();
+  return normalized === 'completed' || normalized === 'failed';
+}
+
+function isMappingBackfillOperation(operation: SyncOperation | null | undefined): boolean {
+  return (operation?.kind || '').trim().toLowerCase() === 'test_mapping_backfill';
+}
+
+function normalizeBackfillDetail(operation: SyncOperation): MappingBackfillResponse | null {
+  const stats = operation.stats || {};
+  const projectId = String(stats.project_id || operation.projectId || '').trim();
+  const runLimit = Number(stats.run_limit ?? stats.runLimit ?? 0);
+  if (!projectId || runLimit <= 0) return null;
+
+  const errors = Array.isArray(stats.errors) ? stats.errors.map((item: any) => String(item)) : [];
+  return {
+    project_id: projectId,
+    run_limit: runLimit,
+    runs_processed: Number(stats.runs_processed ?? stats.runsProcessed ?? 0),
+    tests_considered: Number(stats.tests_considered ?? stats.testsConsidered ?? 0),
+    tests_resolved: Number(stats.tests_resolved ?? stats.testsResolved ?? 0),
+    tests_reused_cached: Number(stats.tests_reused_cached ?? stats.testsReusedCached ?? 0),
+    mappings_stored: Number(stats.mappings_stored ?? stats.mappingsStored ?? 0),
+    primary_mappings: Number(stats.primary_mappings ?? stats.primaryMappings ?? 0),
+    resolver_version: String(stats.resolver_version ?? stats.resolverVersion ?? ''),
+    cache_state: (stats.cache_state && typeof stats.cache_state === 'object')
+      ? stats.cache_state as Record<string, any>
+      : {},
+    total_errors: Number(stats.total_errors ?? stats.totalErrors ?? errors.length),
+    errors,
+  };
+}
+
+function mappingSummaryText(detail: MappingBackfillResponse): string {
+  return `Mapping backfill processed ${Number(detail.runs_processed || 0)} runs, stored ${Number(detail.mappings_stored || 0)} mappings (${Number(detail.primary_mappings || 0)} primary, ${Number(detail.total_errors || 0)} errors).`;
+}
+
+function mappingProgressPercent(operation: SyncOperation | null): number {
+  if (!operation) return 0;
+  const progress = operation.progress || {};
+  const raw = Number(progress.percent);
+  if (Number.isFinite(raw) && raw >= 0) return Math.max(0, Math.min(100, raw));
+  const total = Number(progress.runsTotal || 0);
+  const scanned = Number(progress.runsScanned || 0);
+  if (total > 0) return Math.max(0, Math.min(100, Math.round((scanned / total) * 100)));
+  return 0;
+}
+
 export const OpsPanel: React.FC = () => {
-  const { projects, activeProject, sessions, sessionTotal, documents, tasks, features } = useData();
+  const { projects, activeProject, sessions, sessionTotal, documents, tasks, features, refreshAll } = useData();
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
   const [health, setHealth] = useState<{ status: string; db: string; watcher: string } | null>(null);
@@ -115,7 +184,11 @@ export const OpsPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<OpsTab>('general');
   const [mappingRunLimit, setMappingRunLimit] = useState(250);
   const [mappingBackfillDetail, setMappingBackfillDetail] = useState<MappingBackfillResponse | null>(null);
+  const [mappingBackfillOperationId, setMappingBackfillOperationId] = useState('');
   const [mappingResolverDetail, setMappingResolverDetail] = useState<MappingResolverDetailResponse | null>(null);
+  const [toasts, setToasts] = useState<OpsToast[]>([]);
+  const handledOperationIdsRef = useRef<Set<string>>(new Set());
+  const toastTimerIdsRef = useRef<number[]>([]);
 
   const loadOverview = async () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
@@ -236,6 +309,56 @@ export const OpsPanel: React.FC = () => {
     setMappingResolverDetail(payload);
   }, []);
 
+  const pushToast = useCallback((message: string, tone: OpsToast['tone'] = 'info') => {
+    const id = `ops-toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts(prev => [...prev, { id, message, tone }].slice(-4));
+    const timerId = window.setTimeout(() => {
+      setToasts(prev => prev.filter(item => item.id !== id));
+    }, 5000);
+    toastTimerIdsRef.current.push(timerId);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      toastTimerIdsRef.current.forEach(id => window.clearTimeout(id));
+      toastTimerIdsRef.current = [];
+    };
+  }, []);
+
+  const startMappingBackfill = useCallback(async (projectId: string): Promise<string> => {
+    const startRes = await fetch(`${API_BASE}/tests/mappings/backfill/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        run_limit: mappingRunLimit,
+        source: 'ops-panel',
+      }),
+    });
+    if (!startRes.ok) throw new Error(`Mapping backfill request failed (${startRes.status})`);
+    const startPayload = await startRes.json() as MappingBackfillStartResponse;
+    const operationId = String(startPayload.operationId || '');
+    if (!operationId) throw new Error('Mapping backfill started without operation ID.');
+    return operationId;
+  }, [mappingRunLimit]);
+
+  const latestCompletedBackfillOperation = useMemo(
+    () => operations.find(op => isMappingBackfillOperation(op) && (op.status || '').toLowerCase() === 'completed') || null,
+    [operations],
+  );
+
+  const trackedBackfillOperation = useMemo(() => {
+    if (mappingBackfillOperationId) {
+      return operations.find(op => op.id === mappingBackfillOperationId) || null;
+    }
+    return operations.find(op => isMappingBackfillOperation(op) && !isTerminalOperationStatus(op.status)) || null;
+  }, [mappingBackfillOperationId, operations]);
+
+  const mappingBackfillRunning = Boolean(
+    trackedBackfillOperation && !isTerminalOperationStatus(trackedBackfillOperation.status),
+  );
+  const mappingBackfillPct = mappingProgressPercent(trackedBackfillOperation);
+
   const runMappingBackfillOnly = async () => {
     const projectId = status?.projectId || activeProject?.id || '';
     if (!projectId) {
@@ -247,21 +370,12 @@ export const OpsPanel: React.FC = () => {
     setError(null);
     setNotice(null);
     try {
-      const mapRes = await fetch(`${API_BASE}/tests/mappings/backfill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, run_limit: mappingRunLimit }),
-      });
-      if (!mapRes.ok) throw new Error(`Mapping backfill failed (${mapRes.status})`);
-      const mapPayload = await mapRes.json() as MappingBackfillResponse;
-      setMappingBackfillDetail(mapPayload);
-      await loadMappingResolverDetail(projectId, mappingRunLimit);
-      setNotice(
-        `Mapping backfill processed ${Number(mapPayload.runs_processed || 0)} runs, `
-        + `stored ${Number(mapPayload.mappings_stored || 0)} mappings `
-        + `(${Number(mapPayload.primary_mappings || 0)} primary, `
-        + `${Number(mapPayload.total_errors || 0)} errors).`
-      );
+      const operationId = await startMappingBackfill(projectId);
+      setMappingBackfillOperationId(operationId);
+      handledOperationIdsRef.current.delete(operationId);
+      setMappingBackfillDetail(null);
+      setSelectedOperationId(operationId);
+      setNotice('Mapping backfill started in the background. You can navigate away and it will continue running.');
       await loadOverview();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to run mapping backfill');
@@ -288,23 +402,15 @@ export const OpsPanel: React.FC = () => {
       });
       if (!syncRes.ok) throw new Error(`Test sync failed (${syncRes.status})`);
       const syncPayload = await syncRes.json() as { stats?: { synced?: number; errors?: number } };
-
-      const mapRes = await fetch(`${API_BASE}/tests/mappings/backfill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, run_limit: mappingRunLimit }),
-      });
-      if (!mapRes.ok) throw new Error(`Mapping backfill failed (${mapRes.status})`);
-      const mapPayload = await mapRes.json() as MappingBackfillResponse;
-      setMappingBackfillDetail(mapPayload);
-      await loadMappingResolverDetail(projectId, mappingRunLimit);
+      const operationId = await startMappingBackfill(projectId);
+      setMappingBackfillOperationId(operationId);
+      handledOperationIdsRef.current.delete(operationId);
+      setMappingBackfillDetail(null);
+      setSelectedOperationId(operationId);
 
       setNotice(
         `Test sync complete (synced ${Number(syncPayload.stats?.synced || 0)} files). `
-        + `Mapping backfill processed ${Number(mapPayload.runs_processed || 0)} runs, `
-        + `stored ${Number(mapPayload.mappings_stored || 0)} mappings `
-        + `(${Number(mapPayload.primary_mappings || 0)} primary, `
-        + `${Number(mapPayload.total_errors || 0)} errors).`
+        + 'Mapping backfill started in the background and will continue if you navigate away.'
       );
       await loadOverview();
     } catch (e) {
@@ -374,12 +480,60 @@ export const OpsPanel: React.FC = () => {
     });
   }, [activeTab, activeProject?.id, loadMappingResolverDetail, mappingRunLimit, status?.projectId]);
 
+  useEffect(() => {
+    if (!trackedBackfillOperation) return;
+    if (mappingBackfillOperationId) return;
+    setMappingBackfillOperationId(trackedBackfillOperation.id);
+  }, [mappingBackfillOperationId, trackedBackfillOperation]);
+
+  useEffect(() => {
+    if (mappingBackfillDetail || !latestCompletedBackfillOperation) return;
+    const detail = normalizeBackfillDetail(latestCompletedBackfillOperation);
+    if (detail) {
+      setMappingBackfillDetail(detail);
+    }
+  }, [latestCompletedBackfillOperation, mappingBackfillDetail]);
+
+  useEffect(() => {
+    const operation = trackedBackfillOperation;
+    if (!operation || !isTerminalOperationStatus(operation.status)) return;
+    if (handledOperationIdsRef.current.has(operation.id)) return;
+    handledOperationIdsRef.current.add(operation.id);
+
+    const operationStatus = (operation.status || '').toLowerCase();
+    if (operationStatus === 'completed') {
+      const detail = normalizeBackfillDetail(operation);
+      if (detail) {
+        setMappingBackfillDetail(detail);
+        setNotice(mappingSummaryText(detail));
+        if (activeTab === 'testing') {
+          loadMappingResolverDetail(detail.project_id, detail.run_limit).catch((e) => {
+            setError(e instanceof Error ? e.message : 'Failed to load mapping resolver detail');
+          });
+        }
+      } else {
+        setNotice(operation.message || 'Mapping backfill completed.');
+      }
+      setError(null);
+      pushToast('Mapping backfill completed.', 'success');
+      void refreshAll().catch(() => undefined);
+      return;
+    }
+
+    const failureMessage = operation.error || operation.message || 'Mapping backfill failed';
+    setError(failureMessage);
+    setNotice(null);
+    pushToast('Mapping backfill failed. Check operation details for error output.', 'error');
+    void refreshAll().catch(() => undefined);
+  }, [activeTab, loadMappingResolverDetail, pushToast, refreshAll, trackedBackfillOperation]);
+
   const snapshotCards = [
     { label: 'Sessions (Loaded/Total)', value: `${sessions.length} / ${sessionTotal}`, icon: Activity },
     { label: 'Documents', value: String(documents.length), icon: FolderKanban },
     { label: 'Tasks', value: String(tasks.length), icon: CheckCircle2 },
     { label: 'Features', value: String(features.length), icon: Gauge },
   ];
+  const disableBackfillActions = busyAction !== null || mappingBackfillRunning;
 
   return (
     <div className="space-y-6">
@@ -424,6 +578,24 @@ export const OpsPanel: React.FC = () => {
       {notice && (
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
           {notice}
+        </div>
+      )}
+      {toasts.length > 0 && (
+        <div className="fixed right-6 top-6 z-50 space-y-2 pointer-events-none">
+          {toasts.map(toast => (
+            <div
+              key={toast.id}
+              className={`rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur pointer-events-auto ${
+                toast.tone === 'success'
+                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-100'
+                  : toast.tone === 'error'
+                    ? 'border-rose-500/40 bg-rose-500/15 text-rose-100'
+                    : 'border-slate-600 bg-slate-900/90 text-slate-100'
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
         </div>
       )}
 
@@ -822,7 +994,7 @@ export const OpsPanel: React.FC = () => {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={runTestIngestAndMapping}
-                disabled={busyAction !== null}
+                disabled={disableBackfillActions}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-700/80 border border-cyan-500/30 text-cyan-100 hover:bg-cyan-700 disabled:opacity-60"
               >
                 <TestTube2 size={14} />
@@ -830,11 +1002,11 @@ export const OpsPanel: React.FC = () => {
               </button>
               <button
                 onClick={runMappingBackfillOnly}
-                disabled={busyAction !== null}
+                disabled={disableBackfillActions}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-700/80 border border-indigo-500/30 text-indigo-100 hover:bg-indigo-700 disabled:opacity-60"
               >
                 <Wrench size={14} />
-                Mapping Backfill Only
+                {mappingBackfillRunning ? 'Mapping Backfill Running...' : 'Mapping Backfill Only'}
               </button>
               <button
                 onClick={() => {
@@ -859,13 +1031,35 @@ export const OpsPanel: React.FC = () => {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
               <h3 className="text-lg font-semibold text-slate-100">Last Backfill Run</h3>
-              {!mappingBackfillDetail && (
+              {mappingBackfillRunning && trackedBackfillOperation && (
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-300">
+                    Status: <span className="text-slate-100">{trackedBackfillOperation.message || trackedBackfillOperation.phase || 'Running'}</span>
+                  </p>
+                  <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-500 transition-all duration-500"
+                      style={{ width: `${Math.max(2, mappingBackfillPct)}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span>{mappingBackfillPct}%</span>
+                    <span className="font-mono">{trackedBackfillOperation.id}</span>
+                  </div>
+                  <p className="text-xs text-cyan-200/90 bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-2">
+                    This operation runs in the background. You can navigate away and it will continue until completion.
+                  </p>
+                </div>
+              )}
+              {!mappingBackfillRunning && !mappingBackfillDetail && (
                 <p className="text-sm text-slate-400">No backfill has been run from this panel yet.</p>
               )}
-              {mappingBackfillDetail && (
+              {!mappingBackfillRunning && mappingBackfillDetail && (
                 <div className="space-y-2 text-sm">
                   <p className="text-slate-300">Project: <span className="font-mono">{mappingBackfillDetail.project_id}</span></p>
                   <p className="text-slate-300">Runs processed: <span className="text-slate-100">{mappingBackfillDetail.runs_processed}</span></p>
+                  <p className="text-slate-300">Tests considered: <span className="text-slate-100">{mappingBackfillDetail.tests_considered}</span></p>
+                  <p className="text-slate-300">Tests resolved: <span className="text-slate-100">{mappingBackfillDetail.tests_resolved}</span></p>
                   <p className="text-slate-300">Mappings stored: <span className="text-slate-100">{mappingBackfillDetail.mappings_stored}</span></p>
                   <p className="text-slate-300">Primary mappings: <span className="text-slate-100">{mappingBackfillDetail.primary_mappings}</span></p>
                   <p className="text-slate-300">Errors: <span className="text-slate-100">{mappingBackfillDetail.total_errors}</span></p>

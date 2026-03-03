@@ -167,7 +167,10 @@ The resolver is provider-driven to support future mapping strategies:
 1. Built-in providers:
    - `test_metadata`
    - `repo_heuristics`
+   - `path_fallback` (baseline coverage for previously unmapped tests)
 2. External/semantic provider path:
    - use `POST /api/tests/mappings/import` with a precomputed mapping file (`semantic_llm` source).
 3. Provider selection for bulk backfill:
    - use `provider_sources` in `POST /api/tests/mappings/backfill` to constrain enabled providers.
+4. Domain hygiene:
+   - backfill automatically prunes stale unmapped leaf domains so old orphaned domains do not persist in the Mapped Domains pane.

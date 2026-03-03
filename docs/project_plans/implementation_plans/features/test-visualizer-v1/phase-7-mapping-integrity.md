@@ -79,8 +79,13 @@ Both are designed to fail gracefully — if providers conflict, confidence score
 - Added adaptive domain hierarchy behavior:
   - providers create parent/child sub-domains instead of only flat first-level domains.
   - depth expands for large domains to improve drilldown utility on high-volume test areas.
+- Added `path_fallback` provider:
+  - ensures previously unmapped tests still receive baseline domain mappings.
+  - keeps higher-confidence provider mappings primary when available.
 - Added provider-source selection support for backfill payloads:
   - `provider_sources` can constrain provider execution for batch operations.
+- Added backfill cleanup:
+  - unmapped leaf domains are pruned to avoid stale empty domains after remapping.
 
 ---
 

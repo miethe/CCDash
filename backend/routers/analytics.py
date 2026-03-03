@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from backend.models import AnalyticsMetric, AlertConfig, Notification
@@ -119,6 +119,19 @@ def _model_dimensions(raw_model: Any) -> dict[str, str]:
         "canonical": canonical,
         "family": family,
     }
+
+
+def _operation_kind_label(kind: str) -> str:
+    normalized = str(kind or "").strip().lower()
+    if normalized == "full_sync":
+        return "Full sync"
+    if normalized == "rebuild_links":
+        return "Link rebuild"
+    if normalized == "sync_changed_files":
+        return "Changed-path sync"
+    if normalized == "test_mapping_backfill":
+        return "Mapping backfill"
+    return (normalized.replace("_", " ").strip().title() or "Operation")
 
 
 async def _query_rows(
@@ -1738,7 +1751,7 @@ async def delete_alert(alert_id: str):
 
 
 @analytics_router.get("/notifications", response_model=list[Notification])
-async def get_notifications():
+async def get_notifications(request: Request):
     project = project_manager.get_active_project()
     if not project:
         return []
@@ -1748,15 +1761,61 @@ async def get_notifications():
     sessions = await repo.list_paginated(0, 5, project.id, sort_by="started_at", sort_order="desc")
 
     notifications: list[Notification] = []
-    for i, s in enumerate(sessions):
+    for s in sessions:
         notifications.append(Notification(
-            id=f"notif-{s['id']}",
+            id=f"session-{s['id']}",
             alertId="alert-cost",
             message=f"Session {s['id']}: Model={s['model']}, Cost=${s['total_cost']:.4f}",
             timestamp=s["started_at"] or "",
-            isRead=i > 0,
+            isRead=True,
         ))
-    return notifications
+
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine and hasattr(sync_engine, "list_operations"):
+        try:
+            operations = await sync_engine.list_operations(limit=50)
+        except Exception:
+            operations = []
+        for op in operations:
+            if str(op.get("projectId") or "") != project.id:
+                continue
+            status = str(op.get("status") or "").strip().lower()
+            if status not in {"completed", "failed"}:
+                continue
+            kind = str(op.get("kind") or "").strip().lower()
+            label = _operation_kind_label(kind)
+            stats = op.get("stats", {}) if isinstance(op.get("stats"), dict) else {}
+            finished_at = str(op.get("finishedAt") or op.get("updatedAt") or op.get("startedAt") or "")
+            if status == "failed":
+                error = str(op.get("error") or "").strip()
+                message = f"{label} failed{f': {error}' if error else ''}"
+            else:
+                mappings_stored = int(stats.get("mappings_stored") or stats.get("mappingsStored") or 0)
+                runs_processed = int(stats.get("runs_processed") or stats.get("runsProcessed") or 0)
+                if kind == "test_mapping_backfill":
+                    message = f"{label} completed: {runs_processed} runs, {mappings_stored} mappings stored."
+                else:
+                    message = f"{label} completed."
+            notifications.append(Notification(
+                id=f"op-{op.get('id')}",
+                alertId=f"op-{kind or 'generic'}",
+                message=message,
+                timestamp=finished_at,
+                isRead=False,
+            ))
+
+    def _notif_sort_key(item: Notification) -> float:
+        parsed = _parse_iso(item.timestamp)
+        if parsed is None:
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+    notifications.sort(key=_notif_sort_key, reverse=True)
+    for idx, item in enumerate(notifications):
+        item.isRead = idx > 0
+    return notifications[:20]
 
 
 @analytics_router.get("/trends")

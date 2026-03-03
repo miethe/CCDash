@@ -14,6 +14,9 @@
   - `force_recompute`
   - `provider_sources`
   - `source`
+- New low-priority fallback mapping provider:
+  - `path_fallback` assigns baseline domain mappings for tests that do not match feature heuristics.
+  - enables full test-to-domain coverage while preserving higher-confidence mappings as primary when available.
 
 ### Changed
 
@@ -27,6 +30,7 @@
   - `tests_reused_cached`
   - `resolver_version`
   - `cache_state`
+- Backfill now prunes unmapped leaf domains so stale/orphan domain nodes do not accumulate in the UI.
 
 ### Docs
 

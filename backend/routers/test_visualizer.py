@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import aiosqlite
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -69,6 +70,7 @@ from backend.services.test_ingest import ingest_run
 
 logger = logging.getLogger("ccdash.test_visualizer")
 test_visualizer_router = APIRouter(prefix="/api/tests", tags=["test-visualizer"])
+_MAPPING_BACKFILL_OPERATION_KIND = "test_mapping_backfill"
 
 
 def _error(status_code: int, *, error: str, message: str, hint: str) -> HTTPException:
@@ -190,6 +192,68 @@ def _source_status_rows(project: Any, request: Request | None = None) -> list[Te
             )
         )
     return rows
+
+
+async def _prune_unmapped_leaf_domains(db: Any, project_id: str) -> int:
+    """Remove leaf domains that have no mapped primary tests."""
+    normalized_project = str(project_id or "").strip()
+    if not normalized_project:
+        return 0
+
+    if isinstance(db, aiosqlite.Connection):
+        async with db.execute(
+            """
+            SELECT d.domain_id
+            FROM test_domains d
+            LEFT JOIN test_feature_mappings m
+              ON m.project_id = d.project_id
+             AND m.domain_id = d.domain_id
+            LEFT JOIN test_domains child
+              ON child.project_id = d.project_id
+             AND child.parent_id = d.domain_id
+            WHERE d.project_id = ?
+            GROUP BY d.domain_id
+            HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
+            """,
+            (normalized_project,),
+        ) as cur:
+            leaf_ids = [str(row[0]) for row in await cur.fetchall() if str(row[0]).strip()]
+        if not leaf_ids:
+            return 0
+        for domain_id in leaf_ids:
+            await db.execute(
+                "DELETE FROM test_domains WHERE project_id = ? AND domain_id = ?",
+                (normalized_project, domain_id),
+            )
+        await db.commit()
+        return len(leaf_ids)
+
+    rows = await db.fetch(
+        """
+        SELECT d.domain_id
+        FROM test_domains d
+        LEFT JOIN test_feature_mappings m
+          ON m.project_id = d.project_id
+         AND m.domain_id = d.domain_id
+        LEFT JOIN test_domains child
+          ON child.project_id = d.project_id
+         AND child.parent_id = d.domain_id
+        WHERE d.project_id = $1
+        GROUP BY d.domain_id
+        HAVING COUNT(m.mapping_id) = 0 AND COUNT(child.domain_id) = 0
+        """,
+        normalized_project,
+    )
+    leaf_ids = [str(row.get("domain_id") or "").strip() for row in rows if str(row.get("domain_id") or "").strip()]
+    if not leaf_ids:
+        return 0
+    for domain_id in leaf_ids:
+        await db.execute(
+            "DELETE FROM test_domains WHERE project_id = $1 AND domain_id = $2",
+            normalized_project,
+            domain_id,
+        )
+    return len(leaf_ids)
 
 
 def _extract_meta(raw: Any) -> dict[str, Any]:
@@ -346,8 +410,6 @@ async def _load_definitions_for_test_ids(
     if not unique_ids:
         return {}
 
-    import aiosqlite
-
     if isinstance(db, aiosqlite.Connection):
         placeholders = ",".join("?" for _ in unique_ids)
         query = f"""
@@ -458,8 +520,6 @@ async def _load_metric_summary(project_id: str, db: Any) -> TestMetricSummaryDTO
     latest_collected_at = ""
     total_metrics = 0
 
-    import aiosqlite
-
     if isinstance(db, aiosqlite.Connection):
         async with db.execute(
             "SELECT COUNT(*) AS count, MAX(collected_at) AS latest FROM test_metrics WHERE project_id = ?",
@@ -556,6 +616,233 @@ async def _trigger_integrity_check(
             git_sha,
             exc,
         )
+
+
+def _backfill_stats_payload(payload: BackfillTestMappingsResponse) -> dict[str, Any]:
+    data = payload.model_dump()
+    # Include camelCase aliases for easier frontend consumption from generic operation snapshots.
+    data["runLimit"] = int(data.get("run_limit") or 0)
+    data["runsProcessed"] = int(data.get("runs_processed") or 0)
+    data["testsConsidered"] = int(data.get("tests_considered") or 0)
+    data["testsResolved"] = int(data.get("tests_resolved") or 0)
+    data["testsReusedCached"] = int(data.get("tests_reused_cached") or 0)
+    data["mappingsStored"] = int(data.get("mappings_stored") or 0)
+    data["primaryMappings"] = int(data.get("primary_mappings") or 0)
+    data["resolverVersion"] = str(data.get("resolver_version") or "")
+    data["totalErrors"] = int(data.get("total_errors") or 0)
+    return data
+
+
+def _backfill_completion_message(payload: BackfillTestMappingsResponse) -> str:
+    return (
+        f"Backfill completed: processed {int(payload.runs_processed)} runs, "
+        f"stored {int(payload.mappings_stored)} mappings "
+        f"({int(payload.primary_mappings)} primary, {int(payload.total_errors)} errors)"
+    )
+
+
+async def _execute_backfill_mappings(
+    body: BackfillTestMappingsRequest,
+    *,
+    sync_engine: Any | None = None,
+    operation_id: str | None = None,
+) -> BackfillTestMappingsResponse:
+    _require_feature_enabled(body.project_id)
+
+    db = await connection.get_connection()
+    run_repo = get_test_run_repository(db)
+    definition_repo = get_test_definition_repository(db)
+    result_repo = get_test_result_repository(db)
+
+    if sync_engine and operation_id:
+        await sync_engine.update_operation(
+            operation_id,
+            phase="load_runs",
+            message="Loading recent test runs",
+            progress={"percent": 2, "runsScanned": 0, "runsTotal": 0, "runsProcessed": 0},
+            counters={"runLimit": int(body.run_limit)},
+        )
+
+    runs = await run_repo.list_by_project(project_id=body.project_id, limit=body.run_limit, offset=0)
+    resolver = MappingResolver(db, provider_sources=body.provider_sources or None)
+    runs_processed = 0
+    definitions: dict[str, dict[str, Any]] = {}
+    total_runs = len(runs)
+
+    if sync_engine and operation_id:
+        await sync_engine.update_operation(
+            operation_id,
+            phase="collect_definitions",
+            message=f"Collecting test definitions from {total_runs} runs",
+            progress={"percent": 8, "runsScanned": 0, "runsTotal": total_runs, "runsProcessed": 0},
+            counters={"runLimit": int(body.run_limit), "runsTotal": total_runs, "definitionsCollected": 0},
+        )
+
+    for index, run in enumerate(runs, start=1):
+        run_id = str(run.get("run_id") or "").strip()
+        if not run_id:
+            continue
+        run_results = await result_repo.get_by_run(run_id)
+        if not run_results:
+            continue
+        runs_processed += 1
+
+        for row in run_results:
+            test_id = str(row.get("test_id") or "").strip()
+            if not test_id or test_id in definitions:
+                continue
+            definition = await definition_repo.get_by_id(test_id)
+            if definition is not None:
+                definitions[test_id] = definition
+                continue
+            definitions[test_id] = {
+                "test_id": test_id,
+                "project_id": body.project_id,
+                "path": str(row.get("path") or "").strip(),
+                "name": str(row.get("name") or "").strip(),
+                "framework": str(row.get("framework") or "pytest").strip() or "pytest",
+                "tags": row.get("tags") if isinstance(row.get("tags"), list) else [],
+                "owner": str(row.get("owner") or "").strip(),
+            }
+
+        if sync_engine and operation_id and (
+            index == total_runs
+            or index == 1
+            or index % max(1, total_runs // 20) == 0
+        ):
+            collect_pct = 8 + int((index / max(1, total_runs)) * 52)
+            await sync_engine.update_operation(
+                operation_id,
+                phase="collect_definitions",
+                message=f"Analyzing runs ({index}/{total_runs})",
+                progress={
+                    "percent": min(60, collect_pct),
+                    "runsScanned": index,
+                    "runsTotal": total_runs,
+                    "runsProcessed": runs_processed,
+                },
+                counters={
+                    "runsTotal": total_runs,
+                    "runsProcessed": runs_processed,
+                    "definitionsCollected": len(definitions),
+                },
+            )
+
+    if sync_engine and operation_id:
+        await sync_engine.update_operation(
+            operation_id,
+            phase="resolve_mappings",
+            message=f"Resolving mappings for {len(definitions)} tests",
+            progress={
+                "percent": 70,
+                "runsScanned": total_runs,
+                "runsTotal": total_runs,
+                "runsProcessed": runs_processed,
+            },
+            counters={
+                "runsTotal": total_runs,
+                "runsProcessed": runs_processed,
+                "definitionsCollected": len(definitions),
+            },
+        )
+
+    result = await resolver.resolve(
+        project_id=body.project_id,
+        test_definitions=list(definitions.values()),
+        context={
+            "version": 2,
+            "source": str(body.source or "backfill_api").strip() or "backfill_api",
+            "force_recompute": bool(body.force_recompute),
+            "project_root": str(config.CCDASH_PROJECT_ROOT or "").strip(),
+        },
+    )
+    cache_state = dict(result.cache_state or {})
+    cache_state["runs_processed"] = runs_processed
+    cache_state["run_limit"] = body.run_limit
+    if body.provider_sources:
+        cache_state["provider_sources"] = [str(source).strip() for source in body.provider_sources if str(source).strip()]
+    cache_state["pruned_unmapped_leaf_domains"] = await _prune_unmapped_leaf_domains(db, body.project_id)
+
+    payload = BackfillTestMappingsResponse(
+        project_id=body.project_id,
+        run_limit=body.run_limit,
+        runs_processed=runs_processed,
+        tests_considered=result.tests_considered,
+        tests_resolved=result.tests_resolved,
+        tests_reused_cached=result.tests_reused_cached,
+        mappings_stored=result.stored_count,
+        primary_mappings=result.primary_count,
+        resolver_version=result.resolver_version,
+        cache_state=cache_state,
+        total_errors=len(result.errors),
+        errors=result.errors[:100],
+    )
+
+    if sync_engine and operation_id:
+        await sync_engine.update_operation(
+            operation_id,
+            phase="finalizing",
+            message="Finalizing mapping backfill",
+            progress={
+                "percent": 95,
+                "runsScanned": total_runs,
+                "runsTotal": total_runs,
+                "runsProcessed": runs_processed,
+            },
+            counters={
+                "runsTotal": total_runs,
+                "runsProcessed": runs_processed,
+                "definitionsCollected": len(definitions),
+                "testsResolved": int(payload.tests_resolved),
+                "mappingsStored": int(payload.mappings_stored),
+            },
+            stats=_backfill_stats_payload(payload),
+        )
+
+    return payload
+
+
+async def _run_backfill_mappings_background(
+    body: BackfillTestMappingsRequest,
+    sync_engine: Any,
+    operation_id: str,
+) -> None:
+    try:
+        payload = await _execute_backfill_mappings(
+            body,
+            sync_engine=sync_engine,
+            operation_id=operation_id,
+        )
+        stats = _backfill_stats_payload(payload)
+        await sync_engine.update_operation(
+            operation_id,
+            phase="completed",
+            message=_backfill_completion_message(payload),
+            progress={"percent": 100},
+            stats=stats,
+        )
+        await sync_engine.finish_operation(
+            operation_id,
+            status="completed",
+            stats=stats,
+        )
+    except Exception as exc:
+        error = str(exc) or "Unknown mapping backfill failure"
+        logger.exception("Background mapping backfill failed operation_id=%s: %s", operation_id, error)
+        try:
+            await sync_engine.update_operation(
+                operation_id,
+                phase="failed",
+                message=f"Mapping backfill failed: {error}",
+                progress={"percent": 100},
+            )
+            await sync_engine.finish_operation(
+                operation_id,
+                status="failed",
+                error=error,
+            )
+        except Exception:
+            logger.exception("Failed to finalize mapping backfill operation state operation_id=%s", operation_id)
 
 
 @test_visualizer_router.get("/config", response_model=TestVisualizerConfigDTO)
@@ -988,75 +1275,51 @@ async def import_mappings(request: Request) -> dict[str, Any]:
 @test_visualizer_router.post("/mappings/backfill", response_model=BackfillTestMappingsResponse)
 async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest) -> BackfillTestMappingsResponse:
     _ = request
+    return await _execute_backfill_mappings(body)
+
+
+@test_visualizer_router.post("/mappings/backfill/start")
+async def start_backfill_mappings(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    body: BackfillTestMappingsRequest,
+) -> dict[str, Any]:
     _require_feature_enabled(body.project_id)
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    sync_engine = getattr(app_state, "sync_engine", None)
+    if sync_engine is None:
+        raise _error(
+            503,
+            error="sync_engine_unavailable",
+            message="Background operations are unavailable.",
+            hint="Ensure CCDash backend sync engine is initialized.",
+        )
 
-    db = await connection.get_connection()
-    run_repo = get_test_run_repository(db)
-    definition_repo = get_test_definition_repository(db)
-    result_repo = get_test_result_repository(db)
-
-    runs = await run_repo.list_by_project(project_id=body.project_id, limit=body.run_limit, offset=0)
-    resolver = MappingResolver(db, provider_sources=body.provider_sources or None)
-    runs_processed = 0
-    definitions: dict[str, dict[str, Any]] = {}
-
-    for run in runs:
-        run_id = str(run.get("run_id") or "").strip()
-        if not run_id:
-            continue
-        run_results = await result_repo.get_by_run(run_id)
-        if not run_results:
-            continue
-        runs_processed += 1
-
-        for row in run_results:
-            test_id = str(row.get("test_id") or "").strip()
-            if not test_id or test_id in definitions:
-                continue
-            definition = await definition_repo.get_by_id(test_id)
-            if definition is not None:
-                definitions[test_id] = definition
-                continue
-            definitions[test_id] = {
-                "test_id": test_id,
-                "project_id": body.project_id,
-                "path": str(row.get("path") or "").strip(),
-                "name": str(row.get("name") or "").strip(),
-                "framework": str(row.get("framework") or "pytest").strip() or "pytest",
-                "tags": row.get("tags") if isinstance(row.get("tags"), list) else [],
-                "owner": str(row.get("owner") or "").strip(),
-            }
-
-    result = await resolver.resolve(
-        project_id=body.project_id,
-        test_definitions=list(definitions.values()),
-        context={
-            "version": 2,
-            "source": str(body.source or "backfill_api").strip() or "backfill_api",
-            "force_recompute": bool(body.force_recompute),
-            "project_root": str(config.CCDASH_PROJECT_ROOT or "").strip(),
+    operation_id = await sync_engine.start_operation(
+        _MAPPING_BACKFILL_OPERATION_KIND,
+        body.project_id,
+        trigger="tests-api",
+        metadata={
+            "runLimit": int(body.run_limit),
+            "forceRecompute": bool(body.force_recompute),
+            "providerSources": [str(source).strip() for source in body.provider_sources if str(source).strip()],
+            "source": str(body.source or "backfill").strip() or "backfill",
         },
     )
-    cache_state = dict(result.cache_state or {})
-    cache_state["runs_processed"] = runs_processed
-    cache_state["run_limit"] = body.run_limit
-    if body.provider_sources:
-        cache_state["provider_sources"] = [str(source).strip() for source in body.provider_sources if str(source).strip()]
-
-    return BackfillTestMappingsResponse(
-        project_id=body.project_id,
-        run_limit=body.run_limit,
-        runs_processed=runs_processed,
-        tests_considered=result.tests_considered,
-        tests_resolved=result.tests_resolved,
-        tests_reused_cached=result.tests_reused_cached,
-        mappings_stored=result.stored_count,
-        primary_mappings=result.primary_count,
-        resolver_version=result.resolver_version,
-        cache_state=cache_state,
-        total_errors=len(result.errors),
-        errors=result.errors[:100],
+    await sync_engine.update_operation(
+        operation_id,
+        phase="queued",
+        message="Mapping backfill queued",
+        progress={"percent": 0, "runsScanned": 0, "runsTotal": 0, "runsProcessed": 0},
+        counters={"runLimit": int(body.run_limit)},
     )
+    background_tasks.add_task(_run_backfill_mappings_background, body, sync_engine, operation_id)
+    return {
+        "status": "ok",
+        "mode": "background",
+        "message": "Mapping backfill started in background",
+        "operationId": operation_id,
+    }
 
 
 @test_visualizer_router.get("/mappings/resolver-detail", response_model=MappingResolverDetailResponseDTO)

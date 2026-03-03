@@ -127,6 +127,30 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
         self.assertIn("test-3", by_test)
         self.assertEqual(by_test["test-3"][0].feature_id, "checkout")
 
+    async def test_test_metadata_provider_does_not_create_domain_without_feature_match(self) -> None:
+        provider = TestMetadataProvider(self.db)
+        before = await self.domain_repo.list_paginated(0, 500, project_id="project-1")
+        before_ids = {str(row.get("domain_id") or "") for row in before}
+
+        rows = await provider.resolve(
+            [
+                {
+                    "test_id": "test-orphan-domain",
+                    "path": "tests/unknown/test_anything.py",
+                    "name": "test_anything",
+                    "framework": "pytest",
+                    "tags": ["domain:unknown", "feature:not-a-real-feature"],
+                }
+            ],
+            project_id="project-1",
+            context={},
+        )
+
+        after = await self.domain_repo.list_paginated(0, 500, project_id="project-1")
+        after_ids = {str(row.get("domain_id") or "") for row in after}
+        self.assertEqual(rows, [])
+        self.assertSetEqual(before_ids, after_ids)
+
     async def test_semantic_provider_and_validation(self) -> None:
         valid, message = validate_semantic_mapping_file(
             {"mappings": [{"test_id": "test-1", "feature_id": "login", "confidence": 0.92}]}
@@ -248,6 +272,21 @@ class TestMappingResolver(unittest.IsolatedAsyncioTestCase):
         parent_id = str((leaf or {}).get("parent_id") or "")
         parent = await self.domain_repo.get_by_id(parent_id)
         self.assertEqual(str((parent or {}).get("name") or "").lower(), "auth")
+
+    async def test_path_fallback_provider_maps_unknown_tests(self) -> None:
+        resolver = MappingResolver(self.db, provider_sources=["path_fallback"])
+        result = await resolver.resolve(
+            project_id="project-1",
+            test_definitions=[
+                {"test_id": "test-fallback-1", "path": "tests/odd/shape/spec_case.py", "name": "spec_case"}
+            ],
+            context={"source": "unit_test", "version": 2, "force_recompute": True},
+        )
+
+        self.assertEqual(result.primary_count, 1)
+        mappings = await self.mapping_repo.get_primary_for_test("project-1", "test-fallback-1")
+        self.assertEqual(len(mappings), 1)
+        self.assertEqual(str(mappings[0].get("provider_source") or ""), "path_fallback")
 
     async def test_resolve_for_run_uses_run_results(self) -> None:
         await self.db.execute(

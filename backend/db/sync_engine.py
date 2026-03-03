@@ -1820,6 +1820,42 @@ class SyncEngine:
         """Create an observable operation and return its ID."""
         return await self._start_operation(kind, project_id, trigger, metadata or {})
 
+    async def update_operation(
+        self,
+        operation_id: str,
+        *,
+        phase: str | None = None,
+        message: str | None = None,
+        progress: dict[str, Any] | None = None,
+        counters: dict[str, Any] | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> None:
+        """Public wrapper for updating operation observability payloads."""
+        await self._update_operation(
+            operation_id,
+            phase=phase,
+            message=message,
+            progress=progress,
+            counters=counters,
+            stats=stats,
+        )
+
+    async def finish_operation(
+        self,
+        operation_id: str,
+        *,
+        status: str,
+        stats: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        """Public wrapper for finalizing operation status."""
+        await self._finish_operation(
+            operation_id,
+            status=status,
+            stats=stats,
+            error=error,
+        )
+
     async def list_operations(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return latest operation snapshots, newest first."""
         async with self._ops_lock:

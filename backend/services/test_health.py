@@ -268,7 +268,31 @@ class TestHealthService:
             else:
                 roots.append(node)
 
-        if not include_children:
+        if include_children:
+            def _fold(node: DomainHealthRollupDTO) -> None:
+                for child in node.children:
+                    _fold(child)
+                    node.total_tests += child.total_tests
+                    node.passed += child.passed
+                    node.failed += child.failed
+                    node.skipped += child.skipped
+                    if child.last_run_at and (not node.last_run_at or child.last_run_at > node.last_run_at):
+                        node.last_run_at = child.last_run_at
+                node.pass_rate = _pass_rate(passed=node.passed, failed=node.failed)
+
+            def _prune_empty(node: DomainHealthRollupDTO) -> bool:
+                kept: list[DomainHealthRollupDTO] = []
+                for child in node.children:
+                    if _prune_empty(child):
+                        kept.append(child)
+                node.children = kept
+                return node.total_tests > 0 or bool(node.children)
+
+            for root in roots:
+                _fold(root)
+            roots = [root for root in roots if _prune_empty(root)]
+        else:
+            roots = [node for node in roots if node.total_tests > 0]
             for node in nodes.values():
                 node.children = []
         return roots

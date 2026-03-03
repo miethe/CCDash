@@ -252,6 +252,43 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ccdash_agent_model_events_total", body)
         self.assertIn("ccdash_session_count", body)
 
+    async def test_notifications_include_operation_events(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        class _SessionRepo:
+            async def list_paginated(self, *args, **kwargs):
+                return [
+                    {
+                        "id": "S-1",
+                        "model": "claude-opus-4-5",
+                        "total_cost": 1.2345,
+                        "started_at": "2026-03-03T09:00:00Z",
+                    }
+                ]
+
+        class _SyncEngine:
+            async def list_operations(self, limit=50):
+                return [
+                    {
+                        "id": "OP-1",
+                        "kind": "test_mapping_backfill",
+                        "projectId": "project-1",
+                        "status": "completed",
+                        "finishedAt": "2026-03-03T09:30:00Z",
+                        "stats": {"runs_processed": 12, "mappings_stored": 40},
+                    }
+                ]
+
+        request = types.SimpleNamespace(
+            app=types.SimpleNamespace(state=types.SimpleNamespace(sync_engine=_SyncEngine()))
+        )
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
+            notifications = await analytics_router.get_notifications(request)
+
+        self.assertGreaterEqual(len(notifications), 2)
+        self.assertIn("Mapping backfill completed", notifications[0].message)
+        self.assertFalse(notifications[0].isRead)
+
 
 if __name__ == "__main__":
     unittest.main()

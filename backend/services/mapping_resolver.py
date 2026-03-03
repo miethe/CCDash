@@ -387,6 +387,23 @@ class TestMetadataProvider:
             if not markers["features"] and not markers["feature_tags"]:
                 continue
 
+            feature_tokens: list[tuple[str, float, str, str]] = []
+            for token in markers["features"]:
+                feature_id = feature_lookup.get(_slug(token))
+                if not feature_id:
+                    continue
+                feature_tokens.append((feature_id, 0.9, "feature_marker", token))
+
+            for token in markers["feature_tags"]:
+                feature_id = feature_lookup.get(_slug(token))
+                if not feature_id:
+                    continue
+                feature_tokens.append((feature_id, 0.8, "tag", token))
+
+            # Avoid creating orphan domains when no feature candidate matched.
+            if not feature_tokens:
+                continue
+
             domain_id = None
             domain_path = ""
             selected_segments: list[str] = []
@@ -403,39 +420,16 @@ class TestMetadataProvider:
             if selected_segments:
                 domain_id, domain_path = await domain_assigner.ensure_domain(project_id, selected_segments)
 
-            for token in markers["features"]:
-                feature_id = feature_lookup.get(_slug(token))
-                if not feature_id:
-                    continue
+            for feature_id, confidence, source_kind, token in feature_tokens:
                 candidates.append(
                     MappingCandidate(
                         test_id=test_id,
                         feature_id=feature_id,
                         domain_id=domain_id,
-                        confidence=0.9,
+                        confidence=confidence,
                         provider_source=self.name,
                         metadata={
-                            "source": "feature_marker",
-                            "token": token,
-                            "domain_path": domain_path,
-                            "domain_segments": selected_segments,
-                        },
-                    )
-                )
-
-            for token in markers["feature_tags"]:
-                feature_id = feature_lookup.get(_slug(token))
-                if not feature_id:
-                    continue
-                candidates.append(
-                    MappingCandidate(
-                        test_id=test_id,
-                        feature_id=feature_id,
-                        domain_id=domain_id,
-                        confidence=0.8,
-                        provider_source=self.name,
-                        metadata={
-                            "source": "tag",
+                            "source": source_kind,
                             "token": token,
                             "domain_path": domain_path,
                             "domain_segments": selected_segments,
@@ -569,6 +563,79 @@ class SemanticLLMProvider:
         return candidates
 
 
+class PathFallbackProvider:
+    """Low-priority fallback that guarantees baseline domain mapping coverage."""
+
+    name = "path_fallback"
+    priority = 90
+
+    def __init__(self, db: Any):
+        self.db = db
+        self.domain_repo = get_test_domain_repository(db)
+
+    async def resolve(
+        self,
+        test_definitions: list[dict[str, Any]],
+        project_id: str,
+        context: dict[str, Any],
+    ) -> list[MappingCandidate]:
+        domain_assigner = _DomainHierarchyAssigner(self.domain_repo, test_definitions, context)
+        candidates: list[MappingCandidate] = []
+
+        for row in test_definitions:
+            test_id = str(row.get("test_id") or "").strip()
+            if not test_id:
+                continue
+            path = str(row.get("path") or "").strip()
+            name = str(row.get("name") or "").strip()
+
+            segments = domain_assigner.select_segments(domain_assigner.path_segments(path), explicit=False)
+            if not segments:
+                segments = ["uncategorized"]
+            domain_id, domain_path = await domain_assigner.ensure_domain(project_id, segments)
+
+            feature_hint = self._feature_hint(path=path, test_name=name, domain_segments=segments)
+            feature_id = f"auto-{feature_hint}" if feature_hint else "auto-uncategorized"
+
+            candidates.append(
+                MappingCandidate(
+                    test_id=test_id,
+                    feature_id=feature_id,
+                    domain_id=domain_id,
+                    confidence=0.55,
+                    provider_source=self.name,
+                    metadata={
+                        "source": "path_fallback",
+                        "synthetic_feature": True,
+                        "domain_path": domain_path,
+                        "domain_segments": segments,
+                    },
+                )
+            )
+        return candidates
+
+    def _feature_hint(self, *, path: str, test_name: str, domain_segments: list[str]) -> str:
+        filename = Path(path).name
+        stem = _slug(Path(filename).stem)
+        if stem.startswith("test-"):
+            stem = stem[len("test-"):]
+        if stem.startswith("test_"):
+            stem = stem[len("test_"):]
+        stem = _slug(stem)
+        if stem and stem not in {"test", "tests"}:
+            return stem[:48]
+
+        match = _TEST_FUNC_PATTERN.search(test_name)
+        if match:
+            token = _slug(match.group(1))
+            if token:
+                return token[:48]
+
+        if domain_segments:
+            return _slug("-".join(domain_segments))[:48]
+        return "uncategorized"
+
+
 class MappingResolver:
     """Orchestrates providers, resolves conflicts, and stores mapping snapshots."""
 
@@ -589,9 +656,10 @@ class MappingResolver:
         provider_by_name = {
             "test_metadata": TestMetadataProvider(self.db),
             "repo_heuristics": RepoHeuristicsProvider(self.db),
+            "path_fallback": PathFallbackProvider(self.db),
         }
         if not provider_sources:
-            order = ["test_metadata", "repo_heuristics"]
+            order = ["test_metadata", "repo_heuristics", "path_fallback"]
         else:
             normalized = [str(source).strip().lower() for source in provider_sources if str(source).strip()]
             order = [name for name in normalized if name in provider_by_name]

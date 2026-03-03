@@ -217,7 +217,8 @@ Represents Markdown documentation. Contains:
     *   Resolver uses cached primary mappings for unchanged tests and remaps only new/changed tests on future runs.
     *   Pass `force_recompute=true` only when mapping logic changes and you want a full remap.
     *   Domain mapping now supports hierarchical sub-domains and adaptive depth for large test groups.
-    *   Mapping providers are pluggable; current built-ins are `test_metadata` and `repo_heuristics`, with semantic import support via `POST /api/tests/mappings/import`.
+    *   Mapping providers are pluggable; current built-ins are `test_metadata`, `repo_heuristics`, and low-priority `path_fallback`, with semantic import support via `POST /api/tests/mappings/import`.
+    *   Backfill prunes stale unmapped leaf domains to keep domain drilldown cleaner after resolver changes.
 
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).  
 For project-scoped Testing configuration and `/tests` ingestion flow, see [`docs/testing-user-guide.md`](docs/testing-user-guide.md).  

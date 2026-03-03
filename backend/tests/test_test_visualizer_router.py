@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from backend import config
 from backend.db.repositories.features import SqliteFeatureRepository
@@ -136,6 +136,13 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
             headers={"content-type": "application/json"},
             json=_json,
             form=_form,
+        )
+
+    def _request_with_sync_engine(self, sync_engine: object) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            app=types.SimpleNamespace(
+                state=types.SimpleNamespace(sync_engine=sync_engine)
+            )
         )
 
     async def test_ingest_returns_503_when_feature_flag_disabled(self) -> None:
@@ -418,6 +425,46 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(payload.tests_resolved, 1)
         self.assertGreaterEqual(payload.mappings_stored, 1)
         self.assertTrue(payload.resolver_version)
+
+    async def test_backfill_mappings_start_endpoint_queues_background_operation(self) -> None:
+        class _FakeSyncEngine:
+            def __init__(self) -> None:
+                self.started: list[dict] = []
+                self.updated: list[dict] = []
+
+            async def start_operation(self, kind, project_id, trigger="api", metadata=None):
+                self.started.append(
+                    {
+                        "kind": kind,
+                        "project_id": project_id,
+                        "trigger": trigger,
+                        "metadata": metadata or {},
+                    }
+                )
+                return "OP-BACKFILL-1"
+
+            async def update_operation(self, operation_id, **kwargs):
+                self.updated.append({"operation_id": operation_id, **kwargs})
+
+            async def finish_operation(self, operation_id, **kwargs):
+                return None
+
+        engine = _FakeSyncEngine()
+        request = self._request_with_sync_engine(engine)
+        background = BackgroundTasks()
+
+        payload = await router.start_backfill_mappings(
+            request,
+            background,
+            body=router.BackfillTestMappingsRequest(project_id="project-1", run_limit=10),
+        )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["mode"], "background")
+        self.assertEqual(payload["operationId"], "OP-BACKFILL-1")
+        self.assertEqual(len(background.tasks), 1)
+        self.assertEqual(engine.started[0]["kind"], "test_mapping_backfill")
+        self.assertEqual(engine.started[0]["project_id"], "project-1")
 
     async def test_mapping_resolver_detail_endpoint(self) -> None:
         with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
