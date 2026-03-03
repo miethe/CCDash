@@ -808,6 +808,25 @@ class BackfillTestMappingsResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class MappingResolverRunDetailDTO(BaseModel):
+    run_id: str
+    timestamp: str = ""
+    branch: str = ""
+    git_sha: str = ""
+    agent_session_id: str = ""
+    total_results: int = 0
+    mapped_primary_tests: int = 0
+    unmapped_tests: int = 0
+    coverage: float = 0.0
+
+
+class MappingResolverDetailResponseDTO(BaseModel):
+    project_id: str
+    run_limit: int
+    generated_at: str = ""
+    runs: list[MappingResolverRunDetailDTO] = Field(default_factory=list)
+
+
 class TestMetricSummaryDTO(BaseModel):
     project_id: str
     total_metrics: int = 0

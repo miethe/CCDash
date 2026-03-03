@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -62,6 +62,37 @@ function opKindLabel(kind: string): string {
   }
 }
 
+type OpsTab = 'general' | 'testing';
+
+interface MappingBackfillResponse {
+  project_id: string;
+  run_limit: number;
+  runs_processed: number;
+  mappings_stored: number;
+  primary_mappings: number;
+  total_errors: number;
+  errors: string[];
+}
+
+interface MappingResolverRunDetail {
+  run_id: string;
+  timestamp: string;
+  branch: string;
+  git_sha: string;
+  agent_session_id: string;
+  total_results: number;
+  mapped_primary_tests: number;
+  unmapped_tests: number;
+  coverage: number;
+}
+
+interface MappingResolverDetailResponse {
+  project_id: string;
+  run_limit: number;
+  generated_at: string;
+  runs: MappingResolverRunDetail[];
+}
+
 export const OpsPanel: React.FC = () => {
   const { projects, activeProject, sessions, sessionTotal, documents, tasks, features } = useData();
 
@@ -81,8 +112,10 @@ export const OpsPanel: React.FC = () => {
   const [lastRefreshAt, setLastRefreshAt] = useState<string>('');
   const [pathSyncRaw, setPathSyncRaw] = useState('');
   const [pathSyncChangeType, setPathSyncChangeType] = useState<'modified' | 'added' | 'deleted'>('modified');
-
-  const activeOps = useMemo(() => status?.operations?.activeOperations || [], [status]);
+  const [activeTab, setActiveTab] = useState<OpsTab>('general');
+  const [mappingRunLimit, setMappingRunLimit] = useState(250);
+  const [mappingBackfillDetail, setMappingBackfillDetail] = useState<MappingBackfillResponse | null>(null);
+  const [mappingResolverDetail, setMappingResolverDetail] = useState<MappingResolverDetailResponse | null>(null);
 
   const loadOverview = async () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
@@ -194,6 +227,49 @@ export const OpsPanel: React.FC = () => {
     }
   };
 
+  const loadMappingResolverDetail = useCallback(async (projectId: string, runLimit: number) => {
+    const params = new URLSearchParams({
+      project_id: projectId,
+      run_limit: String(runLimit),
+    });
+    const payload = await fetchJson<MappingResolverDetailResponse>(`/tests/mappings/resolver-detail?${params.toString()}`);
+    setMappingResolverDetail(payload);
+  }, []);
+
+  const runMappingBackfillOnly = async () => {
+    const projectId = status?.projectId || activeProject?.id || '';
+    if (!projectId) {
+      setError('No active project selected for mapping backfill.');
+      return;
+    }
+
+    setBusyAction('mapping-backfill');
+    setError(null);
+    setNotice(null);
+    try {
+      const mapRes = await fetch(`${API_BASE}/tests/mappings/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, run_limit: mappingRunLimit }),
+      });
+      if (!mapRes.ok) throw new Error(`Mapping backfill failed (${mapRes.status})`);
+      const mapPayload = await mapRes.json() as MappingBackfillResponse;
+      setMappingBackfillDetail(mapPayload);
+      await loadMappingResolverDetail(projectId, mappingRunLimit);
+      setNotice(
+        `Mapping backfill processed ${Number(mapPayload.runs_processed || 0)} runs, `
+        + `stored ${Number(mapPayload.mappings_stored || 0)} mappings `
+        + `(${Number(mapPayload.primary_mappings || 0)} primary, `
+        + `${Number(mapPayload.total_errors || 0)} errors).`
+      );
+      await loadOverview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to run mapping backfill');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const runTestIngestAndMapping = async () => {
     const projectId = status?.projectId || activeProject?.id || '';
     if (!projectId) {
@@ -216,15 +292,12 @@ export const OpsPanel: React.FC = () => {
       const mapRes = await fetch(`${API_BASE}/tests/mappings/backfill`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId, run_limit: 250 }),
+        body: JSON.stringify({ project_id: projectId, run_limit: mappingRunLimit }),
       });
       if (!mapRes.ok) throw new Error(`Mapping backfill failed (${mapRes.status})`);
-      const mapPayload = await mapRes.json() as {
-        runs_processed?: number;
-        mappings_stored?: number;
-        primary_mappings?: number;
-        total_errors?: number;
-      };
+      const mapPayload = await mapRes.json() as MappingBackfillResponse;
+      setMappingBackfillDetail(mapPayload);
+      await loadMappingResolverDetail(projectId, mappingRunLimit);
 
       setNotice(
         `Test sync complete (synced ${Number(syncPayload.stats?.synced || 0)} files). `
@@ -292,6 +365,15 @@ export const OpsPanel: React.FC = () => {
     };
   }, [selectedOperationId, operations.length, status?.operations?.activeOperationCount, lastRefreshAt]);
 
+  useEffect(() => {
+    if (activeTab !== 'testing') return;
+    const projectId = status?.projectId || activeProject?.id || '';
+    if (!projectId) return;
+    loadMappingResolverDetail(projectId, mappingRunLimit).catch((e) => {
+      setError(e instanceof Error ? e.message : 'Failed to load mapping resolver detail');
+    });
+  }, [activeTab, activeProject?.id, loadMappingResolverDetail, mappingRunLimit, status?.projectId]);
+
   const snapshotCards = [
     { label: 'Sessions (Loaded/Total)', value: `${sessions.length} / ${sessionTotal}`, icon: Activity },
     { label: 'Documents', value: String(documents.length), icon: FolderKanban },
@@ -317,6 +399,23 @@ export const OpsPanel: React.FC = () => {
         </button>
       </div>
 
+      <div className="inline-flex rounded-lg border border-slate-800 bg-slate-900/70 p-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab('general')}
+          className={`rounded-md px-3 py-1.5 text-sm ${activeTab === 'general' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+        >
+          General Ops
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('testing')}
+          className={`rounded-md px-3 py-1.5 text-sm ${activeTab === 'testing' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+        >
+          Testing Ops
+        </button>
+      </div>
+
       {error && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
           {error}
@@ -328,6 +427,8 @@ export const OpsPanel: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'general' && (
+        <>
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
         {snapshotCards.map(({ label, value, icon: Icon }) => (
           <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/80 p-4">
@@ -370,14 +471,6 @@ export const OpsPanel: React.FC = () => {
             >
               <Wrench size={14} />
               Rebuild Links
-            </button>
-            <button
-              onClick={runTestIngestAndMapping}
-              disabled={busyAction !== null}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-700/80 border border-cyan-500/30 text-cyan-100 hover:bg-cyan-700 disabled:opacity-60"
-            >
-              <TestTube2 size={14} />
-              Test Ingest + Mapping
             </button>
           </div>
 
@@ -700,6 +793,141 @@ export const OpsPanel: React.FC = () => {
           rebuild windows and capture audit output for mapping reviews.
         </p>
       </div>
+        </>
+      )}
+
+      {activeTab === 'testing' && (
+        <section className="space-y-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">Testing Controls</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Trigger test ingestion plus mapping backfill, or run mapping backfill only.
+                </p>
+              </div>
+              <label className="text-xs text-slate-400">
+                Run Limit
+                <input
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={mappingRunLimit}
+                  onChange={(e) => setMappingRunLimit(Math.max(1, Math.min(5000, Number(e.target.value || 250))))}
+                  className="ml-2 w-28 rounded-lg bg-slate-950 border border-slate-700 px-2 py-1.5 text-sm text-slate-200"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={runTestIngestAndMapping}
+                disabled={busyAction !== null}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-700/80 border border-cyan-500/30 text-cyan-100 hover:bg-cyan-700 disabled:opacity-60"
+              >
+                <TestTube2 size={14} />
+                Test Ingest + Mapping
+              </button>
+              <button
+                onClick={runMappingBackfillOnly}
+                disabled={busyAction !== null}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-700/80 border border-indigo-500/30 text-indigo-100 hover:bg-indigo-700 disabled:opacity-60"
+              >
+                <Wrench size={14} />
+                Mapping Backfill Only
+              </button>
+              <button
+                onClick={() => {
+                  const projectId = status?.projectId || activeProject?.id || '';
+                  if (!projectId) {
+                    setError('No active project selected for resolver detail refresh.');
+                    return;
+                  }
+                  loadMappingResolverDetail(projectId, mappingRunLimit).catch((e) => {
+                    setError(e instanceof Error ? e.message : 'Failed to refresh mapping resolver detail');
+                  });
+                }}
+                disabled={busyAction !== null}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+              >
+                <RefreshCw size={14} />
+                Refresh Resolver Detail
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <h3 className="text-lg font-semibold text-slate-100">Last Backfill Run</h3>
+              {!mappingBackfillDetail && (
+                <p className="text-sm text-slate-400">No backfill has been run from this panel yet.</p>
+              )}
+              {mappingBackfillDetail && (
+                <div className="space-y-2 text-sm">
+                  <p className="text-slate-300">Project: <span className="font-mono">{mappingBackfillDetail.project_id}</span></p>
+                  <p className="text-slate-300">Runs processed: <span className="text-slate-100">{mappingBackfillDetail.runs_processed}</span></p>
+                  <p className="text-slate-300">Mappings stored: <span className="text-slate-100">{mappingBackfillDetail.mappings_stored}</span></p>
+                  <p className="text-slate-300">Primary mappings: <span className="text-slate-100">{mappingBackfillDetail.primary_mappings}</span></p>
+                  <p className="text-slate-300">Errors: <span className="text-slate-100">{mappingBackfillDetail.total_errors}</span></p>
+                  {mappingBackfillDetail.errors.length > 0 && (
+                    <details className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-slate-300">Resolver Errors</summary>
+                      <ul className="mt-2 space-y-1 text-xs text-rose-300">
+                        {mappingBackfillDetail.errors.slice(0, 20).map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <h3 className="text-lg font-semibold text-slate-100">Mapping Resolver Detail</h3>
+              {!mappingResolverDetail && (
+                <p className="text-sm text-slate-400">Loading mapping resolver detail...</p>
+              )}
+              {mappingResolverDetail && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-400">
+                    Generated: <span className="text-slate-200">{formatDate(mappingResolverDetail.generated_at)}</span>
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border border-slate-800">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-950/80 text-slate-400 text-xs uppercase tracking-wide">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Run</th>
+                          <th className="px-3 py-2 text-left">Results</th>
+                          <th className="px-3 py-2 text-left">Mapped</th>
+                          <th className="px-3 py-2 text-left">Unmapped</th>
+                          <th className="px-3 py-2 text-left">Coverage</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mappingResolverDetail.runs.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-3 py-4 text-center text-slate-400">No runs found.</td>
+                          </tr>
+                        )}
+                        {mappingResolverDetail.runs.map(row => (
+                          <tr key={row.run_id} className="border-t border-slate-800 bg-slate-900/40">
+                            <td className="px-3 py-2 text-slate-200 font-mono text-xs">{row.run_id}</td>
+                            <td className="px-3 py-2 text-slate-200">{row.total_results}</td>
+                            <td className="px-3 py-2 text-emerald-300">{row.mapped_primary_tests}</td>
+                            <td className="px-3 py-2 text-amber-300">{row.unmapped_tests}</td>
+                            <td className="px-3 py-2 text-slate-200">{Math.round((row.coverage || 0) * 100)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        </section>
+      )}
     </div>
   );
 };

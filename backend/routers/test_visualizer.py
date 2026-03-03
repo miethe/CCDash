@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,8 @@ from backend.models import (
     TestMetricSummaryDTO,
     IngestRunRequest,
     IngestRunResponse,
+    MappingResolverDetailResponseDTO,
+    MappingResolverRunDetailDTO,
     SyncTestsRequest,
     SyncTestsResponse,
     TestCorrelationResponseDTO,
@@ -913,6 +916,60 @@ async def backfill_mappings(request: Request, body: BackfillTestMappingsRequest)
         primary_mappings=primary_mappings,
         total_errors=len(errors),
         errors=errors[:100],
+    )
+
+
+@test_visualizer_router.get("/mappings/resolver-detail", response_model=MappingResolverDetailResponseDTO)
+async def mapping_resolver_detail(
+    request: Request,
+    project_id: str,
+    run_limit: int = Query(30, ge=1, le=500),
+) -> MappingResolverDetailResponseDTO:
+    _ = request
+    _require_feature_enabled(project_id)
+
+    db = await connection.get_connection()
+    run_repo = get_test_run_repository(db)
+    result_repo = get_test_result_repository(db)
+    mapping_repo = get_test_mapping_repository(db)
+
+    runs = await run_repo.list_by_project(project_id=project_id, limit=run_limit, offset=0)
+    detail_rows: list[MappingResolverRunDetailDTO] = []
+
+    for run in runs:
+        run_id = str(run.get("run_id") or "").strip()
+        results = await result_repo.get_by_run(run_id) if run_id else []
+        test_ids = sorted({str(row.get("test_id") or "").strip() for row in results if str(row.get("test_id") or "").strip()})
+
+        mapped_primary = 0
+        for test_id in test_ids:
+            primary = await mapping_repo.get_primary_for_test(project_id, test_id)
+            if primary:
+                mapped_primary += 1
+
+        total_results = len(test_ids)
+        unmapped = max(0, total_results - mapped_primary)
+        coverage = round((mapped_primary / total_results), 4) if total_results > 0 else 0.0
+
+        detail_rows.append(
+            MappingResolverRunDetailDTO(
+                run_id=run_id,
+                timestamp=str(run.get("timestamp") or ""),
+                branch=str(run.get("branch") or ""),
+                git_sha=str(run.get("git_sha") or ""),
+                agent_session_id=str(run.get("agent_session_id") or ""),
+                total_results=total_results,
+                mapped_primary_tests=mapped_primary,
+                unmapped_tests=unmapped,
+                coverage=coverage,
+            )
+        )
+
+    return MappingResolverDetailResponseDTO(
+        project_id=project_id,
+        run_limit=run_limit,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        runs=detail_rows,
     )
 
 
