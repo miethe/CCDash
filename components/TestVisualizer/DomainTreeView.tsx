@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { DomainHealthRollup } from '../../types';
@@ -42,6 +42,16 @@ const findById = (nodes: DomainHealthRollup[], id: string): DomainHealthRollup |
   return null;
 };
 
+const findPathToId = (nodes: DomainHealthRollup[], id: string, trail: string[] = []): string[] | null => {
+  for (const node of nodes) {
+    const nextTrail = [...trail, node.domainId];
+    if (node.domainId === id) return nextTrail;
+    const childTrail = findPathToId(node.children, id, nextTrail);
+    if (childTrail) return childTrail;
+  }
+  return null;
+};
+
 export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
   domains,
   selectedDomainId = null,
@@ -54,6 +64,21 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
     return initial;
   });
   const [focusedDomainId, setFocusedDomainId] = useState<string | null>(selectedDomainId);
+
+  useEffect(() => {
+    if (domains.length === 0) return;
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.size === 0) {
+        domains.forEach(domain => next.add(domain.domainId));
+      }
+      if (selectedDomainId) {
+        const selectionPath = findPathToId(domains, selectedDomainId) || [];
+        selectionPath.forEach(domainId => next.add(domainId));
+      }
+      return next;
+    });
+  }, [domains, selectedDomainId]);
 
   const flatNodes = useMemo(() => flattenVisibleNodes(domains, expanded), [domains, expanded]);
 

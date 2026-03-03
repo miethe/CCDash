@@ -2,7 +2,7 @@
 title: "Implementation Plan: Testing Page Performance Pass"
 schema_version: 2
 doc_type: implementation_plan
-status: in_progress
+status: completed
 created: 2026-03-03
 updated: 2026-03-03
 feature_slug: "testing-page-performance-pass"
@@ -47,9 +47,9 @@ This plan captures the original phased approach agreed for the performance pass.
 | Phase | Title | Status | Objective |
 |------|-------|--------|-----------|
 | 1 | Progressive Result Loading | Completed | Stop loading/rendering entire run result sets at once |
-| 2 | Project-Scoped Cache Layer | Planned | Reuse runs/features/domain rollups per project with invalidation |
-| 3 | Backend Query Scalability | Planned | Remove in-memory filtering and N+1 query patterns |
-| 4 | Performance Guardrails | Planned | Add budgets, observability, and regression tests at realistic data volume |
+| 2 | Project-Scoped Cache Layer | Completed | Reuse runs/features/domain rollups per project with invalidation |
+| 3 | Backend Query Scalability | Completed | Remove in-memory filtering and N+1 query patterns |
+| 4 | Performance Guardrails | Completed | Add budgets, observability, and regression tests at realistic data volume |
 
 ## Phase 1: Progressive Result Loading (Completed)
 
@@ -67,7 +67,7 @@ This plan captures the original phased approach agreed for the performance pass.
 2. Result table no longer sorts/filters the full run dataset client-side.
 3. Initial run detail interaction cost is materially reduced for large suites.
 
-## Phase 2: Project-Scoped Cache Layer (Planned)
+## Phase 2: Project-Scoped Cache Layer (Completed)
 
 ### Scope
 
@@ -92,7 +92,7 @@ This plan captures the original phased approach agreed for the performance pass.
 2. Navigating run selection with previously loaded pages resolves from cache first.
 3. Memory remains bounded under repeated run switches.
 
-## Phase 3: Backend Query Scalability (Planned)
+## Phase 3: Backend Query Scalability (Completed)
 
 ### Scope
 
@@ -113,7 +113,7 @@ This plan captures the original phased approach agreed for the performance pass.
 2. P95 endpoint latency is stable under larger historical datasets.
 3. Functional behavior remains equivalent for existing UI filters.
 
-## Phase 4: Performance Guardrails (Planned)
+## Phase 4: Performance Guardrails (Completed)
 
 ### Scope
 

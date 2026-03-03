@@ -10,6 +10,7 @@ interface TestResultTableProps {
   isLoading?: boolean;
   isLoadingMore?: boolean;
   total?: number;
+  totalTestsOverall?: number;
   error?: string | null;
   hasMore?: boolean;
   onLoadMore?: () => void;
@@ -38,6 +39,7 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
   isLoading = false,
   isLoadingMore = false,
   total,
+  totalTestsOverall,
   error = null,
   hasMore = false,
   onLoadMore,
@@ -90,6 +92,9 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
         </div>
         <div className="text-xs text-slate-500">
           {results.length} loaded / {typeof total === 'number' ? total : results.length} total
+          {typeof totalTestsOverall === 'number' && (
+            <span> (out of {totalTestsOverall} total tests)</span>
+          )}
         </div>
       </div>
 
