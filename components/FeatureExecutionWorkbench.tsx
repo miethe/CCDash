@@ -456,11 +456,12 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
+  const featureParam = searchParams.get('feature') || '';
+  const tabParam = searchParams.get('tab');
 
-  const [selectedFeatureId, setSelectedFeatureId] = useState<string>(searchParams.get('feature') || '');
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string>(featureParam);
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => {
-    const tabParam = searchParams.get('tab');
     return isWorkbenchTab(tabParam) ? tabParam : 'overview';
   });
   const [context, setContext] = useState<FeatureExecutionContext | null>(null);
@@ -498,26 +499,26 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   }, [features, query]);
 
   useEffect(() => {
-    const fromQuery = searchParams.get('feature') || '';
-    if (fromQuery && fromQuery !== selectedFeatureId) {
-      setSelectedFeatureId(fromQuery);
+    if (featureParam) {
+      setSelectedFeatureId(prev => (prev === featureParam ? prev : featureParam));
       return;
     }
-    if (!selectedFeatureId && features.length > 0) {
+    if (features.length === 0) return;
+    setSelectedFeatureId(prev => {
+      if (prev) return prev;
       const first = [...features].sort((a, b) => a.name.localeCompare(b.name))[0];
-      setSelectedFeatureId(first.id);
-    }
-  }, [features, searchParams, selectedFeatureId]);
+      return first?.id || prev;
+    });
+  }, [featureParam, features]);
 
   useEffect(() => {
-    const tabParam = searchParams.get('tab');
-    if (isWorkbenchTab(tabParam) && tabParam !== activeTab) {
-      setActiveTab(tabParam);
+    if (isWorkbenchTab(tabParam)) {
+      setActiveTab(prev => (prev === tabParam ? prev : tabParam));
     }
-  }, [activeTab, searchParams]);
+  }, [tabParam]);
 
   useEffect(() => {
-    const currentTab = searchParams.get('tab');
+    const currentTab = tabParam;
     if (activeTab === 'overview' && !currentTab) return;
     if (activeTab === currentTab) return;
     const nextParams = new URLSearchParams(searchParams);
@@ -526,8 +527,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     } else {
       nextParams.set('tab', activeTab);
     }
+    if (nextParams.toString() === searchParams.toString()) return;
     setSearchParams(nextParams, { replace: true });
-  }, [activeTab, searchParams, setSearchParams]);
+  }, [activeTab, searchParams, setSearchParams, tabParam]);
 
   const selectFeature = useCallback(
     (featureId: string) => {
