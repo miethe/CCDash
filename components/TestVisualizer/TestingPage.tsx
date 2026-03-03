@@ -459,7 +459,7 @@ export const TestingPage: React.FC = () => {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="space-y-4">
       <header className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -588,8 +588,8 @@ export const TestingPage: React.FC = () => {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="min-h-0 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-3">
+      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="h-[38rem] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-3">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Mapped Domains</h2>
           <DomainTreeView
             domains={status.domains}
@@ -700,47 +700,49 @@ export const TestingPage: React.FC = () => {
               </div>
             )}
           </article>
+
+          <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-200">Test Details</h2>
+                <p className="text-xs text-slate-400">
+                  Viewing domain: <span className="text-slate-200">{viewingDomainLabel}</span>
+                  {activeRun && (
+                    <>
+                      {' • '}run <span className="font-mono text-slate-200">{activeRun.runId}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="text-xs text-slate-500">
+                {runResults.length} loaded / {resultsTotal} total
+                {' '}
+                (out of {activeRun?.totalTests || totals.totalTests} total tests)
+              </div>
+            </div>
+
+            <div className="h-[38rem] overflow-y-auto">
+              <TestResultTable
+                results={runResults}
+                definitions={runResultDefinitions}
+                isLoading={isRunResultsLoading || isRunDetailLoading}
+                isLoadingMore={isRunResultsLoadingMore}
+                total={resultsTotal}
+                totalTestsOverall={activeRun?.totalTests || totals.totalTests}
+                error={runResultsError}
+                hasMore={Boolean(resultsNextCursor)}
+                onLoadMore={loadMoreRunResults}
+                sortKey={resultSortKey}
+                sortOrder={resultSortOrder}
+                onSortChange={(sortKey, sortOrder) => {
+                  setResultSortKey(sortKey);
+                  setResultSortOrder(sortOrder);
+                }}
+              />
+            </div>
+          </section>
         </section>
       </div>
-
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900 p-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-200">Test Details</h2>
-            <p className="text-xs text-slate-400">
-              Viewing domain: <span className="text-slate-200">{viewingDomainLabel}</span>
-              {activeRun && (
-                <>
-                  {' • '}run <span className="font-mono text-slate-200">{activeRun.runId}</span>
-                </>
-              )}
-            </p>
-          </div>
-          <div className="text-xs text-slate-500">
-            {runResults.length} loaded / {resultsTotal} total
-            {' '}
-            (out of {activeRun?.totalTests || totals.totalTests} total tests)
-          </div>
-        </div>
-
-        <TestResultTable
-          results={runResults}
-          definitions={runResultDefinitions}
-          isLoading={isRunResultsLoading || isRunDetailLoading}
-          isLoadingMore={isRunResultsLoadingMore}
-          total={resultsTotal}
-          totalTestsOverall={activeRun?.totalTests || totals.totalTests}
-          error={runResultsError}
-          hasMore={Boolean(resultsNextCursor)}
-          onLoadMore={loadMoreRunResults}
-          sortKey={resultSortKey}
-          sortOrder={resultSortOrder}
-          onSortChange={(sortKey, sortOrder) => {
-            setResultSortKey(sortKey);
-            setResultSortOrder(sortOrder);
-          }}
-        />
-      </section>
 
       <SidebarFiltersPortal>
         <TestFilters
