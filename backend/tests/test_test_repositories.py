@@ -143,6 +143,17 @@ class TestVisualizerRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(latest)
         self.assertEqual(latest["run_id"], "run-2")
 
+        filtered_rows, filtered_total = await self.run_repo.list_filtered(
+            "project-1",
+            feature_id="feature-1",
+            since="2026-02-28T10:30:00Z",
+            limit=10,
+            offset=0,
+        )
+        self.assertEqual(filtered_total, 1)
+        self.assertEqual(len(filtered_rows), 1)
+        self.assertEqual(filtered_rows[0]["run_id"], "run-2")
+
     async def test_result_repository_is_append_only(self) -> None:
         await self.definition_repo.upsert(
             {
@@ -174,6 +185,22 @@ class TestVisualizerRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(latest)
         self.assertEqual(latest["run_id"], "run-b")
         self.assertEqual(latest["status"], "failed")
+
+        scoped_history, scoped_total = await self.result_repo.list_history_for_test(
+            project_id="project-1",
+            test_id="test-append",
+            since="2026-02-28T09:30:00Z",
+            limit=10,
+            offset=0,
+        )
+        self.assertEqual(scoped_total, 1)
+        self.assertEqual(len(scoped_history), 1)
+        self.assertEqual(scoped_history[0]["run_id"], "run-b")
+
+        latest_rows = await self.result_repo.list_latest_by_project(project_id="project-1")
+        latest_by_test = {str(row.get("test_id")): row for row in latest_rows}
+        self.assertIn("test-append", latest_by_test)
+        self.assertEqual(str(latest_by_test["test-append"].get("run_id")), "run-b")
 
     async def test_domain_tree_builds_parent_child_structure(self) -> None:
         parent = await self.domain_repo.get_or_create_by_name("project-1", "Core")
@@ -236,6 +263,18 @@ class TestVisualizerRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(primary_after), 1)
         self.assertEqual(primary_after[0]["provider_source"], "repo_heuristics")
 
+        await self.run_repo.upsert(
+            {"run_id": "run-map", "project_id": "project-1", "timestamp": "2026-02-28T12:00:00Z"}
+        )
+        await self.result_repo.upsert({"run_id": "run-map", "test_id": "test-map", "status": "passed"})
+
+        primary_rows = await self.mapping_repo.list_primary_by_project("project-1")
+        self.assertTrue(any(str(row.get("test_id")) == "test-map" for row in primary_rows))
+
+        primary_for_run = await self.mapping_repo.list_primary_for_run("project-1", "run-map")
+        self.assertEqual(len(primary_for_run), 1)
+        self.assertEqual(str(primary_for_run[0].get("test_id")), "test-map")
+
     async def test_integrity_repository_filters(self) -> None:
         await self.integrity_repo.upsert(
             {
@@ -254,6 +293,8 @@ class TestVisualizerRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "git_sha": "sha-2",
                 "file_path": "tests/test_two.py",
                 "signal_type": "skip_introduced",
+                "severity": "high",
+                "agent_session_id": "session-2",
                 "created_at": "2026-02-28T10:00:00Z",
             }
         )
@@ -268,6 +309,18 @@ class TestVisualizerRepositoryTests(unittest.IsolatedAsyncioTestCase):
         since_rows = await self.integrity_repo.list_since("project-1", "2026-02-28T09:30:00Z")
         self.assertEqual(len(since_rows), 1)
         self.assertEqual(since_rows[0]["signal_id"], "sig-2")
+
+        filtered_rows, filtered_total = await self.integrity_repo.list_filtered(
+            project_id="project-1",
+            signal_type="skip_introduced",
+            severity="high",
+            agent_session_id="session-2",
+            limit=10,
+            offset=0,
+        )
+        self.assertEqual(filtered_total, 1)
+        self.assertEqual(len(filtered_rows), 1)
+        self.assertEqual(str(filtered_rows[0].get("signal_id")), "sig-2")
 
 
 if __name__ == "__main__":

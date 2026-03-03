@@ -111,6 +111,73 @@ class PostgresTestRunRepository:
         )
         return [dict(row) for row in rows]
 
+    async def list_filtered(
+        self,
+        project_id: str,
+        *,
+        agent_session_id: str | None = None,
+        feature_id: str | None = None,
+        git_sha: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        where_clauses = ["tr.project_id = $1"]
+        params: list[object] = [project_id]
+        bind_index = 2
+
+        if agent_session_id:
+            where_clauses.append(f"tr.agent_session_id = ${bind_index}")
+            params.append(agent_session_id)
+            bind_index += 1
+        if git_sha:
+            where_clauses.append(f"tr.git_sha = ${bind_index}")
+            params.append(git_sha)
+            bind_index += 1
+        if since:
+            where_clauses.append(f"tr.timestamp >= ${bind_index}")
+            params.append(since)
+            bind_index += 1
+        if feature_id:
+            where_clauses.append(
+                f"""
+                EXISTS (
+                    SELECT 1
+                    FROM test_results r
+                    JOIN test_feature_mappings m
+                      ON m.project_id = tr.project_id
+                     AND m.test_id = r.test_id
+                     AND m.is_primary = 1
+                    WHERE r.run_id = tr.run_id
+                      AND m.feature_id = ${bind_index}
+                )
+                """
+            )
+            params.append(feature_id)
+            bind_index += 1
+
+        where_sql = " AND ".join(where_clauses)
+        count_row = await self.db.fetchrow(
+            f"SELECT COUNT(*)::int AS total FROM test_runs tr WHERE {where_sql}",
+            *params,
+        )
+        total = int((dict(count_row).get("total") if count_row else 0) or 0)
+
+        data_query = (
+            "SELECT tr.* "
+            "FROM test_runs tr "
+            f"WHERE {where_sql} "
+            "ORDER BY tr.timestamp DESC "
+            f"LIMIT ${bind_index} OFFSET ${bind_index + 1}"
+        )
+        rows = await self.db.fetch(
+            data_query,
+            *params,
+            max(1, int(limit)),
+            max(0, int(offset)),
+        )
+        return [dict(row) for row in rows], total
+
     async def list_by_session(
         self,
         project_id: str,

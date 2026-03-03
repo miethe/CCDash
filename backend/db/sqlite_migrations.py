@@ -510,6 +510,12 @@ CREATE INDEX IF NOT EXISTS idx_test_results_status
     ON test_results(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_test_results_fingerprint
     ON test_results(error_fingerprint) WHERE error_fingerprint != '';
+CREATE INDEX IF NOT EXISTS idx_test_results_run
+    ON test_results(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_run_status
+    ON test_results(run_id, status, test_id);
+CREATE INDEX IF NOT EXISTS idx_test_results_test_run
+    ON test_results(test_id, run_id);
 
 CREATE TABLE IF NOT EXISTS test_domains (
     domain_id       TEXT PRIMARY KEY,
@@ -549,6 +555,10 @@ CREATE INDEX IF NOT EXISTS idx_mappings_feature
     ON test_feature_mappings(project_id, feature_id, is_primary);
 CREATE INDEX IF NOT EXISTS idx_mappings_domain
     ON test_feature_mappings(project_id, domain_id);
+CREATE INDEX IF NOT EXISTS idx_mappings_primary_feature_test
+    ON test_feature_mappings(project_id, is_primary, feature_id, test_id);
+CREATE INDEX IF NOT EXISTS idx_mappings_primary_domain_test
+    ON test_feature_mappings(project_id, is_primary, domain_id, test_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mappings_upsert
     ON test_feature_mappings(test_id, feature_id, provider_source, version);
 
@@ -574,6 +584,8 @@ CREATE INDEX IF NOT EXISTS idx_integrity_test
     ON test_integrity_signals(test_id) WHERE test_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_integrity_type
     ON test_integrity_signals(project_id, signal_type, severity);
+CREATE INDEX IF NOT EXISTS idx_integrity_project_agent_created
+    ON test_integrity_signals(project_id, agent_session_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS test_metrics (
     metric_id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -164,26 +164,34 @@ class TestHealthService:
         project_id: str,
         since: str | None = None,
     ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
-        runs = await self._filtered_runs(project_id=project_id, since=since)
-        runs_sorted = sorted(
-            runs,
-            key=lambda item: _parse_iso(str(item.get("timestamp") or "")) or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=True,
-        )
-        run_by_id = {str(run.get("run_id") or ""): run for run in runs_sorted if str(run.get("run_id") or "")}
+        rows = await self.result_repo.list_latest_by_project(project_id=project_id, since=since)
+        run_by_id: dict[str, dict[str, Any]] = {}
         latest_result: dict[str, dict[str, Any]] = {}
         latest_run_for_test: dict[str, dict[str, Any]] = {}
 
-        for run in runs_sorted:
-            run_id = str(run.get("run_id") or "")
-            if not run_id:
+        for row in rows:
+            test_id = str(row.get("test_id") or "").strip()
+            run_id = str(row.get("run_id") or "").strip()
+            if not test_id:
                 continue
-            results = await self.result_repo.get_by_run(run_id)
-            for row in results:
-                test_id = str(row.get("test_id") or "")
-                if test_id and test_id not in latest_result:
-                    latest_result[test_id] = row
-                    latest_run_for_test[test_id] = run
+            run = {
+                "run_id": run_id,
+                "project_id": str(row.get("run_project_id") or project_id),
+                "timestamp": str(row.get("run_timestamp") or ""),
+                "git_sha": str(row.get("run_git_sha") or ""),
+                "branch": str(row.get("run_branch") or ""),
+                "agent_session_id": str(row.get("run_agent_session_id") or ""),
+            }
+            latest_result[test_id] = row
+            latest_run_for_test[test_id] = run
+            if run_id and run_id not in run_by_id:
+                run_by_id[run_id] = run
+
+        runs_sorted = sorted(
+            run_by_id.values(),
+            key=lambda item: _parse_iso(str(item.get("timestamp") or "")) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
         return run_by_id, latest_result, latest_run_for_test, runs_sorted
 
     async def get_domain_rollups(
@@ -193,17 +201,12 @@ class TestHealthService:
         include_children: bool = True,
     ) -> list[DomainHealthRollupDTO]:
         domains = await self._list_all_paginated(self.domain_repo, project_id=project_id)
-        mappings = await self._list_all_paginated(self.mapping_repo, project_id=project_id)
+        mappings = await self.mapping_repo.list_primary_by_project(project_id=project_id)
         integrity_signals = await self.integrity_repo.list_by_project(project_id=project_id, limit=5000, offset=0)
         _, latest_result, latest_run_for_test, _ = await self._latest_results_by_test(project_id=project_id, since=since)
 
-        primary_mappings = [
-            row for row in mappings
-            if int(row.get("is_primary") or 0) == 1 and str(row.get("domain_id") or "").strip()
-        ]
-
         domain_to_tests: dict[str, set[str]] = defaultdict(set)
-        for row in primary_mappings:
+        for row in mappings:
             domain_id = str(row.get("domain_id") or "").strip()
             test_id = str(row.get("test_id") or "").strip()
             if domain_id and test_id:
@@ -296,7 +299,7 @@ class TestHealthService:
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[FeatureTestHealthDTO], int]:
-        mappings = await self._list_all_paginated(self.mapping_repo, project_id=project_id)
+        mappings = await self.mapping_repo.list_primary_by_project(project_id=project_id, domain_id=domain_id)
         feature_rows = await self.feature_repo.list_all(project_id)
         feature_names = {str(row.get("id") or ""): str(row.get("name") or "") for row in feature_rows}
         integrity_signals = await self.integrity_repo.list_by_project(project_id=project_id, limit=5000, offset=0)
@@ -306,11 +309,7 @@ class TestHealthService:
         feature_domain: dict[str, str | None] = {}
 
         for row in mappings:
-            if int(row.get("is_primary") or 0) != 1:
-                continue
             mapping_domain_id = str(row.get("domain_id") or "").strip() or None
-            if domain_id and mapping_domain_id != domain_id:
-                continue
             feature_id = str(row.get("feature_id") or "").strip()
             test_id = str(row.get("test_id") or "").strip()
             if not feature_id or not test_id:
@@ -537,6 +536,11 @@ class TestHealthService:
         )
 
     async def _list_mappings_for_run(self, project_id: str, run_id: str) -> list[dict[str, Any]]:
+        if hasattr(self.mapping_repo, "list_primary_for_run"):
+            rows = await self.mapping_repo.list_primary_for_run(project_id, run_id)
+            if isinstance(rows, list):
+                return rows
+
         results = await self.result_repo.get_by_run(run_id)
         mappings: list[dict[str, Any]] = []
         for row in results:

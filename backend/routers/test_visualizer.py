@@ -309,8 +309,13 @@ def _to_test_history_dto(row: dict[str, Any], run: dict[str, Any] | None) -> Tes
         stderr_ref=str(row.get("stderr_ref") or ""),
         created_at=str(row.get("created_at") or ""),
         run_timestamp=str(run_row.get("timestamp") or row.get("run_timestamp") or ""),
-        git_sha=str(run_row.get("git_sha") or ""),
-        agent_session_id=str(run_row.get("agent_session_id") or ""),
+        git_sha=str(run_row.get("git_sha") or row.get("run_git_sha") or row.get("git_sha") or ""),
+        agent_session_id=str(
+            run_row.get("agent_session_id")
+            or row.get("run_agent_session_id")
+            or row.get("agent_session_id")
+            or ""
+        ),
     )
 
 
@@ -715,15 +720,18 @@ async def get_feature_health(
             project_id=project_id,
             domain_id=domain_id,
             since=since,
-            offset=0,
-            limit=10000,
+            offset=offset,
+            limit=limit,
         )
-        paged, next_cursor = _page(items, offset=offset, limit=limit, total=total)
+        next_offset = offset + len(items)
+        next_cursor = _encode_cursor(next_offset) if next_offset < total else None
         if span is not None:
-            span.set_attribute("result_count", len(paged))
+            span.set_attribute("result_count", len(items))
+            span.set_attribute("total_count", total)
+            span.set_attribute("query_mode", "db_native")
 
     return CursorPaginatedResponse[FeatureTestHealthDTO](
-        items=paged,
+        items=items,
         total=total,
         limit=limit,
         next_cursor=next_cursor,
@@ -1097,37 +1105,27 @@ async def list_runs(
 
     db = await connection.get_connection()
     run_repo = get_test_run_repository(db)
-    result_repo = get_test_result_repository(db)
-    service = TestHealthService(db)
 
     with start_span(
         "test_visualizer.list_runs",
         attributes={"project_id": project_id, "feature_id": feature_id or "", "session_id": agent_session_id or ""},
     ) as span:
-        runs = await run_repo.list_by_project(project_id=project_id, limit=5000, offset=0)
-        if agent_session_id:
-            runs = [row for row in runs if str(row.get("agent_session_id") or "") == agent_session_id]
-        if git_sha:
-            runs = [row for row in runs if str(row.get("git_sha") or "") == git_sha]
-        if since:
-            runs = [row for row in runs if str(row.get("timestamp") or "") >= since]
-
-        if feature_id:
-            filtered: list[dict[str, Any]] = []
-            for run in runs:
-                run_id = str(run.get("run_id") or "")
-                if not run_id:
-                    continue
-                mappings = await service._list_mappings_for_run(project_id=project_id, run_id=run_id)
-                if any(str(row.get("feature_id") or "") == feature_id for row in mappings):
-                    filtered.append(run)
-            runs = filtered
-
-        total = len(runs)
-        paged, next_cursor = _page(runs, offset=offset, limit=limit, total=total)
-        items = [_to_test_run_dto(row) for row in paged]
+        rows, total = await run_repo.list_filtered(
+            project_id=project_id,
+            agent_session_id=agent_session_id,
+            feature_id=feature_id,
+            git_sha=git_sha,
+            since=since,
+            limit=limit,
+            offset=offset,
+        )
+        next_offset = offset + len(rows)
+        next_cursor = _encode_cursor(next_offset) if next_offset < total else None
+        items = [_to_test_run_dto(row) for row in rows]
         if span is not None:
             span.set_attribute("result_count", len(items))
+            span.set_attribute("total_count", total)
+            span.set_attribute("query_mode", "db_native")
 
     return CursorPaginatedResponse[TestRunDTO](items=items, total=total, limit=limit, next_cursor=next_cursor)
 
@@ -1148,35 +1146,25 @@ async def get_test_history(
 
     db = await connection.get_connection()
     result_repo = get_test_result_repository(db)
-    run_repo = get_test_run_repository(db)
 
     with start_span(
         "test_visualizer.get_test_history",
         attributes={"project_id": project_id, "test_id": test_id, "since": since or ""},
     ) as span:
-        history = await result_repo.get_history_for_test(test_id=test_id, limit=5000)
-        filtered: list[dict[str, Any]] = []
-        run_cache: dict[str, dict[str, Any] | None] = {}
-        for row in history:
-            run_id = str(row.get("run_id") or "")
-            if not run_id:
-                continue
-            if run_id not in run_cache:
-                run_cache[run_id] = await run_repo.get_by_id(run_id)
-            run = run_cache.get(run_id)
-            if run is None:
-                continue
-            if str(run.get("project_id") or "") != project_id:
-                continue
-            if since and str(run.get("timestamp") or "") < since:
-                continue
-            filtered.append(row)
-
-        total = len(filtered)
-        page_rows, next_cursor = _page(filtered, offset=offset, limit=limit, total=total)
-        items = [_to_test_history_dto(row, run_cache.get(str(row.get("run_id") or ""))) for row in page_rows]
+        rows, total = await result_repo.list_history_for_test(
+            project_id=project_id,
+            test_id=test_id,
+            since=since,
+            limit=limit,
+            offset=offset,
+        )
+        next_offset = offset + len(rows)
+        next_cursor = _encode_cursor(next_offset) if next_offset < total else None
+        items = [_to_test_history_dto(row, None) for row in rows]
         if span is not None:
             span.set_attribute("result_count", len(items))
+            span.set_attribute("total_count", total)
+            span.set_attribute("query_mode", "db_native")
 
     return CursorPaginatedResponse[TestResultHistoryDTO](
         items=items,
@@ -1243,23 +1231,22 @@ async def list_integrity_alerts(
         "test_visualizer.list_integrity_alerts",
         attributes={"project_id": project_id, "signal_type": signal_type or "", "severity": severity or ""},
     ) as span:
-        if since:
-            rows = await integrity_repo.list_since(project_id=project_id, since=since, limit=5000)
-        else:
-            rows = await integrity_repo.list_by_project(project_id=project_id, limit=5000, offset=0)
-
-        if signal_type:
-            rows = [row for row in rows if str(row.get("signal_type") or "") == signal_type]
-        if severity:
-            rows = [row for row in rows if str(row.get("severity") or "") == severity]
-        if agent_session_id:
-            rows = [row for row in rows if str(row.get("agent_session_id") or "") == agent_session_id]
-
-        total = len(rows)
-        page_rows, next_cursor = _page(rows, offset=offset, limit=limit, total=total)
-        items = [_to_test_signal_dto(row) for row in page_rows]
+        rows, total = await integrity_repo.list_filtered(
+            project_id=project_id,
+            since=since,
+            signal_type=signal_type,
+            severity=severity,
+            agent_session_id=agent_session_id,
+            limit=limit,
+            offset=offset,
+        )
+        next_offset = offset + len(rows)
+        next_cursor = _encode_cursor(next_offset) if next_offset < total else None
+        items = [_to_test_signal_dto(row) for row in rows]
         if span is not None:
             span.set_attribute("result_count", len(items))
+            span.set_attribute("total_count", total)
+            span.set_attribute("query_mode", "db_native")
 
     return CursorPaginatedResponse[TestIntegritySignalDTO](
         items=items,

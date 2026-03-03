@@ -142,6 +142,17 @@ class TestRunRepository(Protocol):
     async def list_by_session(
         self, project_id: str, agent_session_id: str, limit: int = 100, offset: int = 0
     ) -> list[dict]: ...
+    async def list_filtered(
+        self,
+        project_id: str,
+        *,
+        agent_session_id: str | None = None,
+        feature_id: str | None = None,
+        git_sha: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]: ...
     async def get_latest_for_feature(self, project_id: str, feature_id: str) -> dict | None: ...
 
 
@@ -182,6 +193,21 @@ class TestResultRepository(Protocol):
         offset: int = 0,
     ) -> tuple[list[dict], int]: ...
     async def get_history_for_test(self, test_id: str, limit: int = 200) -> list[dict]: ...
+    async def list_history_for_test(
+        self,
+        *,
+        project_id: str,
+        test_id: str,
+        since: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]: ...
+    async def list_latest_by_project(
+        self,
+        *,
+        project_id: str,
+        since: str | None = None,
+    ) -> list[dict]: ...
     async def get_latest_status(self, test_id: str) -> dict | None: ...
 
 
@@ -212,6 +238,8 @@ class TestMappingRepository(Protocol):
     async def list_by_feature(self, project_id: str, feature_id: str, is_primary_only: bool = False) -> list[dict]: ...
     async def list_by_domain(self, project_id: str, domain_id: str) -> list[dict]: ...
     async def get_primary_for_test(self, project_id: str, test_id: str) -> list[dict]: ...
+    async def list_primary_by_project(self, project_id: str, domain_id: str | None = None) -> list[dict]: ...
+    async def list_primary_for_run(self, project_id: str, run_id: str) -> list[dict]: ...
 
 
 @runtime_checkable
@@ -223,3 +251,14 @@ class TestIntegrityRepository(Protocol):
     async def list_by_project(self, project_id: str, limit: int = 100, offset: int = 0) -> list[dict]: ...
     async def list_by_sha(self, project_id: str, git_sha: str, limit: int = 100) -> list[dict]: ...
     async def list_since(self, project_id: str, since: str, limit: int = 100) -> list[dict]: ...
+    async def list_filtered(
+        self,
+        *,
+        project_id: str,
+        since: str | None = None,
+        signal_type: str | None = None,
+        severity: str | None = None,
+        agent_session_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]: ...

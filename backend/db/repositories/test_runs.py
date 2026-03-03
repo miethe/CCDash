@@ -103,6 +103,64 @@ class SqliteTestRunRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_filtered(
+        self,
+        project_id: str,
+        *,
+        agent_session_id: str | None = None,
+        feature_id: str | None = None,
+        git_sha: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        where_clauses = ["tr.project_id = ?"]
+        params: list[object] = [project_id]
+
+        if agent_session_id:
+            where_clauses.append("tr.agent_session_id = ?")
+            params.append(agent_session_id)
+        if git_sha:
+            where_clauses.append("tr.git_sha = ?")
+            params.append(git_sha)
+        if since:
+            where_clauses.append("tr.timestamp >= ?")
+            params.append(since)
+        if feature_id:
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM test_results r
+                    JOIN test_feature_mappings m
+                      ON m.project_id = tr.project_id
+                     AND m.test_id = r.test_id
+                     AND m.is_primary = 1
+                    WHERE r.run_id = tr.run_id
+                      AND m.feature_id = ?
+                )
+                """
+            )
+            params.append(feature_id)
+
+        where_sql = " AND ".join(where_clauses)
+        count_query = f"SELECT COUNT(*) FROM test_runs tr WHERE {where_sql}"
+        async with self.db.execute(count_query, tuple(params)) as cur:
+            row = await cur.fetchone()
+            total = int((row[0] if row else 0) or 0)
+
+        data_query = (
+            "SELECT tr.* "
+            "FROM test_runs tr "
+            f"WHERE {where_sql} "
+            "ORDER BY tr.timestamp DESC "
+            "LIMIT ? OFFSET ?"
+        )
+        data_params = [*params, max(1, int(limit)), max(0, int(offset))]
+        async with self.db.execute(data_query, tuple(data_params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows], total
+
     async def list_by_session(
         self,
         project_id: str,

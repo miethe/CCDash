@@ -186,6 +186,41 @@ class SqliteTestMappingRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_primary_by_project(self, project_id: str, domain_id: str | None = None) -> list[dict]:
+        if domain_id:
+            query = """
+                SELECT *
+                FROM test_feature_mappings
+                WHERE project_id = ? AND is_primary = 1 AND domain_id = ?
+                ORDER BY feature_id ASC, test_id ASC
+            """
+            params: tuple[object, ...] = (project_id, domain_id)
+        else:
+            query = """
+                SELECT *
+                FROM test_feature_mappings
+                WHERE project_id = ? AND is_primary = 1
+                ORDER BY feature_id ASC, test_id ASC
+            """
+            params = (project_id,)
+        async with self.db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    async def list_primary_for_run(self, project_id: str, run_id: str) -> list[dict]:
+        async with self.db.execute(
+            """
+            SELECT m.*
+            FROM test_feature_mappings m
+            JOIN test_results r ON r.test_id = m.test_id
+            WHERE m.project_id = ? AND m.is_primary = 1 AND r.run_id = ?
+            ORDER BY m.feature_id ASC, m.test_id ASC
+            """,
+            (project_id, run_id),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     async def _refresh_primary(self, project_id: str, test_id: str) -> None:
         async with self.db.execute(
             """

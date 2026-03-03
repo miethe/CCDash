@@ -192,6 +192,89 @@ class SqliteTestResultRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_history_for_test(
+        self,
+        *,
+        project_id: str,
+        test_id: str,
+        since: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        where_clauses = [
+            "r.test_id = ?",
+            "tr.project_id = ?",
+        ]
+        params: list[object] = [test_id, project_id]
+        if since:
+            where_clauses.append("tr.timestamp >= ?")
+            params.append(since)
+
+        where_sql = " AND ".join(where_clauses)
+        count_query = (
+            "SELECT COUNT(*) "
+            "FROM test_results r "
+            "JOIN test_runs tr ON tr.run_id = r.run_id "
+            f"WHERE {where_sql}"
+        )
+        async with self.db.execute(count_query, tuple(params)) as cur:
+            row = await cur.fetchone()
+            total = int((row[0] if row else 0) or 0)
+
+        data_query = (
+            "SELECT "
+            "  r.*, "
+            "  tr.timestamp AS run_timestamp, "
+            "  tr.project_id, "
+            "  tr.git_sha AS run_git_sha, "
+            "  tr.agent_session_id AS run_agent_session_id "
+            "FROM test_results r "
+            "JOIN test_runs tr ON tr.run_id = r.run_id "
+            f"WHERE {where_sql} "
+            "ORDER BY tr.timestamp DESC, r.created_at DESC "
+            "LIMIT ? OFFSET ?"
+        )
+        data_params = [*params, max(1, int(limit)), max(0, int(offset))]
+        async with self.db.execute(data_query, tuple(data_params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows], total
+
+    async def list_latest_by_project(
+        self,
+        *,
+        project_id: str,
+        since: str | None = None,
+    ) -> list[dict]:
+        where_sql = "tr.project_id = ?"
+        params: list[object] = [project_id]
+        if since:
+            where_sql += " AND tr.timestamp >= ?"
+            params.append(since)
+
+        query = (
+            "WITH ranked AS ("
+            "  SELECT "
+            "    r.*, "
+            "    tr.project_id AS run_project_id, "
+            "    tr.timestamp AS run_timestamp, "
+            "    tr.git_sha AS run_git_sha, "
+            "    tr.branch AS run_branch, "
+            "    tr.agent_session_id AS run_agent_session_id, "
+            "    ROW_NUMBER() OVER ("
+            "      PARTITION BY r.test_id "
+            "      ORDER BY tr.timestamp DESC, r.created_at DESC"
+            "    ) AS row_num "
+            "  FROM test_results r "
+            "  JOIN test_runs tr ON tr.run_id = r.run_id "
+            f"  WHERE {where_sql}"
+            ") "
+            "SELECT * FROM ranked WHERE row_num = 1 "
+            "ORDER BY run_timestamp DESC"
+        )
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     async def get_latest_status(self, test_id: str) -> dict | None:
         async with self.db.execute(
             """

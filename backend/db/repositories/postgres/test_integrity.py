@@ -71,25 +71,110 @@ class PostgresTestIntegrityRepository:
         self, offset: int, limit: int, project_id: str | None = None
     ) -> list[dict]:
         if project_id:
-            rows = await self.db.fetch(
-                """
-                SELECT *
-                FROM test_integrity_signals
-                WHERE project_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2 OFFSET $3
-                """,
-                project_id,
-                limit,
-                offset,
-            )
-        else:
-            rows = await self.db.fetch(
-                "SELECT * FROM test_integrity_signals ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-                limit,
-                offset,
-            )
+            return await self.list_by_project(project_id=project_id, limit=limit, offset=offset)
+        rows = await self.db.fetch(
+            "SELECT * FROM test_integrity_signals ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            limit,
+            offset,
+        )
         return [dict(row) for row in rows]
 
     async def delete_by_source(self, source_file: str) -> None:
         _ = source_file
+
+    async def list_by_project(self, project_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_integrity_signals
+            WHERE project_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+            """,
+            project_id,
+            limit,
+            offset,
+        )
+        return [dict(row) for row in rows]
+
+    async def list_by_sha(self, project_id: str, git_sha: str, limit: int = 100) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_integrity_signals
+            WHERE project_id = $1 AND git_sha = $2
+            ORDER BY created_at DESC
+            LIMIT $3
+            """,
+            project_id,
+            git_sha,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def list_since(self, project_id: str, since: str, limit: int = 100) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM test_integrity_signals
+            WHERE project_id = $1 AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT $3
+            """,
+            project_id,
+            since,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def list_filtered(
+        self,
+        *,
+        project_id: str,
+        since: str | None = None,
+        signal_type: str | None = None,
+        severity: str | None = None,
+        agent_session_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        where_clauses = ["project_id = $1"]
+        params: list[object] = [project_id]
+        bind_index = 2
+        if since:
+            where_clauses.append(f"created_at >= ${bind_index}")
+            params.append(since)
+            bind_index += 1
+        if signal_type:
+            where_clauses.append(f"signal_type = ${bind_index}")
+            params.append(signal_type)
+            bind_index += 1
+        if severity:
+            where_clauses.append(f"severity = ${bind_index}")
+            params.append(severity)
+            bind_index += 1
+        if agent_session_id:
+            where_clauses.append(f"agent_session_id = ${bind_index}")
+            params.append(agent_session_id)
+            bind_index += 1
+
+        where_sql = " AND ".join(where_clauses)
+        count_row = await self.db.fetchrow(
+            f"SELECT COUNT(*)::int AS total FROM test_integrity_signals WHERE {where_sql}",
+            *params,
+        )
+        total = int((dict(count_row).get("total") if count_row else 0) or 0)
+
+        rows = await self.db.fetch(
+            (
+                "SELECT * "
+                "FROM test_integrity_signals "
+                f"WHERE {where_sql} "
+                "ORDER BY created_at DESC "
+                f"LIMIT ${bind_index} OFFSET ${bind_index + 1}"
+            ),
+            *params,
+            max(1, int(limit)),
+            max(0, int(offset)),
+        )
+        return [dict(row) for row in rows], total

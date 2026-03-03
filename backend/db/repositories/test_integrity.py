@@ -132,6 +132,50 @@ class SqliteTestIntegrityRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_filtered(
+        self,
+        *,
+        project_id: str,
+        since: str | None = None,
+        signal_type: str | None = None,
+        severity: str | None = None,
+        agent_session_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        where_clauses = ["project_id = ?"]
+        params: list[object] = [project_id]
+        if since:
+            where_clauses.append("created_at >= ?")
+            params.append(since)
+        if signal_type:
+            where_clauses.append("signal_type = ?")
+            params.append(signal_type)
+        if severity:
+            where_clauses.append("severity = ?")
+            params.append(severity)
+        if agent_session_id:
+            where_clauses.append("agent_session_id = ?")
+            params.append(agent_session_id)
+
+        where_sql = " AND ".join(where_clauses)
+        count_query = f"SELECT COUNT(*) FROM test_integrity_signals WHERE {where_sql}"
+        async with self.db.execute(count_query, tuple(params)) as cur:
+            row = await cur.fetchone()
+            total = int((row[0] if row else 0) or 0)
+
+        data_query = (
+            "SELECT * "
+            "FROM test_integrity_signals "
+            f"WHERE {where_sql} "
+            "ORDER BY created_at DESC "
+            "LIMIT ? OFFSET ?"
+        )
+        data_params = [*params, max(1, int(limit)), max(0, int(offset))]
+        async with self.db.execute(data_query, tuple(data_params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows], total
+
     def _row_to_dict(self, row: aiosqlite.Row | None) -> dict:
         if row is None:
             return {}
