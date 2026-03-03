@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-03-03
+
+### Added
+
+- Incremental Test Visualizer mapping cache keyed by test-definition signature:
+  - resolver now reuses existing primary mappings when a test definition is unchanged.
+  - each stored mapping now includes `definition_signature`, `resolver_version`, and `mapped_at` metadata.
+- Adaptive domain hierarchy assignment for mapping providers:
+  - domain paths can now be created at multiple levels (`core`/`support`/`leaf`) instead of only a flat top-level domain.
+  - large top-level domains automatically map deeper (sub-domain depth) based on test-volume thresholds.
+- Backfill API payload now supports:
+  - `force_recompute`
+  - `provider_sources`
+  - `source`
+
+### Changed
+
+- `POST /api/tests/mappings/backfill` now performs project-wide incremental resolution over tests found in selected runs:
+  - no longer skips a run just because some tests already have primary mappings.
+  - resolves only unmapped/changed tests and reports cache reuse counts.
+- `POST /api/tests/mappings/import` now runs with resolver version `2` and forces recompute for imported semantic mappings.
+- Mapping backfill response includes richer progress and cache telemetry:
+  - `tests_considered`
+  - `tests_resolved`
+  - `tests_reused_cached`
+  - `resolver_version`
+  - `cache_state`
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/testing-user-guide.md`
+  - `docs/project_plans/implementation_plans/features/test-visualizer-v1/phase-7-mapping-integrity.md`
+
+### Added (Execution Workbench)
+
+- In-app local terminal run lifecycle support on `/execution`:
+  - pre-run policy review modal (command/cwd/env profile + re-check)
+  - feature-scoped `Runs` tab with run history and live output stream
+  - approval dialog for `requires_approval` blocked runs
+- Frontend execution API client methods for:
+  - policy checks
+  - create/list/get runs
+  - event pagination and incremental stream fetch
+  - approve/cancel/retry actions
+- New execution UI components:
+  - `components/execution/ExecutionRunHistory.tsx`
+  - `components/execution/ExecutionRunPanel.tsx`
+  - `components/execution/ExecutionApprovalDialog.tsx`
+
+### Changed (Execution Workbench)
+
+- `FeatureExecutionWorkbench` now includes a dedicated `Runs` tab and workbench-native run controls instead of copy-only command flows.
+- Recommendation actions now support immediate in-app run launch (`Run in Workbench`) for primary and alternative commands.
+
+### Docs (Execution Workbench)
+
+- Added:
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/execution-workbench-developer-reference.md`
+- Updated:
+  - `README.md`
+
 ## 2026-03-02
 
 ### Added

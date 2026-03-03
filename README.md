@@ -120,6 +120,24 @@ The core debugging loop for AI interactions.
 *   **Toggle System**: Activate/Deactivate alerts with backend persistence.
 *   **Project Testing Configuration**: Per-project Testing settings to configure platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export.
 
+### 9. Execution Workbench (In-App Local Terminal)
+*   **Route**: `/execution` with feature-scoped execution context and command recommendations.
+*   **Run Launch UX**: `Run in Workbench` actions open a pre-run review modal with:
+    *   editable command text
+    *   working-directory selection
+    *   env profile selection (`default`, `minimal`, `project`, `ci`)
+    *   policy re-check before launch
+*   **Safety Pipeline**:
+    *   `allow` commands run immediately.
+    *   `requires_approval` commands enter `blocked` until explicit approve/deny.
+    *   `deny` commands are blocked until changed and re-evaluated.
+*   **Runs Tab**:
+    *   run history list for the selected feature
+    *   active run metadata/status
+    *   streamed terminal output (`stdout`/`stderr`)
+    *   actions for cancel and retry
+*   **Backend API**: `/api/execution/*` endpoints persist runs, events, and approvals for auditable run lifecycles.
+
 ---
 
 ## 📊 Data Models
@@ -194,7 +212,16 @@ Represents Markdown documentation. Contains:
     *   `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS`: delay before deferred rebuild (default `45`).
     *   `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS`: capture analytics during deferred rebuild (default `false`).
 
+6.  **Test Mapping Workflow (recommended)**:
+    *   Run one initial backfill for each project (`POST /api/tests/mappings/backfill`) to bootstrap mappings across existing runs.
+    *   Resolver uses cached primary mappings for unchanged tests and remaps only new/changed tests on future runs.
+    *   Pass `force_recompute=true` only when mapping logic changes and you want a full remap.
+    *   Domain mapping now supports hierarchical sub-domains and adaptive depth for large test groups.
+    *   Mapping providers are pluggable; current built-ins are `test_metadata` and `repo_heuristics`, with semantic import support via `POST /api/tests/mappings/import`.
+
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).  
 For project-scoped Testing configuration and `/tests` ingestion flow, see [`docs/testing-user-guide.md`](docs/testing-user-guide.md).  
+For end-user execution flow in `/execution`, see [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md).  
 For sync/rebuild operation behavior, see [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md).  
 For codebase explorer backend and scoring details, see [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md).
+For execution run architecture and API integration details, see [`docs/execution-workbench-developer-reference.md`](docs/execution-workbench-developer-reference.md).
