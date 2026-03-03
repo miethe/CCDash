@@ -11,6 +11,7 @@ import {
   TestRun,
   TestVisualizerConfig,
   TestRunDetail,
+  TestDefinition,
   TestResult,
 } from '../types';
 
@@ -30,6 +31,14 @@ export interface CursorPage<T> {
   items: T[];
   nextCursor: string | null;
   total: number;
+}
+
+export interface RunResultPage {
+  items: TestResult[];
+  total: number;
+  limit: number;
+  nextCursor: string | null;
+  definitions: Record<string, TestDefinition>;
 }
 
 interface RequestOptions {
@@ -150,9 +159,35 @@ export async function getFeatureHealth(
   return requestJson<CursorPage<FeatureTestHealth>>(`/health/features${query}`);
 }
 
-export async function getTestRun(runId: string, projectId: string): Promise<TestRunDetail | null> {
-  const query = buildQuery({ project_id: projectId });
+export async function getTestRun(
+  runId: string,
+  projectId: string,
+  options?: { includeResults?: boolean }
+): Promise<TestRunDetail | null> {
+  const query = buildQuery({ project_id: projectId, include_results: options?.includeResults });
   return requestJson<TestRunDetail | null>(`/runs/${encodeURIComponent(runId)}${query}`);
+}
+
+export async function listRunResults(options: {
+  runId: string;
+  projectId: string;
+  statuses?: string[];
+  query?: string;
+  sortBy?: 'status' | 'duration' | 'name' | 'test_id';
+  sortOrder?: 'asc' | 'desc';
+  cursor?: string;
+  limit?: number;
+}): Promise<RunResultPage> {
+  const query = buildQuery({
+    project_id: options.projectId,
+    statuses: (options.statuses || []).join(','),
+    query: options.query,
+    sort_by: options.sortBy,
+    sort_order: options.sortOrder,
+    cursor: options.cursor,
+    limit: options.limit,
+  });
+  return requestJson<RunResultPage>(`/runs/${encodeURIComponent(options.runId)}/results${query}`);
 }
 
 export async function listTestRuns(filter: TestRunsFilter): Promise<CursorPage<TestRun>> {

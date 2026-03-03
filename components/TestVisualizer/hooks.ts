@@ -251,7 +251,7 @@ export function useLiveTestUpdates(
     const poll = async () => {
       try {
         if (filter.runId) {
-          const detail = await getTestRun(filter.runId, projectId);
+          const detail = await getTestRun(filter.runId, projectId, { includeResults: false });
           if (!alive) return;
           setLatestRun(detail?.run ?? null);
           setLastUpdated(new Date());

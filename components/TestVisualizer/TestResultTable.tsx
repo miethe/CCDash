@@ -1,28 +1,29 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
-import { TestDefinition, TestResult, TestStatus } from '../../types';
+import { TestDefinition, TestResult } from '../../types';
 import { TestStatusBadge } from './TestStatusBadge';
 
 interface TestResultTableProps {
   results: TestResult[];
   definitions?: Record<string, TestDefinition>;
   isLoading?: boolean;
+  isLoadingMore?: boolean;
+  total?: number;
+  error?: string | null;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  sortKey?: SortKey;
+  sortOrder?: 'asc' | 'desc';
+  onSortChange?: (sortKey: SortKey, sortOrder: 'asc' | 'desc') => void;
   className?: string;
 }
 
-type SortKey = 'status' | 'duration' | 'name';
-
-const STATUS_ORDER: TestStatus[] = ['error', 'failed', 'xpassed', 'xfailed', 'skipped', 'running', 'unknown', 'passed'];
+type SortKey = 'status' | 'duration' | 'name' | 'test_id';
 
 const formatDuration = (ms: number): string => {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
-};
-
-const sortStatusIndex = (status: TestStatus): number => {
-  const index = STATUS_ORDER.indexOf(status);
-  return index >= 0 ? index : STATUS_ORDER.length;
 };
 
 const previewError = (message: string): string => {
@@ -35,44 +36,26 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
   results,
   definitions = {},
   isLoading = false,
+  isLoadingMore = false,
+  total,
+  error = null,
+  hasMore = false,
+  onLoadMore,
+  sortKey = 'status',
+  sortOrder = 'asc',
+  onSortChange,
   className = '',
 }) => {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-  const [statusFilter, setStatusFilter] = useState<TestStatus | 'all'>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('status');
-  const [ascending, setAscending] = useState(true);
-
-  const availableStatuses = useMemo(() => {
-    const unique = new Set<TestStatus>();
-    results.forEach(result => unique.add(result.status));
-    return Array.from(unique);
-  }, [results]);
-
-  const rows = useMemo(() => {
-    const filtered = statusFilter === 'all' ? results : results.filter(result => result.status === statusFilter);
-    const sorted = [...filtered].sort((a, b) => {
-      if (sortKey === 'duration') {
-        return ascending ? a.durationMs - b.durationMs : b.durationMs - a.durationMs;
-      }
-      if (sortKey === 'name') {
-        const nameA = definitions[a.testId]?.name || a.testId;
-        const nameB = definitions[b.testId]?.name || b.testId;
-        return ascending ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
-      }
-      const scoreA = sortStatusIndex(a.status);
-      const scoreB = sortStatusIndex(b.status);
-      return ascending ? scoreA - scoreB : scoreB - scoreA;
-    });
-    return sorted;
-  }, [results, statusFilter, sortKey, ascending, definitions]);
 
   const setSort = (nextKey: SortKey) => {
-    if (nextKey === sortKey) {
-      setAscending(prev => !prev);
-      return;
-    }
-    setSortKey(nextKey);
-    setAscending(true);
+    if (!onSortChange) return;
+    const nextOrder: 'asc' | 'desc' = nextKey === sortKey
+      ? sortOrder === 'asc'
+        ? 'desc'
+        : 'asc'
+      : 'asc';
+    onSortChange(nextKey, nextOrder);
   };
 
   const toggleRow = (testId: string) => {
@@ -102,21 +85,12 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
   return (
     <div className={`rounded-xl border border-slate-800 bg-slate-900 ${className}`.trim()}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-3">
-        <div className="flex items-center gap-2 text-xs text-slate-400">
-          <label htmlFor="status-filter" className="font-semibold text-slate-300">Status</label>
-          <select
-            id="status-filter"
-            value={statusFilter}
-            onChange={event => setStatusFilter(event.target.value as TestStatus | 'all')}
-            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-          >
-            <option value="all">All</option>
-            {availableStatuses.map(status => (
-              <option key={status} value={status}>{status}</option>
-            ))}
-          </select>
+        <div className="text-xs text-slate-400">
+          Server-sorted by <span className="font-semibold text-slate-200">{sortKey}</span> ({sortOrder})
         </div>
-        <div className="text-xs text-slate-500">{rows.length} visible / {results.length} total</div>
+        <div className="text-xs text-slate-500">
+          {results.length} loaded / {typeof total === 'number' ? total : results.length} total
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -137,7 +111,7 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
             </tr>
           </thead>
           <tbody>
-            {rows.map(result => {
+            {results.map(result => {
               const definition = definitions[result.testId];
               const expanded = Boolean(expandedRows[result.testId]);
               return (
@@ -181,6 +155,21 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
           </tbody>
         </table>
       </div>
+      {(error || hasMore || isLoadingMore) && (
+        <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2">
+          <div className="text-xs text-rose-300">{error || ''}</div>
+          {hasMore && onLoadMore && (
+            <button
+              type="button"
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:border-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoadingMore ? 'Loading more…' : 'Load more'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

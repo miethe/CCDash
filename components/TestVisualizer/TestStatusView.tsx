@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
-import { FeatureTestTimeline, TestRun, TestRunDetail, TestStatus } from '../../types';
-import { getFeatureTimeline, getIntegrityAlerts, getTestRun } from '../../services/testVisualizer';
+import { FeatureTestTimeline, TestDefinition, TestRun, TestRunDetail, TestStatus } from '../../types';
+import { getFeatureTimeline, getIntegrityAlerts, getTestRun, listRunResults } from '../../services/testVisualizer';
 import { DomainTreeView } from './DomainTreeView';
 import { HealthGauge } from './HealthGauge';
 import { HealthSummaryBar } from './HealthSummaryBar';
@@ -41,6 +41,8 @@ interface TestStatusViewProps {
   };
 }
 
+const EMPTY_STATUSES: TestStatus[] = [];
+
 export const TestStatusView: React.FC<TestStatusViewProps> = ({
   projectId,
   filter,
@@ -60,9 +62,19 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   const [timeline, setTimeline] = useState<FeatureTestTimeline | null>(null);
   const [timelineError, setTimelineError] = useState<Error | null>(null);
   const [alerts, setAlerts] = useState<Awaited<ReturnType<typeof getIntegrityAlerts>>['items']>([]);
-  const runDetailCacheRef = useRef<Record<string, TestRunDetail>>({});
+  const [runResults, setRunResults] = useState<TestRunDetail['results']>([]);
+  const [runResultDefinitions, setRunResultDefinitions] = useState<Record<string, TestDefinition>>({});
+  const [resultsNextCursor, setResultsNextCursor] = useState<string | null>(null);
+  const [resultsTotal, setResultsTotal] = useState(0);
+  const [isRunResultsLoading, setIsRunResultsLoading] = useState(false);
+  const [isRunResultsLoadingMore, setIsRunResultsLoadingMore] = useState(false);
+  const [runResultsError, setRunResultsError] = useState<string | null>(null);
+  const [resultSortKey, setResultSortKey] = useState<'status' | 'duration' | 'name' | 'test_id'>('status');
+  const [resultSortOrder, setResultSortOrder] = useState<'asc' | 'desc'>('asc');
+  const runResultsRequestIdRef = useRef(0);
 
-  const status = useTestStatus(projectId, { enabled: Boolean(projectId) });
+  const shouldFetchStatus = showDomainTree || !hideHeader;
+  const status = useTestStatus(projectId, { enabled: Boolean(projectId && shouldFetchStatus) });
   const runs = useTestRuns(projectId, {
     featureId: filter?.featureId,
     agentSessionId: filter?.sessionId,
@@ -85,12 +97,26 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   }, [filter?.domainId]);
 
   useEffect(() => {
-    runDetailCacheRef.current = {};
     setSelectedRunDetail(null);
     setSelectedRunId(null);
+    setRunResults([]);
+    setRunResultDefinitions({});
+    setResultsNextCursor(null);
+    setResultsTotal(0);
+    setRunResultsError(null);
+    setResultSortKey('status');
+    setResultSortOrder('asc');
   }, [projectId]);
 
-  const selectedStatuses = uiFilter?.statuses || [];
+  const selectedStatuses = uiFilter?.statuses ?? EMPTY_STATUSES;
+  const selectedStatusesKey = useMemo(
+    () => [...selectedStatuses].sort().join(','),
+    [selectedStatuses],
+  );
+  const selectedStatusesParam = useMemo(
+    () => (selectedStatusesKey ? selectedStatusesKey.split(',') : undefined),
+    [selectedStatusesKey],
+  );
   const searchQuery = (uiFilter?.searchQuery || '').trim().toLowerCase();
   const branchFilter = (uiFilter?.branch || '').trim().toLowerCase();
   const runDateFrom = (uiFilter?.runDateFrom || '').trim();
@@ -159,6 +185,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       || runs.runs.find(run => run.runId === activeRunId)
       || null;
   }, [activeRunId, filteredRuns, runs.runs]);
+  const resolvedActiveRun = activeRun || selectedRunDetail?.run || null;
 
   const topDomain = useMemo(() => {
     const roots = status.domains;
@@ -182,22 +209,12 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       return;
     }
 
-    const cached = runDetailCacheRef.current[activeRunId];
-    if (cached) {
-      setSelectedRunDetail(cached);
-      setIsRunDetailLoading(false);
-      return;
-    }
-
     const loadDetail = async () => {
       setIsRunDetailLoading(true);
       setSelectedRunDetail(null);
       try {
-        const detail = await getTestRun(activeRunId, projectId);
+        const detail = await getTestRun(activeRunId, projectId, { includeResults: false });
         if (!alive) return;
-        if (detail) {
-          runDetailCacheRef.current[activeRunId] = detail;
-        }
         setSelectedRunDetail(detail);
       } catch {
         if (!alive) return;
@@ -266,35 +283,102 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     };
   }, [filter?.featureId, projectId]);
 
-  const filteredRunResults = useMemo(() => {
-    const results = selectedRunDetail?.results || [];
-    if (results.length === 0) return [];
+  useEffect(() => {
+    if (!activeRunId || !projectId) {
+      runResultsRequestIdRef.current += 1;
+      setRunResults([]);
+      setRunResultDefinitions({});
+      setResultsNextCursor(null);
+      setResultsTotal(0);
+      setRunResultsError(null);
+      setIsRunResultsLoading(false);
+      setIsRunResultsLoadingMore(false);
+      return;
+    }
 
-    return results.filter(result => {
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(result.status)) {
-        return false;
+    const requestId = runResultsRequestIdRef.current + 1;
+    runResultsRequestIdRef.current = requestId;
+
+    setIsRunResultsLoading(true);
+    setRunResultsError(null);
+    setRunResults([]);
+    setRunResultDefinitions({});
+    setResultsNextCursor(null);
+
+    const loadFirstPage = async () => {
+      try {
+        const payload = await listRunResults({
+          runId: activeRunId,
+          projectId,
+          statuses: selectedStatusesParam,
+          query: searchQuery || undefined,
+          sortBy: resultSortKey,
+          sortOrder: resultSortOrder,
+          limit: 150,
+        });
+        if (runResultsRequestIdRef.current !== requestId) return;
+        setRunResults(payload.items || []);
+        setRunResultDefinitions(payload.definitions || {});
+        setResultsNextCursor(payload.nextCursor || null);
+        setResultsTotal(payload.total || 0);
+      } catch (err) {
+        if (runResultsRequestIdRef.current !== requestId) return;
+        setRunResults([]);
+        setRunResultDefinitions({});
+        setResultsNextCursor(null);
+        setResultsTotal(0);
+        setRunResultsError(err instanceof Error ? err.message : 'Failed to load run results');
+      } finally {
+        if (runResultsRequestIdRef.current === requestId) {
+          setIsRunResultsLoading(false);
+        }
       }
-      if (!searchQuery) return true;
-      const definition = selectedRunDetail?.definitions?.[result.testId];
-      const haystack = [
-        result.testId,
-        definition?.name || '',
-        definition?.path || '',
-        result.errorMessage || '',
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(searchQuery);
-    });
-  }, [searchQuery, selectedRunDetail, selectedStatuses]);
+    };
+
+    void loadFirstPage();
+  }, [activeRunId, projectId, resultSortKey, resultSortOrder, searchQuery, selectedStatusesParam]);
+
+  const loadMoreRunResults = async () => {
+    if (!activeRunId || !projectId || !resultsNextCursor || isRunResultsLoadingMore) {
+      return;
+    }
+
+    const requestId = runResultsRequestIdRef.current;
+    setIsRunResultsLoadingMore(true);
+    setRunResultsError(null);
+    try {
+      const payload = await listRunResults({
+        runId: activeRunId,
+        projectId,
+        statuses: selectedStatusesParam,
+        query: searchQuery || undefined,
+        sortBy: resultSortKey,
+        sortOrder: resultSortOrder,
+        cursor: resultsNextCursor,
+        limit: 150,
+      });
+      if (runResultsRequestIdRef.current !== requestId) return;
+      setRunResults(prev => [...prev, ...(payload.items || [])]);
+      setRunResultDefinitions(prev => ({ ...prev, ...(payload.definitions || {}) }));
+      setResultsNextCursor(payload.nextCursor || null);
+      setResultsTotal(payload.total || 0);
+    } catch (err) {
+      if (runResultsRequestIdRef.current !== requestId) return;
+      setRunResultsError(err instanceof Error ? err.message : 'Failed to load more run results');
+    } finally {
+      if (runResultsRequestIdRef.current === requestId) {
+        setIsRunResultsLoadingMore(false);
+      }
+    }
+  };
 
   useEffect(() => {
     onRunSelectionChange?.({
-      run: activeRun,
+      run: resolvedActiveRun,
       detail: selectedRunDetail,
       isLoading: isRunDetailLoading,
     });
-  }, [activeRun, isRunDetailLoading, onRunSelectionChange, selectedRunDetail]);
+  }, [resolvedActiveRun, isRunDetailLoading, onRunSelectionChange, selectedRunDetail]);
 
   const showSplitLayout = mode === 'full' && showDomainTree;
 
@@ -371,9 +455,9 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-slate-300">Recent Runs</h3>
-              {activeRun && (
+              {resolvedActiveRun && (
                 <p className="text-xs text-indigo-300">
-                  Viewing run <span className="font-mono">{activeRun.runId}</span>
+                  Viewing run <span className="font-mono">{resolvedActiveRun.runId}</span>
                 </p>
               )}
               {filteredRuns.map(run => (
@@ -424,31 +508,31 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
                     <span className="text-xs text-indigo-300">Loading selected run...</span>
                   )}
                 </div>
-                {activeRun ? (
+                {resolvedActiveRun ? (
                   <div className="mt-3 space-y-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
                       <TestStatusBadge
-                        status={activeRun.status === 'failed' ? 'failed' : activeRun.status === 'running' ? 'running' : 'passed'}
+                        status={resolvedActiveRun.status === 'failed' ? 'failed' : resolvedActiveRun.status === 'running' ? 'running' : 'passed'}
                         size="sm"
                       />
-                      <span className="font-mono text-slate-200">{activeRun.runId}</span>
-                      <span>{new Date(activeRun.timestamp).toLocaleString()}</span>
-                      {activeRun.gitSha && (
+                      <span className="font-mono text-slate-200">{resolvedActiveRun.runId}</span>
+                      <span>{new Date(resolvedActiveRun.timestamp).toLocaleString()}</span>
+                      {resolvedActiveRun.gitSha && (
                         <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
-                          {activeRun.gitSha.slice(0, 12)}
+                          {resolvedActiveRun.gitSha.slice(0, 12)}
                         </span>
                       )}
-                      {activeRun.branch && (
+                      {resolvedActiveRun.branch && (
                         <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
-                          {activeRun.branch}
+                          {resolvedActiveRun.branch}
                         </span>
                       )}
                     </div>
                     <HealthSummaryBar
-                      passed={activeRun.passedTests}
-                      failed={activeRun.failedTests}
-                      skipped={activeRun.skippedTests}
-                      total={activeRun.totalTests}
+                      passed={resolvedActiveRun.passedTests}
+                      failed={resolvedActiveRun.failedTests}
+                      skipped={resolvedActiveRun.skippedTests}
+                      total={resolvedActiveRun.totalTests}
                       className="pt-1"
                     />
                   </div>
@@ -457,9 +541,20 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
                 )}
               </div>
               <TestResultTable
-                results={filteredRunResults}
-                definitions={selectedRunDetail?.definitions || {}}
-                isLoading={runs.isLoading || status.isLoading || isRunDetailLoading}
+                results={runResults}
+                definitions={runResultDefinitions}
+                isLoading={isRunResultsLoading || isRunDetailLoading}
+                isLoadingMore={isRunResultsLoadingMore}
+                total={resultsTotal}
+                error={runResultsError}
+                hasMore={Boolean(resultsNextCursor)}
+                onLoadMore={loadMoreRunResults}
+                sortKey={resultSortKey}
+                sortOrder={resultSortOrder}
+                onSortChange={(sortKey, sortOrder) => {
+                  setResultSortKey(sortKey);
+                  setResultSortOrder(sortOrder);
+                }}
               />
               {filter?.featureId && <TestTimeline timeline={timeline} />}
               {timelineError && <p className="text-sm text-rose-300">{timelineError.message}</p>}

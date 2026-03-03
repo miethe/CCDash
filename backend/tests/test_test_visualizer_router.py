@@ -213,6 +213,19 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_detail_runs_history_timeline_and_integrity_endpoints(self) -> None:
         with patch.object(router.connection, "get_connection", new=AsyncMock(return_value=self.db)):
             run_detail = await router.get_run_detail(types.SimpleNamespace(), run_id="run-2")
+            run_detail_light = await router.get_run_detail(
+                types.SimpleNamespace(),
+                run_id="run-2",
+                include_results=False,
+            )
+            run_results = await router.list_run_results(
+                types.SimpleNamespace(),
+                run_id="run-2",
+                project_id="project-1",
+                limit=10,
+                statuses="failed",
+                query="core",
+            )
             runs = await router.list_runs(types.SimpleNamespace(), project_id="project-1", limit=1)
             history = await router.get_test_history(
                 types.SimpleNamespace(),
@@ -233,6 +246,11 @@ class TestVisualizerRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(run_detail.run.run_id, "run-2")
         self.assertEqual(len(run_detail.results), 1)
+        self.assertEqual(len(run_detail_light.results), 0)
+        self.assertEqual(len(run_detail_light.definitions), 0)
+        self.assertEqual(run_results.total, 1)
+        self.assertEqual(len(run_results.items), 1)
+        self.assertIn("test-1", run_results.definitions)
         self.assertEqual(runs.total, 2)
         self.assertEqual(len(runs.items), 1)
         self.assertIsNotNone(runs.next_cursor)

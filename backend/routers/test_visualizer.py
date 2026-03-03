@@ -46,6 +46,7 @@ from backend.models import (
     TestResultHistoryDTO,
     TestRunDTO,
     TestRunDetailDTO,
+    RunResultPageDTO,
     TestSourceStatusDTO,
 )
 from backend.observability import start_span
@@ -730,7 +731,12 @@ async def get_feature_health(
 
 
 @test_visualizer_router.get("/runs/{run_id}", response_model=TestRunDetailDTO)
-async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
+async def get_run_detail(
+    request: Request,
+    run_id: str,
+    project_id: str | None = None,
+    include_results: bool = True,
+) -> TestRunDetailDTO:
     _ = request
     _require_env_feature_enabled()
     db = await connection.get_connection()
@@ -747,23 +753,34 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
                 message=f"No run found with id={run_id}",
                 hint="Check run_id is correct and was ingested successfully.",
             )
-        _require_feature_enabled(str(run.get("project_id") or ""))
+        resolved_project_id = str(run.get("project_id") or "")
+        if project_id and project_id != resolved_project_id:
+            raise _error(
+                404,
+                error="run_not_found",
+                message=f"No run found with id={run_id} for project_id={project_id}",
+                hint="Check project_id is correct for the selected run.",
+            )
 
-        results = await result_repo.get_by_run(run_id)
-        project_id = str(run.get("project_id") or "")
-        test_ids = [str(row.get("test_id") or "").strip() for row in results]
-        definition_rows = await _load_definitions_for_test_ids(
-            db,
-            project_id=project_id,
-            test_ids=test_ids,
-        )
-        definitions = {
-            test_id: _to_test_definition_dto(row)
-            for test_id, row in definition_rows.items()
-        }
+        _require_feature_enabled(resolved_project_id)
+
+        results: list[dict[str, Any]] = []
+        definitions: dict[str, TestDefinitionDTO] = {}
+        if include_results:
+            results = await result_repo.get_by_run(run_id)
+            test_ids = [str(row.get("test_id") or "").strip() for row in results]
+            definition_rows = await _load_definitions_for_test_ids(
+                db,
+                project_id=resolved_project_id,
+                test_ids=test_ids,
+            )
+            definitions = {
+                test_id: _to_test_definition_dto(row)
+                for test_id, row in definition_rows.items()
+            }
 
         signals = await integrity_repo.list_by_sha(
-            project_id=project_id,
+            project_id=resolved_project_id,
             git_sha=str(run.get("git_sha") or ""),
             limit=500,
         )
@@ -782,6 +799,95 @@ async def get_run_detail(request: Request, run_id: str) -> TestRunDetailDTO:
         if span is not None:
             span.set_attribute("result_count", len(response.results))
         return response
+
+
+@test_visualizer_router.get("/runs/{run_id}/results", response_model=RunResultPageDTO)
+async def list_run_results(
+    request: Request,
+    run_id: str,
+    project_id: str | None = None,
+    statuses: str | None = None,
+    query: str | None = None,
+    sort_by: str = Query("status", pattern="^(status|duration|name|test_id)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
+    cursor: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+) -> RunResultPageDTO:
+    _ = request
+    _require_env_feature_enabled()
+    cursor_data = _decode_cursor(cursor)
+    offset = int(cursor_data.get("offset", 0))
+
+    db = await connection.get_connection()
+    run_repo = get_test_run_repository(db)
+    result_repo = get_test_result_repository(db)
+
+    with start_span(
+        "test_visualizer.list_run_results",
+        attributes={
+            "run_id": run_id,
+            "project_id": project_id or "",
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        },
+    ) as span:
+        run = await run_repo.get_by_id(run_id)
+        if run is None:
+            raise _error(
+                404,
+                error="run_not_found",
+                message=f"No run found with id={run_id}",
+                hint="Check run_id is correct and was ingested successfully.",
+            )
+
+        resolved_project_id = str(run.get("project_id") or "")
+        if project_id and project_id != resolved_project_id:
+            raise _error(
+                404,
+                error="run_not_found",
+                message=f"No run found with id={run_id} for project_id={project_id}",
+                hint="Check project_id is correct for the selected run.",
+            )
+        _require_feature_enabled(resolved_project_id)
+
+        status_tokens = [
+            token.strip().lower()
+            for token in str(statuses or "").split(",")
+            if token.strip()
+        ]
+        rows, total = await result_repo.list_by_run_filtered(
+            run_id,
+            statuses=status_tokens or None,
+            query=query,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+        next_offset = offset + len(rows)
+        next_cursor = _encode_cursor(next_offset) if next_offset < total else None
+
+        definition_rows = await _load_definitions_for_test_ids(
+            db,
+            project_id=resolved_project_id,
+            test_ids=[str(row.get("test_id") or "").strip() for row in rows],
+        )
+        definitions = {
+            test_id: _to_test_definition_dto(row)
+            for test_id, row in definition_rows.items()
+        }
+
+        if span is not None:
+            span.set_attribute("result_count", len(rows))
+            span.set_attribute("total_count", total)
+
+    return RunResultPageDTO(
+        items=[_to_test_result_dto(row) for row in rows],
+        total=total,
+        limit=limit,
+        next_cursor=next_cursor,
+        definitions=definitions,
+    )
 
 
 @test_visualizer_router.post("/mappings/import")

@@ -693,6 +693,14 @@ class TestRunDetailDTO(BaseModel):
     integrity_signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
 
 
+class RunResultPageDTO(BaseModel):
+    items: list[TestResultDTO] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    next_cursor: Optional[str] = None
+    definitions: dict[str, TestDefinitionDTO] = Field(default_factory=dict)
+
+
 class FeatureTimelinePointDTO(BaseModel):
     date: str
     pass_rate: float = 0.0

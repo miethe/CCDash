@@ -99,6 +99,84 @@ class SqliteTestResultRepository:
             rows = await cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def list_by_run_filtered(
+        self,
+        run_id: str,
+        *,
+        statuses: list[str] | None = None,
+        query: str | None = None,
+        sort_by: str = "status",
+        sort_order: str = "asc",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        status_tokens = [str(token or "").strip().lower() for token in (statuses or []) if str(token or "").strip()]
+        token = str(query or "").strip().lower()
+        order = "DESC" if str(sort_order or "").lower() == "desc" else "ASC"
+        if sort_by == "duration":
+            order_clause = f"r.duration_ms {order}, r.test_id ASC"
+        elif sort_by == "name":
+            order_clause = f"LOWER(COALESCE(d.name, r.test_id)) {order}, r.test_id ASC"
+        elif sort_by == "test_id":
+            order_clause = f"LOWER(r.test_id) {order}"
+        else:
+            # Failed/error/xpassed first when ASC to prioritize triage.
+            status_case = (
+                "CASE LOWER(r.status) "
+                "WHEN 'error' THEN 0 "
+                "WHEN 'failed' THEN 1 "
+                "WHEN 'xpassed' THEN 2 "
+                "WHEN 'running' THEN 3 "
+                "WHEN 'skipped' THEN 4 "
+                "WHEN 'xfailed' THEN 5 "
+                "WHEN 'unknown' THEN 6 "
+                "ELSE 7 END"
+            )
+            order_clause = f"{status_case} {order}, r.test_id ASC"
+
+        where_clauses = ["r.run_id = ?"]
+        params: list[object] = [run_id]
+        if status_tokens:
+            placeholders = ",".join("?" for _ in status_tokens)
+            where_clauses.append(f"LOWER(r.status) IN ({placeholders})")
+            params.extend(status_tokens)
+        if token:
+            where_clauses.append(
+                "("
+                "LOWER(r.test_id) LIKE ? "
+                "OR LOWER(COALESCE(d.name, '')) LIKE ? "
+                "OR LOWER(COALESCE(d.path, '')) LIKE ? "
+                "OR LOWER(COALESCE(r.error_message, '')) LIKE ?"
+                ")"
+            )
+            like = f"%{token}%"
+            params.extend([like, like, like, like])
+
+        where_sql = " AND ".join(where_clauses)
+        count_query = (
+            "SELECT COUNT(*) "
+            "FROM test_results r "
+            "LEFT JOIN test_definitions d ON d.test_id = r.test_id "
+            "WHERE "
+            + where_sql
+        )
+        async with self.db.execute(count_query, tuple(params)) as cur:
+            row = await cur.fetchone()
+            total = int((row[0] if row else 0) or 0)
+
+        data_query = (
+            "SELECT r.* "
+            "FROM test_results r "
+            "LEFT JOIN test_definitions d ON d.test_id = r.test_id "
+            "WHERE "
+            + where_sql
+            + f" ORDER BY {order_clause} LIMIT ? OFFSET ?"
+        )
+        data_params = [*params, max(1, int(limit)), max(0, int(offset))]
+        async with self.db.execute(data_query, tuple(data_params)) as cur:
+            rows = await cur.fetchall()
+        return [self._row_to_dict(row) for row in rows], total
+
     async def get_history_for_test(self, test_id: str, limit: int = 200) -> list[dict]:
         async with self.db.execute(
             """
