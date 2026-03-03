@@ -50,6 +50,36 @@ interface TestStatusViewProps {
 
 const EMPTY_STATUSES: TestStatus[] = [];
 
+const startPerfMark = (name: string): string | null => {
+  if (typeof window === 'undefined' || typeof window.performance?.mark !== 'function') {
+    return null;
+  }
+  const markName = `${name}:start:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  window.performance.mark(markName);
+  return markName;
+};
+
+const finishPerfMark = (name: string, startMark: string | null): void => {
+  if (
+    !startMark
+    || typeof window === 'undefined'
+    || typeof window.performance?.mark !== 'function'
+    || typeof window.performance?.measure !== 'function'
+  ) {
+    return;
+  }
+  const endMark = `${name}:end:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  window.performance.mark(endMark);
+  try {
+    window.performance.measure(name, startMark, endMark);
+  } catch {
+    // Best-effort UI telemetry marker.
+  } finally {
+    window.performance.clearMarks(startMark);
+    window.performance.clearMarks(endMark);
+  }
+};
+
 export const TestStatusView: React.FC<TestStatusViewProps> = ({
   projectId,
   filter,
@@ -222,6 +252,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     }
 
     const loadDetail = async () => {
+      const perfStart = startPerfMark('tests.ui.runDetail.load');
       setIsRunDetailLoading(true);
       setSelectedRunDetail(null);
       try {
@@ -235,6 +266,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         if (alive) {
           setIsRunDetailLoading(false);
         }
+        finishPerfMark('tests.ui.runDetail.load', perfStart);
       }
     };
 
@@ -318,6 +350,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     setResultsNextCursor(null);
 
     const loadFirstPage = async () => {
+      const perfStart = startPerfMark('tests.ui.runResults.firstPage');
       try {
         const payload = await listRunResults({
           runId: activeRunId,
@@ -344,6 +377,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         if (runResultsRequestIdRef.current === requestId) {
           setIsRunResultsLoading(false);
         }
+        finishPerfMark('tests.ui.runResults.firstPage', perfStart);
       }
     };
 
@@ -356,6 +390,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     }
 
     const requestId = runResultsRequestIdRef.current;
+    const perfStart = startPerfMark('tests.ui.runResults.loadMore');
     setIsRunResultsLoadingMore(true);
     setRunResultsError(null);
     try {
@@ -381,6 +416,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       if (runResultsRequestIdRef.current === requestId) {
         setIsRunResultsLoadingMore(false);
       }
+      finishPerfMark('tests.ui.runResults.loadMore', perfStart);
     }
   };
 
