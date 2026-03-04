@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -734,6 +734,28 @@ async def _ensure_test_visualizer_tables(db: asyncpg.Connection) -> None:
     await db.execute(_TEST_VISUALIZER_TABLES)
 
 
+async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
+    # Deduplicate legacy rows before enforcing unique upsert key.
+    await db.execute(
+        """
+        DELETE FROM entity_links a
+        USING entity_links b
+        WHERE a.id < b.id
+          AND a.source_type = b.source_type
+          AND a.source_id = b.source_id
+          AND a.target_type = b.target_type
+          AND a.target_id = b.target_id
+          AND a.link_type = b.link_type
+        """
+    )
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_links_upsert
+            ON entity_links(source_type, source_id, target_type, target_id, link_type)
+        """
+    )
+
+
 async def run_migrations(db: asyncpg.Connection) -> None:
     """Create all tables and seed data. Idempotent."""
     # Check current schema version
@@ -746,6 +768,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
 
     if current_version >= SCHEMA_VERSION:
         await _ensure_test_visualizer_tables(db)
+        await _ensure_entity_link_uniqueness(db)
         logger.info(f"Schema is up to date (version {current_version})")
         return
 
@@ -755,6 +778,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     # asyncpg execute() supports multiple statements.
     await db.execute(_TABLES)
     await _ensure_test_visualizer_tables(db)
+    await _ensure_entity_link_uniqueness(db)
 
     # Explicit table upgrades for existing DBs.
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")

@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.models import (
@@ -21,6 +21,7 @@ from backend.models import (
     FeatureExecutionAnalyticsSummary,
     FeatureExecutionContext,
     FeatureExecutionWarning,
+    PaginatedResponse,
 )
 from backend.project_manager import project_manager
 from backend.db import connection
@@ -506,19 +507,23 @@ def _task_from_feature_blob(task_data: dict[str, Any], feature_id: str, phase_id
 
 # ── GET endpoints ───────────────────────────────────────────────────
 
-@features_router.get("", response_model=list[Feature])
-async def list_features():
-    """Return all discovered features from DB."""
+@features_router.get("", response_model=PaginatedResponse[Feature])
+async def list_features(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=5000),
+):
+    """Return paginated discovered features from DB."""
     project = project_manager.get_active_project()
     if not project:
-        return []
+        return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     db = await connection.get_connection()
     repo = get_feature_repository(db)
-    
-    features_data = await repo.list_all(project.id)
-    
-    results = []
+
+    features_data = await repo.list_paginated(project.id, offset, limit)
+    total = await repo.count(project.id)
+
+    results: list[Feature] = []
     for f in features_data:
         try:
             data = _safe_json(f.get("data_json"))
@@ -576,7 +581,7 @@ async def list_features():
         except Exception:
             logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
             continue
-    return results
+    return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
 
 
 @features_router.get("/task-source", response_model=TaskSourceResponse)

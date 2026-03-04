@@ -1856,6 +1856,44 @@ class SyncEngine:
             error=error,
         )
 
+    async def capture_analytics_snapshot(
+        self,
+        project_id: str,
+        *,
+        trigger: str = "api",
+    ) -> dict[str, Any]:
+        """Capture analytics snapshot as a first-class observable operation."""
+        operation_id = await self._start_operation(
+            "analytics_snapshot",
+            project_id,
+            trigger,
+            {"projectId": project_id},
+        )
+        stats: dict[str, Any] = {"operation_id": operation_id}
+        try:
+            await self._update_operation(
+                operation_id,
+                phase="analytics",
+                message="Capturing analytics snapshot",
+            )
+            await self._capture_analytics(project_id)
+            await self._update_operation(
+                operation_id,
+                phase="completed",
+                message="Analytics snapshot completed",
+                stats=stats,
+            )
+            await self._finish_operation(operation_id, status="completed", stats=stats)
+            return stats
+        except Exception as exc:
+            await self._finish_operation(
+                operation_id,
+                status="failed",
+                stats=stats,
+                error=str(exc),
+            )
+            raise
+
     async def list_operations(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return latest operation snapshots, newest first."""
         async with self._ops_lock:
@@ -4612,3 +4650,180 @@ class SyncEngine:
 
             await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
             await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})
+
+            # 5. File churn (project)
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM session_file_updates fu
+                    JOIN sessions s ON s.id = fu.session_id
+                    WHERE s.project_id = ?
+                    """,
+                    (project_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+                    project_file_churn = int(row[0]) if row else 0
+            else:
+                row = await self.db.fetchrow(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM session_file_updates fu
+                    JOIN sessions s ON s.id = fu.session_id
+                    WHERE s.project_id = $1
+                    """,
+                    project_id,
+                )
+                project_file_churn = int((row["count"] if row else 0) or 0)
+
+            await insert_metric("file_churn", project_file_churn, metadata={"scope": "project"})
+
+            # 6. Feature-scoped metrics (multi-entity analytics links)
+            feature_rows = await self.feature_repo.list_all(project_id)
+            for feature_row in feature_rows:
+                feature_id = str(feature_row.get("id") or "").strip()
+                if not feature_id:
+                    continue
+                feature_name = str(feature_row.get("name") or "")
+                feature_links = [("project", project_id), ("feature", feature_id)]
+
+                feature_tasks = await self.task_repo.list_by_feature(feature_id, None)
+                total_feature_tasks = len(feature_tasks)
+                completed_feature_tasks = sum(
+                    1
+                    for task in feature_tasks
+                    if str(task.get("status") or "").strip().lower() in {"done", "deferred", "completed"}
+                )
+                completion_pct = (
+                    (float(completed_feature_tasks) / float(total_feature_tasks) * 100.0)
+                    if total_feature_tasks > 0
+                    else 0.0
+                )
+
+                total_tasks_row = _coerce_int(feature_row.get("total_tasks"))
+                completed_tasks_row = _coerce_int(feature_row.get("completed_tasks"))
+                progress_total = total_tasks_row if total_tasks_row > 0 else total_feature_tasks
+                progress_completed = completed_tasks_row if completed_tasks_row > 0 else completed_feature_tasks
+                feature_progress = (
+                    (float(progress_completed) / float(progress_total) * 100.0)
+                    if progress_total > 0
+                    else 0.0
+                )
+
+                feature_meta = {
+                    "scope": "feature",
+                    "featureId": feature_id,
+                    "featureName": feature_name,
+                }
+                await insert_metric(
+                    "task_velocity",
+                    completed_feature_tasks,
+                    metadata={**feature_meta, "terminalStatuses": ["done", "deferred", "completed"]},
+                    entity_links=feature_links,
+                )
+                await insert_metric(
+                    "task_completion_pct",
+                    completion_pct,
+                    metadata={**feature_meta, "unit": "percent", "taskCount": total_feature_tasks},
+                    entity_links=feature_links,
+                )
+                await insert_metric(
+                    "feature_progress",
+                    feature_progress,
+                    metadata={**feature_meta, "unit": "percent"},
+                    entity_links=feature_links,
+                )
+
+                feature_session_links = await self.link_repo.get_links_for("feature", feature_id, "related")
+                linked_session_ids: set[str] = set()
+                for link in feature_session_links:
+                    if str(link.get("source_type") or "") != "feature":
+                        continue
+                    if str(link.get("source_id") or "") != feature_id:
+                        continue
+                    if str(link.get("target_type") or "") != "session":
+                        continue
+                    target_id = str(link.get("target_id") or "").strip()
+                    if target_id:
+                        linked_session_ids.add(target_id)
+
+                if not linked_session_ids:
+                    continue
+
+                feature_session_count = 0
+                feature_cost = 0.0
+                feature_tokens = 0
+                feature_duration = 0.0
+                feature_tool_calls = 0
+                feature_tool_success = 0
+                feature_file_churn = 0
+
+                for session_id in linked_session_ids:
+                    session_row = await self.session_repo.get_by_id(session_id)
+                    if not session_row:
+                        continue
+
+                    feature_session_count += 1
+                    feature_cost += _coerce_float(session_row.get("total_cost"))
+                    feature_tokens += _coerce_int(session_row.get("tokens_in")) + _coerce_int(session_row.get("tokens_out"))
+                    feature_duration += _coerce_float(session_row.get("duration_seconds"))
+
+                    tool_rows = await self.session_repo.get_tool_usage(session_id)
+                    for tool_row in tool_rows:
+                        call_count = _coerce_int(tool_row.get("call_count"))
+                        success_count = _coerce_int(tool_row.get("success_count"))
+                        feature_tool_calls += max(0, call_count)
+                        feature_tool_success += max(0, min(call_count, success_count))
+
+                    file_updates = await self.session_repo.get_file_updates(session_id)
+                    feature_file_churn += len(file_updates)
+
+                if feature_session_count > 0:
+                    feature_tool_success_rate = (
+                        (float(feature_tool_success) / float(feature_tool_calls) * 100.0)
+                        if feature_tool_calls > 0
+                        else 0.0
+                    )
+                    feature_duration_avg = float(feature_duration) / float(feature_session_count)
+                    session_meta = {
+                        **feature_meta,
+                        "scope": "feature",
+                        "linkedSessionCount": feature_session_count,
+                    }
+                    await insert_metric("session_count", feature_session_count, metadata=session_meta, entity_links=feature_links)
+                    await insert_metric(
+                        "session_cost",
+                        feature_cost,
+                        metadata={**session_meta, "unit": "usd"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "session_tokens",
+                        feature_tokens,
+                        metadata={**session_meta, "unit": "tokens"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "session_duration",
+                        feature_duration_avg,
+                        metadata={**session_meta, "unit": "seconds", "aggregation": "avg"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "tool_call_count",
+                        feature_tool_calls,
+                        metadata=session_meta,
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "tool_success_rate",
+                        feature_tool_success_rate,
+                        metadata={**session_meta, "unit": "percent"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "file_churn",
+                        feature_file_churn,
+                        metadata=session_meta,
+                        entity_links=feature_links,
+                    )

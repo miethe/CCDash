@@ -305,8 +305,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const refreshTasks = useCallback(async () => {
         try {
-            const data = await fetchJson<ProjectTask[]>('/tasks');
-            setTasks(data);
+            const data = await fetchJson<PaginatedResponse<ProjectTask> | ProjectTask[]>('/tasks?offset=0&limit=5000');
+            setTasks(Array.isArray(data) ? data : (data.items || []));
         } catch (e) {
             console.error('Failed to fetch tasks:', e);
         }
@@ -336,8 +336,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         const task = (async () => {
             try {
-                const data = await fetchJson<Feature[]>('/features');
-                setFeatures(applyPendingFeatureStatuses(data));
+                const data = await fetchJson<PaginatedResponse<Feature> | Feature[]>('/features?offset=0&limit=5000');
+                const items = Array.isArray(data) ? data : (data.items || []);
+                setFeatures(applyPendingFeatureStatuses(items));
             } catch (e) {
                 console.error('Failed to fetch features:', e);
             }

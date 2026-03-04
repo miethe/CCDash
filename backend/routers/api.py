@@ -1119,22 +1119,26 @@ async def get_document(doc_id: str):
 tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
-@tasks_router.get("", response_model=list[ProjectTask])
-async def list_tasks():
-    """Return all tasks from DB."""
+@tasks_router.get("", response_model=PaginatedResponse[ProjectTask])
+async def list_tasks(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=5000),
+):
+    """Return paginated tasks from DB."""
     project = project_manager.get_active_project()
     if not project:
-        return []
+        return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     db = await connection.get_connection()
     repo = get_task_repository(db)
-    tasks = await repo.list_all(project.id)
-    
-    results = []
+    tasks = await repo.list_paginated(project.id, offset, limit)
+    total = await repo.count(project.id)
+
+    results: list[ProjectTask] = []
     for t in tasks:
         data = _safe_json(t.get("data_json"))
         raw_task_id = data.get("rawTaskId") or t["id"]
-        
+
         results.append(ProjectTask(
             id=str(raw_task_id),
             title=t["title"],
@@ -1153,4 +1157,4 @@ async def list_tasks():
             sessionId=t["session_id"],
             commitHash=t["commit_hash"],
         ))
-    return results
+    return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)

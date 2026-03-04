@@ -111,6 +111,33 @@ async def lifespan(app: FastAPI):
             test_results_dir=test_results_dir,
             test_sources=test_sources,
         )
+
+    analytics_interval = max(0, int(getattr(config, "ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0)))
+    if analytics_interval > 0:
+        async def _run_periodic_analytics_snapshots() -> None:
+            while True:
+                await asyncio.sleep(analytics_interval)
+                current_project = project_manager.get_active_project()
+                if not current_project:
+                    continue
+                try:
+                    await sync.capture_analytics_snapshot(
+                        current_project.id,
+                        trigger="periodic_timer",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Periodic analytics snapshot failed for project '%s'",
+                        current_project.id,
+                    )
+
+        app.state.analytics_snapshot_task = asyncio.create_task(_run_periodic_analytics_snapshots())
+        logger.info(
+            "Started periodic analytics snapshots (interval=%ss)",
+            analytics_interval,
+        )
     
     yield
     
@@ -121,6 +148,13 @@ async def lifespan(app: FastAPI):
         app.state.sync_task.cancel()
         try:
             await app.state.sync_task
+        except asyncio.CancelledError:
+            pass
+
+    if hasattr(app.state, "analytics_snapshot_task"):
+        app.state.analytics_snapshot_task.cancel()
+        try:
+            await app.state.analytics_snapshot_task
         except asyncio.CancelledError:
             pass
             
