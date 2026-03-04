@@ -19,11 +19,22 @@ _REQ_ID_PATTERN = re.compile(r"\bREQ-\d{8}-[A-Za-z0-9-]+-\d+\b")
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _NOISY_PATH_PATTERN = re.compile(r"(\*|\$\{[^}]+\}|<[^>]+>|\{[^{}]+\})")
 _COMMAND_MARKER_PATTERN = re.compile(r"^\^?\s*(/[A-Za-z0-9:_-]+)")
+_COMMAND_NAME_TAG_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
+_COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
+_SLASH_COMMAND_LINE_PATTERN = re.compile(
+    r"(?m)^\s*(/[a-z][a-z0-9_-]*(?::[a-z0-9_-]+)?)\b(?:\s+([^\n]+))?\s*$",
+    re.IGNORECASE,
+)
+_ICON_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+_HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$")
 _DEFAULT_JOIN_WITH = ", "
 _MAPPING_TYPE_BASH = "bash"
 _MAPPING_TYPE_KEY_COMMAND = "key_command"
-_SUPPORTED_MATCH_SCOPES = {"command", "args", "command_and_args"}
+_MAPPING_TYPE_ARTIFACT_CALL = "artifact_call"
+_MAPPING_TYPE_ACTION_CALL = "action_call"
+_SUPPORTED_MATCH_SCOPES = {"command", "args", "command_and_args", "message"}
 _SUPPORTED_FIELD_SOURCES = {"command", "args", "phaseToken", "phases", "featurePath", "featureSlug", "requestId"}
+_SUPPORTED_TRANSCRIPT_KINDS = {"command", "artifact", "action"}
 _ALL_PLATFORM_TOKEN = "all"
 _NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
 
@@ -35,6 +46,10 @@ _DEFAULT_SESSION_MAPPINGS: list[dict[str, Any]] = [
         "category": "git",
         "pattern": r"\bgit\s+commit\b",
         "transcriptLabel": "Git Commit",
+        "transcriptKind": "command",
+        "icon": "git-commit",
+        "color": "#10b981",
+        "summaryTemplate": "{label}: {match}",
         "priority": 100,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
@@ -46,6 +61,10 @@ _DEFAULT_SESSION_MAPPINGS: list[dict[str, Any]] = [
         "category": "git",
         "pattern": r"\bgit\s+",
         "transcriptLabel": "Git Command",
+        "transcriptKind": "command",
+        "icon": "git-branch",
+        "color": "#14b8a6",
+        "summaryTemplate": "{label}: {match}",
         "priority": 90,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
@@ -57,6 +76,10 @@ _DEFAULT_SESSION_MAPPINGS: list[dict[str, Any]] = [
         "category": "test",
         "pattern": r"\b(pytest|pnpm\s+test|npm\s+test|vitest|jest|go\s+test|cargo\s+test)\b",
         "transcriptLabel": "Test Run",
+        "transcriptKind": "action",
+        "icon": "test-tube",
+        "color": "#22c55e",
+        "summaryTemplate": "{label}: {match}",
         "priority": 80,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
@@ -68,6 +91,10 @@ _DEFAULT_SESSION_MAPPINGS: list[dict[str, Any]] = [
         "category": "lint",
         "pattern": r"\b(eslint|pnpm\s+lint|npm\s+run\s+lint|ruff|flake8|mypy|black)\b",
         "transcriptLabel": "Lint Check",
+        "transcriptKind": "action",
+        "icon": "shield-check",
+        "color": "#f59e0b",
+        "summaryTemplate": "{label}: {match}",
         "priority": 70,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
@@ -79,6 +106,10 @@ _DEFAULT_SESSION_MAPPINGS: list[dict[str, Any]] = [
         "category": "deploy",
         "pattern": r"\b(deploy|release|publish|vercel|netlify|kubectl|docker\s+push)\b",
         "transcriptLabel": "Deployment",
+        "transcriptKind": "action",
+        "icon": "rocket",
+        "color": "#f97316",
+        "summaryTemplate": "{label}: {match}",
         "priority": 60,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
@@ -96,6 +127,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/dev:execute-phase",
         "pattern": r"^/dev:execute-phase\b",
         "matchScope": "command",
+        "transcriptKind": "command",
+        "icon": "play-circle",
+        "color": "#6366f1",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "related-phases", "label": "Related Phase(s)", "source": "phases", "enabled": True, "joinWith": ", "},
@@ -115,6 +150,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/dev:quick-feature",
         "pattern": r"^/dev:quick-feature\b",
         "matchScope": "command",
+        "transcriptKind": "command",
+        "icon": "zap",
+        "color": "#6366f1",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "command-args", "label": "Command Arguments", "source": "args", "enabled": True},
@@ -133,6 +172,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/dev:implement-story",
         "pattern": r"^/dev:implement-story\b",
         "matchScope": "command",
+        "transcriptKind": "command",
+        "icon": "code-2",
+        "color": "#8b5cf6",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "feature-path", "label": "Feature Path", "source": "featurePath", "enabled": True},
@@ -152,6 +195,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/plan:plan-feature",
         "pattern": r"^/plan:plan-feature\b",
         "matchScope": "command",
+        "transcriptKind": "action",
+        "icon": "clipboard-list",
+        "color": "#0ea5e9",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "feature-path", "label": "Feature Path", "source": "featurePath", "enabled": True},
@@ -171,6 +218,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/dev:complete-user-story",
         "pattern": r"^/dev:complete-user-story\b",
         "matchScope": "command",
+        "transcriptKind": "action",
+        "icon": "check-circle-2",
+        "color": "#22c55e",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "feature-path", "label": "Feature Path", "source": "featurePath", "enabled": True},
@@ -190,6 +241,10 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/fix:debug",
         "pattern": r"^/fix:debug\b",
         "matchScope": "command",
+        "transcriptKind": "action",
+        "icon": "bug",
+        "color": "#ef4444",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "command-args", "label": "Command Arguments", "source": "args", "enabled": True},
@@ -208,12 +263,68 @@ _DEFAULT_KEY_COMMAND_MAPPINGS: list[dict[str, Any]] = [
         "commandMarker": "/recovering-sessions",
         "pattern": r"^/recovering-sessions\b",
         "matchScope": "command_and_args",
+        "transcriptKind": "action",
+        "icon": "life-buoy",
+        "color": "#f59e0b",
+        "summaryTemplate": "{command} {args}",
         "fieldMappings": [
             {"id": "related-command", "label": "Related Command", "source": "command", "enabled": True},
             {"id": "feature-path", "label": "Feature Path", "source": "featurePath", "enabled": True},
             {"id": "feature-slug", "label": "Feature Slug", "source": "featureSlug", "enabled": True},
         ],
         "priority": 185,
+        "enabled": True,
+        "platforms": [_ALL_PLATFORM_TOKEN],
+    },
+]
+
+_DEFAULT_TRANSCRIPT_MAPPINGS: list[dict[str, Any]] = [
+    {
+        "id": "artifact-capture-command",
+        "mappingType": _MAPPING_TYPE_ARTIFACT_CALL,
+        "label": "Artifact Capture",
+        "category": "artifact",
+        "pattern": r"^/(mc|meatycapture(?::[a-z0-9_-]+)?)\b",
+        "matchScope": "command",
+        "transcriptLabel": "Artifact Capture",
+        "transcriptKind": "artifact",
+        "icon": "archive",
+        "color": "#f59e0b",
+        "summaryTemplate": "{command} {args}",
+        "priority": 188,
+        "enabled": True,
+        "platforms": [_ALL_PLATFORM_TOKEN],
+    },
+    {
+        "id": "artifact-skill-mention",
+        "mappingType": _MAPPING_TYPE_ARTIFACT_CALL,
+        "label": "Skill Mention",
+        "category": "artifact",
+        "pattern": r"\$[A-Za-z][A-Za-z0-9-]*",
+        "matchScope": "message",
+        "extractPattern": r"(\$[A-Za-z][A-Za-z0-9-]*)",
+        "transcriptLabel": "Skill Mention",
+        "transcriptKind": "artifact",
+        "icon": "cpu",
+        "color": "#38bdf8",
+        "summaryTemplate": "Skill {match}",
+        "priority": 160,
+        "enabled": True,
+        "platforms": [_ALL_PLATFORM_TOKEN],
+    },
+    {
+        "id": "action-ops-command",
+        "mappingType": _MAPPING_TYPE_ACTION_CALL,
+        "label": "Ops Action",
+        "category": "action",
+        "pattern": r"^/(ops|infra):[a-z0-9_-]+\b",
+        "matchScope": "command",
+        "transcriptLabel": "Ops Action",
+        "transcriptKind": "action",
+        "icon": "settings-2",
+        "color": "#14b8a6",
+        "summaryTemplate": "{command} {args}",
+        "priority": 155,
         "enabled": True,
         "platforms": [_ALL_PLATFORM_TOKEN],
     },
@@ -228,7 +339,7 @@ def _sort_mappings(mappings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def default_session_mappings() -> list[dict[str, Any]]:
     """Return a deep copy of built-in mappings."""
-    return _sort_mappings([*_DEFAULT_SESSION_MAPPINGS, *_DEFAULT_KEY_COMMAND_MAPPINGS])
+    return _sort_mappings([*_DEFAULT_SESSION_MAPPINGS, *_DEFAULT_KEY_COMMAND_MAPPINGS, *_DEFAULT_TRANSCRIPT_MAPPINGS])
 
 
 def workflow_command_exemptions() -> set[str]:
@@ -458,6 +569,71 @@ def _default_key_field_mappings(label: str) -> list[dict[str, Any]]:
     ]
 
 
+def _default_transcript_kind(mapping_type: str) -> str:
+    if mapping_type == _MAPPING_TYPE_ARTIFACT_CALL:
+        return "artifact"
+    if mapping_type == _MAPPING_TYPE_ACTION_CALL:
+        return "action"
+    return "command"
+
+
+def _coerce_match_scope(raw_scope: Any, default_scope: str = "command") -> str:
+    scope = str(raw_scope or default_scope).strip().lower()
+    return scope if scope in _SUPPORTED_MATCH_SCOPES else default_scope
+
+
+def _coerce_icon_name(value: Any) -> str:
+    icon_name = str(value or "").strip().lower()
+    return icon_name if _ICON_NAME_PATTERN.match(icon_name) else ""
+
+
+def _coerce_color(value: Any) -> str:
+    color = str(value or "").strip().lower()
+    return color if _HEX_COLOR_PATTERN.match(color) else ""
+
+
+def _coerce_valid_regex(value: Any) -> str:
+    pattern = str(value or "").strip()
+    if not pattern:
+        return ""
+    try:
+        re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return ""
+    return pattern
+
+
+def _coerce_transcript_fields(mapping: dict[str, Any], raw: dict[str, Any], mapping_type: str, label: str) -> None:
+    transcript_kind = str(raw.get("transcriptKind") or _default_transcript_kind(mapping_type)).strip().lower()
+    if transcript_kind not in _SUPPORTED_TRANSCRIPT_KINDS:
+        transcript_kind = _default_transcript_kind(mapping_type)
+    mapping["transcriptKind"] = transcript_kind
+
+    icon_name = _coerce_icon_name(raw.get("icon"))
+    if icon_name:
+        mapping["icon"] = icon_name
+    elif "icon" in mapping:
+        mapping.pop("icon", None)
+
+    color = _coerce_color(raw.get("color"))
+    if color:
+        mapping["color"] = color
+    elif "color" in mapping:
+        mapping.pop("color", None)
+
+    summary_template = str(raw.get("summaryTemplate") or "").strip()[:320]
+    mapping["summaryTemplate"] = summary_template or "{label}: {match}"
+
+    extract_pattern = _coerce_valid_regex(raw.get("extractPattern"))
+    if extract_pattern:
+        mapping["extractPattern"] = extract_pattern
+    elif "extractPattern" in mapping:
+        mapping.pop("extractPattern", None)
+
+    transcript_label = str(mapping.get("transcriptLabel") or label).strip()
+    mapping["transcriptLabel"] = transcript_label or label
+
+
 def _coerce_mapping(raw: dict[str, Any], idx: int) -> dict[str, Any]:
     mapping = dict(raw)
     mapping_id = str(raw.get("id") or f"custom-{idx}").strip() or f"custom-{idx}"
@@ -477,6 +653,11 @@ def _coerce_mapping(raw: dict[str, Any], idx: int) -> dict[str, Any]:
     except Exception:
         priority = 10
 
+    match_scope_default = "command"
+    if mapping_type == _MAPPING_TYPE_ARTIFACT_CALL:
+        match_scope_default = "message"
+    match_scope = _coerce_match_scope(raw.get("matchScope"), match_scope_default)
+
     mapping.update(
         {
             "id": mapping_id,
@@ -488,14 +669,14 @@ def _coerce_mapping(raw: dict[str, Any], idx: int) -> dict[str, Any]:
             "enabled": enabled,
             "priority": priority,
             "platforms": _coerce_platforms(raw.get("platforms")),
+            "matchScope": match_scope,
         }
     )
+    _coerce_transcript_fields(mapping, raw, mapping_type, label)
 
     if mapping_type == _MAPPING_TYPE_KEY_COMMAND:
         session_type_label = str(raw.get("sessionTypeLabel") or label).strip() or label
-        match_scope = str(raw.get("matchScope") or "command").strip().lower()
-        if match_scope not in _SUPPORTED_MATCH_SCOPES:
-            match_scope = "command"
+        match_scope = _coerce_match_scope(raw.get("matchScope"), "command")
 
         raw_fields = raw.get("fieldMappings")
         field_mappings: list[dict[str, Any]] = []
@@ -605,8 +786,121 @@ def classify_bash_command(
     return None
 
 
+def _extract_transcript_commands(text: str) -> list[tuple[str, str]]:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return []
+
+    tag_commands = [
+        str(match.group(1) or "").strip()
+        for match in _COMMAND_NAME_TAG_PATTERN.finditer(raw_text)
+        if str(match.group(1) or "").strip()
+    ]
+    if tag_commands:
+        tag_args = [str(match.group(1) or "").strip() for match in _COMMAND_ARGS_TAG_PATTERN.finditer(raw_text)]
+        pairs: list[tuple[str, str]] = []
+        for idx, command_name in enumerate(tag_commands):
+            if not command_name.startswith("/"):
+                continue
+            args = tag_args[idx] if idx < len(tag_args) else ""
+            pairs.append((command_name, args))
+        if pairs:
+            return pairs
+
+    pairs = []
+    seen: set[tuple[str, str]] = set()
+    for match in _SLASH_COMMAND_LINE_PATTERN.finditer(raw_text):
+        command_name = str(match.group(1) or "").strip()
+        args = str(match.group(2) or "").strip()
+        if not command_name.startswith("/"):
+            continue
+        key = (command_name.lower(), args)
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((command_name, args))
+    return pairs
+
+
+def _coerce_regex_match(pattern: str, target: str) -> re.Match[str] | None:
+    if not pattern or not target:
+        return None
+    try:
+        return re.search(pattern, target, re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _mapping_pattern(mapping: dict[str, Any]) -> str:
+    extract_pattern = str(mapping.get("extractPattern") or "").strip()
+    if extract_pattern:
+        return extract_pattern
+    return str(mapping.get("pattern") or "").strip()
+
+
+def classify_transcript_message(
+    message: str,
+    mappings: list[dict[str, Any]],
+    *,
+    platform_type: str = "",
+) -> dict[str, Any] | None:
+    """Classify transcript message content into configured command/artifact/action mappings."""
+    message_text = str(message or "").strip()
+    if not message_text:
+        return None
+
+    commands = _extract_transcript_commands(message_text)
+    for mapping in _sort_mappings(mappings):
+        mapping_type = str(mapping.get("mappingType") or "").strip().lower()
+        if mapping_type not in {_MAPPING_TYPE_KEY_COMMAND, _MAPPING_TYPE_ARTIFACT_CALL, _MAPPING_TYPE_ACTION_CALL}:
+            continue
+        if not bool(mapping.get("enabled", True)):
+            continue
+        if not _mapping_applies_to_platform(mapping, platform_type):
+            continue
+
+        pattern = _mapping_pattern(mapping)
+        if not pattern:
+            continue
+
+        match_scope = _coerce_match_scope(mapping.get("matchScope"), "command")
+        candidates: list[tuple[str, str, str]] = []
+        if match_scope == "message":
+            candidates.append(("", "", message_text))
+        else:
+            for command_name, args_text in commands:
+                if match_scope == "args":
+                    target = args_text
+                elif match_scope == "command_and_args":
+                    target = f"{command_name} {args_text}".strip()
+                else:
+                    target = command_name
+                candidates.append((command_name, args_text, target))
+
+        for command_name, args_text, target in candidates:
+            match = _coerce_regex_match(pattern, target)
+            if not match:
+                continue
+            return {
+                "mappingId": str(mapping.get("id") or ""),
+                "mappingType": mapping_type,
+                "label": str(mapping.get("label") or ""),
+                "transcriptLabel": str(mapping.get("transcriptLabel") or mapping.get("label") or ""),
+                "transcriptKind": str(mapping.get("transcriptKind") or _default_transcript_kind(mapping_type)),
+                "icon": str(mapping.get("icon") or "").strip(),
+                "color": str(mapping.get("color") or "").strip(),
+                "summaryTemplate": str(mapping.get("summaryTemplate") or "").strip(),
+                "command": command_name,
+                "args": args_text,
+                "matchText": str(match.group(0) or "").strip(),
+                "groups": [str(group or "") for group in match.groups()],
+                "namedGroups": {key: str(value or "") for key, value in match.groupdict().items()},
+            }
+    return None
+
+
 def _mapping_match_target(mapping: dict[str, Any], command: str, args_text: str) -> str:
-    match_scope = str(mapping.get("matchScope") or "command").strip().lower()
+    match_scope = _coerce_match_scope(mapping.get("matchScope"), "command")
     if match_scope == "args":
         return args_text
     if match_scope == "command_and_args":

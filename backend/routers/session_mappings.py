@@ -13,6 +13,7 @@ from backend.project_manager import project_manager
 from backend.session_mappings import (
     classify_bash_command,
     classify_key_command,
+    classify_transcript_message,
     load_session_mappings,
     save_session_mappings,
     workflow_command_exemptions,
@@ -35,6 +36,11 @@ class SessionMappingRule(BaseModel):
     transcriptLabel: str
     sessionTypeLabel: str = ""
     matchScope: str = "command"
+    transcriptKind: str = "command"
+    icon: str = ""
+    color: str = ""
+    summaryTemplate: str = "{label}: {match}"
+    extractPattern: str = ""
     fieldMappings: list[dict[str, Any]] = Field(default_factory=list)
     platforms: list[str] = Field(default_factory=lambda: ["all"])
     commandMarker: str = ""
@@ -161,6 +167,19 @@ async def get_session_mappings_diagnostics():
                     command_name,
                     command_args,
                     parsed,
+                    mappings,
+                    platform_type=platform_type,
+                )
+                if match:
+                    mapping_id = str(match.get("mappingId") or "")
+                    if mapping_id in rows_by_id:
+                        rows_by_id[mapping_id].matchCount += 1
+                continue
+
+            if log_type == "message":
+                message_text = str(log.get("content") or "")
+                match = classify_transcript_message(
+                    message_text,
                     mappings,
                     platform_type=platform_type,
                 )

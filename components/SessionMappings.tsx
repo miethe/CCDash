@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, LayoutGrid, List, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { parseTranscriptMessage } from './sessionTranscriptFormatting';
 
-type MatchScope = 'command' | 'args' | 'command_and_args';
+type MatchScope = 'command' | 'args' | 'command_and_args' | 'message';
+type TranscriptKind = 'command' | 'artifact' | 'action';
 type ViewMode = 'table' | 'cards';
 
 interface SessionFieldMapping {
@@ -22,6 +24,11 @@ interface SessionMappingRule {
   transcriptLabel: string;
   sessionTypeLabel?: string;
   matchScope?: MatchScope;
+  transcriptKind?: TranscriptKind;
+  icon?: string;
+  color?: string;
+  summaryTemplate?: string;
+  extractPattern?: string;
   fieldMappings?: SessionFieldMapping[];
   platforms?: string[];
   commandMarker?: string;
@@ -49,7 +56,7 @@ interface SessionMappingsDiagnostics {
   evaluatedSessions: number;
 }
 
-const KNOWN_TYPES = ['key_command', 'bash'];
+const KNOWN_TYPES = ['key_command', 'bash', 'artifact_call', 'action_call'];
 const KNOWN_PLATFORMS = ['claude_code', 'codex'];
 
 const defaultKeyFields = (): SessionFieldMapping[] => ([
@@ -77,15 +84,21 @@ const mappingAppliesToPlatform = (rule: SessionMappingRule, platform: string): b
 const emptyRule = (index: number, mappingType: string): SessionMappingRule => {
   const type = String(mappingType || 'bash').trim().toLowerCase() || 'bash';
   const isKey = type === 'key_command';
+  const isArtifact = type === 'artifact_call';
   return {
     id: `custom-${Date.now()}-${index}`,
     mappingType: type,
-    label: isKey ? 'Key Command Type' : 'Custom Mapping',
+    label: isKey ? 'Key Command Type' : (isArtifact ? 'Artifact Mapping' : 'Custom Mapping'),
     category: isKey ? 'key_command' : type,
     pattern: '',
-    transcriptLabel: isKey ? 'Key Command' : 'Shell Command',
+    transcriptLabel: isKey ? 'Key Command' : (isArtifact ? 'Artifact Event' : 'Shell Command'),
+    transcriptKind: isKey ? 'command' : (isArtifact ? 'artifact' : 'action'),
+    icon: '',
+    color: '',
+    summaryTemplate: '{label}: {match}',
+    extractPattern: '',
     sessionTypeLabel: isKey ? 'Custom Session Type' : '',
-    matchScope: 'command',
+    matchScope: isArtifact ? 'message' : 'command',
     fieldMappings: isKey ? defaultKeyFields() : [],
     platforms: ['all'],
     commandMarker: '',
@@ -98,6 +111,30 @@ const fieldMappingsToText = (rule: SessionMappingRule): string =>
   JSON.stringify(rule.fieldMappings || [], null, 2);
 
 const cloneRule = (rule: SessionMappingRule): SessionMappingRule => JSON.parse(JSON.stringify(rule));
+
+const buildPreviewSeedText = (rule: SessionMappingRule): string => {
+  const marker = String(rule.commandMarker || '').trim();
+  const label = String(rule.label || '').trim();
+  const mappingType = String(rule.mappingType || '').trim().toLowerCase();
+  const scope = String(rule.matchScope || '').trim().toLowerCase();
+  if (marker) {
+    return `${marker} 2 docs/project_plans/implementation_plans/features/example-v1.md`;
+  }
+  if (mappingType === 'artifact_call') {
+    if (scope === 'message') return `Need to use $${label.replace(/\s+/g, '-').toLowerCase() || 'artifact-skill'} for this workflow.`;
+    return '/mc capture "session insight artifact"';
+  }
+  if (mappingType === 'action_call') {
+    return '/ops:sync --target backend';
+  }
+  if (scope === 'message') {
+    return `Mapping text sample for ${label || 'preview'} with artifact and action markers.`;
+  }
+  if (mappingType === 'key_command') {
+    return '/dev:execute-phase 2 docs/project_plans/implementation_plans/features/example-v1.md';
+  }
+  return 'uv run pytest backend/tests/test_session_mappings.py -q';
+};
 
 export const SessionMappings: React.FC = () => {
   const [rules, setRules] = useState<SessionMappingRule[]>([]);
@@ -116,6 +153,10 @@ export const SessionMappings: React.FC = () => {
   const [editorDraft, setEditorDraft] = useState<SessionMappingRule | null>(null);
   const [editorFieldDraft, setEditorFieldDraft] = useState('[]');
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRuleId, setPreviewRuleId] = useState<string | null>(null);
+  const [previewInput, setPreviewInput] = useState('');
+  const [previewPlatform, setPreviewPlatform] = useState('all');
 
   const load = async () => {
     setLoading(true);
@@ -187,7 +228,12 @@ export const SessionMappings: React.FC = () => {
         rule.label,
         rule.category,
         rule.pattern,
+        rule.extractPattern,
         rule.transcriptLabel,
+        rule.transcriptKind,
+        rule.icon,
+        rule.color,
+        rule.summaryTemplate,
         rule.sessionTypeLabel,
         rule.commandMarker,
       ].join(' ').toLowerCase();
@@ -195,12 +241,44 @@ export const SessionMappings: React.FC = () => {
     });
   }, [activeType, platformFilter, query, sortedRules]);
 
+  const selectedPreviewRule = useMemo(
+    () => rules.find(rule => rule.id === previewRuleId) || null,
+    [previewRuleId, rules],
+  );
+
+  const previewRuleOptions = useMemo(() => {
+    const base = filteredRules.length > 0 ? filteredRules : rules;
+    if (selectedPreviewRule && !base.some(rule => rule.id === selectedPreviewRule.id)) {
+      return [selectedPreviewRule, ...base];
+    }
+    return base;
+  }, [filteredRules, rules, selectedPreviewRule]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    if (!selectedPreviewRule) {
+      const fallback = filteredRules[0] || rules[0];
+      if (fallback) setPreviewRuleId(fallback.id);
+    }
+  }, [filteredRules, previewOpen, rules, selectedPreviewRule]);
+
+  const previewResult = useMemo(() => {
+    if (!selectedPreviewRule) return null;
+    const platformValue = previewPlatform === 'all' ? '' : previewPlatform;
+    return parseTranscriptMessage(previewInput || buildPreviewSeedText(selectedPreviewRule), {
+      mappings: [{ ...selectedPreviewRule, enabled: true }],
+      platformType: platformValue,
+    });
+  }, [previewInput, previewPlatform, selectedPreviewRule]);
+
   const summary = useMemo(() => {
     const total = rules.length;
     const enabled = rules.filter(rule => rule.enabled).length;
     const keyCommands = rules.filter(rule => String(rule.mappingType || '').toLowerCase() === 'key_command').length;
     const bash = rules.filter(rule => String(rule.mappingType || '').toLowerCase() === 'bash').length;
-    return { total, enabled, keyCommands, bash };
+    const artifact = rules.filter(rule => String(rule.mappingType || '').toLowerCase() === 'artifact_call').length;
+    const action = rules.filter(rule => String(rule.mappingType || '').toLowerCase() === 'action_call').length;
+    return { total, enabled, keyCommands, bash, artifact, action };
   }, [rules]);
 
   const openCreateEditor = () => {
@@ -221,6 +299,20 @@ export const SessionMappings: React.FC = () => {
     setEditorFieldDraft(fieldMappingsToText(draft));
     setEditorError(null);
     setEditorOpen(true);
+  };
+
+  const openPreviewForRule = (rule: SessionMappingRule) => {
+    setPreviewRuleId(rule.id);
+    if (!previewInput.trim()) {
+      setPreviewInput(buildPreviewSeedText(rule));
+    }
+    if (previewPlatform === 'all') {
+      const platforms = normalizePlatforms(rule.platforms);
+      if (platforms.length === 1 && platforms[0] !== 'all') {
+        setPreviewPlatform(platforms[0]);
+      }
+    }
+    setPreviewOpen(true);
   };
 
   const closeEditor = () => {
@@ -259,6 +351,7 @@ export const SessionMappings: React.FC = () => {
     setEditorError(null);
 
     const normalizedType = String(editorDraft.mappingType || '').trim().toLowerCase() || 'bash';
+    const defaultScope: MatchScope = normalizedType === 'artifact_call' ? 'message' : 'command';
     const nextDraft: SessionMappingRule = {
       ...editorDraft,
       mappingType: normalizedType,
@@ -267,8 +360,14 @@ export const SessionMappings: React.FC = () => {
       priority: Number(editorDraft.priority || 0),
       enabled: Boolean(editorDraft.enabled),
       pattern: String(editorDraft.pattern || '').trim(),
+      extractPattern: String(editorDraft.extractPattern || '').trim(),
       label: String(editorDraft.label || '').trim(),
       transcriptLabel: String(editorDraft.transcriptLabel || '').trim(),
+      transcriptKind: (String(editorDraft.transcriptKind || (normalizedType === 'artifact_call' ? 'artifact' : normalizedType === 'action_call' ? 'action' : 'command')).trim().toLowerCase() || 'command') as TranscriptKind,
+      icon: String(editorDraft.icon || '').trim(),
+      color: String(editorDraft.color || '').trim().toLowerCase(),
+      summaryTemplate: String(editorDraft.summaryTemplate || '').trim() || '{label}: {match}',
+      matchScope: (editorDraft.matchScope || defaultScope) as MatchScope,
       commandMarker: String(editorDraft.commandMarker || '').trim(),
     };
 
@@ -297,9 +396,16 @@ export const SessionMappings: React.FC = () => {
       }
     } else {
       nextDraft.sessionTypeLabel = '';
-      nextDraft.matchScope = 'command';
+      nextDraft.matchScope = (nextDraft.matchScope || defaultScope) as MatchScope;
       nextDraft.fieldMappings = [];
-      nextDraft.commandMarker = '';
+      if (normalizedType !== 'action_call' && normalizedType !== 'artifact_call') {
+        nextDraft.commandMarker = '';
+      }
+    }
+
+    if (nextDraft.color && !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(nextDraft.color)) {
+      setEditorError('Color must be a hex value like #22c55e.');
+      return;
     }
 
     if (editorMode === 'create') {
@@ -476,15 +582,23 @@ export const SessionMappings: React.FC = () => {
             >
               <LayoutGrid size={13} /> Cards
             </button>
+            <button
+              onClick={() => setPreviewOpen(prev => !prev)}
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ${previewOpen ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400'}`}
+            >
+              {previewOpen ? 'Hide Preview' : 'Open Preview'}
+            </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Loading mappings...</div>
-        ) : filteredRules.length === 0 ? (
-          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">No mappings found for current filters.</div>
-        ) : viewMode === 'table' ? (
-          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800">
+        <div className={`mt-4 ${previewOpen ? 'flex flex-col gap-4 xl:flex-row xl:items-start' : ''}`}>
+          <div className={previewOpen ? 'min-w-0 flex-1' : ''}>
+            {loading ? (
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Loading mappings...</div>
+            ) : filteredRules.length === 0 ? (
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">No mappings found for current filters.</div>
+            ) : viewMode === 'table' ? (
+              <div className="overflow-x-auto rounded-xl border border-slate-800">
             <table className="min-w-full divide-y divide-slate-800 text-sm">
               <thead className="bg-slate-900/90">
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
@@ -504,6 +618,22 @@ export const SessionMappings: React.FC = () => {
                       <button onClick={() => openEditEditor(rule)} className="text-left">
                         <p className="font-medium text-slate-100">{rule.label}</p>
                         <p className="text-[11px] font-mono text-slate-500">{rule.id}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300">
+                            {rule.transcriptKind || 'command'}
+                          </span>
+                          {rule.icon && (
+                            <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+                              {rule.icon}
+                            </span>
+                          )}
+                          {rule.color && (
+                            <span className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+                              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: rule.color }} />
+                              {rule.color}
+                            </span>
+                          )}
+                        </div>
                       </button>
                     </td>
                     <td className="px-3 py-2 align-top text-slate-300">{rule.mappingType}</td>
@@ -526,6 +656,13 @@ export const SessionMappings: React.FC = () => {
                     <td className="px-3 py-2 align-top">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => openPreviewForRule(rule)}
+                          className="rounded border border-slate-700 px-2 py-1.5 text-[11px] text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200"
+                          title="Preview mapping"
+                        >
+                          Preview
+                        </button>
+                        <button
                           onClick={() => openEditEditor(rule)}
                           className="rounded border border-slate-700 p-1.5 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200"
                           title="Edit mapping"
@@ -545,9 +682,9 @@ export const SessionMappings: React.FC = () => {
                 ))}
               </tbody>
             </table>
-          </div>
-        ) : (
-          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {filteredRules.map(rule => (
               <div key={rule.id} className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
                 <div className="flex items-start justify-between gap-2">
@@ -563,6 +700,15 @@ export const SessionMappings: React.FC = () => {
                 <div className="mt-3 space-y-2 text-xs text-slate-300">
                   <p><span className="text-slate-500">Type:</span> {rule.mappingType}</p>
                   <p><span className="text-slate-500">Priority:</span> {rule.priority}</p>
+                  <p><span className="text-slate-500">Transcript Kind:</span> {rule.transcriptKind || 'command'}</p>
+                  {rule.icon && <p><span className="text-slate-500">Icon:</span> <span className="font-mono">{rule.icon}</span></p>}
+                  {rule.color && (
+                    <p className="flex items-center gap-2">
+                      <span className="text-slate-500">Color:</span>
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: rule.color }} />
+                      <span className="font-mono">{rule.color}</span>
+                    </p>
+                  )}
                   <p className="font-mono text-cyan-200">{rule.pattern}</p>
                 </div>
 
@@ -575,6 +721,13 @@ export const SessionMappings: React.FC = () => {
                 </div>
 
                 <div className="mt-4 flex items-center justify-end gap-1">
+                  <button
+                    onClick={() => openPreviewForRule(rule)}
+                    className="rounded border border-slate-700 px-2 py-1.5 text-[11px] text-slate-300 hover:border-cyan-500/40 hover:text-cyan-200"
+                    title="Preview mapping"
+                  >
+                    Preview
+                  </button>
                   <button
                     onClick={() => openEditEditor(rule)}
                     className="rounded border border-slate-700 p-1.5 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200"
@@ -592,8 +745,95 @@ export const SessionMappings: React.FC = () => {
                 </div>
               </div>
             ))}
+              </div>
+            )}
           </div>
-        )}
+          {previewOpen && (
+            <div className="w-full shrink-0 xl:sticky xl:top-4 xl:w-[360px]">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Live Preview</h4>
+                    <p className="mt-1 text-xs text-slate-500">Preview selected mapping against transcript text.</p>
+                  </div>
+                  <button
+                    onClick={() => setPreviewOpen(false)}
+                    className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:text-slate-100"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="block text-xs text-slate-400">
+                    Mapping
+                    <select
+                      value={selectedPreviewRule?.id || ''}
+                      onChange={event => setPreviewRuleId(event.target.value || null)}
+                      className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                    >
+                      {previewRuleOptions.map(rule => (
+                        <option key={rule.id} value={rule.id}>{rule.label} ({rule.id})</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-400">
+                    Platform
+                    <select
+                      value={previewPlatform}
+                      onChange={event => setPreviewPlatform(event.target.value)}
+                      className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                    >
+                      <option value="all">all</option>
+                      {platformOptions.filter(platform => platform !== 'all').map(platform => (
+                        <option key={platform} value={platform}>{platform}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-400">
+                    Sample Transcript Text
+                    <textarea
+                      value={previewInput}
+                      onChange={event => setPreviewInput(event.target.value)}
+                      className="mt-1 min-h-[140px] w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-slate-200"
+                      placeholder={selectedPreviewRule ? buildPreviewSeedText(selectedPreviewRule) : 'Select a mapping to preview'}
+                    />
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => selectedPreviewRule && setPreviewInput(buildPreviewSeedText(selectedPreviewRule))}
+                      className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:text-slate-100"
+                    >
+                      Auto Sample
+                    </button>
+                  </div>
+                  {selectedPreviewRule ? (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500">Result</div>
+                      <div className="mt-2 text-xs text-slate-200">
+                        <p><span className="text-slate-500">Kind:</span> {previewResult?.kind || 'n/a'}</p>
+                        <p><span className="text-slate-500">Summary:</span> {previewResult?.summary || 'No match'}</p>
+                        <p><span className="text-slate-500">Mapping:</span> {previewResult?.mapped?.mappingId || 'No mapping match'}</p>
+                        {previewResult?.mapped?.matchText && (
+                          <p><span className="text-slate-500">Regex Match:</span> <span className="font-mono">{previewResult.mapped.matchText}</span></p>
+                        )}
+                        {(previewResult?.mapped?.command || previewResult?.mapped?.args) && (
+                          <div className="mt-2 rounded border border-slate-800 bg-slate-900/70 p-2 text-[11px] font-mono text-slate-300">
+                            {previewResult?.mapped?.command && <p>{previewResult.mapped.command}</p>}
+                            {previewResult?.mapped?.args && <p className="mt-1 whitespace-pre-wrap break-words">{previewResult.mapped.args}</p>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-500">
+                      Choose a mapping from table/cards using Preview.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {editorOpen && editorDraft && (
@@ -632,14 +872,31 @@ export const SessionMappings: React.FC = () => {
                   onChange={event => {
                     const nextType = event.target.value;
                     const base = emptyRule(rules.length + 1, nextType);
+                    const defaultScope: MatchScope = nextType === 'artifact_call' ? 'message' : 'command';
+                    const nextKind: TranscriptKind = nextType === 'artifact_call'
+                      ? 'artifact'
+                      : nextType === 'action_call'
+                        ? 'action'
+                        : 'command';
                     updateEditorDraft({
                       mappingType: nextType,
                       category: nextType === 'key_command' ? 'key_command' : nextType,
-                      transcriptLabel: nextType === 'key_command' ? (editorDraft.transcriptLabel || 'Key Command') : (editorDraft.transcriptLabel || 'Shell Command'),
+                      transcriptLabel: nextType === 'key_command'
+                        ? (editorDraft.transcriptLabel || 'Key Command')
+                        : nextType === 'artifact_call'
+                          ? (editorDraft.transcriptLabel || 'Artifact Event')
+                          : (editorDraft.transcriptLabel || 'Shell Command'),
+                      transcriptKind: (editorDraft.transcriptKind || nextKind) as TranscriptKind,
                       sessionTypeLabel: nextType === 'key_command' ? (editorDraft.sessionTypeLabel || editorDraft.label || 'Session Type') : '',
-                      matchScope: nextType === 'key_command' ? (editorDraft.matchScope || 'command') : 'command',
+                      matchScope: nextType === 'key_command'
+                        ? (editorDraft.matchScope || 'command')
+                        : ((editorDraft.matchScope || defaultScope) as MatchScope),
+                      summaryTemplate: editorDraft.summaryTemplate || '{label}: {match}',
+                      color: editorDraft.color || '',
+                      icon: editorDraft.icon || '',
+                      extractPattern: editorDraft.extractPattern || '',
                       fieldMappings: nextType === 'key_command' ? (editorDraft.fieldMappings && editorDraft.fieldMappings.length > 0 ? editorDraft.fieldMappings : base.fieldMappings) : [],
-                      commandMarker: nextType === 'key_command' ? (editorDraft.commandMarker || '') : '',
+                      commandMarker: nextType === 'key_command' ? (editorDraft.commandMarker || '') : (editorDraft.commandMarker || ''),
                     });
                     setEditorFieldDraft(nextType === 'key_command' ? JSON.stringify(editorDraft.fieldMappings?.length ? editorDraft.fieldMappings : base.fieldMappings, null, 2) : '[]');
                   }}
@@ -688,6 +945,73 @@ export const SessionMappings: React.FC = () => {
                 />
               </label>
 
+              <label className="text-xs text-slate-400">
+                Transcript Kind
+                <select
+                  value={editorDraft.transcriptKind || 'command'}
+                  onChange={event => updateEditorDraft({ transcriptKind: event.target.value as TranscriptKind })}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                >
+                  <option value="command">command</option>
+                  <option value="artifact">artifact</option>
+                  <option value="action">action</option>
+                </select>
+              </label>
+
+              <label className="text-xs text-slate-400">
+                Match Scope
+                <select
+                  value={editorDraft.matchScope || 'command'}
+                  onChange={event => updateEditorDraft({ matchScope: event.target.value as MatchScope })}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                >
+                  <option value="command">command</option>
+                  <option value="args">args</option>
+                  <option value="command_and_args">command + args</option>
+                  <option value="message">message</option>
+                </select>
+              </label>
+
+              <label className="text-xs text-slate-400">
+                Icon Token
+                <input
+                  value={editorDraft.icon || ''}
+                  onChange={event => updateEditorDraft({ icon: event.target.value })}
+                  placeholder="terminal / archive / zap"
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                />
+              </label>
+
+              <label className="text-xs text-slate-400">
+                Accent Color
+                <input
+                  value={editorDraft.color || ''}
+                  onChange={event => updateEditorDraft({ color: event.target.value })}
+                  placeholder="#22c55e"
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-slate-200"
+                />
+              </label>
+
+              <label className="text-xs text-slate-400 md:col-span-2">
+                Summary Template
+                <input
+                  value={editorDraft.summaryTemplate || ''}
+                  onChange={event => updateEditorDraft({ summaryTemplate: event.target.value })}
+                  placeholder="{label}: {match} (supports {command}, {args}, {g1}, {group:name})"
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-slate-200"
+                />
+              </label>
+
+              <label className="text-xs text-slate-400 md:col-span-2 lg:col-span-3">
+                Extract Regex (Optional)
+                <input
+                  value={editorDraft.extractPattern || ''}
+                  onChange={event => updateEditorDraft({ extractPattern: event.target.value })}
+                  placeholder="Use capture groups to power templates (defaults to Regex Pattern)"
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-slate-200"
+                />
+              </label>
+
               <label className="flex items-center gap-2 self-end text-xs text-slate-300">
                 <input
                   type="checkbox"
@@ -719,7 +1043,7 @@ export const SessionMappings: React.FC = () => {
 
             {editorDraft.mappingType === 'key_command' && (
               <div className="mt-4 space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <label className="text-xs text-slate-400">
                     Session Type Label
                     <input
@@ -727,18 +1051,6 @@ export const SessionMappings: React.FC = () => {
                       onChange={event => updateEditorDraft({ sessionTypeLabel: event.target.value })}
                       className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
                     />
-                  </label>
-                  <label className="text-xs text-slate-400">
-                    Match Scope
-                    <select
-                      value={editorDraft.matchScope || 'command'}
-                      onChange={event => updateEditorDraft({ matchScope: event.target.value as MatchScope })}
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
-                    >
-                      <option value="command">command</option>
-                      <option value="args">args</option>
-                      <option value="command_and_args">command + args</option>
-                    </select>
                   </label>
                   <label className="text-xs text-slate-400">
                     Command Marker

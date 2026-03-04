@@ -5,7 +5,7 @@ import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, Sessi
 import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
 import { DocumentModal } from './DocumentModal';
-import { TranscriptFormattedMessage, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
+import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { analyticsService } from '../services/analytics';
@@ -193,6 +193,51 @@ const formatAction = (action: string): string => {
     const normalized = (action || '').trim();
     if (!normalized) return 'Unknown';
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+const isMappedTranscriptKind = (kind: TranscriptFormattedMessage['kind']): boolean =>
+    kind === 'mapped-command' || kind === 'mapped-artifact' || kind === 'mapped-action';
+
+const fallbackMappedColor = (kind: TranscriptFormattedMessage['kind']): string => {
+    if (kind === 'mapped-artifact') return '#f59e0b';
+    if (kind === 'mapped-action') return '#0ea5e9';
+    return '#22c55e';
+};
+
+const normalizeMappedColor = (value: string | undefined, kind: TranscriptFormattedMessage['kind']): string => {
+    const color = String(value || '').trim();
+    if (HEX_COLOR_PATTERN.test(color)) return color.toLowerCase();
+    return fallbackMappedColor(kind);
+};
+
+const hexToRgba = (hex: string, alpha: number): string => {
+    const normalized = hex.replace('#', '').trim();
+    const value = normalized.length === 3
+        ? normalized.split('').map(char => `${char}${char}`).join('')
+        : normalized;
+    const r = Number.parseInt(value.slice(0, 2), 16);
+    const g = Number.parseInt(value.slice(2, 4), 16);
+    const b = Number.parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const mappedIcon = (iconName: string | undefined, kind: TranscriptFormattedMessage['kind'], size = 12): JSX.Element => {
+    const token = String(iconName || '').trim().toLowerCase();
+    if (token === 'archive' || token === 'box') return <Archive size={size} />;
+    if (token === 'cpu' || token === 'chip') return <Cpu size={size} />;
+    if (token === 'zap') return <Zap size={size} />;
+    if (token === 'play-circle') return <PlayCircle size={size} />;
+    if (token === 'check-circle-2') return <CheckCircle2 size={size} />;
+    if (token === 'git-branch' || token === 'git-commit') return <GitBranch size={size} />;
+    if (token === 'test-tube') return <TestTube2 size={size} />;
+    if (token === 'clipboard-list') return <FileText size={size} />;
+    if (token === 'rocket') return <TrendingUp size={size} />;
+    if (token === 'settings-2') return <Layers size={size} />;
+    if (kind === 'mapped-artifact') return <Archive size={size} />;
+    if (kind === 'mapped-action') return <PlayCircle size={size} />;
+    return <Terminal size={size} />;
 };
 
 const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
@@ -560,6 +605,23 @@ const LogItemBlurb: React.FC<{
     const renderMessagePreview = () => {
         const parsed = formattedMessage || parseTranscriptMessage(log.content);
 
+        if (isMappedTranscriptKind(parsed.kind) && parsed.mapped) {
+            const accent = normalizeMappedColor(parsed.mapped.color, parsed.kind);
+            const mappedLabel = parsed.mapped.transcriptLabel || parsed.mapped.label || 'Mapped Event';
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold" style={{ color: accent }}>
+                        {mappedIcon(parsed.mapped.icon, parsed.kind, 11)}
+                        <span>{mappedLabel}</span>
+                    </div>
+                    <p className="font-mono text-xs line-clamp-2 break-all text-slate-200">{parsed.summary}</p>
+                    {parsed.command?.args && (
+                        <p className="text-xs text-slate-400 whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
+                    )}
+                </div>
+            );
+        }
+
         if (parsed.kind === 'claude-command') {
             const commandLabel = parsed.command?.name || parsed.command?.message || 'Command';
             return (
@@ -695,7 +757,11 @@ const LogItemBlurb: React.FC<{
         log.type === 'subagent_start' ? `Sub-thread Started` :
             log.type === 'thought' ? 'Agent Thought' :
                 log.type === 'system' ? 'System Event' :
-                    log.type === 'command' ? `Command: ${log.content}` :
+                    log.type === 'command'
+                        ? (formattedMessage && isMappedTranscriptKind(formattedMessage.kind) && formattedMessage.mapped
+                            ? `${formattedMessage.mapped.transcriptLabel}: ${formattedMessage.summary}`
+                            : `Command: ${log.content}`)
+                        :
         log.type === 'subagent' ? `Spawned Agent: ${log.agentName || 'Subagent'}` :
             `Loaded Skill: ${log.skillDetails?.name}`;
     const taskToolDetails = getTaskToolDetails(log);
@@ -785,17 +851,84 @@ const DetailPane: React.FC<{
         setExpandedSections(next);
     };
 
-    const parsedMessage = formattedMessage || parseTranscriptMessage(log.content);
+    const commandArgs = log.type === 'command' ? String(log.metadata?.args || '').trim() : '';
+    const messageSourceText = log.type === 'command' && commandArgs
+        ? `${log.content} ${commandArgs}`.trim()
+        : log.content;
+    const parsedMessage = formattedMessage || parseTranscriptMessage(messageSourceText);
     const taskToolDetails = getTaskToolDetails(log);
     const detailTitle = (() => {
         if (log.type === 'subagent') return 'Subagent Thread';
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
+        if (isMappedTranscriptKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
         return 'Log Details';
     })();
 
     const renderStructuredMessage = () => {
+        if (isMappedTranscriptKind(parsedMessage.kind) && parsedMessage.mapped) {
+            const accent = normalizeMappedColor(parsedMessage.mapped.color, parsedMessage.kind);
+            const mapped = parsedMessage.mapped;
+            return (
+                <div
+                    className="rounded-xl p-5 space-y-4"
+                    style={{
+                        border: `1px solid ${hexToRgba(accent, 0.35)}`,
+                        backgroundColor: hexToRgba(accent, 0.08),
+                    }}
+                >
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                            <div className="text-[10px] uppercase tracking-widest font-bold flex items-center gap-1.5" style={{ color: accent }}>
+                                {mappedIcon(mapped.icon, parsedMessage.kind, 12)}
+                                <span>{mapped.transcriptLabel || mapped.label}</span>
+                            </div>
+                            <p className="font-mono text-sm break-all text-slate-100">{parsedMessage.summary}</p>
+                        </div>
+                        <span className="text-[10px] px-2 py-1 rounded border text-slate-200" style={{ borderColor: hexToRgba(accent, 0.35), backgroundColor: hexToRgba(accent, 0.12) }}>
+                            {mapped.mappingType}
+                        </span>
+                    </div>
+
+                    {(mapped.command || mapped.args) && (
+                        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 space-y-2">
+                            {mapped.command && (
+                                <div>
+                                    <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Command</div>
+                                    <div className="font-mono text-xs text-slate-200 break-all">{mapped.command}</div>
+                                </div>
+                            )}
+                            {mapped.args && (
+                                <div>
+                                    <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Args</div>
+                                    <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                                        {mapped.args}
+                                    </pre>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {mapped.matchText && (
+                        <div className="text-[11px] text-slate-300">
+                            <span className="text-slate-500 uppercase tracking-wider text-[10px] mr-2">Regex Match</span>
+                            <span className="font-mono">{mapped.matchText}</span>
+                        </div>
+                    )}
+
+                    {commandArtifacts.length > 0 && (
+                        <button
+                            onClick={onOpenArtifacts}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+                        >
+                            Open Command Artifact ({commandArtifacts.length})
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
         if (parsedMessage.kind === 'claude-command') {
             const commandLabel = parsedMessage.command?.name || parsedMessage.command?.message || 'Unknown Command';
             return (
@@ -1116,6 +1249,29 @@ const TranscriptView: React.FC<{
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
         : session.logs;
+    const [transcriptMappings, setTranscriptMappings] = useState<TranscriptFormattingMappingRule[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadMappings = async () => {
+            try {
+                const res = await fetch('/api/session-mappings');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled && Array.isArray(data)) {
+                    setTranscriptMappings(data as TranscriptFormattingMappingRule[]);
+                }
+            } catch {
+                if (!cancelled) {
+                    setTranscriptMappings([]);
+                }
+            }
+        };
+        void loadMappings();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const selectedLog = logs.find(l => l.id === selectedLogId);
     const threadLinks = threadSessions.filter(t => t.id !== session.id);
@@ -1132,12 +1288,19 @@ const TranscriptView: React.FC<{
     const formattedMessagesByLogId = useMemo(() => {
         const map = new Map<string, TranscriptFormattedMessage>();
         logs.forEach(log => {
-            if (log.type === 'message') {
-                map.set(log.id, parseTranscriptMessage(log.content));
+            if (log.type === 'message' || log.type === 'command') {
+                const commandArgs = log.type === 'command' ? String(log.metadata?.args || '').trim() : '';
+                const sourceText = log.type === 'command' && commandArgs
+                    ? `${log.content} ${commandArgs}`.trim()
+                    : log.content;
+                map.set(log.id, parseTranscriptMessage(sourceText, {
+                    mappings: transcriptMappings,
+                    platformType: session.platformType,
+                }));
             }
         });
         return map;
-    }, [logs]);
+    }, [logs, session.platformType, transcriptMappings]);
 
     const artifactsByLogId = useMemo(() => {
         const map = new Map<string, SessionArtifact[]>();

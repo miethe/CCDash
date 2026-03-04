@@ -4,7 +4,9 @@ from backend.session_mappings import (
     classify_bash_command,
     classify_key_command,
     classify_session_key_metadata,
+    classify_transcript_message,
     default_session_mappings,
+    normalize_session_mappings,
     workflow_command_markers,
 )
 
@@ -96,6 +98,42 @@ class SessionMappingsTests(unittest.TestCase):
             platform_type="Codex",
         )
         self.assertIsNone(match_for_codex)
+
+    def test_classify_transcript_message_matches_artifact_mapping(self) -> None:
+        mappings = default_session_mappings()
+        match = classify_transcript_message(
+            "/mc capture \"flaky test trace\"",
+            mappings,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.get("mappingId"), "artifact-capture-command")
+        self.assertEqual(match.get("transcriptKind"), "artifact")
+        self.assertEqual(match.get("command"), "/mc")
+
+    def test_normalize_transcript_fields_sanitizes_color_and_icon(self) -> None:
+        mappings = normalize_session_mappings([
+            {
+                "id": "custom-style",
+                "mappingType": "action_call",
+                "label": "Custom Style",
+                "category": "action",
+                "pattern": r"^/ops:sync\\b",
+                "transcriptLabel": "Ops Sync",
+                "color": "tomato",
+                "icon": "invalid icon",
+                "summaryTemplate": "run {command}",
+            }
+        ])
+        custom = next((item for item in mappings if item.get("id") == "custom-style"), None)
+        self.assertIsNotNone(custom)
+        assert custom is not None
+        self.assertEqual(custom.get("mappingType"), "action_call")
+        self.assertEqual(custom.get("transcriptKind"), "action")
+        self.assertEqual(custom.get("matchScope"), "command")
+        self.assertEqual(custom.get("summaryTemplate"), "run {command}")
+        self.assertFalse(custom.get("icon"))
+        self.assertFalse(custom.get("color"))
 
 
 if __name__ == "__main__":
