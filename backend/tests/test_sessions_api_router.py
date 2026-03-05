@@ -119,6 +119,49 @@ class _FakeFeatureRepo:
 
 
 class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
+    def test_derive_session_title_prefers_subagent_type_for_subagent(self) -> None:
+        title = api_router._derive_session_title(
+            session_metadata=None,
+            summary="",
+            session_id="S-agent-1",
+            session_type="subagent",
+            subagent_type="python-backend-engineer",
+        )
+        self.assertEqual(title, "python-backend-engineer")
+
+    def test_subagent_type_from_logs_resolves_from_tool_and_linked_session(self) -> None:
+        own_logs = [
+            {
+                "type": "tool",
+                "tool_name": "Agent",
+                "linked_session_id": "S-agent-xyz",
+                "metadata_json": "{\"taskSubagentType\":\"python-backend-engineer\"}",
+                "tool_args": "{}",
+            }
+        ]
+        parent_logs = [
+            {
+                "type": "tool",
+                "tool_name": "Task",
+                "linked_session_id": "S-agent-abc",
+                "metadata_json": "{\"taskSubagentType\":\"frontend-architect\"}",
+                "tool_args": "{}",
+            },
+            {
+                "type": "tool",
+                "tool_name": "Task",
+                "linked_session_id": "S-agent-target",
+                "metadata_json": "{}",
+                "tool_args": "{\"subagent_type\":\"python-backend-engineer\"}",
+            },
+        ]
+
+        from_own = api_router._subagent_type_from_logs(own_logs, target_linked_session_id="S-agent-xyz")
+        from_parent = api_router._subagent_type_from_logs(parent_logs, target_linked_session_id="S-agent-target")
+
+        self.assertEqual(from_own, "python-backend-engineer")
+        self.assertEqual(from_parent, "python-backend-engineer")
+
     async def test_list_sessions_defaults_to_excluding_subagents(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")

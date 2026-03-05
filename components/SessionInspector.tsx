@@ -421,12 +421,55 @@ const getTranscriptSourceText = (log: SessionLog): string => {
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+    const titled = (thread.title || '').trim();
     return (
         subagentNameBySessionId.get(thread.id) ||
+        (titled && titled !== thread.id ? titled : '') ||
         (thread.agentId ? `agent-${thread.agentId}` : '') ||
         thread.sessionType ||
         'thread'
     );
+};
+
+const collectSessionSubagentTypes = (session: AgentSession): string[] => {
+    const seen = new Set<string>();
+    const values: string[] = [];
+    const add = (candidate: unknown) => {
+        const normalized = String(candidate || '').trim();
+        if (!normalized) return;
+        const lowered = normalized.toLowerCase();
+        if (lowered === 'subagent' || lowered === 'agent') return;
+        if (/^agent[-_]/i.test(normalized)) return;
+        if (seen.has(lowered)) return;
+        seen.add(lowered);
+        values.push(normalized);
+    };
+
+    (session.logs || []).forEach(log => {
+        if (log.type === 'tool') {
+            const details = getTaskToolDetails(log);
+            add(details?.subagentType);
+        }
+        if (log.type === 'subagent_start') {
+            add(log.metadata?.subagentType);
+            add(log.metadata?.subagentName);
+            add(log.metadata?.taskSubagentType);
+        }
+    });
+
+    (session.linkedArtifacts || []).forEach(artifact => {
+        if ((artifact.type || '').trim().toLowerCase() !== 'agent') return;
+        add(artifact.title);
+    });
+
+    if ((session.sessionType || '').trim().toLowerCase() === 'subagent') {
+        const title = (session.title || '').trim();
+        if (title && title !== session.id) {
+            add(title);
+        }
+    }
+
+    return values.sort((a, b) => a.localeCompare(b));
 };
 
 const makeArtifactGroupKey = (artifact: SessionArtifact): string => {
@@ -3620,6 +3663,7 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     const resourceScopeCounts = asCountEntries(resourceFootprint.scopes, 12);
     const resourceTopTargets = Array.isArray(resourceFootprint.topTargets) ? resourceFootprint.topTargets : [];
     const subagentLinkedSessionIds = asStringArray(subagentTopology.linkedSessionIds);
+    const subagentTypes = useMemo(() => collectSessionSubagentTypes(session), [session]);
     const telemetryProject = asRecord(platformTelemetry.project);
     const telemetryMcpServerNames = asStringArray(telemetryProject.mcpServerNames);
     const codexPayloadTypeCounts = asCountEntries(codexPayloadSignals.payloadTypeCounts, 12);
@@ -3933,6 +3977,19 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                         <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
                             <div className="text-[10px] uppercase tracking-wider text-slate-500">Is Subagent</div>
                             <div className="text-slate-200 font-mono mt-1">{String(Boolean(subagentTopology.isSubagentSession))}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Agent Types</div>
+                            <div className="text-slate-200 font-mono mt-1">{subagentTypes.length}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Agent Types</div>
+                        <div className="max-h-24 overflow-y-auto pr-1 space-y-1">
+                            {subagentTypes.length === 0 && <div className="text-xs text-slate-500">No agent type metadata captured</div>}
+                            {subagentTypes.slice(0, 20).map(typeName => (
+                                <div key={typeName} className="text-[10px] text-slate-300 font-mono break-all">{typeName}</div>
+                            ))}
                         </div>
                     </div>
                     <div>
@@ -5009,7 +5066,15 @@ const SessionDetail: React.FC<{
         }
 
         for (const thread of threadSessions) {
-            if (!names.has(thread.id) && thread.agentId) {
+            if (names.has(thread.id)) {
+                continue;
+            }
+            const titled = (thread.title || '').trim();
+            if (titled && titled !== thread.id) {
+                names.set(thread.id, titled);
+                continue;
+            }
+            if (thread.agentId) {
                 names.set(thread.id, `agent-${thread.agentId}`);
             }
         }

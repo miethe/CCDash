@@ -78,8 +78,10 @@ const extractTaskSubagentName = (toolArgs: string | undefined): string | null =>
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+  const titled = (thread.title || '').trim();
   return (
     subagentNameBySessionId.get(thread.id) ||
+    (titled && titled !== thread.id ? titled : '') ||
     (thread.agentId ? `agent-${thread.agentId}` : '') ||
     thread.sessionType ||
     'thread'
@@ -295,6 +297,38 @@ export const SessionArtifactsView: React.FC<{
       }
     };
 
+    const addSyntheticAgentGroupFromLog = (log: SessionLog) => {
+      const subagentName = extractTaskSubagentName(log.toolCall?.args)
+        || (log.linkedSessionId ? subagentNameBySessionId.get(log.linkedSessionId) : null)
+        || (log.linkedSessionId || null)
+        || 'Agent subthread';
+
+      const syntheticArtifact: SessionArtifact = {
+        id: `synthetic-agent-${log.id}-${subagentName}`,
+        type: 'agent',
+        title: subagentName,
+        source: 'tool',
+        description: 'Agent invocation inferred from tool call',
+        sourceLogId: log.id,
+        sourceToolName: log.toolCall?.name || 'tool',
+      };
+      const group = ensureGroup(syntheticArtifact);
+      if (!group.artifactIds.includes(syntheticArtifact.id)) {
+        group.artifactIds.push(syntheticArtifact.id);
+      }
+      if (!group.artifacts.some(item => item.id === syntheticArtifact.id)) {
+        group.artifacts.push(syntheticArtifact);
+      }
+      if (!group.description) {
+        group.description = syntheticArtifact.description;
+      }
+      group.sourceLogIdSet.add(log.id);
+      if (log.toolCall?.name) {
+        group.sourceToolNameSet.add(log.toolCall.name);
+      }
+      attachFromLog(group, log);
+    };
+
     for (const artifact of artifacts) {
       if (commandTagArtifactTypes.has((artifact.type || '').trim().toLowerCase())) {
         continue;
@@ -316,6 +350,20 @@ export const SessionArtifactsView: React.FC<{
       }
       if (artifact.sourceToolName) {
         group.sourceToolNameSet.add(artifact.sourceToolName);
+      }
+    }
+
+    for (const log of session.logs) {
+      if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
+        continue;
+      }
+      const existingAgentGroup = Array.from(groups.values()).some(group => {
+        if ((group.type || '').trim().toLowerCase() !== 'agent') return false;
+        if (group.sourceLogIdSet.has(log.id)) return true;
+        return group.relatedToolLogIds.has(log.id);
+      });
+      if (!existingAgentGroup) {
+        addSyntheticAgentGroupFromLog(log);
       }
     }
 

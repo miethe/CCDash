@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -39,6 +40,7 @@ from backend.document_linking import (
 from backend.date_utils import make_date_value
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
+_SUBAGENT_TOOL_NAMES = {"task", "agent"}
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -80,6 +82,68 @@ def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
         value = parsed.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return ""
+
+
+def _is_subagent_tool_name(name: Any) -> bool:
+    return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
+
+
+def _parse_tool_args(raw_tool_args: Any) -> dict[str, Any]:
+    if isinstance(raw_tool_args, dict):
+        return raw_tool_args
+    if not isinstance(raw_tool_args, str) or not raw_tool_args.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_tool_args)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_subagent_type(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    lowered = candidate.lower()
+    if lowered in {"subagent", "agent"}:
+        return ""
+    if re.fullmatch(r"agent[-_][a-z0-9._:-]+", lowered):
+        return ""
+    return candidate
+
+
+def _subagent_type_from_logs(
+    logs: list[dict[str, Any]],
+    target_linked_session_id: str = "",
+) -> str:
+    linked_target = str(target_linked_session_id or "").strip()
+    for row in logs:
+        row_type = str(row.get("type") or "").strip().lower()
+        metadata = _safe_json(row.get("metadata_json") or row.get("metadata"))
+        if row_type == "subagent_start":
+            if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+                continue
+            for key in ("subagentType", "subagentName", "taskSubagentType"):
+                candidate = _normalize_subagent_type(metadata.get(key))
+                if candidate:
+                    return candidate
+        if row_type != "tool":
+            continue
+        if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+            continue
+        tool_name = row.get("tool_name")
+        if not _is_subagent_tool_name(tool_name):
+            continue
+        for key in ("taskSubagentType", "subagentType", "subagentName"):
+            candidate = _normalize_subagent_type(metadata.get(key))
+            if candidate:
+                return candidate
+        args = _parse_tool_args(row.get("tool_args"))
+        for key in ("subagent_type", "subagentType", "agent_name", "agentName"):
+            candidate = _normalize_subagent_type(args.get(key))
+            if candidate:
+                return candidate
     return ""
 
 
@@ -164,7 +228,18 @@ def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
     return dates
 
 
-def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
+def _derive_session_title(
+    session_metadata: dict | None,
+    summary: str,
+    session_id: str,
+    session_type: str = "",
+    subagent_type: str = "",
+) -> str:
+    normalized_session_type = str(session_type or "").strip().lower()
+    normalized_subagent_type = _normalize_subagent_type(subagent_type)
+    if normalized_session_type == "subagent" and normalized_subagent_type:
+        return normalized_subagent_type
+
     summary_text = (summary or "").strip()
     if summary_text:
         return summary_text
@@ -284,10 +359,13 @@ async def list_sessions(
     )
     total_count = await repo.count(project.id, filters)
     
+    parent_logs_cache: dict[str, list[dict[str, Any]]] = {}
     # Hydrate items (minimal for list view)
     results = []
     for s in sessions_data:
         platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+        session_type_value = str(s.get("session_type") or "").strip().lower()
+        session_id = str(s.get("id") or "").strip()
         logs = await repo.get_logs(s["id"])
         badge_data = derive_session_badges(
             logs,
@@ -314,7 +392,22 @@ async def list_sessions(
             platform_type=platform_type_value,
         )
         model_identity = derive_model_identity(s.get("model"))
-        session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+        subagent_type = _subagent_type_from_logs(logs)
+        if not subagent_type and session_type_value == "subagent":
+            parent_session_id = str(s.get("parent_session_id") or "").strip()
+            if parent_session_id:
+                parent_logs = parent_logs_cache.get(parent_session_id)
+                if parent_logs is None:
+                    parent_logs = await repo.get_logs(parent_session_id)
+                    parent_logs_cache[parent_session_id] = parent_logs
+                subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+        session_title = _derive_session_title(
+            session_metadata,
+            latest_summary,
+            s["id"],
+            session_type=s.get("session_type") or "",
+            subagent_type=subagent_type,
+        )
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
         platform_versions: list[str] = []
@@ -527,7 +620,20 @@ async def get_session(session_id: str):
         platform_type=platform_type_value,
     )
     model_identity = derive_model_identity(s.get("model"))
-    session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+    session_type_value = str(s.get("session_type") or "").strip().lower()
+    subagent_type = _subagent_type_from_logs(logs)
+    if not subagent_type and session_type_value == "subagent":
+        parent_session_id = str(s.get("parent_session_id") or "").strip()
+        if parent_session_id:
+            parent_logs = await repo.get_logs(parent_session_id)
+            subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=str(s.get("id") or ""))
+    session_title = _derive_session_title(
+        session_metadata,
+        latest_summary,
+        s["id"],
+        session_type=s.get("session_type") or "",
+        subagent_type=subagent_type,
+    )
     platform_version_value = str(s.get("platform_version") or "").strip()
     raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
     platform_versions: list[str] = []
