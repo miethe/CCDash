@@ -1565,42 +1565,53 @@ async def get_correlation(
     items: list[dict[str, Any]] = []
     for row in sessions:
         session_id = str(row.get("id") or "")
+        if not session_id:
+            continue
         links = await link_repo.get_links_for("session", session_id, "related")
         feature_links = [link for link in links if link.get("source_type") == "feature"]
+        model_dims = _model_dimensions(row.get("model"))
+        session_type = str(row.get("session_type") or "")
+        token_input = int(row.get("tokens_in") or 0)
+        token_output = int(row.get("tokens_out") or 0)
+        base_payload = {
+            "sessionId": session_id,
+            "commitHash": row.get("git_commit_hash") or "",
+            "model": model_dims["canonical"],
+            "modelRaw": model_dims["raw"],
+            "modelFamily": model_dims["family"],
+            "status": row.get("status") or "",
+            "startedAt": row.get("started_at") or "",
+            "endedAt": row.get("ended_at") or "",
+            "rootSessionId": row.get("root_session_id") or "",
+            "parentSessionId": row.get("parent_session_id") or "",
+            "sessionType": session_type or "",
+            "durationSeconds": int(row.get("duration_seconds") or 0),
+            "tokenInput": token_input,
+            "tokenOutput": token_output,
+            "totalTokens": token_input + token_output,
+            "totalCost": float(row.get("total_cost") or 0.0),
+            "linkedFeatureCount": len(feature_links),
+            "isSubagent": session_type == "subagent",
+        }
         if not feature_links:
-            model_dims = _model_dimensions(row.get("model"))
             items.append({
-                "sessionId": session_id,
+                **base_payload,
                 "featureId": "",
                 "featureName": "",
                 "confidence": 0.0,
-                "commitHash": row.get("git_commit_hash") or "",
-                "model": model_dims["canonical"],
-                "modelRaw": model_dims["raw"],
-                "modelFamily": model_dims["family"],
-                "status": row.get("status") or "",
-                "startedAt": row.get("started_at") or "",
-                "endedAt": row.get("ended_at") or "",
+                "linkStrategy": "",
             })
             continue
         for link in feature_links:
             feature_id = str(link.get("source_id") or "")
             feature_row = await feature_repo.get_by_id(feature_id)
             metadata = _safe_json(link.get("metadata_json"))
-            model_dims = _model_dimensions(row.get("model"))
             items.append({
-                "sessionId": session_id,
+                **base_payload,
                 "featureId": feature_id,
                 "featureName": (feature_row or {}).get("name", ""),
                 "confidence": float(link.get("confidence") or 0.0),
                 "linkStrategy": metadata.get("linkStrategy") or "",
-                "commitHash": row.get("git_commit_hash") or "",
-                "model": model_dims["canonical"],
-                "modelRaw": model_dims["raw"],
-                "modelFamily": model_dims["family"],
-                "status": row.get("status") or "",
-                "startedAt": row.get("started_at") or "",
-                "endedAt": row.get("ended_at") or "",
             })
 
     total = len(items)

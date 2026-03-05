@@ -3,12 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
-import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart } from 'recharts';
+import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
-import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
@@ -3561,143 +3560,361 @@ const AnalyticsDetailsModal: React.FC<{
     );
 };
 
-const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
-    const [timelineData, setTimelineData] = useState<Array<{
-        index: number;
-        time: string;
-        tokens: number;
-        stepTokens: number;
-        agent?: string;
-    }>>([]);
+const tokenDeltaForLog = (log: SessionLog): number => {
+    const metadata = (log.metadata || {}) as Record<string, any>;
+    const inputTokens = Number(metadata.inputTokens || 0);
+    const outputTokens = Number(metadata.outputTokens || 0);
+    const directDelta = Math.max(0, inputTokens + outputTokens);
+    if (directDelta > 0) return directDelta;
+    return Math.max(0, Number(metadata.totalTokens || 0));
+};
 
-    useEffect(() => {
-        let mounted = true;
-        const loadSeries = async () => {
-            try {
-                const res = await analyticsService.getSeries({
-                    metric: 'session_tokens',
-                    period: 'point',
-                    sessionId: session.id,
-                    limit: 2000,
-                });
-                if (!mounted) return;
-                const points = (res.items || []).map((point, index) => ({
-                    index,
-                    time: String(point.captured_at || ''),
-                    tokens: Math.round(Number(point.value || 0)),
-                    stepTokens: Math.round(Number(point.metadata?.stepTokens || 0)),
-                    agent: String(point.metadata?.agent || ''),
-                }));
-                setTimelineData(points);
-            } catch (err) {
-                console.error('Failed to fetch token timeline:', err);
-                let cumulative = 0;
-                const fallback = (session.logs || []).map((log, index) => {
-                    const step = Number(log.metadata?.totalTokens || 0);
-                    cumulative += step;
-                    return {
-                        index,
-                        time: log.timestamp,
-                        tokens: cumulative,
-                        stepTokens: step,
-                        agent: log.agentName || '',
-                    };
-                }).filter(item => item.stepTokens > 0);
-                setTimelineData(fallback);
+const formatTimelineTick = (rawTime: string): string => {
+    const timestampMs = toEpoch(rawTime);
+    if (timestampMs > 0) {
+        return new Date(timestampMs).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    }
+    return rawTime ? rawTime.slice(11, 16) : '';
+};
+
+const formatTimelineLabel = (rawTime: string): string => {
+    const timestampMs = toEpoch(rawTime);
+    if (timestampMs > 0) {
+        return new Date(timestampMs).toLocaleString();
+    }
+    return rawTime || 'Unknown';
+};
+
+const TokenTimeline: React.FC<{ sessions: AgentSession[] }> = ({ sessions }) => {
+    const timelineData = useMemo(() => {
+        type TimelineBucket = {
+            time: string;
+            timestampMs: number;
+            tokenDelta: number;
+            tokenCumulative: number;
+            toolExecutions: number;
+            failedTools: number;
+            fileEdits: number;
+            artifactLinks: number;
+            testRuns: number;
+        };
+
+        const buckets = new Map<string, TimelineBucket>();
+        const fallbackIndexByKey = new Map<string, number>();
+
+        const getBucket = (timestamp: string, fallbackKey: string): TimelineBucket => {
+            const cleanTime = String(timestamp || '').trim();
+            const timestampMs = toEpoch(cleanTime);
+            const key = timestampMs > 0
+                ? `ms:${timestampMs}`
+                : `raw:${cleanTime || fallbackKey}`;
+
+            let row = buckets.get(key);
+            if (!row) {
+                row = {
+                    time: cleanTime,
+                    timestampMs,
+                    tokenDelta: 0,
+                    tokenCumulative: 0,
+                    toolExecutions: 0,
+                    failedTools: 0,
+                    fileEdits: 0,
+                    artifactLinks: 0,
+                    testRuns: 0,
+                };
+                buckets.set(key, row);
+                fallbackIndexByKey.set(key, fallbackIndexByKey.size);
             }
+            return row;
         };
-        loadSeries();
-        return () => {
-            mounted = false;
-        };
-    }, [session.id, session.logs]);
+
+        sessions.forEach(scopeSession => {
+            const logs = scopeSession.logs || [];
+            const timestampByLogId = new Map(logs.map(log => [log.id, log.timestamp]));
+
+            logs.forEach((log, logIndex) => {
+                const bucket = getBucket(
+                    log.timestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:log:${log.id || logIndex}`,
+                );
+                bucket.tokenDelta += tokenDeltaForLog(log);
+                if (log.type === 'tool') {
+                    bucket.toolExecutions += 1;
+                    if (log.toolCall?.status === 'error' || log.toolCall?.isError) {
+                        bucket.failedTools += 1;
+                    }
+                    if (getTestRunDetails(log)) {
+                        bucket.testRuns += 1;
+                    }
+                }
+            });
+
+            (scopeSession.updatedFiles || []).forEach((file, fileIndex) => {
+                const action = normalizeFileAction(file.action, file.sourceToolName);
+                if (action === 'read' || action === 'other') return;
+                const sourceTimestamp = file.sourceLogId ? String(timestampByLogId.get(file.sourceLogId) || '') : '';
+                const bucket = getBucket(
+                    file.timestamp || sourceTimestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:file:${file.sourceLogId || fileIndex}`,
+                );
+                bucket.fileEdits += 1;
+            });
+
+            (scopeSession.linkedArtifacts || []).forEach((artifact, artifactIndex) => {
+                const sourceTimestamp = artifact.sourceLogId ? String(timestampByLogId.get(artifact.sourceLogId) || '') : '';
+                const bucket = getBucket(
+                    sourceTimestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:artifact:${artifact.id || artifactIndex}`,
+                );
+                bucket.artifactLinks += 1;
+            });
+        });
+
+        let cumulative = 0;
+        const ordered = Array.from(buckets.entries())
+            .sort((a, b) => {
+                const rowA = a[1];
+                const rowB = b[1];
+                if (rowA.timestampMs > 0 && rowB.timestampMs > 0) return rowA.timestampMs - rowB.timestampMs;
+                if (rowA.timestampMs > 0) return -1;
+                if (rowB.timestampMs > 0) return 1;
+                return (fallbackIndexByKey.get(a[0]) || 0) - (fallbackIndexByKey.get(b[0]) || 0);
+            })
+            .map(([_, row], index) => {
+                cumulative += row.tokenDelta;
+                return {
+                    index,
+                    ...row,
+                    tokenCumulative: cumulative,
+                };
+            });
+
+        return ordered;
+    }, [sessions]);
+
+    const totals = useMemo(
+        () => timelineData.reduce(
+            (acc, row) => {
+                acc.toolExecutions += row.toolExecutions;
+                acc.failedTools += row.failedTools;
+                acc.fileEdits += row.fileEdits;
+                acc.artifactLinks += row.artifactLinks;
+                acc.testRuns += row.testRuns;
+                return acc;
+            },
+            { toolExecutions: 0, failedTools: 0, fileEdits: 0, artifactLinks: 0, testRuns: 0 }
+        ),
+        [timelineData]
+    );
 
     return (
-        <div className="h-80 w-full relative">
-            <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={timelineData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                    <defs>
-                        <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                        </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                    <XAxis dataKey="time" stroke="#475569" tick={{ fontSize: 10 }} interval={Math.floor(timelineData.length / 5)} />
-                    <YAxis stroke="#475569" tick={{ fontSize: 10 }} label={{ value: 'Tokens', angle: -90, position: 'insideLeft', fill: '#64748b' }} />
-                    <Tooltip
-                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
-                        itemStyle={{ color: '#e2e8f0' }}
-                        labelStyle={{ color: '#94a3b8' }}
-                    />
-
-                    {/* Token Area */}
-                    <Area type="monotone" dataKey="tokens" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTokens)" name="Cumulative Tokens" />
-                </ComposedChart>
-            </ResponsiveContainer>
+        <div className="space-y-4">
+            <div className="h-80 w-full relative">
+                <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={timelineData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                        <defs>
+                            <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                            </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                        <XAxis
+                            dataKey="index"
+                            stroke="#475569"
+                            tick={{ fontSize: 10 }}
+                            interval={Math.max(0, Math.floor(timelineData.length / 7))}
+                            tickFormatter={(value: number) => formatTimelineTick(String(timelineData[value]?.time || ''))}
+                        />
+                        <YAxis
+                            yAxisId="tokens"
+                            stroke="#475569"
+                            tick={{ fontSize: 10 }}
+                            label={{ value: 'Tokens', angle: -90, position: 'insideLeft', fill: '#64748b' }}
+                        />
+                        <YAxis
+                            yAxisId="events"
+                            orientation="right"
+                            stroke="#64748b"
+                            tick={{ fontSize: 10 }}
+                            allowDecimals={false}
+                            label={{ value: 'Events', angle: 90, position: 'insideRight', fill: '#64748b' }}
+                        />
+                        <Tooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                            itemStyle={{ color: '#e2e8f0' }}
+                            labelStyle={{ color: '#94a3b8' }}
+                            labelFormatter={(value: number) => formatTimelineLabel(String(timelineData[value]?.time || ''))}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Area
+                            yAxisId="tokens"
+                            type="monotone"
+                            dataKey="tokenCumulative"
+                            stroke="#3b82f6"
+                            fillOpacity={1}
+                            fill="url(#colorTokens)"
+                            name="Cumulative Tokens"
+                        />
+                        <Bar yAxisId="events" dataKey="toolExecutions" barSize={8} fill="#f59e0b" name="Tool Executions" />
+                        <Bar yAxisId="events" dataKey="fileEdits" barSize={8} fill="#22c55e" name="File Edits" />
+                        <Line yAxisId="events" type="monotone" dataKey="artifactLinks" stroke="#a855f7" dot={false} strokeWidth={2} name="Artifact Links" />
+                        <Line yAxisId="events" type="monotone" dataKey="testRuns" stroke="#06b6d4" dot={false} strokeWidth={2} name="Test Runs" />
+                    </ComposedChart>
+                </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Tool Executions</div>
+                    <div className="text-sm font-mono text-amber-300">{totals.toolExecutions.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Failed Tools</div>
+                    <div className="text-sm font-mono text-rose-300">{totals.failedTools.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">File Edits</div>
+                    <div className="text-sm font-mono text-emerald-300">{totals.fileEdits.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Artifact Links</div>
+                    <div className="text-sm font-mono text-violet-300">{totals.artifactLinks.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Test Runs</div>
+                    <div className="text-sm font-mono text-cyan-300">{totals.testRuns.toLocaleString()}</div>
+                </div>
+            </div>
         </div>
     );
 };
 
-
 const AnalyticsView: React.FC<{
     session: AgentSession;
+    threadSessions: AgentSession[];
+    threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
-}> = ({ session, goToTranscript }) => {
+}> = ({ session, threadSessions, threadSessionDetails, goToTranscript }) => {
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
+    const [scopeMode, setScopeMode] = useState<'thread_family' | 'main'>('thread_family');
 
     const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
 
-    // --- Data Aggregation ---
+    const sessionsInScope = useMemo(
+        () => (
+            scopeMode === 'main'
+                ? [session]
+                : collectThreadDetailSessions(session, threadSessions, threadSessionDetails)
+        ),
+        [scopeMode, session, threadSessions, threadSessionDetails]
+    );
 
-    // 1. Tool Data
-    const toolData = session.toolsUsed.map(t => ({
-        name: t.name,
-        value: t.count,
-        type: 'tool',
-        cost: session.totalCost * 0.1, // Mock portion
-        tokens: Math.round(session.tokensIn * 0.1) // Mock portion
-    }));
+    const scopeTotals = useMemo(
+        () => sessionsInScope.reduce(
+            (acc, scopeSession) => {
+                acc.tokensIn += Number(scopeSession.tokensIn || 0);
+                acc.tokensOut += Number(scopeSession.tokensOut || 0);
+                acc.totalCost += Number(scopeSession.totalCost || 0);
+                acc.logCount += (scopeSession.logs || []).length;
+                return acc;
+            },
+            { tokensIn: 0, tokensOut: 0, totalCost: 0, logCount: 0 }
+        ),
+        [sessionsInScope]
+    );
 
-    // 2. Agent Data
+    const toolData = useMemo(() => {
+        const byTool = new Map<string, { name: string; value: number; tokens: number; type: 'tool'; toolCount: number }>();
+        sessionsInScope.forEach(scopeSession => {
+            (scopeSession.logs || []).forEach(log => {
+                if (log.type !== 'tool') return;
+                const toolName = String(log.toolCall?.name || 'tool').trim() || 'tool';
+                const current = byTool.get(toolName) || { name: toolName, value: 0, tokens: 0, type: 'tool', toolCount: 0 };
+                current.value += 1;
+                current.toolCount += 1;
+                current.tokens += tokenDeltaForLog(log);
+                byTool.set(toolName, current);
+            });
+        });
+        const totalTokens = Math.max(1, scopeTotals.tokensIn + scopeTotals.tokensOut);
+        return Array.from(byTool.values())
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 10)
+            .map(row => ({
+                ...row,
+                cost: scopeTotals.totalCost * (row.tokens / totalTokens),
+            }));
+    }, [scopeTotals, sessionsInScope]);
+
     const agentStats = useMemo(() => {
         const stats: Record<string, { count: number, tokens: number, tools: number }> = {};
-        session.logs.forEach(log => {
-            if (log.speaker === 'agent') {
-                const name = log.agentName || 'Main';
+        sessionsInScope.forEach(scopeSession => {
+            (scopeSession.logs || []).forEach(log => {
+                if (log.speaker !== 'agent') return;
+                const name = String(log.agentName || (scopeSession.id === session.id ? MAIN_SESSION_AGENT : scopeSession.title || scopeSession.id)).trim() || MAIN_SESSION_AGENT;
                 if (!stats[name]) stats[name] = { count: 0, tokens: 0, tools: 0 };
                 stats[name].count += 1;
-                stats[name].tokens += log.content.length / 4; // Approx
+                stats[name].tokens += tokenDeltaForLog(log);
                 if (log.type === 'tool') stats[name].tools += 1;
-            }
+            });
         });
         return Object.entries(stats).map(([name, stat]) => ({
             name,
             value: stat.count,
             tokens: Math.round(stat.tokens),
             toolCount: stat.tools,
-            cost: (stat.tokens / 1000000) * 15, // Mock pricing
+            cost: (scopeTotals.tokensIn + scopeTotals.tokensOut) > 0
+                ? (scopeTotals.totalCost * stat.tokens) / (scopeTotals.tokensIn + scopeTotals.tokensOut)
+                : 0,
             type: 'agent'
         }));
-    }, [session]);
+    }, [scopeTotals, session.id, sessionsInScope]);
 
-    // 3. Model Data
     const modelData = useMemo(() => {
-        // Mocking: assuming Agents use different models or the session model is primary
-        // In a real app, logs would have `modelId`
-        return [{
-            name: session.model,
-            value: session.logs.length,
-            tokens: session.tokensIn + session.tokensOut,
-            toolCount: session.toolsUsed.reduce((acc, t) => acc + t.count, 0),
-            cost: session.totalCost,
-            type: 'model'
-        }];
-    }, [session]);
+        const byModel = new Map<string, { name: string; value: number; tokens: number; toolCount: number; cost: number; type: 'model' }>();
+        sessionsInScope.forEach(scopeSession => {
+            const modelName = String(scopeSession.model || 'unknown').trim() || 'unknown';
+            const current = byModel.get(modelName) || { name: modelName, value: 0, tokens: 0, toolCount: 0, cost: 0, type: 'model' };
+            const sessionTokens = Number(scopeSession.tokensIn || 0) + Number(scopeSession.tokensOut || 0);
+            current.value += (scopeSession.logs || []).length;
+            current.tokens += sessionTokens;
+            current.toolCount += (scopeSession.logs || []).filter(log => log.type === 'tool').length;
+            current.cost += Number(scopeSession.totalCost || 0);
+            byModel.set(modelName, current);
+        });
+        return Array.from(byModel.values()).sort((a, b) => b.value - a.value);
+    }, [sessionsInScope]);
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+                <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Correlation Scope</div>
+                    <div className="text-sm text-slate-200">
+                        {scopeMode === 'thread_family'
+                            ? `Main thread + ${Math.max(0, sessionsInScope.length - 1)} linked sub-thread${sessionsInScope.length === 2 ? '' : 's'}`
+                            : 'Main thread only'}
+                    </div>
+                </div>
+                <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                    <button
+                        onClick={() => setScopeMode('thread_family')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'thread_family' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Main + Linked
+                    </button>
+                    <button
+                        onClick={() => setScopeMode('main')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'main' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Main Only
+                    </button>
+                </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
 
                 {/* 1. AGENTS CHART */}
@@ -3781,8 +3998,8 @@ const AnalyticsView: React.FC<{
                         {tokenViewMode === 'summary' ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={[
-                                    { name: 'Input', tokens: session.tokensIn, fill: '#3b82f6' },
-                                    { name: 'Output', tokens: session.tokensOut, fill: '#10b981' }
+                                    { name: 'Input', tokens: scopeTotals.tokensIn, fill: '#3b82f6' },
+                                    { name: 'Output', tokens: scopeTotals.tokensOut, fill: '#10b981' }
                                 ]} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
                                     <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
@@ -3792,7 +4009,7 @@ const AnalyticsView: React.FC<{
                                 </BarChart>
                             </ResponsiveContainer>
                         ) : (
-                            <TokenTimeline session={session} />
+                            <TokenTimeline sessions={sessionsInScope} />
                         )}
                     </div>
                 </div>
@@ -3800,16 +4017,8 @@ const AnalyticsView: React.FC<{
                 {/* 5. MASTER TIMELINE VIEW (Full Width) */}
                 <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
                     <h3 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Layers size={16} /> Session Master Timeline</h3>
-                    <p className="text-xs text-slate-500 mb-6">Correlated view of token usage, tool executions, and file edits over the session lifecycle.</p>
-                    <TokenTimeline session={session} />
-                    <div className="mt-4 flex gap-4 justify-center">
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-3 h-3 bg-blue-500/50 border border-blue-500 rounded-sm"></div> Token Volume
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-2 h-2 rounded-full bg-amber-500"></div> Tool Execution
-                        </div>
-                    </div>
+                    <p className="text-xs text-slate-500 mb-6">Correlated lifecycle view across tokens, tool executions, file edits, artifacts, and test runs.</p>
+                    <TokenTimeline sessions={sessionsInScope} />
                 </div>
 
             </div>
@@ -3820,15 +4029,15 @@ const AnalyticsView: React.FC<{
                 <div className="flex items-center gap-8">
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Total Cost</div>
-                        <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(session.totalCost, 4)}</div>
+                        <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(scopeTotals.totalCost, 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Cost / Step</div>
-                        <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd((Number(session.totalCost) || 0) / Math.max(session.logs.length, 1), 4)}</div>
+                        <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd(scopeTotals.totalCost / Math.max(scopeTotals.logCount, 1), 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Tokens / Step</div>
-                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((session.tokensIn + session.tokensOut) / session.logs.length)}</div>
+                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((scopeTotals.tokensIn + scopeTotals.tokensOut) / Math.max(scopeTotals.logCount, 1))}</div>
                     </div>
                 </div>
             </div>
@@ -6230,7 +6439,14 @@ const SessionDetail: React.FC<{
                         highlightedSourceLogId={linkedSourceLogId}
                     />
                 )}
-                {activeTab === 'analytics' && <AnalyticsView session={session} goToTranscript={handleJumpToTranscript} />}
+                {activeTab === 'analytics' && (
+                    <AnalyticsView
+                        session={session}
+                        threadSessions={threadSessions}
+                        threadSessionDetails={threadSessionDetails}
+                        goToTranscript={handleJumpToTranscript}
+                    />
+                )}
                 {activeTab === 'agents' && (
                     <AgentsView
                         session={session}

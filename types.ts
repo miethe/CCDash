@@ -479,6 +479,16 @@ export interface AnalyticsCorrelationItem {
   status: string;
   startedAt: string;
   endedAt: string;
+  rootSessionId?: string;
+  parentSessionId?: string;
+  sessionType?: string;
+  durationSeconds?: number;
+  tokenInput?: number;
+  tokenOutput?: number;
+  totalTokens?: number;
+  totalCost?: number;
+  linkedFeatureCount?: number;
+  isSubagent?: boolean;
 }
 
 export interface AnalyticsArtifactTypePoint {

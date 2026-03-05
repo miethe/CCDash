@@ -289,6 +289,85 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Mapping backfill completed", notifications[0].message)
         self.assertFalse(notifications[0].isRead)
 
+    async def test_correlation_includes_enriched_session_context_fields(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        class _SessionRepo:
+            async def list_paginated(self, *args, **kwargs):
+                return [
+                    {
+                        "id": "S-1",
+                        "model": "claude-opus-4-5",
+                        "status": "completed",
+                        "git_commit_hash": "abc123",
+                        "started_at": "2026-03-03T09:00:00Z",
+                        "ended_at": "2026-03-03T09:05:00Z",
+                        "root_session_id": "S-1",
+                        "parent_session_id": None,
+                        "session_type": "",
+                        "duration_seconds": 300,
+                        "tokens_in": 120,
+                        "tokens_out": 180,
+                        "total_cost": 1.5,
+                    },
+                    {
+                        "id": "S-2",
+                        "model": "gpt-5",
+                        "status": "completed",
+                        "git_commit_hash": "",
+                        "started_at": "2026-03-03T09:01:00Z",
+                        "ended_at": "2026-03-03T09:02:00Z",
+                        "root_session_id": "S-1",
+                        "parent_session_id": "S-1",
+                        "session_type": "subagent",
+                        "duration_seconds": 60,
+                        "tokens_in": 20,
+                        "tokens_out": 30,
+                        "total_cost": 0.2,
+                    },
+                ]
+
+        class _LinkRepo:
+            async def get_links_for(self, entity_type: str, entity_id: str, relation: str):
+                if entity_type == "session" and entity_id == "S-1" and relation == "related":
+                    return [
+                        {
+                            "source_type": "feature",
+                            "source_id": "F-1",
+                            "confidence": 0.82,
+                            "metadata_json": '{"linkStrategy":"explicit"}',
+                        }
+                    ]
+                return []
+
+        class _FeatureRepo:
+            async def get_by_id(self, feature_id: str):
+                if feature_id == "F-1":
+                    return {"name": "Feature One"}
+                return None
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()), patch.object(analytics_router, "get_entity_link_repository", return_value=_LinkRepo()), patch.object(analytics_router, "get_feature_repository", return_value=_FeatureRepo()):
+            payload = await analytics_router.get_correlation()
+
+        self.assertEqual(payload["total"], 2)
+        linked_row = next(row for row in payload["items"] if row["sessionId"] == "S-1")
+        unlinked_row = next(row for row in payload["items"] if row["sessionId"] == "S-2")
+
+        self.assertEqual(linked_row["featureId"], "F-1")
+        self.assertEqual(linked_row["linkedFeatureCount"], 1)
+        self.assertEqual(linked_row["tokenInput"], 120)
+        self.assertEqual(linked_row["tokenOutput"], 180)
+        self.assertEqual(linked_row["totalTokens"], 300)
+        self.assertEqual(linked_row["durationSeconds"], 300)
+        self.assertFalse(linked_row["isSubagent"])
+
+        self.assertEqual(unlinked_row["featureId"], "")
+        self.assertEqual(unlinked_row["linkedFeatureCount"], 0)
+        self.assertEqual(unlinked_row["sessionType"], "subagent")
+        self.assertEqual(unlinked_row["rootSessionId"], "S-1")
+        self.assertEqual(unlinked_row["parentSessionId"], "S-1")
+        self.assertTrue(unlinked_row["isSubagent"])
+
 
 if __name__ == "__main__":
     unittest.main()
