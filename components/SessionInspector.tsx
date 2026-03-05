@@ -4075,7 +4075,6 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
                     <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
                     <div className="space-y-2 text-xs">
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Platform</span><span className="text-slate-200 font-mono">{String(forensics.platform || 'claude_code')}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-slate-500">Schema Version</span><span className="text-slate-200 font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-slate-500">Raw Session ID</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
                         <div className="text-slate-500">Session File</div>
@@ -5623,6 +5622,28 @@ const SessionDetail: React.FC<{
         () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
         [session.id, session.title, session.sessionMetadata]
     );
+    const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const primaryFeatureDetail = useMemo(
+        () => (primaryFeatureLink ? (linkedFeatureDetailsById[primaryFeatureLink.featureId] || null) : null),
+        [linkedFeatureDetailsById, primaryFeatureLink]
+    );
+    const primaryFeatureStatus = (primaryFeatureDetail?.status || primaryFeatureLink?.featureStatus || '').trim();
+    const primaryFeatureStatusStyle = getFeatureStatusStyle(primaryFeatureStatus || 'backlog');
+    const platformValue = String(sessionForensics.platform || session.platformType || 'claude_code').trim() || 'claude_code';
+    const platformVersion = String(session.platformVersion || '').trim();
+    const platformDisplay = platformVersion ? `${platformValue} ${platformVersion}` : platformValue;
+    const sessionDetailTabs: Array<{ id: SessionInspectorTab; icon: React.ComponentType<{ size?: number }>; label: string }> = [
+        { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
+        { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
+        { id: 'test-status', icon: TestTube2, label: 'Test Status' },
+        { id: 'analytics', icon: BarChart2, label: 'Analytics' },
+        { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
+        { id: 'impact', icon: TrendingUp, label: 'App Impact' },
+        { id: 'agents', icon: Users, label: 'Agents' },
+        { id: 'files', icon: FileText, label: 'Files' },
+        { id: 'activity', icon: Activity, label: 'Activity' },
+    ];
 
     const handleOpenFeature = useCallback((featureId: string) => {
         if (!featureId) return;
@@ -5632,42 +5653,89 @@ const SessionDetail: React.FC<{
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
             {/* Header */}
-            <div className="flex justify-between items-center mb-4 px-2">
-                <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all group">
-                        <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
-                    </button>
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                            {sessionDisplayTitle}
-                        </h2>
-                        <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5">{session.id}</div>
-                        <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
-                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
-                                {session.status}
-                            </span>
+            <div className="mb-4 px-2 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 min-w-0 flex-1">
+                        <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all group">
+                            <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+                        </button>
+                        <div className="min-w-0">
+                            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 min-w-0">
+                                {sessionDisplayTitle}
+                            </h2>
+                            <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
+                            <div className="flex flex-wrap items-center gap-3 mt-0.5">
+                                <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
+                                    {session.status}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 min-w-[18rem] max-w-[28rem] shrink-0 space-y-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Context</div>
+                        <div className="flex flex-col gap-2">
+                            {primaryFeatureLink ? (
+                                <button
+                                    onClick={() => handleOpenFeature(primaryFeatureLink.featureId)}
+                                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/35 bg-indigo-500/10 px-2.5 py-1.5 text-left hover:bg-indigo-500/20 transition-colors min-w-0"
+                                >
+                                    <span className="text-[10px] uppercase tracking-wide text-indigo-200/90 whitespace-nowrap">Linked Feature</span>
+                                    <span className="text-xs text-indigo-100 font-medium truncate max-w-[16rem]">
+                                        {primaryFeatureDetail?.name || primaryFeatureLink.featureName || primaryFeatureLink.featureId}
+                                    </span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${primaryFeatureStatusStyle.badge}`}>
+                                        {primaryFeatureStatusStyle.label}
+                                    </span>
+                                    <span className="text-[10px] text-indigo-200/80 font-mono whitespace-nowrap">
+                                        {Math.round(primaryFeatureLink.confidence * 100)}%
+                                    </span>
+                                    <ExternalLink size={11} className="text-indigo-200/80 shrink-0" />
+                                </button>
+                            ) : (
+                                !linkedFeatureDetailsLoading && (
+                                    <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                        No linked feature
+                                    </span>
+                                )
+                            )}
+                            {linkedFeatureDetailsLoading && (
+                                <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                    Resolving linked feature...
+                                </span>
+                            )}
+                            {linkedFeatureLinks.length > 1 && (
+                                <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 w-fit">
+                                    +{linkedFeatureLinks.length - 1} related
+                                </span>
+                            )}
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5">
+                                <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+                                    <Cpu size={12} />
+                                    Platform
+                                </span>
+                                <span className="text-[11px] text-slate-200 font-mono truncate" title={platformDisplay}>
+                                    {platformDisplay}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-6 shrink-0">
+                        <div className="text-right">
+                            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
+                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
                         </div>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
-                    {[
-                        { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
-                        { id: 'activity', icon: Activity, label: 'Activity' },
-                        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
-                        { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
-                        { id: 'test-status', icon: TestTube2, label: 'Test Status' },
-                        { id: 'files', icon: FileText, label: 'Files' },
-                        { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
-                        { id: 'impact', icon: TrendingUp, label: 'App Impact' },
-                        { id: 'analytics', icon: BarChart2, label: 'Analytics' },
-                        { id: 'agents', icon: Users, label: 'Agents' },
-                    ].map(tab => (
+                <div className="w-full flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
+                    {sessionDetailTabs.map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTabWithSync(tab.id as SessionInspectorTab)}
+                            onClick={() => setActiveTabWithSync(tab.id)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                 ? 'bg-indigo-600 text-white shadow'
                                 : 'text-slate-400 hover:text-slate-200'
@@ -5677,13 +5745,6 @@ const SessionDetail: React.FC<{
                             {tab.label}
                         </button>
                     ))}
-                </div>
-
-                <div className="flex items-center gap-6">
-                    <div className="text-right">
-                        <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                        <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
-                    </div>
                 </div>
             </div>
 
