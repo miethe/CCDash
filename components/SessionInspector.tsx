@@ -3569,6 +3569,17 @@ const tokenDeltaForLog = (log: SessionLog): number => {
     return Math.max(0, Number(metadata.totalTokens || 0));
 };
 
+const modelHueForAnalytics = (model: string): number => {
+    const input = (model || 'unknown').trim().toLowerCase();
+    let hash = 0;
+    for (let i = 0; i < input.length; i += 1) {
+        hash = (hash * 31 + input.charCodeAt(i)) % 360;
+    }
+    return hash;
+};
+
+const modelAccentForAnalytics = (model: string): string => `hsl(${modelHueForAnalytics(model)} 80% 62%)`;
+
 const formatTimelineTick = (rawTime: string): string => {
     const timestampMs = toEpoch(rawTime);
     if (timestampMs > 0) {
@@ -3968,7 +3979,11 @@ const AnalyticsView: React.FC<{
                                 <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
                                 <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 10 }} width={100} />
                                 <Tooltip cursor={{ fill: '#1e293b' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed" />
+                                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed">
+                                    {modelData.map((entry, index) => (
+                                        <Cell key={`model-bar-${entry.name}-${index}`} fill={modelAccentForAnalytics(entry.name)} />
+                                    ))}
+                                </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

@@ -385,16 +385,16 @@ async def _fetch_artifact_analytics_rows(
     agent_rows = await _query_rows(
         db,
         sqlite_query=f"""
-            SELECT session_id, model, agent, occurred_at, payload_json
+            SELECT session_id, model, agent, occurred_at, event_type, payload_json
             FROM telemetry_events
-            WHERE {" AND ".join(event_filters_sqlite)} AND TRIM(COALESCE(agent, '')) != ''
+            WHERE {" AND ".join(event_filters_sqlite)} AND event_type LIKE 'log.%'
             ORDER BY occurred_at DESC
         """,
         sqlite_params=tuple(event_params_sqlite),
         postgres_query=f"""
-            SELECT session_id, model, agent, occurred_at, payload_json
+            SELECT session_id, model, agent, occurred_at, event_type, payload_json
             FROM telemetry_events
-            WHERE {" AND ".join(event_filters_pg)} AND TRIM(COALESCE(agent, '')) != ''
+            WHERE {" AND ".join(event_filters_pg)} AND event_type LIKE 'log.%'
             ORDER BY occurred_at DESC
         """,
         postgres_params=tuple(event_params_pg),
@@ -510,48 +510,6 @@ def _build_artifact_analytics_payload(
                 "skill": skill,
             }
         )
-
-    if not records:
-        return {
-            "totals": {
-                "artifactCount": 0,
-                "artifactTypes": 0,
-                "sessions": 0,
-                "features": 0,
-                "models": 0,
-                "modelFamilies": 0,
-                "tools": 0,
-                "sources": 0,
-                "agents": 0,
-                "skills": 0,
-                "commands": 0,
-                "kindTotals": {
-                    "agents": 0,
-                    "skills": 0,
-                    "commands": 0,
-                    "manifests": 0,
-                    "requests": 0,
-                },
-            },
-            "byType": [],
-            "bySource": [],
-            "byTool": [],
-            "bySession": [],
-            "byFeature": [],
-            "modelArtifact": [],
-            "artifactTool": [],
-            "modelArtifactTool": [],
-            "modelFamilies": [],
-            "commandModel": [],
-            "agentModel": [],
-            "tokenUsage": {
-                "byArtifactType": [],
-                "byModel": [],
-                "byModelArtifact": [],
-                "byModelFamily": [],
-            },
-            "detailLimit": detail_limit,
-        }
 
     def session_metrics(session_id: str) -> dict[str, Any]:
         lifecycle = lifecycle_by_session.get(session_id, {})
@@ -1142,7 +1100,25 @@ def _build_artifact_analytics_payload(
             continue
         if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
             continue
+        payload = _safe_json(row.get("payload_json"))
+        metadata = payload.get("metadata") if isinstance(payload, dict) else {}
         agent_name = str(row.get("agent") or "").strip()
+        if not agent_name and isinstance(metadata, dict):
+            agent_name = str(
+                metadata.get("agentName")
+                or metadata.get("agent_name")
+                or metadata.get("subagentName")
+                or metadata.get("taskSubagentType")
+                or ""
+            ).strip()
+        if not agent_name:
+            agent_name = str(
+                (payload.get("agentName") if isinstance(payload, dict) else "")
+                or (payload.get("agent_name") if isinstance(payload, dict) else "")
+                or ""
+            ).strip()
+        if not agent_name and isinstance(payload, dict) and str(payload.get("speaker") or "").strip().lower() == "agent":
+            agent_name = "Main Session"
         if not agent_name:
             continue
         entry = agent_model.setdefault(

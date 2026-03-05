@@ -368,6 +368,98 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unlinked_row["parentSessionId"], "S-1")
         self.assertTrue(unlinked_row["isSubagent"])
 
+    def test_build_artifact_payload_agent_model_falls_back_to_main_agent_speaker(self) -> None:
+        payload = analytics_router._build_artifact_analytics_payload(
+            artifact_rows=[
+                {
+                    "session_id": "S-1",
+                    "feature_id": "",
+                    "model": "claude-opus-4-5",
+                    "tool_name": "Read",
+                    "agent": "",
+                    "skill": "",
+                    "status": "skill",
+                    "occurred_at": "2026-03-03T09:00:00Z",
+                    "payload_json": '{"type":"skill","source":"SkillMeat","title":"X"}',
+                }
+            ],
+            lifecycle_rows=[
+                {
+                    "session_id": "S-1",
+                    "feature_id": "",
+                    "model": "claude-opus-4-5",
+                    "status": "completed",
+                    "occurred_at": "2026-03-03T09:00:00Z",
+                    "token_input": 100,
+                    "token_output": 200,
+                    "cost_usd": 1.5,
+                    "payload_json": "{}",
+                }
+            ],
+            feature_link_rows=[],
+            feature_rows=[],
+            command_rows=[],
+            agent_rows=[
+                {
+                    "session_id": "S-1",
+                    "model": "claude-opus-4-5",
+                    "agent": "",
+                    "event_type": "log.message",
+                    "occurred_at": "2026-03-03T09:00:01Z",
+                    "payload_json": '{"speaker":"agent","metadata":{}}',
+                }
+            ],
+            detail_limit=120,
+            feature_filter=None,
+            model_filter=None,
+            model_family_filter=None,
+        )
+
+        self.assertGreaterEqual(len(payload["agentModel"]), 1)
+        row = payload["agentModel"][0]
+        self.assertEqual(row["agent"], "Main Session")
+        self.assertEqual(row["model"], "claude-opus-4-5")
+        self.assertEqual(row["sessions"], 1)
+
+    def test_build_artifact_payload_agent_model_works_without_artifact_rows(self) -> None:
+        payload = analytics_router._build_artifact_analytics_payload(
+            artifact_rows=[],
+            lifecycle_rows=[
+                {
+                    "session_id": "S-1",
+                    "feature_id": "",
+                    "model": "claude-opus-4-5",
+                    "status": "completed",
+                    "occurred_at": "2026-03-03T09:00:00Z",
+                    "token_input": 10,
+                    "token_output": 20,
+                    "cost_usd": 0.3,
+                    "payload_json": "{}",
+                }
+            ],
+            feature_link_rows=[],
+            feature_rows=[],
+            command_rows=[],
+            agent_rows=[
+                {
+                    "session_id": "S-1",
+                    "model": "claude-opus-4-5",
+                    "agent": "",
+                    "event_type": "log.message",
+                    "occurred_at": "2026-03-03T09:00:01Z",
+                    "payload_json": '{"speaker":"agent","metadata":{}}',
+                }
+            ],
+            detail_limit=120,
+            feature_filter=None,
+            model_filter=None,
+            model_family_filter=None,
+        )
+
+        self.assertEqual(payload["totals"]["artifactCount"], 0)
+        self.assertGreaterEqual(len(payload["agentModel"]), 1)
+        self.assertEqual(payload["agentModel"][0]["agent"], "Main Session")
+
 
 if __name__ == "__main__":
     unittest.main()
