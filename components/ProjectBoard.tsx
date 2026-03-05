@@ -13,7 +13,7 @@ import {
   X, FileText, Calendar, ChevronRight, ChevronDown, LayoutGrid, List,
   Search, Filter, CheckCircle2, Circle, CircleDashed, Layers, Box,
   FolderOpen, ExternalLink, Tag, ClipboardList, BarChart3, RefreshCw,
-  Terminal, GitCommit, GitBranch, Play, TestTube2,
+  Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 
@@ -161,7 +161,7 @@ interface GitCommitAggregate {
 
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 type DocGroupId = 'initialPlanning' | 'prd' | 'plans' | 'progress' | 'context';
-type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history' | 'test-status';
+type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'relations' | 'sessions' | 'history' | 'test-status';
 
 interface CoreSessionGroupDefinition {
   id: CoreSessionGroupId;
@@ -777,6 +777,21 @@ const getFeaturePrimaryDate = (feature: Feature): { label: string; value: string
   }
   const updated = getFeatureDateValue(feature, 'updatedAt');
   return { label: 'Updated', ...updated };
+};
+
+const getFeatureCoverageSummary = (feature: Feature): string => {
+  const coverage = feature.documentCoverage;
+  if (!coverage) return 'Docs: n/a';
+  const present = coverage.present?.length || 0;
+  const total = present + (coverage.missing?.length || 0);
+  if (total <= 0) return 'Docs: n/a';
+  return `Docs: ${present}/${total}`;
+};
+
+const getFeatureLinkedFeatureCount = (feature: Feature): number => {
+  const typedCount = feature.linkedFeatures?.length || 0;
+  if (typedCount > 0) return typedCount;
+  return feature.relatedFeatures?.length || 0;
 };
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -1975,6 +1990,20 @@ const FeatureModal = ({
     () => groupedDocs.flatMap(group => group.docs),
     [groupedDocs]
   );
+  const primaryDocIds = useMemo(() => {
+    const ids = new Set<string>();
+    const primary = activeFeature.primaryDocuments;
+    const pushDoc = (doc?: LinkedDocument | null) => {
+      if (!doc) return;
+      if (doc.id) ids.add(doc.id);
+      if (doc.filePath) ids.add(normalizePath(doc.filePath));
+    };
+    pushDoc(primary?.prd || null);
+    pushDoc(primary?.implementationPlan || null);
+    (primary?.phasePlans || []).forEach(pushDoc);
+    (primary?.progressDocs || []).forEach(pushDoc);
+    return ids;
+  }, [activeFeature.primaryDocuments]);
 
   const toggleCoreSessionGroup = (groupId: CoreSessionGroupId) => {
     setCoreSessionGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
@@ -1998,6 +2027,7 @@ const FeatureModal = ({
       { id: 'overview', label: 'Overview', icon: Box },
       { id: 'phases', label: `Phases (${phases.length})`, icon: Layers },
       { id: 'docs', label: `Documents (${linkedDocs.length})`, icon: FileText },
+      { id: 'relations', label: `Relations (${getFeatureLinkedFeatureCount(activeFeature)})`, icon: Link2 },
       { id: 'sessions', label: `Sessions (${linkedSessions.length})`, icon: Terminal },
       { id: 'history', label: 'Git History', icon: Calendar },
     ];
@@ -2005,7 +2035,7 @@ const FeatureModal = ({
       base.push({ id: 'test-status', label: 'Test Status', icon: TestTube2 });
     }
     return base;
-  }, [featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length]);
+  }, [activeFeature, featureTestHealth?.totalTests, linkedDocs.length, linkedSessions.length, phases.length]);
 
   const renderSessionCard = (
     session: FeatureSessionLink,
@@ -2286,6 +2316,36 @@ const FeatureModal = ({
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
                   <div className="text-slate-500 text-xs mb-1">Documents</div>
                   <div className="text-purple-400 font-bold text-2xl">{linkedDocs.length}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                  <h3 className="text-sm font-semibold text-slate-200 mb-2">Delivery Metadata</h3>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="text-slate-400">Priority <span className="text-slate-200 ml-1">{activeFeature.priority || '-'}</span></div>
+                    <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{activeFeature.riskLevel || '-'}</span></div>
+                    <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{activeFeature.complexity || '-'}</span></div>
+                    <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{activeFeature.track || '-'}</span></div>
+                    <div className="text-slate-400">Target <span className="text-slate-200 ml-1">{activeFeature.targetRelease || '-'}</span></div>
+                    <div className="text-slate-400">Milestone <span className="text-slate-200 ml-1">{activeFeature.milestone || '-'}</span></div>
+                    <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{activeFeature.executionReadiness || '-'}</span></div>
+                    <div className="text-slate-400">Coverage <span className="text-slate-200 ml-1">{getFeatureCoverageSummary(activeFeature)}</span></div>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                  <h3 className="text-sm font-semibold text-slate-200 mb-2">Quality Signals</h3>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.blockerCount ?? 0}</span></div>
+                    <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                    <div className="text-slate-400">Test Impact <span className="text-slate-200 ml-1">{activeFeature.testImpact || activeFeature.qualitySignals?.testImpact || '-'}</span></div>
+                    <div className="text-slate-400">Relations <span className="text-slate-200 ml-1">{getFeatureLinkedFeatureCount(activeFeature)}</span></div>
+                  </div>
+                  {(activeFeature.qualitySignals?.integritySignalRefs || []).length > 0 && (
+                    <div className="mt-2 text-[11px] text-slate-400">
+                      Integrity refs: {(activeFeature.qualitySignals?.integritySignalRefs || []).join(', ')}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2649,6 +2709,12 @@ const FeatureModal = ({
                               <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
                             </div>
                             <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath))
+                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                                }`}>
+                                {primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath)) ? 'Primary' : 'Supporting'}
+                              </span>
                               <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
                                 <DocTypeBadge docType={doc.docType} />
                               </span>
@@ -2659,12 +2725,80 @@ const FeatureModal = ({
                             <FolderOpen size={12} />
                             {doc.filePath}
                           </div>
+                          {(doc.prdRef || '').trim() && (
+                            <div className="mt-2 text-[11px] text-slate-400">
+                              PRD Ref: <span className="font-mono text-slate-300">{doc.prdRef}</span>
+                            </div>
+                          )}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {activeTab === 'relations' && (
+            <div className="space-y-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Typed Feature Relations</h3>
+                <div className="space-y-2">
+                  {(activeFeature.linkedFeatures || []).map((relation, index) => (
+                    <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-slate-800 bg-slate-950 px-3 py-2 text-xs">
+                      <button
+                        onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                        className="font-mono text-indigo-300 hover:text-indigo-200"
+                      >
+                        {relation.feature}
+                      </button>
+                      <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{relation.type || 'related'}</span>
+                      <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-400">{relation.source || 'unknown'}</span>
+                      {typeof relation.confidence === 'number' && (
+                        <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                      )}
+                      {relation.notes && <span className="text-slate-400">{relation.notes}</span>}
+                    </div>
+                  ))}
+                  {(activeFeature.linkedFeatures || []).length === 0 && (
+                    <p className="text-xs text-slate-500 italic">No typed feature relations available.</p>
+                  )}
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Related Features</h3>
+                <div className="flex flex-wrap gap-2">
+                  {activeFeature.relatedFeatures.map(rel => (
+                    <button
+                      key={rel}
+                      onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(rel)}&tab=overview`); }}
+                      className="text-xs bg-slate-800 text-indigo-400 px-2 py-1 rounded border border-slate-700"
+                    >
+                      {rel}
+                    </button>
+                  ))}
+                  {activeFeature.relatedFeatures.length === 0 && (
+                    <span className="text-xs text-slate-500 italic">No related features.</span>
+                  )}
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Lineage Signals</h3>
+                <div className="space-y-2">
+                  {linkedDocs
+                    .filter(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0)
+                    .map(doc => (
+                      <div key={`lineage-${doc.id}`} className="text-xs rounded border border-slate-800 bg-slate-950 p-2">
+                        <div className="text-slate-300">{doc.title}</div>
+                        <div className="text-slate-500 mt-1">Family: <span className="font-mono">{doc.lineageFamily || '-'}</span></div>
+                        <div className="text-slate-500">Parent: <span className="font-mono">{doc.lineageParent || '-'}</span></div>
+                        <div className="text-slate-500">Children: <span className="font-mono">{(doc.lineageChildren || []).join(', ') || '-'}</span></div>
+                      </div>
+                    ))}
+                  {!linkedDocs.some(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0) && (
+                    <p className="text-xs text-slate-500 italic">No lineage metadata detected.</p>
+                  )}
+                </div>
+              </div>
             </div>
           )}
           {/* Sessions Tab */}
@@ -3056,6 +3190,12 @@ const FeatureCard = ({
           </span>
         )}
       </div>
+      <div className="flex flex-wrap gap-1.5 mb-3 text-[9px]">
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{getFeatureCoverageSummary(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">links {getFeatureLinkedFeatureCount(feature)}</span>
+      </div>
 
       {/* Footer */}
       <div className="pt-2 border-t border-slate-800">
@@ -3131,6 +3271,12 @@ const FeatureListCard = ({
 
       <div className="mb-3">
         <FeatureDateStack feature={feature} />
+      </div>
+      <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{getFeatureCoverageSummary(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">links {getFeatureLinkedFeatureCount(feature)}</span>
       </div>
 
       <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
@@ -3247,7 +3393,7 @@ export const ProjectBoard: React.FC = () => {
   useEffect(() => {
     const featureId = searchParams.get('feature');
     const tabParam = (searchParams.get('tab') || '').trim().toLowerCase();
-    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'sessions', 'history', 'test-status'];
+    const validTabs: FeatureModalTab[] = ['overview', 'phases', 'docs', 'relations', 'sessions', 'history', 'test-status'];
     const requestedTab = validTabs.includes(tabParam as FeatureModalTab) ? (tabParam as FeatureModalTab) : 'overview';
     if (featureId && apiFeatures.length > 0) {
       const featureBase = getFeatureBaseSlug(featureId);
