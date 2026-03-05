@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, LayoutGrid, List, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { parseTranscriptMessage } from './sessionTranscriptFormatting';
+import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind } from './TranscriptMappedMessageCard';
+import { IconPicker, Icon, type IconName } from './ui/icon-picker';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Button } from './ui/button';
+import { SketchPicker, type ColorResult } from 'react-color';
+import { dynamicIconImports } from 'lucide-react/dynamic';
 
 type MatchScope = 'command' | 'args' | 'command_and_args' | 'message';
 type TranscriptKind = 'command' | 'artifact' | 'action';
@@ -112,11 +118,16 @@ const fieldMappingsToText = (rule: SessionMappingRule): string =>
 
 const cloneRule = (rule: SessionMappingRule): SessionMappingRule => JSON.parse(JSON.stringify(rule));
 
+const isValidIconName = (value: string): value is IconName => (
+  Boolean(value) && value in dynamicIconImports
+);
+
 const buildPreviewSeedText = (rule: SessionMappingRule): string => {
   const marker = String(rule.commandMarker || '').trim();
   const label = String(rule.label || '').trim();
   const mappingType = String(rule.mappingType || '').trim().toLowerCase();
   const scope = String(rule.matchScope || '').trim().toLowerCase();
+  const matchHints = `${label} ${String(rule.pattern || '')} ${String(rule.extractPattern || '')}`.toLowerCase();
   if (marker) {
     return `${marker} 2 docs/project_plans/implementation_plans/features/example-v1.md`;
   }
@@ -132,6 +143,15 @@ const buildPreviewSeedText = (rule: SessionMappingRule): string => {
   }
   if (mappingType === 'key_command') {
     return '/dev:execute-phase 2 docs/project_plans/implementation_plans/features/example-v1.md';
+  }
+  if (matchHints.includes('git')) {
+    return 'git status';
+  }
+  if (matchHints.includes('pnpm')) {
+    return 'pnpm run build';
+  }
+  if (matchHints.includes('npm')) {
+    return 'npm run build';
   }
   return 'uv run pytest backend/tests/test_session_mappings.py -q';
 };
@@ -302,10 +322,9 @@ export const SessionMappings: React.FC = () => {
   };
 
   const openPreviewForRule = (rule: SessionMappingRule) => {
+    const seed = buildPreviewSeedText(rule);
     setPreviewRuleId(rule.id);
-    if (!previewInput.trim()) {
-      setPreviewInput(buildPreviewSeedText(rule));
-    }
+    setPreviewInput(seed);
     if (previewPlatform === 'all') {
       const platforms = normalizePlatforms(rule.platforms);
       if (platforms.length === 1 && platforms[0] !== 'all') {
@@ -591,33 +610,42 @@ export const SessionMappings: React.FC = () => {
           </div>
         </div>
 
-        <div className={`mt-4 ${previewOpen ? 'flex flex-col gap-4 xl:flex-row xl:items-start' : ''}`}>
+        <div className={`mt-4 ${previewOpen ? 'flex flex-col gap-4 lg:flex-row lg:items-start' : ''}`}>
           <div className={previewOpen ? 'min-w-0 flex-1' : ''}>
             {loading ? (
               <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Loading mappings...</div>
             ) : filteredRules.length === 0 ? (
               <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">No mappings found for current filters.</div>
             ) : viewMode === 'table' ? (
-              <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="min-w-full divide-y divide-slate-800 text-sm">
+              <div className="max-w-full overflow-hidden rounded-xl border border-slate-800">
+            <table className="w-full table-fixed divide-y divide-slate-800 text-sm">
+              <colgroup>
+                <col className="w-[24%] min-w-[18ch]" />
+                <col className="w-[12%] min-w-[10ch]" />
+                <col className="w-[12%] min-w-[12ch]" />
+                <col className="w-[24%] min-w-[20ch]" />
+                <col className="w-[8%] min-w-[8ch]" />
+                <col className="w-[10%] min-w-[10ch]" />
+                <col className="w-[10%] min-w-[12ch]" />
+              </colgroup>
               <thead className="bg-slate-900/90">
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-3 py-2">Mapping</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Platforms</th>
-                  <th className="px-3 py-2">Pattern</th>
-                  <th className="px-3 py-2">Priority</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2"></th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Mapping">Mapping</th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Type">Type</th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Platforms">Platforms</th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Pattern">Pattern</th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Priority">Priority</th>
+                  <th className="px-3 py-2 whitespace-nowrap" title="Status">Status</th>
+                  <th className="px-3 py-2 whitespace-nowrap"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800 bg-slate-950/80">
                 {filteredRules.map(rule => (
                   <tr key={rule.id} className="hover:bg-slate-900/60">
                     <td className="px-3 py-2 align-top">
-                      <button onClick={() => openEditEditor(rule)} className="text-left">
-                        <p className="font-medium text-slate-100">{rule.label}</p>
-                        <p className="text-[11px] font-mono text-slate-500">{rule.id}</p>
+                      <button onClick={() => openEditEditor(rule)} className="w-full min-w-0 text-left">
+                        <p className="truncate font-medium text-slate-100" title={rule.label}>{rule.label}</p>
+                        <p className="truncate text-[11px] font-mono text-slate-500" title={rule.id}>{rule.id}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-1">
                           <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300">
                             {rule.transcriptKind || 'command'}
@@ -636,18 +664,25 @@ export const SessionMappings: React.FC = () => {
                         </div>
                       </button>
                     </td>
-                    <td className="px-3 py-2 align-top text-slate-300">{rule.mappingType}</td>
+                    <td className="px-3 py-2 align-top text-slate-300">
+                      <div className="truncate whitespace-nowrap" title={rule.mappingType}>{rule.mappingType}</div>
+                    </td>
                     <td className="px-3 py-2 align-top">
-                      <div className="flex flex-wrap gap-1">
-                        {normalizePlatforms(rule.platforms).map(platform => (
-                          <span key={`${rule.id}-${platform}`} className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-slate-300">
-                            {platform}
-                          </span>
-                        ))}
+                      <div
+                        className="truncate whitespace-nowrap font-mono text-[11px] text-slate-300"
+                        title={normalizePlatforms(rule.platforms).join(', ')}
+                      >
+                        {normalizePlatforms(rule.platforms).join(', ')}
                       </div>
                     </td>
-                    <td className="px-3 py-2 align-top font-mono text-[11px] text-cyan-200">{rule.pattern}</td>
-                    <td className="px-3 py-2 align-top text-slate-300">{rule.priority}</td>
+                    <td className="px-3 py-2 align-top">
+                      <div className="truncate whitespace-nowrap font-mono text-[11px] text-cyan-200" title={rule.pattern}>
+                        {rule.pattern}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 align-top text-slate-300">
+                      <div className="truncate whitespace-nowrap" title={String(rule.priority)}>{rule.priority}</div>
+                    </td>
                     <td className="px-3 py-2 align-top">
                       <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${rule.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-500'}`}>
                         {rule.enabled ? <Check size={12} /> : <X size={12} />} {rule.enabled ? 'Enabled' : 'Disabled'}
@@ -749,8 +784,8 @@ export const SessionMappings: React.FC = () => {
             )}
           </div>
           {previewOpen && (
-            <div className="w-full shrink-0 xl:sticky xl:top-4 xl:w-[360px]">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+            <div className="w-full shrink-0 min-w-0 lg:sticky lg:top-4 lg:w-[360px]">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 min-w-0 overflow-hidden">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Live Preview</h4>
@@ -763,12 +798,19 @@ export const SessionMappings: React.FC = () => {
                     Close
                   </button>
                 </div>
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 space-y-3 min-w-0">
                   <label className="block text-xs text-slate-400">
                     Mapping
                     <select
                       value={selectedPreviewRule?.id || ''}
-                      onChange={event => setPreviewRuleId(event.target.value || null)}
+                      onChange={event => {
+                        const nextId = event.target.value || null;
+                        const nextRule = rules.find(rule => rule.id === nextId) || null;
+                        setPreviewRuleId(nextId);
+                        if (nextRule) {
+                          setPreviewInput(buildPreviewSeedText(nextRule));
+                        }
+                      }}
                       className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
                     >
                       {previewRuleOptions.map(rule => (
@@ -807,22 +849,16 @@ export const SessionMappings: React.FC = () => {
                     </button>
                   </div>
                   {selectedPreviewRule ? (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500">Result</div>
-                      <div className="mt-2 text-xs text-slate-200">
-                        <p><span className="text-slate-500">Kind:</span> {previewResult?.kind || 'n/a'}</p>
-                        <p><span className="text-slate-500">Summary:</span> {previewResult?.summary || 'No match'}</p>
-                        <p><span className="text-slate-500">Mapping:</span> {previewResult?.mapped?.mappingId || 'No mapping match'}</p>
-                        {previewResult?.mapped?.matchText && (
-                          <p><span className="text-slate-500">Regex Match:</span> <span className="font-mono">{previewResult.mapped.matchText}</span></p>
-                        )}
-                        {(previewResult?.mapped?.command || previewResult?.mapped?.args) && (
-                          <div className="mt-2 rounded border border-slate-800 bg-slate-900/70 p-2 text-[11px] font-mono text-slate-300">
-                            {previewResult?.mapped?.command && <p>{previewResult.mapped.command}</p>}
-                            {previewResult?.mapped?.args && <p className="mt-1 whitespace-pre-wrap break-words">{previewResult.mapped.args}</p>}
-                          </div>
-                        )}
-                      </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 min-w-0 overflow-hidden">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Result</div>
+                      {previewResult && isMappedTranscriptMessageKind(previewResult.kind) ? (
+                        <TranscriptMappedMessageCard message={previewResult} />
+                      ) : (
+                        <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs text-slate-300 min-w-0 overflow-hidden">
+                          <p className="break-words [overflow-wrap:anywhere]"><span className="text-slate-500">Kind:</span> {previewResult?.kind || 'n/a'}</p>
+                          <p className="mt-1 break-words [overflow-wrap:anywhere]"><span className="text-slate-500">Summary:</span> {previewResult?.summary || 'No mapping match for current sample text.'}</p>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="rounded border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-500">
@@ -974,22 +1010,96 @@ export const SessionMappings: React.FC = () => {
 
               <label className="text-xs text-slate-400">
                 Icon Token
-                <input
-                  value={editorDraft.icon || ''}
-                  onChange={event => updateEditorDraft({ icon: event.target.value })}
-                  placeholder="terminal / archive / zap"
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
-                />
+                <div className="mt-1 space-y-2">
+                  <IconPicker
+                    value={isValidIconName(String(editorDraft.icon || '').trim()) ? String(editorDraft.icon || '').trim() as IconName : undefined}
+                    onValueChange={value => updateEditorDraft({ icon: String(value || '') })}
+                    searchPlaceholder="Search icon..."
+                    triggerPlaceholder="Select icon"
+                    categorized
+                    modal
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-between border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        {isValidIconName(String(editorDraft.icon || '').trim()) ? (
+                          <Icon name={String(editorDraft.icon || '').trim() as IconName} className="h-4 w-4 shrink-0" />
+                        ) : (
+                          <span className="inline-block h-4 w-4 shrink-0 rounded border border-slate-600" />
+                        )}
+                        <span className="truncate font-mono text-xs">
+                          {String(editorDraft.icon || '').trim() || 'Select icon'}
+                        </span>
+                      </span>
+                      <span className="text-[10px] text-slate-400">Browse</span>
+                    </Button>
+                  </IconPicker>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={editorDraft.icon || ''}
+                      onChange={event => updateEditorDraft({ icon: event.target.value })}
+                      placeholder="or enter icon token manually"
+                      className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-200"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
+                      onClick={() => updateEditorDraft({ icon: '' })}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
               </label>
 
               <label className="text-xs text-slate-400">
                 Accent Color
-                <input
-                  value={editorDraft.color || ''}
-                  onChange={event => updateEditorDraft({ color: event.target.value })}
-                  placeholder="#22c55e"
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-slate-200"
-                />
+                <div className="mt-1 space-y-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-start gap-2 border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+                      >
+                        <span
+                          className="inline-block h-4 w-4 rounded border border-slate-600"
+                          style={{ backgroundColor: editorDraft.color || '#22c55e' }}
+                        />
+                        <span className="font-mono text-xs">{editorDraft.color || '#22c55e'}</span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-auto border-slate-700 bg-slate-900 p-0">
+                      <SketchPicker
+                        color={editorDraft.color || '#22c55e'}
+                        onChange={(color: ColorResult) => updateEditorDraft({ color: String(color.hex || '').toLowerCase() })}
+                        disableAlpha
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={editorDraft.color || ''}
+                      onChange={event => updateEditorDraft({ color: event.target.value })}
+                      placeholder="#22c55e"
+                      className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-slate-200"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
+                      onClick={() => updateEditorDraft({ color: '' })}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
               </label>
 
               <label className="text-xs text-slate-400 md:col-span-2">

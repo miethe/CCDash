@@ -69,6 +69,7 @@ const TAG_BLOCK_PATTERN = /<([a-z][a-z0-9-]*)>([\s\S]*?)<\/\1>/gi;
 const COMMAND_NAME_TAG_PATTERN = /<command-name>\s*([^<\n]+)\s*<\/command-name>/gi;
 const COMMAND_ARGS_TAG_PATTERN = /<command-args>\s*([\s\S]*?)\s*<\/command-args>/gi;
 const SLASH_COMMAND_LINE_PATTERN = /^\s*(\/[a-z][a-z0-9_-]*(?::[a-z0-9_-]+)?)\b(?:\s+([^\n]+))?\s*$/gim;
+const SHELL_COMMAND_LINE_PATTERN = /^\s*(?:[$#>%]\s*)?([a-z0-9._-]+)(?:\s+(.+?))?\s*$/i;
 
 const TITLE_CASE_PATTERN = /[-_]+/g;
 const PLATFORM_SANITIZE_PATTERN = /[^a-z0-9_]+/g;
@@ -151,7 +152,7 @@ const extractCommandInvocations = (content: string): Array<{ command: string; ar
     let tagNameMatch = COMMAND_NAME_TAG_PATTERN.exec(text);
     while (tagNameMatch) {
         const commandName = String(tagNameMatch[1] || '').trim();
-        if (commandName.startsWith('/')) {
+        if (commandName) {
             tagCommands.push(commandName);
         }
         tagNameMatch = COMMAND_NAME_TAG_PATTERN.exec(text);
@@ -182,6 +183,24 @@ const extractCommandInvocations = (content: string): Array<{ command: string; ar
             invocations.push({ command, args });
         }
         slashMatch = SLASH_COMMAND_LINE_PATTERN.exec(text);
+    }
+
+    if (invocations.length === 0) {
+        const firstLine = text
+            .replace(/^`+|`+$/g, '')
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .find(Boolean);
+        if (firstLine) {
+            const shellMatch = SHELL_COMMAND_LINE_PATTERN.exec(firstLine);
+            if (shellMatch) {
+                const command = String(shellMatch[1] || '').trim();
+                const args = String(shellMatch[2] || '').trim();
+                if (command) {
+                    invocations.push({ command, args });
+                }
+            }
+        }
     }
     return invocations;
 };
@@ -226,6 +245,9 @@ const classifyMappedContent = (
                 if (scope === 'args') {
                     target = invocation.args;
                 } else if (scope === 'command_and_args') {
+                    target = `${invocation.command} ${invocation.args}`.trim();
+                } else if (scope === 'command' && invocation.command && !invocation.command.startsWith('/')) {
+                    // Bash/tool commands are commonly represented as command + args in one line.
                     target = `${invocation.command} ${invocation.args}`.trim();
                 }
                 candidates.push({ command: invocation.command, args: invocation.args, target });

@@ -12,6 +12,7 @@ import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
+import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -195,51 +196,6 @@ const formatAction = (action: string): string => {
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
-const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-
-const isMappedTranscriptKind = (kind: TranscriptFormattedMessage['kind']): boolean =>
-    kind === 'mapped-command' || kind === 'mapped-artifact' || kind === 'mapped-action';
-
-const fallbackMappedColor = (kind: TranscriptFormattedMessage['kind']): string => {
-    if (kind === 'mapped-artifact') return '#f59e0b';
-    if (kind === 'mapped-action') return '#0ea5e9';
-    return '#22c55e';
-};
-
-const normalizeMappedColor = (value: string | undefined, kind: TranscriptFormattedMessage['kind']): string => {
-    const color = String(value || '').trim();
-    if (HEX_COLOR_PATTERN.test(color)) return color.toLowerCase();
-    return fallbackMappedColor(kind);
-};
-
-const hexToRgba = (hex: string, alpha: number): string => {
-    const normalized = hex.replace('#', '').trim();
-    const value = normalized.length === 3
-        ? normalized.split('').map(char => `${char}${char}`).join('')
-        : normalized;
-    const r = Number.parseInt(value.slice(0, 2), 16);
-    const g = Number.parseInt(value.slice(2, 4), 16);
-    const b = Number.parseInt(value.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
-const mappedIcon = (iconName: string | undefined, kind: TranscriptFormattedMessage['kind'], size = 12): JSX.Element => {
-    const token = String(iconName || '').trim().toLowerCase();
-    if (token === 'archive' || token === 'box') return <Archive size={size} />;
-    if (token === 'cpu' || token === 'chip') return <Cpu size={size} />;
-    if (token === 'zap') return <Zap size={size} />;
-    if (token === 'play-circle') return <PlayCircle size={size} />;
-    if (token === 'check-circle-2') return <CheckCircle2 size={size} />;
-    if (token === 'git-branch' || token === 'git-commit') return <GitBranch size={size} />;
-    if (token === 'test-tube') return <TestTube2 size={size} />;
-    if (token === 'clipboard-list') return <FileText size={size} />;
-    if (token === 'rocket') return <TrendingUp size={size} />;
-    if (token === 'settings-2') return <Layers size={size} />;
-    if (kind === 'mapped-artifact') return <Archive size={size} />;
-    if (kind === 'mapped-action') return <PlayCircle size={size} />;
-    return <Terminal size={size} />;
-};
-
 const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null => {
     if (!raw || !raw.trim()) {
         return null;
@@ -375,6 +331,65 @@ const extractTaskSubagentName = (toolArgs: string | undefined): string | null =>
         nestedConfig && (nestedConfig as Record<string, unknown>).id,
         nestedConfig && (nestedConfig as Record<string, unknown>).type,
     );
+};
+
+const toSkillMentionToken = (raw: string): string | null => {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) return null;
+    const token = trimmed
+        .replace(/^[$/]+/, '')
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .pop()
+        ?.replace(/[^A-Za-z0-9-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '') || '';
+    if (!token) return null;
+    const normalized = /^[A-Za-z]/.test(token) ? token : `skill-${token}`;
+    return `$${normalized}`;
+};
+
+const getTranscriptSourceText = (log: SessionLog): string => {
+    if (log.type === 'command') {
+        const args = String(log.metadata?.args || '').trim();
+        return args ? `${log.content} ${args}`.trim() : String(log.content || '');
+    }
+
+    if (log.type === 'tool') {
+        const metadata = asRecord(log.metadata);
+        const toolArgs = parseToolArgs(log.toolCall?.args);
+        const bashCommand = takeString(
+            metadata.bashCommand,
+            metadata.command,
+            toolArgs?.command,
+            toolArgs?.cmd,
+            toolArgs?.script,
+        );
+        if (bashCommand) return bashCommand;
+
+        const toolCategory = String(metadata.toolCategory || '').trim().toLowerCase();
+        const toolName = String(log.toolCall?.name || '').trim().toLowerCase();
+        const skillName = takeString(
+            metadata.toolLabel,
+            metadata.skill,
+            toolArgs?.skill,
+            toolArgs?.name,
+        );
+        if (toolCategory === 'skill' || toolName === 'skill') {
+            const skillToken = skillName ? toSkillMentionToken(skillName) : null;
+            if (skillToken) return skillToken;
+        }
+
+        return String(log.content || '');
+    }
+
+    if (log.type === 'skill') {
+        const skillName = takeString(log.skillDetails?.name, asRecord(log.metadata).skill, log.content);
+        const skillToken = skillName ? toSkillMentionToken(skillName) : null;
+        if (skillToken) return skillToken;
+    }
+
+    return String(log.content || '');
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
@@ -605,13 +620,13 @@ const LogItemBlurb: React.FC<{
     const renderMessagePreview = () => {
         const parsed = formattedMessage || parseTranscriptMessage(log.content);
 
-        if (isMappedTranscriptKind(parsed.kind) && parsed.mapped) {
-            const accent = normalizeMappedColor(parsed.mapped.color, parsed.kind);
+        if (isMappedTranscriptMessageKind(parsed.kind) && parsed.mapped) {
+            const accent = mappedAccentColor(parsed.mapped.color, parsed.kind);
             const mappedLabel = parsed.mapped.transcriptLabel || parsed.mapped.label || 'Mapped Event';
             return (
                 <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold" style={{ color: accent }}>
-                        {mappedIcon(parsed.mapped.icon, parsed.kind, 11)}
+                        {mappedTranscriptIcon(parsed.mapped.icon, parsed.kind, 11)}
                         <span>{mappedLabel}</span>
                     </div>
                     <p className="font-mono text-xs line-clamp-2 break-all text-slate-200">{parsed.summary}</p>
@@ -753,17 +768,32 @@ const LogItemBlurb: React.FC<{
         subagent_start: <Zap size={12} className="text-purple-300" />,
     };
 
-    const label = log.type === 'tool' ? `Used Tool: ${log.toolCall?.name}` :
+    const mappedNonMessageLabel = (
+        formattedMessage
+        && isMappedTranscriptMessageKind(formattedMessage.kind)
+        && formattedMessage.mapped
+    )
+        ? `${formattedMessage.mapped.transcriptLabel}: ${formattedMessage.summary}`
+        : null;
+
+    const label = log.type === 'tool' ? (mappedNonMessageLabel || `Used Tool: ${log.toolCall?.name}`) :
         log.type === 'subagent_start' ? `Sub-thread Started` :
             log.type === 'thought' ? 'Agent Thought' :
                 log.type === 'system' ? 'System Event' :
                     log.type === 'command'
-                        ? (formattedMessage && isMappedTranscriptKind(formattedMessage.kind) && formattedMessage.mapped
+                        ? (formattedMessage && isMappedTranscriptMessageKind(formattedMessage.kind) && formattedMessage.mapped
                             ? `${formattedMessage.mapped.transcriptLabel}: ${formattedMessage.summary}`
                             : `Command: ${log.content}`)
                         :
         log.type === 'subagent' ? `Spawned Agent: ${log.agentName || 'Subagent'}` :
-            `Loaded Skill: ${log.skillDetails?.name}`;
+            (mappedNonMessageLabel || `Loaded Skill: ${log.skillDetails?.name}`);
+    const mappedNonMessageAccent = (
+        formattedMessage
+        && isMappedTranscriptMessageKind(formattedMessage.kind)
+        && formattedMessage.mapped
+    )
+        ? mappedAccentColor(formattedMessage.mapped.color, formattedMessage.kind)
+        : null;
     const taskToolDetails = getTaskToolDetails(log);
 
     return (
@@ -789,6 +819,21 @@ const LogItemBlurb: React.FC<{
                             {taskToolDetails.subagentType && <span>{taskToolDetails.subagentType}</span>}
                             {taskToolDetails.model && <span>{taskToolDetails.model}</span>}
                         </div>
+                    </div>
+                ) : (mappedNonMessageLabel && formattedMessage?.mapped && mappedNonMessageAccent) ? (
+                    <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold" style={{ color: mappedNonMessageAccent }}>
+                            {mappedTranscriptIcon(formattedMessage.mapped.icon, formattedMessage.kind, 11)}
+                            <span className="truncate">{formattedMessage.mapped.transcriptLabel || formattedMessage.mapped.label}</span>
+                        </div>
+                        <div className={`text-[11px] font-mono truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                            {formattedMessage.summary}
+                        </div>
+                        {formattedMessage.mapped.args && (
+                            <div className="text-[10px] text-slate-500 font-mono truncate">
+                                {formattedMessage.mapped.args}
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <span className={`text-[11px] font-mono truncate transition-colors ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
@@ -851,81 +896,25 @@ const DetailPane: React.FC<{
         setExpandedSections(next);
     };
 
-    const commandArgs = log.type === 'command' ? String(log.metadata?.args || '').trim() : '';
-    const messageSourceText = log.type === 'command' && commandArgs
-        ? `${log.content} ${commandArgs}`.trim()
-        : log.content;
-    const parsedMessage = formattedMessage || parseTranscriptMessage(messageSourceText);
+    const parsedMessage = formattedMessage || parseTranscriptMessage(getTranscriptSourceText(log));
     const taskToolDetails = getTaskToolDetails(log);
     const detailTitle = (() => {
+        if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
-        if (isMappedTranscriptKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
         return 'Log Details';
     })();
 
     const renderStructuredMessage = () => {
-        if (isMappedTranscriptKind(parsedMessage.kind) && parsedMessage.mapped) {
-            const accent = normalizeMappedColor(parsedMessage.mapped.color, parsedMessage.kind);
-            const mapped = parsedMessage.mapped;
+        if (isMappedTranscriptMessageKind(parsedMessage.kind) && parsedMessage.mapped) {
             return (
-                <div
-                    className="rounded-xl p-5 space-y-4"
-                    style={{
-                        border: `1px solid ${hexToRgba(accent, 0.35)}`,
-                        backgroundColor: hexToRgba(accent, 0.08),
-                    }}
-                >
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                            <div className="text-[10px] uppercase tracking-widest font-bold flex items-center gap-1.5" style={{ color: accent }}>
-                                {mappedIcon(mapped.icon, parsedMessage.kind, 12)}
-                                <span>{mapped.transcriptLabel || mapped.label}</span>
-                            </div>
-                            <p className="font-mono text-sm break-all text-slate-100">{parsedMessage.summary}</p>
-                        </div>
-                        <span className="text-[10px] px-2 py-1 rounded border text-slate-200" style={{ borderColor: hexToRgba(accent, 0.35), backgroundColor: hexToRgba(accent, 0.12) }}>
-                            {mapped.mappingType}
-                        </span>
-                    </div>
-
-                    {(mapped.command || mapped.args) && (
-                        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3 space-y-2">
-                            {mapped.command && (
-                                <div>
-                                    <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Command</div>
-                                    <div className="font-mono text-xs text-slate-200 break-all">{mapped.command}</div>
-                                </div>
-                            )}
-                            {mapped.args && (
-                                <div>
-                                    <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Args</div>
-                                    <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-                                        {mapped.args}
-                                    </pre>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {mapped.matchText && (
-                        <div className="text-[11px] text-slate-300">
-                            <span className="text-slate-500 uppercase tracking-wider text-[10px] mr-2">Regex Match</span>
-                            <span className="font-mono">{mapped.matchText}</span>
-                        </div>
-                    )}
-
-                    {commandArtifacts.length > 0 && (
-                        <button
-                            onClick={onOpenArtifacts}
-                            className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
-                        >
-                            Open Command Artifact ({commandArtifacts.length})
-                        </button>
-                    )}
-                </div>
+                <TranscriptMappedMessageCard
+                    message={parsedMessage}
+                    commandArtifactsCount={commandArtifacts.length}
+                    onOpenArtifacts={onOpenArtifacts}
+                />
             );
         }
 
@@ -1062,6 +1051,13 @@ const DetailPane: React.FC<{
                 {/* TOOL DETAILS WITH INLINE EXPANSION */}
                 {log.type === 'tool' && log.toolCall && (
                     <div className="space-y-4">
+                        {isMappedTranscriptMessageKind(parsedMessage.kind) && parsedMessage.mapped && (
+                            <TranscriptMappedMessageCard
+                                message={parsedMessage}
+                                commandArtifactsCount={commandArtifacts.length}
+                                onOpenArtifacts={onOpenArtifacts}
+                            />
+                        )}
                         <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
                             <div className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
                                 <span className="text-xs font-mono text-amber-500 flex items-center gap-2">
@@ -1214,14 +1210,23 @@ const DetailPane: React.FC<{
 
                 {/* SKILLS */}
                 {log.type === 'skill' && log.skillDetails && (
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
-                        <div className="flex items-center gap-2 text-blue-400 font-mono text-sm mb-3">
-                            <Cpu size={16} /> {log.skillDetails.name}
-                        </div>
-                        <p className="text-slate-400 text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
-                        <div className="flex items-center justify-between text-[10px] border-t border-slate-800 pt-3">
-                            <span className="text-slate-500">Version</span>
-                            <span className="font-mono text-slate-300">{log.skillDetails.version}</span>
+                    <div className="space-y-4">
+                        {isMappedTranscriptMessageKind(parsedMessage.kind) && parsedMessage.mapped && (
+                            <TranscriptMappedMessageCard
+                                message={parsedMessage}
+                                commandArtifactsCount={commandArtifacts.length}
+                                onOpenArtifacts={onOpenArtifacts}
+                            />
+                        )}
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                            <div className="flex items-center gap-2 text-blue-400 font-mono text-sm mb-3">
+                                <Cpu size={16} /> {log.skillDetails.name}
+                            </div>
+                            <p className="text-slate-400 text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
+                            <div className="flex items-center justify-between text-[10px] border-t border-slate-800 pt-3">
+                                <span className="text-slate-500">Version</span>
+                                <span className="font-mono text-slate-300">{log.skillDetails.version}</span>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -1288,11 +1293,8 @@ const TranscriptView: React.FC<{
     const formattedMessagesByLogId = useMemo(() => {
         const map = new Map<string, TranscriptFormattedMessage>();
         logs.forEach(log => {
-            if (log.type === 'message' || log.type === 'command') {
-                const commandArgs = log.type === 'command' ? String(log.metadata?.args || '').trim() : '';
-                const sourceText = log.type === 'command' && commandArgs
-                    ? `${log.content} ${commandArgs}`.trim()
-                    : log.content;
+            if (log.type === 'message' || log.type === 'command' || log.type === 'tool' || log.type === 'skill') {
+                const sourceText = getTranscriptSourceText(log);
                 map.set(log.id, parseTranscriptMessage(sourceText, {
                     mappings: transcriptMappings,
                     platformType: session.platformType,
