@@ -111,6 +111,76 @@ interface ArtifactGroup {
   linkedThreads: AgentSession[];
 }
 
+type ToolGroupCategory = 'hooks' | 'git' | 'tests' | 'other';
+
+const HOOK_TOOL_CALL_PATTERNS = [
+  /\bhook(s)?\b/,
+  /\bpre-commit\b/,
+  /\bpost-commit\b/,
+  /\bpre-push\b/,
+  /\bpost-merge\b/,
+  /\bhusky\b/,
+  /\blint-staged\b/,
+];
+
+const GIT_TOOL_CALL_PATTERNS = [
+  /\bgit\b/,
+  /\bcommit\b/,
+  /\bcheckout\b/,
+  /\bbranch\b/,
+  /\brebase\b/,
+  /\bmerge\b/,
+  /\bcherry-pick\b/,
+  /\bstash\b/,
+  /\bdiff\b/,
+  /\breset\b/,
+  /\brestore\b/,
+  /\bpush\b/,
+  /\bpull\b/,
+];
+
+const TEST_TOOL_CALL_PATTERNS = [
+  /\btest(s|ing)?\b/,
+  /\bpytest\b/,
+  /\bjest\b/,
+  /\bvitest\b/,
+  /\bmocha\b/,
+  /\bcypress\b/,
+  /\bplaywright\b/,
+  /\bcoverage\b/,
+  /\bspec\b/,
+];
+
+const TOOL_GROUP_SECTION_DEFS: Array<{ id: ToolGroupCategory; label: string; emptyLabel: string }> = [
+  { id: 'hooks', label: 'Hooks', emptyLabel: 'No hook-related tool calls.' },
+  { id: 'git', label: 'Git Calls', emptyLabel: 'No git-related tool calls.' },
+  { id: 'tests', label: 'Tests', emptyLabel: 'No test-related tool calls.' },
+  { id: 'other', label: 'Other Tool Calls', emptyLabel: 'No other tool calls.' },
+];
+
+const anyPatternMatches = (value: string, patterns: RegExp[]): boolean =>
+  patterns.some(pattern => pattern.test(value));
+
+const classifyToolGroup = (group: ArtifactGroup): ToolGroupCategory => {
+  const toolSignals = [
+    group.type,
+    group.title,
+    group.description,
+    group.source,
+    ...group.sourceToolNames,
+    ...group.relatedToolLogs.map(log => log.toolCall?.name || ''),
+    ...group.relatedToolLogs.map(log => log.content || ''),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (anyPatternMatches(toolSignals, HOOK_TOOL_CALL_PATTERNS)) return 'hooks';
+  if (anyPatternMatches(toolSignals, GIT_TOOL_CALL_PATTERNS)) return 'git';
+  if (anyPatternMatches(toolSignals, TEST_TOOL_CALL_PATTERNS)) return 'tests';
+  return 'other';
+};
+
 const ArtifactDetailsModal: React.FC<{
   group: ArtifactGroup;
   onClose: () => void;
@@ -492,15 +562,82 @@ export const SessionArtifactsView: React.FC<{
     }),
     [groupedArtifacts],
   );
+  const toolGroupSections = useMemo(() => {
+    const groupedBySection: Record<ToolGroupCategory, ArtifactGroup[]> = {
+      hooks: [],
+      git: [],
+      tests: [],
+      other: [],
+    };
+    for (const group of toolGroups) {
+      groupedBySection[classifyToolGroup(group)].push(group);
+    }
+    return TOOL_GROUP_SECTION_DEFS.map(section => ({
+      ...section,
+      groups: groupedBySection[section.id],
+    }));
+  }, [toolGroups]);
 
   const visibleGroups = useMemo(() => {
     if (activeSubTab === 'skills') return skillGroups;
     if (activeSubTab === 'agents') return agentGroups;
-    if (activeSubTab === 'tools') return toolGroups;
     return [];
-  }, [activeSubTab, agentGroups, skillGroups, toolGroups]);
+  }, [activeSubTab, agentGroups, skillGroups]);
 
   const hasAnyData = commandEntries.length > 0 || skillGroups.length > 0 || agentGroups.length > 0 || toolGroups.length > 0;
+
+  const renderArtifactCard = (group: ArtifactGroup) => (
+    <button
+      key={group.key}
+      onClick={() => setSelectedGroup(group)}
+      className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group min-w-0 overflow-hidden ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+    >
+      <div className="flex justify-between items-start gap-3 mb-4 min-w-0">
+        <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+          group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+            'bg-blue-500/10 text-blue-400'
+          }`}>
+          {group.type === 'memory' ? <HardDrive size={20} /> :
+            group.type === 'request_log' ? <Scroll size={20} /> :
+              <Database size={20} />}
+        </div>
+        <span
+          className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider max-w-[9rem] truncate"
+          title={group.source}
+        >
+          {group.source}
+        </span>
+      </div>
+
+      <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors truncate" title={group.title}>
+        {group.title}
+      </h3>
+      <p className="text-sm text-slate-400 mb-4 line-clamp-3 break-all" title={group.description || ''}>
+        {group.description}
+      </p>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+          {group.artifacts.length} merged
+        </span>
+        <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+          {group.relatedToolLogs.length} tool calls
+        </span>
+        <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+          {group.linkedThreads.length} sub-threads
+        </span>
+      </div>
+
+      <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-2 min-w-0">
+        <span className="text-xs font-mono text-slate-500 truncate min-w-0 max-w-[65%]" title={group.artifactIds[0]}>
+          {group.artifactIds[0]}
+        </span>
+        <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300 shrink-0">
+          View Details <ChevronRight size={12} />
+        </span>
+      </div>
+    </button>
+  );
 
   if (!hasAnyData) {
     return (
@@ -593,56 +730,36 @@ export const SessionArtifactsView: React.FC<{
         </div>
       )}
 
-      {activeSubTab !== 'commands' && (
+      {activeSubTab === 'tools' && (
+        <div className="space-y-6">
+          {toolGroupSections.map(section => (
+            <section key={section.id} className="space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold">{section.label}</h3>
+                <span className="text-[11px] text-slate-500">{section.groups.length}</span>
+              </div>
+              {section.groups.length === 0 ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                  {section.emptyLabel}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {section.groups.map(renderArtifactCard)}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+
+      {activeSubTab !== 'commands' && activeSubTab !== 'tools' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {visibleGroups.length === 0 && (
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
               No {activeSubTab} artifacts found.
             </div>
           )}
-          {visibleGroups.map(group => (
-            <button
-              key={group.key}
-              onClick={() => setSelectedGroup(group)}
-              className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                  group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                    'bg-blue-500/10 text-blue-400'
-                  }`}>
-                  {group.type === 'memory' ? <HardDrive size={20} /> :
-                    group.type === 'request_log' ? <Scroll size={20} /> :
-                      <Database size={20} />}
-                </div>
-                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                  {group.source}
-                </span>
-              </div>
-
-              <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
-              <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
-
-              <div className="flex flex-wrap gap-2 mb-4">
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.artifacts.length} merged
-                </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.relatedToolLogs.length} tool calls
-                </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.linkedThreads.length} sub-threads
-                </span>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
-                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
-                  View Details <ChevronRight size={12} />
-                </span>
-              </div>
-            </button>
-          ))}
+          {visibleGroups.map(renderArtifactCard)}
         </div>
       )}
 

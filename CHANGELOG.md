@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-03-05
+
+### Added
+
+- Agent/subagent invocation capture improvements:
+  - `Task` and `Agent` tool calls now persist richer invocation metadata (`taskId`, description, prompt preview, `subagent_type`, mode/model, background execution flag).
+  - Agent invocations are captured as first-class `session_artifacts` (`type=agent`) and correlated to linked sub-thread sessions.
+  - Sub-thread naming now prefers captured `subagent_type` and is reflected across transcript links, Session `Artifacts > Agents`, and the top-level `Agents` tab.
+- Test run execution enrichment for session transcripts and forensics:
+  - command-level extraction for test framework, targets, domain inference, flags, timeout, and capture hints.
+  - output-level enrichment for parsed result metrics (`passed`/`failed`/`skipped`/`xfailed`/etc), duration, worker counts, and pass-rate rollups.
+  - parser now persists normalized `testRun` metadata and aggregates session-level `sessionForensics.testExecution`.
+- Hook invocation capture:
+  - Claude `hook_progress` events now persist structured metadata (`hookName`, `hookPath`, `hookEvent`, `hookCommand`) on session logs.
+  - Hook events now create first-class `session_artifacts` (`type=hook`) tied to source log IDs.
+  - Added `entryContext.hookInvocations` in session forensics for correlation and downstream analytics.
+- Default transcript mapping coverage:
+  - added built-in mapping `artifact-hook-invocation` for `.claude/hooks/*` paths as `artifact` transcript events.
+
+### Changed
+
+- Session transcript formatting now supports stronger mapped-event rendering for captured invocation artifacts, including hooks and enriched test runs.
+- Session artifact correlation in inspector flows now has stronger linkage between tool logs, mapped transcript cards, artifact groups, and linked sub-thread sessions.
+
+### Fixed
+
+- Fixed unintended `Test Run` labeling regression where non-test shell/tool commands could appear as tests.
+  - UI now requires explicit test signals (`testRun` metadata, explicit/inferred test framework, or `toolCategory=test`) before rendering test-run formatting.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/testing-user-guide.md`
+  - `docs/session-data-discovery.md`
+  - `docs/codebase-explorer-developer-reference.md`
+
 ## 2026-03-03
 
 ### Added

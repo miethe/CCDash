@@ -77,6 +77,7 @@ The core debugging loop for AI interactions.
     1.  **Transcript**: 
         *   3-pane fluid layout (Log list, Detail view, Metadata sidebar).
         *   **Message/Tool/Skill Support**: distinct visual styling for different log types.
+        *   **Mapped Event Cards**: command/artifact/action mapping for transcript entries (for example Agent invocation, Skill mention, Hook invocation, and test-related command events).
         *   **Inline Expansion**: Inspect tool arguments and large outputs without losing context.
     2.  **Activity**:
         *   Chronological timeline of log entries, file actions, and linked artifacts.
@@ -86,7 +87,8 @@ The core debugging loop for AI interactions.
         *   Multi-action chips (`Read`, `Create`, `Update`, `Delete`) per file.
         *   Touch/session counts, net diff, and open actions.
     4.  **Artifacts**:
-        *   Visual cards for generated Memories, Request Logs, and Knowledge Base entries.
+        *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
+        *   Source-log and linked-thread correlation so artifact cards can be traced back to the originating transcript event and sub-thread.
     5.  **App Impact**:
         *   **Codebase Impact Chart**: Line chart tracking LOC added/removed and file touch-counts over the session duration.
         *   **Test Stability Chart**: Area chart visualizing Test Pass vs. Fail counts over time.
@@ -97,12 +99,15 @@ The core debugging loop for AI interactions.
     7.  **Agents**:
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
+        *   Sub-thread labels resolve to captured `subagent_type` when available for more stable cross-session naming.
     8.  **Forensics**:
         *   Full forensic payload exploration from parser-derived telemetry.
         *   **Queue Pressure**: queue operation/status/task-type distributions and `waiting_for_task` signals.
         *   **Resource Footprint**: command-derived external/internal targets (`api`, `database`, `docker`, `ssh`, `service`).
         *   **Subagent Topology**: task fan-out, linked subagent sessions, and orphan linkage tracking.
         *   **Tool Result Intensity**: `tool-results` sidecar file volume and largest file inspection.
+        *   **Hook Invocation Signals**: parsed hook invocation context (`hookName`, `hookPath`, `hookEvent`, `hookCommand`) and invocation timeline in `entryContext.hookInvocations`.
+        *   **Test Execution Summary**: aggregated session test-run signals (`testExecution`) including framework counts, status counts, and parsed run metrics.
         *   **Platform Telemetry**: project-level platform config telemetry (for example MCP server inventory for Claude).
         *   **Codex Payload Signals**: payload/tool distributions for Codex sessions.
 
@@ -155,6 +160,7 @@ The atomic unit of work. Contains:
 *   `impactHistory`: Persisted time-series impact data (rehydrated from cache DB).
 *   `updatedFiles`: List of file modifications.
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
+    *   Includes parser-captured runtime artifacts such as `skill`, `command`, `agent`, `task`, `hook`, and `test_run` with source-log correlation.
 *   `dates` / `timeline`: Persisted date metadata and event timeline.
 *   `sessionForensics`: Structured platform-aware forensic payload including:
     *   `entryContext`, `sidecars`, `analysisSignals`

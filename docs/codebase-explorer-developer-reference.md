@@ -1,6 +1,6 @@
 # Codebase Explorer Developer Reference
 
-Last updated: 2026-02-25
+Last updated: 2026-03-05
 
 This document describes the Codebase Explorer implementation, APIs, data rules, and performance behavior.
 
@@ -26,6 +26,15 @@ Session detail is split into separate tabs:
 2. `Files`: one row per file with multi-action chips (`Read/Create/Update/Delete`) and aggregate counts.
 
 Transcript deep-links that previously targeted files now target `Activity` with `sourceLogId` highlighting.
+
+Additional transcript/artifact behavior now relevant to explorer/session cross-navigation:
+
+1. Transcript mapping system supports typed mapped event cards (`command`, `artifact`, `action`) with platform-aware mapping rules.
+2. Session artifacts include richer runtime types (`agent`, `task`, `hook`, `test_run`, `skill`, `command`) and keep `sourceLogId` + `sourceToolName` for traceability.
+3. Sub-thread naming prefers captured `subagent_type` metadata when available, improving consistency between:
+   - transcript `Open Thread` actions
+   - Session `Artifacts > Agents`
+   - top-level Session `Agents` tab
 
 ## API surface
 
@@ -123,4 +132,3 @@ Covers:
 - detail aggregation correctness
 - involvement thresholds
 - dangling symlink scan stability
-

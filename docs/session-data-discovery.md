@@ -78,11 +78,19 @@ Signals discovered via this workflow are now wired into session ingestion and Se
   - `queuePressure`
   - `subagentTopology`
   - `toolResultIntensity`
+  - `testExecution` (aggregated parsed test-run telemetry from tool commands/results)
+  - `entryContext.hookInvocations` (normalized hook invocation records from `hook_progress`)
   - `platformTelemetry`
   - `sidecars.toolResults`
 - Codex:
   - `resourceFootprint`
   - `codexPayloadSignals`
+
+Transcript/artifact mapping coverage now also includes:
+
+- structured artifact capture for `agent` and `task` tool invocations
+- structured artifact capture for `hook_progress` (`type=hook`)
+- default transcript artifact mapping for `.claude/hooks/*` invocation lines
 
 Related implementation files:
 
