@@ -860,6 +860,10 @@ export interface LinkedDocument {
   frontmatterKeys?: string[];
   relatedRefs?: string[];
   prdRef?: string;
+  lineageFamily?: string;
+  lineageParent?: string;
+  lineageChildren?: string[];
+  lineageType?: string;
   linkedFeatures?: LinkedFeatureRef[];
   dates?: EntityDates;
   timeline?: TimelineEvent[];
@@ -908,10 +912,37 @@ export interface Feature {
   completedAt?: string;
   linkedDocs: LinkedDocument[];
   linkedFeatures?: LinkedFeatureRef[];
+  primaryDocuments?: FeaturePrimaryDocuments;
+  documentCoverage?: FeatureDocumentCoverage;
+  qualitySignals?: FeatureQualitySignals;
   phases: FeaturePhase[];
   relatedFeatures: string[];
   dates?: EntityDates;
   timeline?: TimelineEvent[];
+}
+
+export interface FeaturePrimaryDocuments {
+  prd?: LinkedDocument | null;
+  implementationPlan?: LinkedDocument | null;
+  phasePlans: LinkedDocument[];
+  progressDocs: LinkedDocument[];
+  supportingDocs: LinkedDocument[];
+}
+
+export interface FeatureDocumentCoverage {
+  present: string[];
+  missing: string[];
+  countsByType: Record<string, number>;
+  coverageScore: number;
+}
+
+export interface FeatureQualitySignals {
+  blockerCount: number;
+  atRiskTaskCount: number;
+  integritySignalRefs: string[];
+  reportFindingsBySeverity: Record<string, number>;
+  testImpact: string;
+  hasBlockingSignals: boolean;
 }
 
 export interface ExecutionRecommendationEvidence {

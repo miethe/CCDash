@@ -551,6 +551,30 @@ class FeaturePhase(BaseModel):
     tasks: list[ProjectTask] = Field(default_factory=list)
 
 
+class FeaturePrimaryDocuments(BaseModel):
+    prd: Optional[LinkedDocument] = None
+    implementationPlan: Optional[LinkedDocument] = None
+    phasePlans: list[LinkedDocument] = Field(default_factory=list)
+    progressDocs: list[LinkedDocument] = Field(default_factory=list)
+    supportingDocs: list[LinkedDocument] = Field(default_factory=list)
+
+
+class FeatureDocumentCoverage(BaseModel):
+    present: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    countsByType: dict[str, int] = Field(default_factory=dict)
+    coverageScore: float = 0.0
+
+
+class FeatureQualitySignals(BaseModel):
+    blockerCount: int = 0
+    atRiskTaskCount: int = 0
+    integritySignalRefs: list[str] = Field(default_factory=list)
+    reportFindingsBySeverity: dict[str, int] = Field(default_factory=dict)
+    testImpact: str = ""
+    hasBlockingSignals: bool = False
+
+
 class Feature(BaseModel):
     id: str  # slug, e.g. "discovery-import-fixes-v1"
     name: str
@@ -582,6 +606,9 @@ class Feature(BaseModel):
     completedAt: str = ""
     linkedDocs: list[LinkedDocument] = Field(default_factory=list)
     linkedFeatures: list[LinkedFeatureRef] = Field(default_factory=list)
+    primaryDocuments: FeaturePrimaryDocuments = Field(default_factory=FeaturePrimaryDocuments)
+    documentCoverage: FeatureDocumentCoverage = Field(default_factory=FeatureDocumentCoverage)
+    qualitySignals: FeatureQualitySignals = Field(default_factory=FeatureQualitySignals)
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)

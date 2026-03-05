@@ -213,11 +213,75 @@ def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
             frontmatterKeys=[str(v) for v in (item.get("frontmatterKeys") or []) if isinstance(v, str)],
             relatedRefs=[str(v) for v in (item.get("relatedRefs") or []) if isinstance(v, str)],
             prdRef=str(item.get("prdRef") or ""),
+            lineageFamily=str(item.get("lineageFamily") or ""),
+            lineageParent=str(item.get("lineageParent") or ""),
+            lineageChildren=[str(v) for v in (item.get("lineageChildren") or []) if isinstance(v, str)],
+            lineageType=str(item.get("lineageType") or ""),
             linkedFeatures=_normalize_linked_feature_refs(item.get("linkedFeatures")),
             dates=item.get("dates") if isinstance(item.get("dates"), dict) else {},
             timeline=item.get("timeline") if isinstance(item.get("timeline"), list) else [],
         ))
     return docs
+
+
+def _normalize_primary_documents(raw: Any) -> dict[str, Any]:
+    payload = raw if isinstance(raw, dict) else {}
+    prd_docs = _normalize_linked_docs([payload.get("prd")] if isinstance(payload.get("prd"), dict) else [])
+    impl_docs = _normalize_linked_docs(
+        [payload.get("implementationPlan")]
+        if isinstance(payload.get("implementationPlan"), dict)
+        else []
+    )
+    return {
+        "prd": prd_docs[0] if prd_docs else None,
+        "implementationPlan": impl_docs[0] if impl_docs else None,
+        "phasePlans": _normalize_linked_docs(payload.get("phasePlans")),
+        "progressDocs": _normalize_linked_docs(payload.get("progressDocs")),
+        "supportingDocs": _normalize_linked_docs(payload.get("supportingDocs")),
+    }
+
+
+def _normalize_document_coverage(raw: Any) -> dict[str, Any]:
+    payload = raw if isinstance(raw, dict) else {}
+    counts_raw = payload.get("countsByType")
+    counts: dict[str, int] = {}
+    if isinstance(counts_raw, dict):
+        for key, value in counts_raw.items():
+            try:
+                counts[str(key)] = max(0, int(value))
+            except Exception:
+                counts[str(key)] = 0
+    try:
+        coverage_score = float(payload.get("coverageScore") or 0.0)
+    except Exception:
+        coverage_score = 0.0
+    coverage_score = max(0.0, min(1.0, coverage_score))
+    return {
+        "present": _normalize_string_list(payload.get("present")),
+        "missing": _normalize_string_list(payload.get("missing")),
+        "countsByType": counts,
+        "coverageScore": coverage_score,
+    }
+
+
+def _normalize_quality_signals(raw: Any) -> dict[str, Any]:
+    payload = raw if isinstance(raw, dict) else {}
+    findings_raw = payload.get("reportFindingsBySeverity")
+    findings: dict[str, int] = {}
+    if isinstance(findings_raw, dict):
+        for key, value in findings_raw.items():
+            try:
+                findings[str(key)] = max(0, int(value))
+            except Exception:
+                findings[str(key)] = 0
+    return {
+        "blockerCount": _safe_int(payload.get("blockerCount"), 0),
+        "atRiskTaskCount": _safe_int(payload.get("atRiskTaskCount"), 0),
+        "integritySignalRefs": _normalize_string_list(payload.get("integritySignalRefs")),
+        "reportFindingsBySeverity": findings,
+        "testImpact": str(payload.get("testImpact") or ""),
+        "hasBlockingSignals": bool(payload.get("hasBlockingSignals", False)),
+    }
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -636,6 +700,9 @@ async def list_features(
                 completedAt=str(data.get("completedAt") or ""),
                 linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
                 linkedFeatures=_normalize_linked_feature_refs(data.get("linkedFeatures")),
+                primaryDocuments=_normalize_primary_documents(data.get("primaryDocuments")),
+                documentCoverage=_normalize_document_coverage(data.get("documentCoverage")),
+                qualitySignals=_normalize_quality_signals(data.get("qualitySignals")),
                 phases=phases,
                 relatedFeatures=[str(v) for v in related_features if str(v).strip()],
                 dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
@@ -963,6 +1030,9 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
         completedAt=str(data.get("completedAt") or ""),
         linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
         linkedFeatures=_normalize_linked_feature_refs(data.get("linkedFeatures")),
+        primaryDocuments=_normalize_primary_documents(data.get("primaryDocuments")),
+        documentCoverage=_normalize_document_coverage(data.get("documentCoverage")),
+        qualitySignals=_normalize_quality_signals(data.get("qualitySignals")),
         phases=phases,
         relatedFeatures=[str(v) for v in related_features if str(v).strip()],
         dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
