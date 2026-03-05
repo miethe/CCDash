@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
+import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
+import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
@@ -3927,88 +3927,495 @@ const AgentsView: React.FC<{
     );
 };
 
-const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
-    if (!session.impactHistory || session.impactHistory.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                <Activity size={48} className="mb-4 opacity-20" />
-                <p>No app impact metrics recorded for this session.</p>
-            </div>
-        );
-    }
+type ImpactSignal = 'positive' | 'risk' | 'neutral';
+type ImpactCategory = 'code' | 'tests' | 'artifacts' | 'workflow' | 'system';
+
+interface ImpactEventRow {
+    id: string;
+    timestamp: string;
+    timestampMs: number;
+    category: ImpactCategory;
+    signal: ImpactSignal;
+    summary: string;
+    detail?: string;
+}
+
+interface ImpactInsight {
+    id: string;
+    title: string;
+    description: string;
+    signal: ImpactSignal;
+}
+
+const signalBadge = (signal: ImpactSignal): string => (
+    signal === 'positive'
+        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+        : signal === 'risk'
+            ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+            : 'border-slate-700 bg-slate-800/80 text-slate-300'
+);
+
+const categoryBadge = (category: ImpactCategory): string => (
+    category === 'code'
+        ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+        : category === 'tests'
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+            : category === 'artifacts'
+                ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
+                : category === 'workflow'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                    : 'border-slate-700 bg-slate-800/80 text-slate-300'
+);
+
+const formatImpactEventTime = (timestamp: string, timestampMs: number): string => {
+    if (timestampMs > 0) return new Date(timestampMs).toLocaleString();
+    return timestamp || 'unknown';
+};
+
+const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionFeatureLink[] }> = ({ session, linkedFeatureLinks }) => {
+    const [eventFilter, setEventFilter] = useState<'all' | ImpactCategory>('all');
+
+    const impactModel = useMemo(() => {
+        const logs = session.logs || [];
+        const forensics = asRecord(session.sessionForensics);
+        const entryContext = asRecord(forensics.entryContext);
+        const queuePressure = asRecord(forensics.queuePressure);
+        const subagentTopology = asRecord(forensics.subagentTopology);
+        const testExecution = asRecord(forensics.testExecution);
+        const apiErrors = Array.isArray(entryContext.apiErrors) ? entryContext.apiErrors : [];
+
+        const actionCounts: Record<'read' | 'create' | 'update' | 'delete' | 'other', number> = {
+            read: 0,
+            create: 0,
+            update: 0,
+            delete: 0,
+            other: 0,
+        };
+
+        let additions = 0;
+        let deletions = 0;
+        const fileUpdates = session.updatedFiles || [];
+        const uniqueTouchedFiles = new Set<string>();
+        const uniqueWrittenFiles = new Set<string>();
+        const events: ImpactEventRow[] = [];
+
+        const pushEvent = (event: ImpactEventRow) => {
+            if (!event.summary.trim()) return;
+            events.push(event);
+        };
+
+        fileUpdates.forEach((file, index) => {
+            const action = normalizeFileAction(file.action, file.sourceToolName);
+            actionCounts[action] += 1;
+            const filePath = normalizePath(file.filePath || '');
+            if (filePath) uniqueTouchedFiles.add(filePath);
+            if (action !== 'read' && action !== 'other' && filePath) uniqueWrittenFiles.add(filePath);
+            additions += Math.max(0, Number(file.additions || 0));
+            deletions += Math.max(0, Number(file.deletions || 0));
+
+            const timestamp = String(file.timestamp || '');
+            const timestampMs = toEpoch(timestamp);
+            const fileName = fileNameFromPath(filePath || `file-${index}`);
+            pushEvent({
+                id: `file-${index}-${file.sourceLogId || fileName}`,
+                timestamp,
+                timestampMs,
+                category: 'code',
+                signal: action === 'delete' ? 'neutral' : 'positive',
+                summary: `${formatAction(action)} ${fileName}`,
+                detail: `+${Math.max(0, Number(file.additions || 0))} / -${Math.max(0, Number(file.deletions || 0))}`,
+            });
+        });
+
+        const parsedTestRuns = logs
+            .map(log => {
+                const details = getTestRunDetails(log);
+                if (!details) return null;
+                return { log, details };
+            })
+            .filter(Boolean) as Array<{ log: SessionLog; details: TestRunDetails }>;
+
+        let derivedTotalTests = 0;
+        let derivedPassedTests = 0;
+        let derivedFailingRuns = 0;
+
+        parsedTestRuns.forEach(({ log, details }, index) => {
+            const failedCount = asNumber(details.counts.failed, 0) + asNumber(details.counts.error, 0);
+            const status = String(details.status || '').toLowerCase();
+            const isFail = status.includes('fail') || status.includes('error') || failedCount > 0;
+            if (isFail) derivedFailingRuns += 1;
+            const total = asNumber(details.total, 0);
+            const passed = asNumber(details.counts.passed, 0);
+            derivedTotalTests += total;
+            derivedPassedTests += passed;
+
+            pushEvent({
+                id: `test-${log.id}-${index}`,
+                timestamp: log.timestamp,
+                timestampMs: toEpoch(log.timestamp),
+                category: 'tests',
+                signal: isFail ? 'risk' : 'positive',
+                summary: `${details.framework} run ${isFail ? 'failed' : 'passed'}`,
+                detail: total > 0 ? `${total} tests · ${failedCount} failing` : (details.description || details.command || '').slice(0, 120),
+            });
+        });
+
+        const resultCounts = asRecord(testExecution.resultCounts);
+        const statusCounts = asRecord(testExecution.statusCounts);
+        const totalTests = asNumber(testExecution.totalTests, derivedTotalTests);
+        const passedTests = asNumber(resultCounts.passed, derivedPassedTests);
+        const failedTests = asNumber(resultCounts.failed, 0) + asNumber(resultCounts.error, 0);
+        const runCount = asNumber(testExecution.runCount, parsedTestRuns.length);
+        const forensicsPassRate = Number(testExecution.passRate);
+        const passRate = Number.isFinite(forensicsPassRate)
+            ? forensicsPassRate
+            : (totalTests > 0 ? passedTests / totalTests : 0);
+        const failingRuns = asNumber(statusCounts.failed, 0) + asNumber(statusCounts.error, 0) || derivedFailingRuns;
+
+        const artifacts = session.linkedArtifacts || [];
+        const artifactTypes = new Map<string, number>();
+        const logTimestampById = new Map(logs.map(log => [log.id, log.timestamp]));
+        artifacts.forEach((artifact, index) => {
+            const normalizedType = String(artifact.type || 'other').trim().toLowerCase() || 'other';
+            artifactTypes.set(normalizedType, (artifactTypes.get(normalizedType) || 0) + 1);
+            const sourceTimestamp = artifact.sourceLogId ? String(logTimestampById.get(artifact.sourceLogId) || '') : '';
+            pushEvent({
+                id: `artifact-${artifact.id || index}`,
+                timestamp: sourceTimestamp || session.startedAt,
+                timestampMs: toEpoch(sourceTimestamp || session.startedAt),
+                category: 'artifacts',
+                signal: normalizedType === 'request_log' ? 'neutral' : 'positive',
+                summary: `Artifact: ${artifact.title || artifact.id}`,
+                detail: `${normalizedType} · ${artifact.source || 'unknown source'}`,
+            });
+        });
+
+        (session.impactHistory || []).forEach((point, index) => {
+            const row = asRecord(point);
+            const timestamp = String(row.timestamp || '');
+            const type = String(row.type || 'info').toLowerCase();
+            const label = String(row.label || '').trim();
+            const locAdded = asNumber(row.locAdded, 0);
+            const locDeleted = asNumber(row.locDeleted, 0);
+            const testsPass = asNumber(row.testPassCount, 0);
+            const testsFail = asNumber(row.testFailCount, 0);
+            const fileCount = asNumber(row.fileCount, 0);
+            const summary = label || (
+                (locAdded || locDeleted || testsPass || testsFail || fileCount)
+                    ? `Impact snapshot (+${locAdded}/-${locDeleted}, files ${fileCount}, tests ${testsPass}/${testsFail})`
+                    : ''
+            );
+            if (!summary) return;
+
+            pushEvent({
+                id: `impact-history-${index}`,
+                timestamp,
+                timestampMs: toEpoch(timestamp),
+                category: 'system',
+                signal: type === 'error' ? 'risk' : (type === 'success' ? 'positive' : 'neutral'),
+                summary,
+            });
+        });
+
+        const toolErrorCount = logs.filter(log => (
+            log.type === 'tool'
+            && (log.toolCall?.status === 'error' || log.toolCall?.isError)
+        )).length;
+        const queueOperationCount = asNumber(queuePressure.queueOperationCount, Array.isArray(entryContext.queueOperations) ? entryContext.queueOperations.length : 0);
+        const waitingForTaskCount = asNumber(queuePressure.waitingForTaskCount, 0);
+        const subagentStartCount = asNumber(subagentTopology.subagentStartCount, 0);
+
+        if (waitingForTaskCount > 0) {
+            pushEvent({
+                id: 'queue-pressure',
+                timestamp: session.endedAt || session.updatedAt || session.startedAt,
+                timestampMs: toEpoch(session.endedAt || session.updatedAt || session.startedAt),
+                category: 'workflow',
+                signal: 'risk',
+                summary: `Queue pressure detected (${waitingForTaskCount} waiting tasks)`,
+                detail: queueOperationCount > 0 ? `${queueOperationCount} queue operations` : undefined,
+            });
+        }
+        if (apiErrors.length > 0) {
+            pushEvent({
+                id: 'api-errors',
+                timestamp: session.endedAt || session.updatedAt || session.startedAt,
+                timestampMs: toEpoch(session.endedAt || session.updatedAt || session.startedAt),
+                category: 'workflow',
+                signal: 'risk',
+                summary: `API errors captured (${apiErrors.length})`,
+                detail: 'Review Session Forensics for raw error payloads.',
+            });
+        }
+
+        const insights: ImpactInsight[] = [];
+        if (uniqueWrittenFiles.size > 0 && failingRuns > 0) {
+            insights.push({
+                id: 'code-vs-failing-tests',
+                title: 'Regression pressure after code changes',
+                description: `${uniqueWrittenFiles.size} written files correlated with ${failingRuns} failing test run(s).`,
+                signal: 'risk',
+            });
+        }
+        if (uniqueWrittenFiles.size > 0 && runCount > 0 && passRate >= 0.9 && failingRuns === 0) {
+            insights.push({
+                id: 'healthy-delivery',
+                title: 'Code change validated by tests',
+                description: `${uniqueWrittenFiles.size} written files with ${(passRate * 100).toFixed(1)}% pass rate across ${runCount} run(s).`,
+                signal: 'positive',
+            });
+        }
+        if (artifacts.length > 0 && linkedFeatureLinks.length > 0) {
+            insights.push({
+                id: 'traceable-delivery',
+                title: 'Execution traceability is strong',
+                description: `${artifacts.length} linked artifact(s) tied to ${linkedFeatureLinks.length} linked feature(s).`,
+                signal: 'positive',
+            });
+        }
+        if (waitingForTaskCount > 0 || toolErrorCount > 0 || apiErrors.length > 0) {
+            insights.push({
+                id: 'workflow-friction',
+                title: 'Execution friction detected',
+                description: `${waitingForTaskCount} waiting tasks, ${toolErrorCount} tool errors, ${apiErrors.length} API errors.`,
+                signal: 'risk',
+            });
+        }
+        if (insights.length === 0) {
+            insights.push({
+                id: 'steady-session',
+                title: 'Session impact appears stable',
+                description: 'No high-signal risks were derived from current session capture.',
+                signal: 'neutral',
+            });
+        }
+
+        const coverage = [
+            {
+                id: 'files',
+                label: 'File change capture',
+                detail: fileUpdates.length > 0 ? `${fileUpdates.length} updates captured` : 'No file updates captured',
+                signal: fileUpdates.length > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'tests',
+                label: 'Test execution capture',
+                detail: runCount > 0 ? `${runCount} test runs captured` : 'No test runs captured',
+                signal: runCount > 0 ? 'positive' : 'risk' as ImpactSignal,
+            },
+            {
+                id: 'artifacts',
+                label: 'Artifact linkage',
+                detail: artifacts.length > 0 ? `${artifacts.length} linked artifacts` : 'No linked artifacts captured',
+                signal: artifacts.length > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'workflow',
+                label: 'Workflow telemetry',
+                detail: queueOperationCount > 0 || subagentStartCount > 0
+                    ? `${queueOperationCount} queue ops · ${subagentStartCount} subagent starts`
+                    : 'Minimal workflow telemetry in this session',
+                signal: queueOperationCount > 0 || subagentStartCount > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'impact-events',
+                label: 'Impact event stream',
+                detail: events.length > 0 ? `${events.length} impact events derived` : 'No impact events derived',
+                signal: events.length > 0 ? 'positive' : 'risk' as ImpactSignal,
+            },
+        ];
+
+        const sortedEvents = events.sort((a, b) => b.timestampMs - a.timestampMs);
+        const topArtifactTypes = Array.from(artifactTypes.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+
+        return {
+            additions,
+            deletions,
+            netLoc: additions - deletions,
+            filesTouched: uniqueTouchedFiles.size,
+            filesWritten: uniqueWrittenFiles.size,
+            actionCounts,
+            runCount,
+            totalTests,
+            passRate,
+            failedTests,
+            failingRuns,
+            artifactsCount: artifacts.length,
+            topArtifactTypes,
+            linkedFeatureCount: linkedFeatureLinks.length,
+            toolErrorCount,
+            queueOperationCount,
+            waitingForTaskCount,
+            apiErrorCount: apiErrors.length,
+            insights,
+            coverage,
+            events: sortedEvents,
+        };
+    }, [linkedFeatureLinks, session]);
+
+    const filteredEvents = useMemo(
+        () => impactModel.events
+            .filter(event => eventFilter === 'all' || event.category === eventFilter)
+            .slice(0, 120),
+        [eventFilter, impactModel.events]
+    );
 
     return (
         <div className="space-y-6 h-full overflow-y-auto pb-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><TrendingUp size={16} /> Codebase Impact Over Time</h3>
-                <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={session.impactHistory}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                            <XAxis dataKey="timestamp" stroke="#475569" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#475569" tick={{ fontSize: 12 }} />
-                            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                            <Legend />
-                            <Line type="monotone" dataKey="locAdded" stroke="#10b981" strokeWidth={2} name="LOC Added" dot={false} />
-                            <Line type="monotone" dataKey="locDeleted" stroke="#f43f5e" strokeWidth={2} name="LOC Removed" dot={false} />
-                            <Line type="monotone" dataKey="fileCount" stroke="#3b82f6" strokeWidth={2} name="Files Touched" dot={false} />
-                        </LineChart>
-                    </ResponsiveContainer>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2"><TrendingUp size={16} /> App Impact</h3>
+                <p className="text-xs text-slate-400 mt-2">
+                    Outcome layer for this session: code changes, validation movement, delivery artifacts, and workflow friction.
+                </p>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Diff From Analytics</div>
+                        <p className="text-xs text-slate-300 mt-1">
+                            Analytics explains resource consumption and execution behavior (tokens, tools, costs).
+                        </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">This Tab Adds</div>
+                        <p className="text-xs text-slate-300 mt-1">
+                            Correlations and conclusions about delivery outcomes, regressions, and execution risk.
+                        </p>
+                    </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><ShieldAlert size={16} /> Test Stability</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={session.impactHistory}>
-                                <defs>
-                                    <linearGradient id="colorPass" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                    </linearGradient>
-                                    <linearGradient id="colorFail" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                <XAxis dataKey="timestamp" stroke="#475569" tick={{ fontSize: 12 }} />
-                                <YAxis stroke="#475569" tick={{ fontSize: 12 }} />
-                                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                                <Area type="monotone" dataKey="testPassCount" stackId="1" stroke="#10b981" fill="url(#colorPass)" name="Tests Passed" />
-                                <Area type="monotone" dataKey="testFailCount" stackId="1" stroke="#f43f5e" fill="url(#colorFail)" name="Tests Failed" />
-                            </AreaChart>
-                        </ResponsiveContainer>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Code Footprint</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.filesWritten}</div>
+                    <div className="text-xs text-slate-400 mt-1">files written ({impactModel.filesTouched} touched)</div>
+                    <div className={`text-xs font-mono mt-2 ${impactModel.netLoc >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                        {impactModel.netLoc >= 0 ? '+' : ''}{impactModel.netLoc} net lines
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Validation</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.runCount}</div>
+                    <div className="text-xs text-slate-400 mt-1">test run(s)</div>
+                    <div className={`text-xs font-mono mt-2 ${impactModel.failingRuns > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+                        {(impactModel.passRate * 100).toFixed(1)}% pass · {impactModel.failedTests} failed tests
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Delivery Traceability</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.artifactsCount}</div>
+                    <div className="text-xs text-slate-400 mt-1">linked artifacts</div>
+                    <div className="text-xs font-mono text-indigo-300 mt-2">{impactModel.linkedFeatureCount} linked features</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Risk Signals</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">
+                        {impactModel.toolErrorCount + impactModel.apiErrorCount + impactModel.waitingForTaskCount}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">aggregate risk points</div>
+                    <div className="text-xs font-mono text-amber-300 mt-2">
+                        Tool errors {impactModel.toolErrorCount} · API errors {impactModel.apiErrorCount}
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div className="xl:col-span-2 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><LayoutGrid size={14} /> Impact Correlations</h4>
+                    <div className="space-y-2">
+                        {impactModel.insights.map(insight => (
+                            <div key={insight.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-sm text-slate-100">{insight.title}</div>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(insight.signal)}`}>
+                                        {insight.signal}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">{insight.description}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><RefreshCw size={14} /> Pipeline Coverage</h4>
+                    <div className="space-y-2">
+                        {impactModel.coverage.map(item => (
+                            <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs text-slate-200">{item.label}</span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(item.signal)}`}>
+                                        {item.signal}
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-1">{item.detail}</p>
+                            </div>
+                        ))}
+                    </div>
+                    {impactModel.topArtifactTypes.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-slate-800">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Artifact Types</div>
+                            <div className="space-y-1">
+                                {impactModel.topArtifactTypes.map(([type, count]) => (
+                                    <div key={type} className="flex justify-between text-[11px]">
+                                        <span className="text-slate-400 font-mono">{type}</span>
+                                        <span className="text-slate-200 font-mono">{count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2"><Layers size={14} /> Impact Event Stream</h4>
+                    <div className="flex items-center gap-1 border border-slate-800 rounded-lg bg-slate-950 p-1">
+                        {([
+                            { id: 'all', label: 'All' },
+                            { id: 'code', label: 'Code' },
+                            { id: 'tests', label: 'Tests' },
+                            { id: 'artifacts', label: 'Artifacts' },
+                            { id: 'workflow', label: 'Workflow' },
+                            { id: 'system', label: 'System' },
+                        ] as Array<{ id: 'all' | ImpactCategory; label: string }>).map(filter => (
+                            <button
+                                key={filter.id}
+                                onClick={() => setEventFilter(filter.id)}
+                                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${eventFilter === filter.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                            >
+                                {filter.label}
+                            </button>
+                        ))}
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-center">
-                    <h3 className="text-sm font-bold text-slate-300 mb-4">Final Session Impact</h3>
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                            <div className="flex items-center gap-3">
-                                <FileDiff className="text-emerald-500" size={20} />
-                                <span className="text-sm text-slate-300">Net Code Growth</span>
-                            </div>
-                            <span className="font-mono font-bold text-emerald-400">+{session.impactHistory[session.impactHistory.length - 1].locAdded - session.impactHistory[session.impactHistory.length - 1].locDeleted} LOC</span>
+                <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+                    {filteredEvents.length === 0 && (
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">
+                            No events match this filter.
                         </div>
-                        <div className="flex items-center justify-between p-3 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                            <div className="flex items-center gap-3">
-                                <Check className="text-blue-500" size={20} />
-                                <span className="text-sm text-slate-300">Tests Passing</span>
+                    )}
+                    {filteredEvents.map(event => (
+                        <div key={event.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${categoryBadge(event.category)}`}>
+                                            {event.category}
+                                        </span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(event.signal)}`}>
+                                            {event.signal}
+                                        </span>
+                                    </div>
+                                    <div className="text-sm text-slate-200 mt-1 break-words">{event.summary}</div>
+                                    {event.detail && <div className="text-xs text-slate-500 mt-1 break-words">{event.detail}</div>}
+                                </div>
+                                <div className="text-[10px] text-slate-500 whitespace-nowrap">{formatImpactEventTime(event.timestamp, event.timestampMs)}</div>
                             </div>
-                            <span className="font-mono font-bold text-blue-400">{session.impactHistory[session.impactHistory.length - 1].testPassCount}</span>
                         </div>
-                        <div className="flex items-center justify-between p-3 bg-rose-500/10 rounded-lg border border-rose-500/20">
-                            <div className="flex items-center gap-3">
-                                <ShieldAlert className="text-rose-500" size={20} />
-                                <span className="text-sm text-slate-300">New Regressions</span>
-                            </div>
-                            <span className="font-mono font-bold text-rose-400">{session.impactHistory[session.impactHistory.length - 1].testFailCount}</span>
-                        </div>
-                    </div>
+                    ))}
                 </div>
             </div>
         </div>
@@ -5833,7 +6240,7 @@ const SessionDetail: React.FC<{
                         onOpenThread={onOpenSession}
                     />
                 )}
-                {activeTab === 'impact' && <ImpactView session={session} />}
+                {activeTab === 'impact' && <ImpactView session={session} linkedFeatureLinks={linkedFeatureLinks} />}
             </div>
 
             {viewingDoc && <DocumentModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}

@@ -88,11 +88,15 @@ export interface SessionLog {
 
 export interface SessionImpactPoint {
   timestamp: string; // ISO timestamp or relative time (e.g., "00:05")
-  locAdded: number;
-  locDeleted: number;
-  fileCount: number;
-  testPassCount: number;
-  testFailCount: number;
+  // Event-style fields captured by current parser pipelines.
+  label?: string;
+  type?: 'info' | 'warning' | 'error' | 'success' | string;
+  // Legacy/derived numeric impact fields (optional).
+  locAdded?: number;
+  locDeleted?: number;
+  fileCount?: number;
+  testPassCount?: number;
+  testFailCount?: number;
 }
 
 export interface SessionMetadataField {

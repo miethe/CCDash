@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.date_utils import file_metadata_dates, make_date_value
-from backend.models import AgentSession, SessionLog, ToolCallInfo, ToolUsage
+from backend.models import AgentSession, ImpactPoint, SessionLog, ToolCallInfo, ToolUsage
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -415,6 +415,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_success: Counter[str] = Counter()
     tool_total: Counter[str] = Counter()
     tool_duration_ms: Counter[str] = Counter()
+    impacts: list[ImpactPoint] = []
     updated_files: list[dict[str, Any]] = []
     linked_artifacts: list[dict[str, Any]] = []
 
@@ -947,6 +948,29 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             related_log.id,
                             str(related_log.toolCall.name or "tool"),
                         )
+                        if timestamp:
+                            result_payload = enriched_test_run.get("result") if isinstance(enriched_test_run.get("result"), dict) else {}
+                            framework = str(enriched_test_run.get("framework") or "test").strip() or "test"
+                            status_label = str(result_payload.get("status") or "").strip().lower() or ("failed" if is_error else "completed")
+                            total = _coerce_int(result_payload.get("total"), 0)
+                            failed_count = _coerce_int((result_payload.get("counts") or {}).get("failed") if isinstance(result_payload.get("counts"), dict) else 0, 0)
+                            error_count = _coerce_int((result_payload.get("counts") or {}).get("error") if isinstance(result_payload.get("counts"), dict) else 0, 0)
+                            impact_type = "error" if status_label in {"failed", "error"} else "success"
+                            suffix = []
+                            if total > 0:
+                                suffix.append(f"{total} tests")
+                            if failed_count > 0 or error_count > 0:
+                                suffix.append(f"{failed_count + error_count} failing")
+                            label = f"{framework} run {status_label}"
+                            if suffix:
+                                label = f"{label} ({', '.join(suffix)})"
+                            impacts.append(
+                                ImpactPoint(
+                                    timestamp=timestamp,
+                                    label=label[:200],
+                                    type=impact_type,
+                                )
+                            )
             else:
                 append_log(
                     timestamp=timestamp,
@@ -955,6 +979,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     content=f"Unmatched tool result for {call_id}: {output_text[:200]}",
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type, "isError": is_error},
                 )
+                if timestamp:
+                    impacts.append(
+                        ImpactPoint(
+                            timestamp=timestamp,
+                            label=f"Unmatched tool result for {call_id}"[:200],
+                            type="warning" if is_error else "info",
+                        )
+                    )
             continue
 
         if entry_type_lower == "event_msg":
@@ -966,6 +998,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     type="system",
                     content=summary_text or payload_type,
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type},
+                )
+            if timestamp and (summary_text or payload_type):
+                impact_type = "info"
+                if payload_type in {"turn_aborted"}:
+                    impact_type = "error"
+                elif payload_type in {"task_complete", "item_completed"}:
+                    impact_type = "success"
+                elif payload_type in {"context_compacted", "thread_rolled_back"}:
+                    impact_type = "warning"
+                impacts.append(
+                    ImpactPoint(
+                        timestamp=timestamp,
+                        label=(summary_text or payload_type)[:200],
+                        type=impact_type,
+                    )
                 )
             continue
 
@@ -1116,7 +1163,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         updatedFiles=updated_files,
         linkedArtifacts=linked_artifacts,
         toolsUsed=tools_used,
-        impactHistory=[],
+        impactHistory=impacts,
         logs=logs,
         thinkingLevel="",
         sessionForensics=session_forensics,

@@ -121,8 +121,13 @@ class SessionPlatformTransition(BaseModel):
 
 class ImpactPoint(BaseModel):
     timestamp: str
-    label: str
+    label: str = ""
     type: str = "info"  # "info" | "warning" | "error" | "success"
+    locAdded: int = 0
+    locDeleted: int = 0
+    fileCount: int = 0
+    testPassCount: int = 0
+    testFailCount: int = 0
 
 
 class SessionMetadataField(BaseModel):
