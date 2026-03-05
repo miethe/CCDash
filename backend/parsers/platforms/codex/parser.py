@@ -12,6 +12,12 @@ from typing import Any
 
 from backend.date_utils import file_metadata_dates, make_date_value
 from backend.models import AgentSession, SessionLog, ToolCallInfo, ToolUsage
+from backend.parsers.platforms.test_runs import (
+    aggregate_test_runs,
+    enrich_test_run_with_output,
+    flatten_test_run_metadata,
+    parse_test_run_from_command,
+)
 
 _ACTIVE_SESSION_WINDOW_SECONDS = 10 * 60
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
@@ -527,6 +533,66 @@ def parse_session_file(path: Path) -> AgentSession | None:
         )
         return artifact_id
 
+    def add_test_run_artifacts(test_run: dict[str, Any], source_log_id: str, source_tool_name: str) -> None:
+        framework = str(test_run.get("framework") or "test").strip() or "test"
+        primary_domain = str(test_run.get("primaryDomain") or "").strip()
+        target_count = _coerce_int(test_run.get("targetCount"), 0)
+        targets = test_run.get("targets") if isinstance(test_run.get("targets"), list) else []
+        result = test_run.get("result") if isinstance(test_run.get("result"), dict) else {}
+        status = str(result.get("status") or "").strip().lower()
+        counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+        passed = _coerce_int(counts.get("passed"), 0)
+        failed = _coerce_int(counts.get("failed"), 0) + _coerce_int(counts.get("error"), 0) + _coerce_int(counts.get("xpassed"), 0)
+
+        title_parts = [framework]
+        if primary_domain:
+            title_parts.append(primary_domain)
+        if target_count > 0:
+            title_parts.append(f"{target_count} target(s)")
+        title = " | ".join(title_parts)
+
+        description = f"{framework} test run"
+        if status:
+            description = f"{description} ({status})"
+        if passed > 0 or failed > 0:
+            description = f"{description}: {passed} passed, {failed} failed-like"
+
+        add_artifact(
+            kind="test_run",
+            title=title[:200],
+            description=description[:500],
+            source="tool",
+            source_log_id=source_log_id,
+            source_tool_name=source_tool_name,
+        )
+
+        domains = test_run.get("domains") if isinstance(test_run.get("domains"), list) else []
+        for domain in domains[:8]:
+            domain_name = str(domain or "").strip()
+            if not domain_name:
+                continue
+            add_artifact(
+                kind="test_domain",
+                title=domain_name,
+                description=f"Test domain inferred from {framework} command",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
+        for target in targets[:16]:
+            target_name = str(target or "").strip()
+            if not target_name:
+                continue
+            add_artifact(
+                kind="test_target",
+                title=target_name[:300],
+                description=f"Test target executed via {framework}",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
     def link_subagent_to_tool_call(
         call_id: str,
         raw_agent_id: str,
@@ -729,6 +795,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     if resource_signals:
                         tool_log.metadata["resourceSignals"] = resource_signals[:20]
                     track_file_actions_from_command(command, tool_log.id, timestamp, tool_name)
+                    test_run = parse_test_run_from_command(
+                        command,
+                        description=args_payload.get("description"),
+                        timeout=args_payload.get("timeout"),
+                    )
+                    if test_run:
+                        tool_log.metadata["toolCategory"] = "test"
+                        tool_log.metadata["toolLabel"] = str(test_run.get("framework") or "test")
+                        tool_log.metadata.update(flatten_test_run_metadata(test_run))
+                        add_test_run_artifacts(test_run, tool_log.id, tool_name)
 
             if str(tool_name or "").strip().lower() == "skill" and isinstance(args_payload, dict):
                 skill_name = str(args_payload.get("skill") or args_payload.get("name") or "").strip()
@@ -845,6 +921,32 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         is_async = payload_dict.get("isAsync")
                     if isinstance(is_async, bool):
                         related_log.metadata["taskIsAsyncLaunch"] = is_async
+                if related_log.toolCall and str(related_log.toolCall.name or "").strip().lower() in _COMMAND_TOOL_NAMES:
+                    command_text = str(related_log.metadata.get("bashCommand") or "").strip()
+                    if not command_text and isinstance(related_log.toolCall.args, str):
+                        try:
+                            raw_args = json.loads(related_log.toolCall.args)
+                        except Exception:
+                            raw_args = {}
+                        if isinstance(raw_args, dict):
+                            command_text = str(raw_args.get("command") or raw_args.get("cmd") or "").strip()
+                    base_test_run = related_log.metadata.get("testRun")
+                    if not isinstance(base_test_run, dict) and command_text:
+                        base_test_run = parse_test_run_from_command(command_text)
+                    enriched_test_run = enrich_test_run_with_output(
+                        base_test_run if isinstance(base_test_run, dict) else None,
+                        output_text,
+                        is_error=is_error,
+                    )
+                    if enriched_test_run:
+                        related_log.metadata["toolCategory"] = "test"
+                        related_log.metadata["toolLabel"] = str(enriched_test_run.get("framework") or "test")
+                        related_log.metadata.update(flatten_test_run_metadata(enriched_test_run))
+                        add_test_run_artifacts(
+                            enriched_test_run,
+                            related_log.id,
+                            str(related_log.toolCall.name or "tool"),
+                        )
             else:
                 append_log(
                     timestamp=timestamp,
@@ -902,6 +1004,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if category and target:
             resource_target_counts[f"{category}:{target}"] += 1
 
+    extracted_test_runs: list[dict[str, Any]] = []
+    for log in logs:
+        if log.type != "tool":
+            continue
+        metadata = log.metadata if isinstance(log.metadata, dict) else {}
+        raw_test_run = metadata.get("testRun")
+        if not isinstance(raw_test_run, dict):
+            continue
+        test_run = dict(raw_test_run)
+        test_run["sourceLogId"] = log.id
+        if log.toolCall and log.toolCall.name:
+            test_run["toolName"] = str(log.toolCall.name)
+        extracted_test_runs.append(test_run)
+    test_execution = aggregate_test_runs(extracted_test_runs)
+
     session_forensics = {
         "platform": "codex",
         "schemaVersion": 1,
@@ -927,9 +1044,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
             ],
             "observations": resource_observations[:200],
         },
+        "testExecution": test_execution,
         "codexPayloadSignals": {
             "payloadTypeCounts": dict(payload_type_counts),
             "toolNameCounts": {tool.name: tool.count for tool in tools_used},
+        },
+        "analysisSignals": {
+            "hasResourceSignals": bool(resource_observations),
+            "hasTestRunSignals": bool(_coerce_int(test_execution.get("runCount"), 0) > 0),
         },
     }
 

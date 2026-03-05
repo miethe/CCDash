@@ -123,6 +123,99 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertEqual(payload_signals.get("payloadTypeCounts", {}).get("function_call_output"), 1)
         self.assertEqual(payload_signals.get("toolNameCounts", {}).get("exec_command"), 1)
 
+    def test_codex_pytest_tool_call_captures_test_run_metadata_and_results(self) -> None:
+        output_text = (
+            "============================= test session starts ==============================\n"
+            "platform darwin -- Python 3.12.0, pytest-8.4.2, pluggy-1.6.0\n"
+            "rootdir: /Users/miethe/dev/homelab/development/skillmeat\n"
+            "configfile: pytest.ini\n"
+            "plugins: benchmark-5.2.3, asyncio-1.2.0, anyio-4.11.0, xdist-3.8.0, timeout-2.4.0, cov-7.0.0\n"
+            "created: 12/12 workers\n"
+            "12 workers [132 items]\n"
+            "======================= 130 passed, 2 xfailed in 15.01s ========================\n"
+        )
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "turn_context",
+                    "timestamp": "2026-03-05T11:00:00Z",
+                    "payload": {
+                        "type": "turn_context",
+                        "model": "gpt-5-codex",
+                        "cli_version": "0.9.4",
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-03-05T11:00:01Z",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "call_id": "call-test-1",
+                        "arguments": {
+                            "command": "python -m pytest tests/api/test_marketplace_router.py tests/api/test_marketplace_source_security.py -x -q --tb=short 2>&1 | tail -20",
+                            "description": "Run marketplace tests to verify agent fixes",
+                            "timeout": 120000,
+                        },
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-03-05T11:00:04Z",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call-test-1",
+                        "status": "success",
+                        "output": output_text,
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-03-05T11:00:05Z",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+            relative_path=".codex/sessions/2026/03/05/session-test-run.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [log for log in session.logs if log.type == "tool" and log.toolCall and log.toolCall.id == "call-test-1"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("toolCategory"), "test")
+        self.assertEqual(metadata.get("testFramework"), "pytest")
+        self.assertEqual(metadata.get("testDomain"), "api")
+        self.assertEqual(metadata.get("testDescription"), "Run marketplace tests to verify agent fixes")
+        self.assertEqual(metadata.get("testTimeoutMs"), 120000)
+        self.assertEqual(metadata.get("testStatus"), "passed")
+        self.assertEqual(metadata.get("testTotal"), 132)
+        self.assertEqual(metadata.get("testWorkers"), 12)
+        self.assertEqual(metadata.get("testCollected"), 132)
+        self.assertEqual(metadata.get("testPytestVersion"), "8.4.2")
+        self.assertEqual(metadata.get("testPythonVersion"), "3.12.0")
+        self.assertIn("tests/api/test_marketplace_router.py", metadata.get("testTargets", []))
+        self.assertIn("tests/api/test_marketplace_source_security.py", metadata.get("testTargets", []))
+        self.assertIn("-x", metadata.get("testFlags", []))
+        self.assertIn("-q", metadata.get("testFlags", []))
+        self.assertIn("--tb=short", metadata.get("testFlags", []))
+        counts = metadata.get("testCounts", {})
+        self.assertEqual(counts.get("passed"), 130)
+        self.assertEqual(counts.get("xfailed"), 2)
+
+        artifact_types = {artifact.type for artifact in session.linkedArtifacts}
+        self.assertIn("test_run", artifact_types)
+        self.assertIn("test_domain", artifact_types)
+        self.assertIn("test_target", artifact_types)
+
+        test_execution = session.sessionForensics.get("testExecution", {})
+        self.assertEqual(test_execution.get("runCount"), 1)
+        self.assertEqual(test_execution.get("domainCounts", {}).get("api"), 1)
+        self.assertEqual(test_execution.get("statusCounts", {}).get("passed"), 1)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("passed"), 130)
+
     def test_codex_agent_tool_creates_agent_artifact_and_links_subthread(self) -> None:
         path = self._write_jsonl(
             [

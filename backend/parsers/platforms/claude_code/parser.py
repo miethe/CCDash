@@ -23,6 +23,12 @@ from backend.models import (
     ToolUsage,
 )
 from backend.date_utils import file_metadata_dates, make_date_value
+from backend.parsers.platforms.test_runs import (
+    aggregate_test_runs,
+    enrich_test_run_with_output,
+    flatten_test_run_metadata,
+    parse_test_run_from_command,
+)
 
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
@@ -1558,6 +1564,66 @@ def parse_session_file(path: Path) -> AgentSession | None:
         )
         return artifact_id
 
+    def add_test_run_artifacts(test_run: dict[str, Any], source_log_id: str, source_tool_name: str) -> None:
+        framework = str(test_run.get("framework") or "test").strip() or "test"
+        primary_domain = str(test_run.get("primaryDomain") or "").strip()
+        target_count = _coerce_int(test_run.get("targetCount"), 0)
+        targets = test_run.get("targets") if isinstance(test_run.get("targets"), list) else []
+        result = test_run.get("result") if isinstance(test_run.get("result"), dict) else {}
+        status = str(result.get("status") or "").strip().lower()
+        counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+        passed = _coerce_int(counts.get("passed"), 0)
+        failed = _coerce_int(counts.get("failed"), 0) + _coerce_int(counts.get("error"), 0) + _coerce_int(counts.get("xpassed"), 0)
+
+        title_parts = [framework]
+        if primary_domain:
+            title_parts.append(primary_domain)
+        if target_count > 0:
+            title_parts.append(f"{target_count} target(s)")
+        title = " | ".join(title_parts)
+
+        description_text = f"{framework} test run"
+        if status:
+            description_text = f"{description_text} ({status})"
+        if passed > 0 or failed > 0:
+            description_text = f"{description_text}: {passed} passed, {failed} failed-like"
+
+        add_artifact(
+            kind="test_run",
+            title=title[:200],
+            description=description_text[:500],
+            source="tool",
+            source_log_id=source_log_id,
+            source_tool_name=source_tool_name,
+        )
+
+        domains = test_run.get("domains") if isinstance(test_run.get("domains"), list) else []
+        for domain in domains[:8]:
+            domain_name = str(domain or "").strip()
+            if not domain_name:
+                continue
+            add_artifact(
+                kind="test_domain",
+                title=domain_name,
+                description=f"Test domain inferred from {framework} command",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
+        for target in targets[:16]:
+            target_name = str(target or "").strip()
+            if not target_name:
+                continue
+            add_artifact(
+                kind="test_target",
+                title=target_name[:300],
+                description=f"Test target executed via {framework}",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
     def add_command_artifacts_from_text(text: str, source_log_id: str) -> None:
         command_names = [m.group(1).strip() for m in _COMMAND_NAME_PATTERN.finditer(text) if m.group(1).strip()]
         command_args = [m.group(1).strip() for m in _COMMAND_ARGS_PATTERN.finditer(text)]
@@ -2039,6 +2105,17 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         category, label = _classify_bash_command(bash_command)
                         related_log.metadata["toolCategory"] = category
                         related_log.metadata["toolLabel"] = label
+                        existing_test_run = related_log.metadata.get("testRun")
+                        parsed_test_run = (
+                            existing_test_run
+                            if isinstance(existing_test_run, dict)
+                            else parse_test_run_from_command(bash_command)
+                        )
+                        if isinstance(parsed_test_run, dict):
+                            related_log.metadata["toolCategory"] = "test"
+                            related_log.metadata["toolLabel"] = str(parsed_test_run.get("framework") or "test")
+                            related_log.metadata.update(flatten_test_run_metadata(parsed_test_run))
+                            add_test_run_artifacts(parsed_test_run, related_log.id, "Bash")
                     elapsed = data.get("elapsedTimeSeconds")
                     if isinstance(elapsed, (int, float)):
                         related_log.metadata["bashElapsedSeconds"] = round(float(elapsed), 3)
@@ -2059,6 +2136,17 @@ def parse_session_file(path: Path) -> AgentSession | None:
                                 related_log.toolCall.output = merged_output[:20000]
                         result_state = _classify_bash_result(output_text, False)
                         related_log.metadata["bashResult"] = result_state
+                        existing_test_run = related_log.metadata.get("testRun")
+                        enriched_test_run = enrich_test_run_with_output(
+                            existing_test_run if isinstance(existing_test_run, dict) else None,
+                            output_text,
+                            is_error=False,
+                        )
+                        if isinstance(enriched_test_run, dict):
+                            related_log.metadata["toolCategory"] = "test"
+                            related_log.metadata["toolLabel"] = str(enriched_test_run.get("framework") or "test")
+                            related_log.metadata.update(flatten_test_run_metadata(enriched_test_run))
+                            add_test_run_artifacts(enriched_test_run, related_log.id, "Bash")
 
                         commit_candidates = _extract_commit_hashes(f"{bash_command}\n{output_text}")
                         if commit_candidates:
@@ -2466,6 +2554,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                                     source_log_id=tool_log.id,
                                     source_tool_name=tool_name,
                                 )
+                        test_run = parse_test_run_from_command(
+                            command_text,
+                            description=tool_input.get("description"),
+                            timeout=tool_input.get("timeout"),
+                        )
+                        if test_run:
+                            tool_log.metadata["toolCategory"] = "test"
+                            tool_log.metadata["toolLabel"] = str(test_run.get("framework") or "test")
+                            tool_log.metadata.update(flatten_test_run_metadata(test_run))
+                            add_test_run_artifacts(test_run, tool_log.id, tool_name)
 
                 file_action = _FILE_ACTION_BY_TOOL.get(tool_name)
                 if file_action:
@@ -2635,6 +2733,18 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             if isinstance(raw, str):
                                 command_text = raw
                         if command_text:
+                            existing_test_run = related_log.metadata.get("testRun")
+                            parsed_test_run = (
+                                existing_test_run
+                                if isinstance(existing_test_run, dict)
+                                else parse_test_run_from_command(command_text)
+                            )
+                            if isinstance(parsed_test_run, dict):
+                                related_log.metadata["toolCategory"] = "test"
+                                related_log.metadata["toolLabel"] = str(parsed_test_run.get("framework") or "test")
+                                related_log.metadata.update(flatten_test_run_metadata(parsed_test_run))
+                                add_test_run_artifacts(parsed_test_run, related_log.id, str(tool_name or "Bash"))
+                        if command_text:
                             resource_signals = register_command_resources(
                                 command_text,
                                 related_log.id,
@@ -2644,6 +2754,17 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             if resource_signals and "resourceSignals" not in related_log.metadata:
                                 related_log.metadata["resourceSignals"] = resource_signals[:20]
                         related_log.metadata["bashResult"] = _classify_bash_result(output_text, is_error)
+                        existing_test_run = related_log.metadata.get("testRun")
+                        enriched_test_run = enrich_test_run_with_output(
+                            existing_test_run if isinstance(existing_test_run, dict) else None,
+                            output_text,
+                            is_error=is_error,
+                        )
+                        if isinstance(enriched_test_run, dict):
+                            related_log.metadata["toolCategory"] = "test"
+                            related_log.metadata["toolLabel"] = str(enriched_test_run.get("framework") or "test")
+                            related_log.metadata.update(flatten_test_run_metadata(enriched_test_run))
+                            add_test_run_artifacts(enriched_test_run, related_log.id, str(tool_name or "Bash"))
                         commit_candidates = _extract_commit_hashes(f"{command_text}\n{output_text}")
                         if commit_candidates:
                             existing = related_log.metadata.get("commitHashes")
@@ -2934,6 +3055,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_result_avg_file_bytes = _coerce_float(tool_results_sidecar.get("avgFileBytes"), 0.0)
     tool_result_large_file_count = _coerce_int(tool_results_sidecar.get("largeFileCount"), 0)
 
+    extracted_test_runs: list[dict[str, Any]] = []
+    for log in logs:
+        if log.type != "tool":
+            continue
+        metadata = log.metadata if isinstance(log.metadata, dict) else {}
+        raw_test_run = metadata.get("testRun")
+        if not isinstance(raw_test_run, dict):
+            continue
+        test_run = dict(raw_test_run)
+        test_run["sourceLogId"] = log.id
+        if log.toolCall and log.toolCall.name:
+            test_run["toolName"] = str(log.toolCall.name)
+        extracted_test_runs.append(test_run)
+    test_execution = aggregate_test_runs(extracted_test_runs)
+
     platform_telemetry = _platform_telemetry_summary(sorted(session_context.get("workingDirectories", set())))
 
     session_forensics = {
@@ -3026,12 +3162,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "largeFileCount": tool_result_large_file_count,
             "largestFiles": list(tool_results_sidecar.get("largestFiles") or [])[:20],
         },
+        "testExecution": test_execution,
         "platformTelemetry": platform_telemetry,
         "analysisSignals": {
             "hasQueuePressureSignals": bool(waiting_for_task_count > 0 or queue_operation_counts),
             "hasResourceSignals": bool(resource_observations),
             "hasToolResultSignals": bool(tool_result_file_count > 0),
             "hasSubagentSignals": bool(task_tool_logs or linked_subagent_ids),
+            "hasTestRunSignals": bool(_coerce_int(test_execution.get("runCount"), 0) > 0),
         },
     }
 

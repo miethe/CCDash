@@ -899,6 +899,96 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(tool_logs[0].metadata.get("bashElapsedSeconds"), 1.2)
         self.assertEqual(tool_logs[0].metadata.get("bashTotalLines"), 2)
 
+    def test_bash_pytest_tool_result_captures_test_run_metadata_and_forensics(self) -> None:
+        output_text = (
+            "============================= test session starts ==============================\n"
+            "platform darwin -- Python 3.12.0, pytest-8.4.2, pluggy-1.6.0\n"
+            "rootdir: /Users/miethe/dev/homelab/development/skillmeat\n"
+            "configfile: pytest.ini\n"
+            "plugins: benchmark-5.2.3, asyncio-1.2.0, anyio-4.11.0, xdist-3.8.0, timeout-2.4.0, cov-7.0.0\n"
+            "created: 12/12 workers\n"
+            "12 workers [132 items]\n"
+            "======================= 130 passed, 2 xfailed in 15.01s ========================\n"
+        )
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T12:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "python -m pytest tests/api/test_marketplace_router.py tests/api/test_marketplace_source_security.py -x -q --tb=short 2>&1 | tail -20",
+                                    "description": "Run marketplace tests to verify agent fixes",
+                                    "timeout": 120000,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T12:00:03Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_1",
+                                "content": output_text,
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.id == "toolu_pytest_1"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("toolCategory"), "test")
+        self.assertEqual(metadata.get("testFramework"), "pytest")
+        self.assertEqual(metadata.get("testDomain"), "api")
+        self.assertEqual(metadata.get("testDescription"), "Run marketplace tests to verify agent fixes")
+        self.assertEqual(metadata.get("testTimeoutMs"), 120000)
+        self.assertEqual(metadata.get("testStatus"), "passed")
+        self.assertEqual(metadata.get("testTotal"), 132)
+        self.assertEqual(metadata.get("testWorkers"), 12)
+        self.assertEqual(metadata.get("testCollected"), 132)
+        self.assertEqual(metadata.get("testPytestVersion"), "8.4.2")
+        self.assertEqual(metadata.get("testPythonVersion"), "3.12.0")
+        self.assertIn("tests/api/test_marketplace_router.py", metadata.get("testTargets", []))
+        self.assertIn("tests/api/test_marketplace_source_security.py", metadata.get("testTargets", []))
+        self.assertIn("-x", metadata.get("testFlags", []))
+        self.assertIn("-q", metadata.get("testFlags", []))
+        self.assertIn("--tb=short", metadata.get("testFlags", []))
+        counts = metadata.get("testCounts", {})
+        self.assertEqual(counts.get("passed"), 130)
+        self.assertEqual(counts.get("xfailed"), 2)
+
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("test_run", artifact_types)
+        self.assertIn("test_domain", artifact_types)
+        self.assertIn("test_target", artifact_types)
+
+        test_execution = session.sessionForensics.get("testExecution", {})
+        self.assertEqual(test_execution.get("runCount"), 1)
+        self.assertEqual(test_execution.get("domainCounts", {}).get("api"), 1)
+        self.assertEqual(test_execution.get("statusCounts", {}).get("passed"), 1)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("passed"), 130)
+        analysis_signals = session.sessionForensics.get("analysisSignals", {})
+        self.assertTrue(bool(analysis_signals.get("hasTestRunSignals")))
+
     def test_recent_session_without_terminal_marker_is_active(self) -> None:
         path = self._write_jsonl(
             [

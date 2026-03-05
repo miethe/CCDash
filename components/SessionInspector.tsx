@@ -288,6 +288,27 @@ interface TaskToolDetails {
     args: Record<string, unknown> | null;
 }
 
+interface TestRunDetails {
+    framework: string;
+    command: string;
+    description: string | null;
+    timeoutMs: number | null;
+    domains: string[];
+    domain: string | null;
+    targets: string[];
+    flags: string[];
+    status: string | null;
+    durationSeconds: number | null;
+    total: number | null;
+    passRate: number | null;
+    workers: number | null;
+    collected: number | null;
+    rootdir: string | null;
+    pythonVersion: string | null;
+    pytestVersion: string | null;
+    counts: Record<string, number>;
+}
+
 const isSubagentToolCallName = (name?: string | null): boolean =>
     SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
 
@@ -337,6 +358,99 @@ const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
         model,
         runInBackground,
         args,
+    };
+};
+
+const inferTestFrameworkFromCommand = (command: string): string | null => {
+    const lowered = String(command || '').toLowerCase();
+    if (!lowered.trim()) return null;
+    if (/\b(?:python(?:\d+(?:\.\d+)*)?\s+-m\s+)?pytest\b/.test(lowered)) return 'pytest';
+    if (/\bvitest\b/.test(lowered)) return 'vitest';
+    if (/\bjest\b/.test(lowered)) return 'jest';
+    if (/\bgo\s+test\b/.test(lowered)) return 'go-test';
+    if (/\bcargo\s+test\b/.test(lowered)) return 'cargo-test';
+    if (/\bpnpm\s+test\b/.test(lowered)) return 'pnpm-test';
+    if (/\bnpm\s+test\b/.test(lowered)) return 'npm-test';
+    if (/\byarn\s+test\b/.test(lowered)) return 'yarn-test';
+    return null;
+};
+
+const getTestRunDetails = (log: SessionLog): TestRunDetails | null => {
+    if (log.type !== 'tool') {
+        return null;
+    }
+    const metadata = asRecord(log.metadata);
+    const args = parseToolArgs(log.toolCall?.args);
+    const testRun = asRecord(metadata.testRun);
+    const result = asRecord(testRun.result);
+    const countsRecord = asRecord(result.counts || metadata.testCounts);
+
+    const command = takeString(
+        metadata.bashCommand,
+        testRun.command,
+        testRun.commandSegment,
+        metadata.command,
+        args?.command,
+        args?.cmd,
+        args?.script,
+    ) || '';
+    const framework = takeString(
+        testRun.framework,
+        metadata.testFramework,
+        metadata.toolLabel,
+        inferTestFrameworkFromCommand(command),
+    );
+    if (!framework) {
+        return null;
+    }
+
+    const domains = asStringArray(testRun.domains && Array.isArray(testRun.domains) ? testRun.domains : metadata.testDomains);
+    const targets = asStringArray(testRun.targets && Array.isArray(testRun.targets) ? testRun.targets : metadata.testTargets);
+    const flags = asStringArray(testRun.flags && Array.isArray(testRun.flags) ? testRun.flags : metadata.testFlags);
+    const domain = takeString(testRun.primaryDomain, metadata.testDomain, domains[0]);
+    const description = takeString(testRun.description, metadata.testDescription, args?.description);
+    const timeoutMsRaw = asNumber(testRun.timeoutMs || metadata.testTimeoutMs || args?.timeout, 0);
+    const durationSource = result.durationSeconds ?? metadata.testDurationSeconds;
+    const durationSecondsRaw = asNumber(durationSource, -1);
+    const passRateSource = result.passRate ?? metadata.testPassRate;
+    const passRateRaw = asNumber(passRateSource, -1);
+    let total = asNumber(result.total || metadata.testTotal, 0);
+    const counts: Record<string, number> = {};
+    ['passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'deselected', 'rerun'].forEach(key => {
+        const count = asNumber(countsRecord[key], 0);
+        if (count > 0) {
+            counts[key] = count;
+        }
+    });
+    if (total <= 0) {
+        total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    }
+
+    const status = takeString(
+        result.status,
+        metadata.testStatus,
+        log.toolCall?.status === 'error' ? 'failed' : '',
+    );
+
+    return {
+        framework,
+        command,
+        description,
+        timeoutMs: timeoutMsRaw > 0 ? timeoutMsRaw : null,
+        domains,
+        domain,
+        targets,
+        flags,
+        status,
+        durationSeconds: durationSecondsRaw >= 0 ? durationSecondsRaw : null,
+        total: total > 0 ? total : null,
+        passRate: passRateRaw >= 0 ? passRateRaw : null,
+        workers: asNumber(result.workers || metadata.testWorkers, 0) || null,
+        collected: asNumber(result.collected || metadata.testCollected, 0) || null,
+        rootdir: takeString(result.rootdir, metadata.testRootdir),
+        pythonVersion: takeString(result.pythonVersion, metadata.testPythonVersion),
+        pytestVersion: takeString(result.pytestVersion, metadata.testPytestVersion),
+        counts,
     };
 };
 
@@ -866,6 +980,7 @@ const LogItemBlurb: React.FC<{
         ? mappedAccentColor(formattedMessage.mapped.color, formattedMessage.kind)
         : null;
     const taskToolDetails = getTaskToolDetails(log);
+    const testToolDetails = getTestRunDetails(log);
 
     return (
         <div
@@ -892,6 +1007,21 @@ const LogItemBlurb: React.FC<{
                             {typeof taskToolDetails.runInBackground === 'boolean' && (
                                 <span>{taskToolDetails.runInBackground ? 'background' : 'foreground'}</span>
                             )}
+                        </div>
+                    </div>
+                ) : testToolDetails ? (
+                    <div className="min-w-0 space-y-0.5">
+                        <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-emerald-400'}`}>
+                            {testToolDetails.framework} Test Run
+                        </div>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                            {testToolDetails.description || testToolDetails.domain || testToolDetails.command || 'Test execution'}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                            {testToolDetails.status && <span>{testToolDetails.status}</span>}
+                            {typeof testToolDetails.total === 'number' && <span>{testToolDetails.total} tests</span>}
+                            {typeof testToolDetails.durationSeconds === 'number' && <span>{testToolDetails.durationSeconds.toFixed(2)}s</span>}
+                            {testToolDetails.domain && <span>{testToolDetails.domain}</span>}
                         </div>
                     </div>
                 ) : (mappedNonMessageLabel && formattedMessage?.mapped && mappedNonMessageAccent) ? (
@@ -972,10 +1102,12 @@ const DetailPane: React.FC<{
 
     const parsedMessage = formattedMessage || parseTranscriptMessage(getTranscriptSourceText(log));
     const taskToolDetails = getTaskToolDetails(log);
+    const testToolDetails = getTestRunDetails(log);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
         if (log.type === 'tool' && taskToolDetails) return `${taskToolDetails.toolName} Invocation`;
+        if (log.type === 'tool' && testToolDetails) return `${testToolDetails.framework} Test Run`;
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
         if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
@@ -1211,6 +1343,124 @@ const DetailPane: React.FC<{
                                             </pre>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {testToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-emerald-500/5">
+                                    <div className="text-[10px] text-emerald-300 uppercase tracking-widest font-bold mb-3">Test Run Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Framework</div>
+                                            <div className="font-mono text-emerald-200">{testToolDetails.framework}</div>
+                                        </div>
+                                        {testToolDetails.status && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Status</div>
+                                                <div className="text-slate-200">{testToolDetails.status}</div>
+                                            </div>
+                                        )}
+                                        {(testToolDetails.domain || testToolDetails.domains.length > 0) && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Domain</div>
+                                                <div className="text-slate-300">
+                                                    {testToolDetails.domain || testToolDetails.domains.join(', ')}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.timeoutMs === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Timeout</div>
+                                                <div className="text-slate-300">{testToolDetails.timeoutMs} ms</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.durationSeconds === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Duration</div>
+                                                <div className="text-slate-300">{testToolDetails.durationSeconds.toFixed(2)} s</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.total === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Total</div>
+                                                <div className="text-slate-300">{testToolDetails.total} tests</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.passRate === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pass Rate</div>
+                                                <div className="text-slate-300">{(testToolDetails.passRate * 100).toFixed(1)}%</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.collected === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Collected</div>
+                                                <div className="text-slate-300">{testToolDetails.collected}</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.workers === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Workers</div>
+                                                <div className="text-slate-300">{testToolDetails.workers}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.pytestVersion && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pytest</div>
+                                                <div className="text-slate-300">{testToolDetails.pytestVersion}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.pythonVersion && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Python</div>
+                                                <div className="text-slate-300">{testToolDetails.pythonVersion}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.rootdir && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Rootdir</div>
+                                                <div className="font-mono text-slate-300 break-all">{testToolDetails.rootdir}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.description && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-slate-200">{testToolDetails.description}</div>
+                                            </div>
+                                        )}
+                                        {Object.keys(testToolDetails.counts).length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Result Counts</div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {Object.entries(testToolDetails.counts).map(([key, value]) => (
+                                                        <span key={key} className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 font-mono">
+                                                            {key}: {value}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.targets.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Targets</div>
+                                                <div className="text-slate-300 font-mono break-all whitespace-pre-wrap">
+                                                    {testToolDetails.targets.slice(0, 12).join('\n')}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.flags.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Flags</div>
+                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.flags.join(' ')}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.command && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Command</div>
+                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.command}</div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
@@ -3668,6 +3918,12 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     const telemetryMcpServerNames = asStringArray(telemetryProject.mcpServerNames);
     const codexPayloadTypeCounts = asCountEntries(codexPayloadSignals.payloadTypeCounts, 12);
     const codexToolNameCounts = asCountEntries(codexPayloadSignals.toolNameCounts, 12);
+    const testExecution = useMemo(() => asRecord(forensics.testExecution), [forensics]);
+    const testFrameworkCounts = asCountEntries(testExecution.frameworkCounts, 12);
+    const testDomainCounts = asCountEntries(testExecution.domainCounts, 12);
+    const testStatusCounts = asCountEntries(testExecution.statusCounts, 12);
+    const testResultCounts = asCountEntries(testExecution.resultCounts, 12);
+    const testRuns = Array.isArray(testExecution.runs) ? testExecution.runs : [];
 
     if (Object.keys(forensics).length === 0) {
         return (
@@ -3784,6 +4040,100 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><TestTube2 size={16} /> Test Execution</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Runs</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.runCount, 0)}</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Total Tests</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalTests, 0)}</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Pass Rate</div>
+                        <div className="text-slate-200 font-mono mt-1">{(asNumber(testExecution.passRate, 0) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Duration</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalDurationSeconds, 0).toFixed(2)}s</div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Frameworks</div>
+                            <div className="space-y-1">
+                                {testFrameworkCounts.length === 0 && <div className="text-xs text-slate-500">No test runs parsed</div>}
+                                {testFrameworkCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Statuses</div>
+                            <div className="space-y-1">
+                                {testStatusCounts.length === 0 && <div className="text-xs text-slate-500">No status signals</div>}
+                                {testStatusCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Domains</div>
+                            <div className="space-y-1">
+                                {testDomainCounts.length === 0 && <div className="text-xs text-slate-500">No domain inference</div>}
+                                {testDomainCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Result Counts</div>
+                            <div className="space-y-1">
+                                {testResultCounts.length === 0 && <div className="text-xs text-slate-500">No result counts</div>}
+                                {testResultCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {testRuns.length > 0 && (
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Recent Runs</div>
+                        <div className="max-h-32 overflow-y-auto pr-1 space-y-1">
+                            {testRuns.slice(0, 20).map((row, idx) => {
+                                const run = asRecord(row);
+                                return (
+                                    <div key={`${idx}-${String(run.framework || '')}-${String(run.status || '')}`} className="rounded border border-slate-800 bg-slate-950/60 p-2 text-[10px]">
+                                        <div className="text-slate-300 font-mono">{String(run.framework || 'test')} · {String(run.status || 'unknown')}</div>
+                                        <div className="text-slate-500 mt-0.5">
+                                            {String(run.domain || 'n/a')} · {asNumber(run.total, 0)} tests · {asNumber(run.durationSeconds, 0).toFixed(2)}s
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
