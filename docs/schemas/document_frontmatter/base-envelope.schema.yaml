@@ -1,0 +1,280 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/base-envelope"
+title: "CCDash Document Frontmatter Base Envelope"
+type: object
+additionalProperties: true
+required:
+  - schema_name
+  - schema_version
+  - doc_type
+  - title
+  - status
+properties:
+  schema_name:
+    const: ccdash_document
+  schema_version:
+    type: integer
+    const: 3
+  doc_type:
+    type: string
+    enum:
+      - prd
+      - implementation_plan
+      - phase_plan
+      - progress
+      - report
+      - design_doc
+      - spec
+      - document
+  doc_subtype:
+    type: string
+  title:
+    type: string
+    minLength: 1
+  description:
+    type: string
+  summary:
+    type: string
+  status:
+    type: string
+    enum:
+      - pending
+      - in_progress
+      - review
+      - completed
+      - deferred
+      - blocked
+      - archived
+  category:
+    type: string
+  priority:
+    type: string
+    enum: [low, medium, high, critical]
+  risk_level:
+    type: string
+    enum: [low, medium, high, critical]
+  complexity:
+    type: string
+  track:
+    type: string
+  timeline_estimate:
+    type: string
+  target_release:
+    type: string
+  milestone:
+    type: string
+  decision_status:
+    type: string
+    enum: [proposed, approved, accepted, superseded, rejected, draft]
+  execution_readiness:
+    type: string
+    enum: [unknown, not_ready, needs_inputs, ready, in_progress, complete]
+  test_impact:
+    type: string
+    enum: [none, low, medium, high, critical]
+  feature_slug:
+    type: string
+  feature_family:
+    type: string
+  feature_version:
+    type: string
+  lineage_family:
+    type: string
+  lineage_parent:
+    anyOf:
+      - type: string
+      - $ref: "#/$defs/refObject"
+  lineage_children:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/refObject"
+  lineage_type:
+    type: string
+    enum:
+      - ""
+      - iteration
+      - enhancement
+      - bug_fix
+      - refactor
+      - follow_up
+      - expansion
+      - phase
+      - roadmap
+      - spike
+      - supersedes
+  prd_ref:
+    anyOf:
+      - type: string
+      - $ref: "#/$defs/refObject"
+  plan_ref:
+    anyOf:
+      - type: string
+      - $ref: "#/$defs/refObject"
+  implementation_plan_ref:
+    anyOf:
+      - type: string
+      - $ref: "#/$defs/refObject"
+  primary_doc_role:
+    type: string
+    enum:
+      - primary_prd
+      - primary_plan
+      - primary_phase_plan
+      - primary_progress
+      - supporting_report
+      - supporting_design
+      - supporting_spec
+      - supporting_document
+  created:
+    type: string
+  updated:
+    type: string
+  started:
+    type: string
+  completed:
+    type: [string, "null"]
+  owner:
+    type: string
+  owners:
+    type: array
+    items:
+      type: string
+  contributors:
+    type: array
+    items:
+      type: string
+  reviewers:
+    type: array
+    items:
+      type: string
+  approvers:
+    type: array
+    items:
+      type: string
+  audience:
+    type: array
+    items:
+      type: string
+  tags:
+    type: array
+    items:
+      type: string
+  labels:
+    type: array
+    items:
+      type: string
+  related_documents:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/refObject"
+  linked_features:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/linkedFeature"
+  linked_sessions:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/refObject"
+  linked_tasks:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/refObject"
+  request_log_ids:
+    type: array
+    items:
+      type: string
+  commit_refs:
+    type: array
+    items:
+      type: string
+  pr_refs:
+    type: array
+    items:
+      type: string
+  files_affected:
+    type: array
+    items:
+      type: string
+  files_modified:
+    type: array
+    items:
+      type: string
+  context_files:
+    type: array
+    items:
+      type: string
+  source_documents:
+    type: array
+    items:
+      anyOf:
+        - type: string
+        - $ref: "#/$defs/refObject"
+  integrity_signal_refs:
+    type: array
+    items:
+      type: string
+$defs:
+  refObject:
+    type: object
+    additionalProperties: true
+    required: [ref]
+    properties:
+      ref:
+        type: string
+      label:
+        type: string
+      kind:
+        type: string
+      source:
+        type: string
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+  linkedFeature:
+    type: object
+    additionalProperties: true
+    required:
+      - feature
+    properties:
+      feature:
+        type: string
+      type:
+        type: string
+        enum:
+          - ""
+          - iteration
+          - enhancement
+          - bug_fix
+          - refactor
+          - follow_up
+          - expansion
+          - phase
+          - roadmap
+          - spike
+          - dependency
+          - related
+      source:
+        type: string
+        enum: [manual, explicit_doc_field, derived_lineage, correlated_ref, inferred]
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+      notes:
+        type: string
+      evidence:
+        type: array
+        items:
+          type: string
+

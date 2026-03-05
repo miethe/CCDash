@@ -119,6 +119,7 @@ When completion is inferred this way, CCDash writes through to linked PRD/Plan d
 
 ## Related Docs
 
-- `docs/document-entity-spec.md`
+- `docs/schemas/document_frontmatter/README.md`
+- `docs/schemas/document_frontmatter/document-and-feature-mapping.md`
 - `docs/document-entity-developer-reference.md`
 - `docs/entity-linking-user-guide.md`

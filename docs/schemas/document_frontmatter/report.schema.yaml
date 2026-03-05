@@ -1,0 +1,46 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/report"
+title: "CCDash Report Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - title
+    properties:
+      doc_type:
+        const: report
+      doc_subtype:
+        type: string
+        enum: [audit, findings, analysis, postmortem, benchmark, research_report]
+      report_kind:
+        type: string
+      scope:
+        type: string
+      evidence:
+        type: array
+        items:
+          type: string
+      findings:
+        type: array
+        items:
+          type: object
+          required: [title]
+          properties:
+            id: { type: string }
+            title: { type: string }
+            severity: { type: string }
+            description: { type: string }
+            impact: { type: string }
+            recommendation: { type: string }
+      recommendations:
+        type: array
+        items:
+          type: string
+      impacted_features:
+        type: array
+        items:
+          anyOf:
+            - type: string
+            - $ref: "./base-envelope.schema.yaml#/$defs/linkedFeature"
+

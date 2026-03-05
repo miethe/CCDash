@@ -21,11 +21,11 @@ linked_features: [live-update-animations-v1]
 prd: ""
 prd_ref: ""
 related:
-  - docs/document-frontmatter-current-implementation-spec-2026-02-19.md
-  - docs/document-frontmatter-improvement-spec-2026-02-19.md
+  - docs/schemas/document_frontmatter/README.md
+  - docs/schemas/document_frontmatter/document-and-feature-mapping.md
 related_documents:
-  - docs/document-frontmatter-current-implementation-spec-2026-02-19.md
-  - docs/document-frontmatter-improvement-spec-2026-02-19.md
+  - docs/schemas/document_frontmatter/README.md
+  - docs/schemas/document_frontmatter/document-and-feature-mapping.md
 plan_ref: live-update-animations-v1
 linked_sessions: []
 

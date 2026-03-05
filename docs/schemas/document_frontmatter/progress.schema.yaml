@@ -1,0 +1,99 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/progress"
+title: "CCDash Progress Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - feature_slug
+      - status
+    properties:
+      doc_type:
+        const: progress
+      doc_subtype:
+        type: string
+        enum: [progress_phase, progress_all_phases, progress_quick_feature, progress_other]
+      schema_version:
+        type: integer
+        enum: [2, 3]
+      phase:
+        anyOf:
+          - type: integer
+          - type: string
+      overall_progress:
+        type: number
+        minimum: 0
+        maximum: 100
+      completion_estimate:
+        type: string
+      total_tasks:
+        type: integer
+        minimum: 0
+      completed_tasks:
+        type: integer
+        minimum: 0
+      in_progress_tasks:
+        type: integer
+        minimum: 0
+      blocked_tasks:
+        type: integer
+        minimum: 0
+      deferred_tasks:
+        type: integer
+        minimum: 0
+      at_risk_tasks:
+        type: integer
+        minimum: 0
+      blockers:
+        type: array
+        items:
+          type: string
+      success_criteria:
+        type: array
+        items:
+          type: string
+      next_steps:
+        type: array
+        items:
+          type: string
+      files_modified:
+        type: array
+        items:
+          type: string
+      tasks:
+        type: array
+        items:
+          $ref: "#/$defs/task"
+      parallelization:
+        type: object
+        additionalProperties: true
+$defs:
+  task:
+    type: object
+    required: [id, description]
+    properties:
+      id: { type: string }
+      title: { type: string }
+      description: { type: string }
+      status: { type: string }
+      assigned_to:
+        anyOf:
+          - type: string
+          - type: array
+            items: { type: string }
+      dependencies:
+        type: array
+        items: { type: string }
+      estimated_effort: { type: string }
+      priority: { type: string }
+      session_id: { type: string }
+      sessionId: { type: string }
+      git_commit: { type: string }
+      commitHash: { type: string }
+      deliverables:
+        type: array
+        items: { type: string }
+      notes:
+        type: string
+

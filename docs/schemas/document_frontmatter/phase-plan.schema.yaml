@@ -1,0 +1,78 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/phase-plan"
+title: "CCDash Phase Plan Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - feature_slug
+      - phase
+    properties:
+      doc_type:
+        const: phase_plan
+      doc_subtype:
+        type: string
+        enum: [phase_plan]
+      phase:
+        anyOf:
+          - type: integer
+          - type: string
+      phase_title:
+        type: string
+      phase_goal:
+        type: string
+      depends_on_phases:
+        type: array
+        items:
+          type: string
+      entry_criteria:
+        type: array
+        items:
+          type: string
+      exit_criteria:
+        type: array
+        items:
+          type: string
+      tasks:
+        type: array
+        items:
+          $ref: "#/$defs/task"
+      parallelization:
+        type: object
+        additionalProperties: true
+      blockers:
+        type: array
+        items:
+          type: string
+      success_criteria:
+        type: array
+        items:
+          type: string
+      files_modified:
+        type: array
+        items:
+          type: string
+$defs:
+  task:
+    type: object
+    required: [id, description]
+    properties:
+      id: { type: string }
+      title: { type: string }
+      description: { type: string }
+      status: { type: string }
+      assigned_to:
+        type: array
+        items: { type: string }
+      dependencies:
+        type: array
+        items: { type: string }
+      estimated_effort: { type: string }
+      priority: { type: string }
+      session_id: { type: string }
+      git_commit: { type: string }
+      deliverables:
+        type: array
+        items: { type: string }
+
