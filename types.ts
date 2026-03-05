@@ -382,6 +382,25 @@ export interface PlanDocument {
   phaseToken?: string;
   phaseNumber?: number | null;
   overallProgress?: number | null;
+  completionEstimate?: string;
+  description?: string;
+  summary?: string;
+  priority?: string;
+  riskLevel?: string;
+  complexity?: string;
+  track?: string;
+  timelineEstimate?: string;
+  targetRelease?: string;
+  milestone?: string;
+  decisionStatus?: string;
+  executionReadiness?: string;
+  testImpact?: string;
+  primaryDocRole?: string;
+  featureSlug?: string;
+  featureFamily?: string;
+  featureVersion?: string;
+  planRef?: string;
+  implementationPlanRef?: string;
   totalTasks?: number;
   completedTasks?: number;
   inProgressTasks?: number;
@@ -389,7 +408,9 @@ export interface PlanDocument {
   frontmatter: {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
+    linkedFeatureRefs?: LinkedFeatureRef[];
     linkedSessions?: string[]; // IDs like S-8821
+    linkedTasks?: string[];
     lineageFamily?: string;
     lineageParent?: string;
     lineageChildren?: string[];
@@ -398,11 +419,19 @@ export interface PlanDocument {
     version?: string;
     commits?: string[];
     prs?: string[];
+    requestLogIds?: string[];
+    commitRefs?: string[];
+    prRefs?: string[];
     relatedRefs?: string[];
     pathRefs?: string[];
     slugRefs?: string[];
     prd?: string;
     prdRefs?: string[];
+    sourceDocuments?: string[];
+    filesAffected?: string[];
+    filesModified?: string[];
+    contextFiles?: string[];
+    integritySignalRefs?: string[];
     fieldKeys?: string[];
     raw?: Record<string, any>;
   };
@@ -413,6 +442,25 @@ export interface PlanDocument {
     phase?: string;
     phaseNumber?: number | null;
     overallProgress?: number | null;
+    completionEstimate?: string;
+    description?: string;
+    summary?: string;
+    priority?: string;
+    riskLevel?: string;
+    complexity?: string;
+    track?: string;
+    timelineEstimate?: string;
+    targetRelease?: string;
+    milestone?: string;
+    decisionStatus?: string;
+    executionReadiness?: string;
+    testImpact?: string;
+    primaryDocRole?: string;
+    featureSlug?: string;
+    featureFamily?: string;
+    featureVersion?: string;
+    planRef?: string;
+    implementationPlanRef?: string;
     taskCounts?: {
       total: number;
       completed: number;
@@ -421,8 +469,22 @@ export interface PlanDocument {
     };
     owners?: string[];
     contributors?: string[];
+    reviewers?: string[];
+    approvers?: string[];
+    audience?: string[];
+    labels?: string[];
+    linkedTasks?: string[];
     requestLogIds?: string[];
     commitRefs?: string[];
+    prRefs?: string[];
+    sourceDocuments?: string[];
+    filesAffected?: string[];
+    filesModified?: string[];
+    contextFiles?: string[];
+    integritySignalRefs?: string[];
+    executionEntrypoints?: Array<Record<string, any>>;
+    linkedFeatureRefs?: LinkedFeatureRef[];
+    docTypeFields?: Record<string, any>;
     featureSlugHint?: string;
     canonicalPath?: string;
   };
@@ -434,6 +496,15 @@ export interface PlanDocument {
   };
   dates?: EntityDates;
   timeline?: TimelineEvent[];
+}
+
+export interface LinkedFeatureRef {
+  feature: string;
+  type?: string;
+  source?: string;
+  confidence?: number;
+  notes?: string;
+  evidence?: string[];
 }
 
 export interface AnalyticsMetric {
@@ -782,13 +853,14 @@ export interface LinkedDocument {
   id: string;
   title: string;
   filePath: string;
-  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'progress' | 'spec' | string;
+  docType: 'prd' | 'implementation_plan' | 'report' | 'phase_plan' | 'progress' | 'design_doc' | 'spec' | string;
   category?: string;
   slug?: string;
   canonicalSlug?: string;
   frontmatterKeys?: string[];
   relatedRefs?: string[];
   prdRef?: string;
+  linkedFeatures?: LinkedFeatureRef[];
   dates?: EntityDates;
   timeline?: TimelineEvent[];
 }
@@ -814,11 +886,28 @@ export interface Feature {
   deferredTasks?: number;
   category: string;
   tags: string[];
+  description?: string;
+  summary?: string;
+  priority?: string;
+  riskLevel?: string;
+  complexity?: string;
+  track?: string;
+  timelineEstimate?: string;
+  targetRelease?: string;
+  milestone?: string;
+  owners?: string[];
+  contributors?: string[];
+  requestLogIds?: string[];
+  commitRefs?: string[];
+  prRefs?: string[];
+  executionReadiness?: string;
+  testImpact?: string;
   updatedAt: string;
   plannedAt?: string;
   startedAt?: string;
   completedAt?: string;
   linkedDocs: LinkedDocument[];
+  linkedFeatures?: LinkedFeatureRef[];
   phases: FeaturePhase[];
   relatedFeatures: string[];
   dates?: EntityDates;
