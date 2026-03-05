@@ -1088,43 +1088,15 @@ def _build_artifact_analytics_payload(
 
     agent_model: dict[tuple[str, str], dict[str, Any]] = {}
     agent_model_session_pairs: set[tuple[str, str, str]] = set()
-    for row in agent_rows:
-        session_id = str(row.get("session_id") or "").strip()
-        if not session_id:
-            continue
-        feature_ids = set(session_feature_map.get(session_id, set()))
-        if feature_filter_norm and feature_filter_norm not in feature_ids:
-            continue
-        model_dims = _model_dimensions(str(row.get("model") or "").strip() or str(lifecycle_by_session.get(session_id, {}).get("model_raw") or "unknown"))
-        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
-            continue
-        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
-            continue
-        payload = _safe_json(row.get("payload_json"))
-        metadata = payload.get("metadata") if isinstance(payload, dict) else {}
-        agent_name = str(row.get("agent") or "").strip()
-        if not agent_name and isinstance(metadata, dict):
-            agent_name = str(
-                metadata.get("agentName")
-                or metadata.get("agent_name")
-                or metadata.get("subagentName")
-                or metadata.get("taskSubagentType")
-                or ""
-            ).strip()
-        if not agent_name:
-            agent_name = str(
-                (payload.get("agentName") if isinstance(payload, dict) else "")
-                or (payload.get("agent_name") if isinstance(payload, dict) else "")
-                or ""
-            ).strip()
-        if not agent_name and isinstance(payload, dict) and str(payload.get("speaker") or "").strip().lower() == "agent":
-            agent_name = "Main Session"
-        if not agent_name:
-            continue
+
+    def add_agent_model_observation(session_id: str, model_dims: dict[str, str], agent_name: str) -> None:
+        normalized_agent = str(agent_name or "").strip()
+        if not session_id or not normalized_agent:
+            return
         entry = agent_model.setdefault(
-            (agent_name, model_dims["canonical"]),
+            (normalized_agent, model_dims["canonical"]),
             {
-                "agent": agent_name,
+                "agent": normalized_agent,
                 "model": model_dims["canonical"],
                 "modelRawSet": set(),
                 "modelFamily": model_dims["family"],
@@ -1138,7 +1110,86 @@ def _build_artifact_analytics_payload(
         entry["count"] += 1
         entry["modelRawSet"].add(model_dims["raw"])
         entry["sessionSet"].add(session_id)
-        agent_model_session_pairs.add((session_id, agent_name, model_dims["canonical"]))
+        agent_model_session_pairs.add((session_id, normalized_agent, model_dims["canonical"]))
+
+    def extract_agent_name(
+        *,
+        row_agent: Any,
+        event_type: Any,
+        payload: dict[str, Any],
+    ) -> str:
+        if row_agent:
+            return str(row_agent).strip()
+        metadata = payload.get("metadata") if isinstance(payload, dict) else {}
+        if isinstance(metadata, dict):
+            resolved = str(
+                metadata.get("agentName")
+                or metadata.get("agent_name")
+                or metadata.get("subagentName")
+                or metadata.get("taskSubagentType")
+                or metadata.get("subagentType")
+                or metadata.get("subagent_type")
+                or metadata.get("subagentAgentId")
+                or metadata.get("agentId")
+                or ""
+            ).strip()
+            if resolved:
+                return resolved
+        if isinstance(payload, dict):
+            resolved = str(
+                payload.get("agentName")
+                or payload.get("agent_name")
+                or payload.get("subagentName")
+                or payload.get("subagentType")
+                or payload.get("subagent_type")
+                or ""
+            ).strip()
+            if resolved:
+                return resolved
+        speaker = str((payload.get("speaker") if isinstance(payload, dict) else "") or "").strip().lower()
+        if speaker == "agent":
+            return "Main Session"
+        if str(event_type or "").strip().lower() == "log.subagent_start":
+            return "Subagent"
+        return ""
+
+    for row in agent_rows:
+        session_id = str(row.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        feature_ids = set(session_feature_map.get(session_id, set()))
+        if feature_filter_norm and feature_filter_norm not in feature_ids:
+            continue
+        model_dims = _model_dimensions(str(row.get("model") or "").strip() or str(lifecycle_by_session.get(session_id, {}).get("model_raw") or "unknown"))
+        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
+            continue
+        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
+            continue
+        payload = _safe_json(row.get("payload_json"))
+        agent_name = extract_agent_name(
+            row_agent=row.get("agent"),
+            event_type=row.get("event_type"),
+            payload=payload if isinstance(payload, dict) else {},
+        )
+        if not agent_name:
+            continue
+        add_agent_model_observation(session_id, model_dims, agent_name)
+
+    for record in records:
+        session_id = str(record.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        model_dims = _model_dimensions(str(record.get("model_raw") or record.get("model") or "unknown"))
+        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
+            continue
+        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
+            continue
+        agent_name = str(record.get("agent") or "").strip()
+        if not agent_name and str(record.get("artifact_type") or "") == "agent":
+            agent_name = str(record.get("title") or "").strip()
+        if not agent_name:
+            continue
+        add_agent_model_observation(session_id, model_dims, agent_name)
 
     for session_id, agent_name, model in agent_model_session_pairs:
         lifecycle = session_metrics(session_id)

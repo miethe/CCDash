@@ -123,6 +123,15 @@ export interface SessionModelInfo {
   modelVersion?: string;
 }
 
+export interface SessionModelFacet {
+  raw: string;
+  modelDisplayName: string;
+  modelProvider: string;
+  modelFamily: string;
+  modelVersion: string;
+  count: number;
+}
+
 export interface SessionPlatformTransition {
   timestamp: string;
   fromVersion: string;

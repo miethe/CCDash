@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
+import { useModelColors } from '../contexts/ModelColorsContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
@@ -3569,17 +3570,6 @@ const tokenDeltaForLog = (log: SessionLog): number => {
     return Math.max(0, Number(metadata.totalTokens || 0));
 };
 
-const modelHueForAnalytics = (model: string): number => {
-    const input = (model || 'unknown').trim().toLowerCase();
-    let hash = 0;
-    for (let i = 0; i < input.length; i += 1) {
-        hash = (hash * 31 + input.charCodeAt(i)) % 360;
-    }
-    return hash;
-};
-
-const modelAccentForAnalytics = (model: string): string => `hsl(${modelHueForAnalytics(model)} 80% 62%)`;
-
 const formatTimelineTick = (rawTime: string): string => {
     const timestampMs = toEpoch(rawTime);
     if (timestampMs > 0) {
@@ -3809,6 +3799,7 @@ const AnalyticsView: React.FC<{
     threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
 }> = ({ session, threadSessions, threadSessionDetails, goToTranscript }) => {
+    const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
     const [scopeMode, setScopeMode] = useState<'thread_family' | 'main'>('thread_family');
@@ -3981,7 +3972,7 @@ const AnalyticsView: React.FC<{
                                 <Tooltip cursor={{ fill: '#1e293b' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
                                 <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed">
                                     {modelData.map((entry, index) => (
-                                        <Cell key={`model-bar-${entry.name}-${index}`} fill={modelAccentForAnalytics(entry.name)} />
+                                        <Cell key={`model-bar-${entry.name}-${index}`} fill={getColorForModel({ model: entry.name })} />
                                     ))}
                                 </Bar>
                             </BarChart>
