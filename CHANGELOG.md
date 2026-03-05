@@ -18,6 +18,13 @@
   - Added `entryContext.hookInvocations` in session forensics for correlation and downstream analytics.
 - Default transcript mapping coverage:
   - added built-in mapping `artifact-hook-invocation` for `.claude/hooks/*` paths as `artifact` transcript events.
+- App Impact re-architecture:
+  - rebuilt Session Inspector `App Impact` as an outcome/correlation layer using currently captured pipelines (`updatedFiles`, `sessionForensics.testExecution`, linked artifacts/features, queue/API/tool signals).
+  - added derived correlation insights, pipeline coverage health panel, and filterable impact event stream.
+  - explicitly scoped boundary with `Analytics`: Analytics for resource/behavior telemetry, App Impact for delivery outcomes and inferred conclusions.
+- Codex impact event pipeline:
+  - Codex parser now emits `impactHistory` events (instead of always empty) from system events, test outcomes, and unmatched tool-result warnings.
+  - `ImpactPoint` schema now supports event-first fields with optional legacy numeric impact fields.
 
 ### Changed
 
@@ -28,6 +35,13 @@
   - `Tests Run During This Session` list with one entry per detected test run and parsed result telemetry (framework/status/targets/domains/flags/counts/duration).
 - Session `Artifacts` test cards now surface parsed test-run details from correlated source logs so each test artifact can be inspected with run-level metadata.
 - Session forensics test-run aggregation now retains full run row history (removed prior run-row truncation).
+- Session Inspector header and tab ergonomics:
+  - tabs moved to a dedicated full-width row below the title section.
+  - added middle Session Context header panel between title and session cost.
+  - promoted Linked Feature and Platform into the header context panel.
+  - tab ordering updated so `Analytics` follows `Test Status`, and final sequence ends with `Agents`, `Files`, `Activity`.
+- Forensics Session Capture:
+  - removed duplicate `Platform` field from the Session Capture card now that Platform is promoted to the Session header context panel.
 
 ### Fixed
 
@@ -39,6 +53,7 @@
 
 - Updated:
   - `README.md`
+  - `CHANGELOG.md`
   - `docs/testing-user-guide.md`
   - `docs/session-data-discovery.md`
   - `docs/codebase-explorer-developer-reference.md`

@@ -73,39 +73,18 @@
 ### 6. Session Inspector (Agent Forensics)
 The core debugging loop for AI interactions.
 *   **Session Index**: Grid view of Active (Live) vs. Historical sessions with cost and health indicators.
+*   **Session Header Context**:
+    *   Full-width tab bar below the title row.
+    *   Dedicated middle context section between Title and Session Cost showing:
+        *   primary **Linked Feature** (status + confidence + quick-open)
+        *   **Platform** value promoted from Forensics Session Capture.
 *   **Deep Dive View (Tabbed Interface)**:
     1.  **Transcript**: 
         *   3-pane fluid layout (Log list, Detail view, Metadata sidebar).
         *   **Message/Tool/Skill Support**: distinct visual styling for different log types.
         *   **Mapped Event Cards**: command/artifact/action mapping for transcript entries (for example Agent invocation, Skill mention, Hook invocation, and test-related command events).
         *   **Inline Expansion**: Inspect tool arguments and large outputs without losing context.
-    2.  **Activity**:
-        *   Chronological timeline of log entries, file actions, and linked artifacts.
-        *   Includes `sourceLogId`-driven deep-link highlighting from Transcript.
-    3.  **Files**:
-        *   Aggregated table with one row per file touched by the root thread.
-        *   Multi-action chips (`Read`, `Create`, `Update`, `Delete`) per file.
-        *   Touch/session counts, net diff, and open actions.
-    4.  **Test Status**:
-        *   Scrollable `Modified Tests During This Session` list derived from all test file actions (including reads/edits).
-        *   `Tests Run During This Session` list with one row per detected run from transcript tool calls.
-        *   Per-run telemetry includes framework/status, grouped targets/domains/flags, and parsed pass/fail/skipped/xfailed counts and duration when available.
-    5.  **Artifacts**:
-        *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
-        *   Source-log and linked-thread correlation so artifact cards can be traced back to the originating transcript event and sub-thread.
-        *   Test artifacts include parsed test-run details (command, scope, counts, timing, status) via card detail modals for cross-session traceability.
-    6.  **App Impact**:
-        *   **Codebase Impact Chart**: Line chart tracking LOC added/removed and file touch-counts over the session duration.
-        *   **Test Stability Chart**: Area chart visualizing Test Pass vs. Fail counts over time.
-    7.  **Analytics (Advanced)**:
-        *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
-        *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
-        *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
-    8.  **Agents**:
-        *   Card view of all participating agents (e.g., Architect, Coder, Planner).
-        *   Click-to-filter transcript by specific agent.
-        *   Sub-thread labels resolve to captured `subagent_type` when available for more stable cross-session naming.
-    9.  **Forensics**:
+    2.  **Forensics**:
         *   Full forensic payload exploration from parser-derived telemetry.
         *   **Queue Pressure**: queue operation/status/task-type distributions and `waiting_for_task` signals.
         *   **Resource Footprint**: command-derived external/internal targets (`api`, `database`, `docker`, `ssh`, `service`).
@@ -115,6 +94,46 @@ The core debugging loop for AI interactions.
         *   **Test Execution Summary**: aggregated session test-run signals (`testExecution`) including framework counts, status counts, and parsed run metrics.
         *   **Platform Telemetry**: project-level platform config telemetry (for example MCP server inventory for Claude).
         *   **Codex Payload Signals**: payload/tool distributions for Codex sessions.
+    3.  **Features**:
+        *   Linked feature set with confidence metadata, status/category chips, and task hierarchy correlation.
+        *   Loads related main-thread sessions for each feature and supports direct navigation.
+    4.  **Test Status**:
+        *   Scrollable `Modified Tests During This Session` list derived from all test file actions (including reads/edits).
+        *   `Tests Run During This Session` list with one row per detected run from transcript tool calls.
+        *   Per-run telemetry includes framework/status, grouped targets/domains/flags, and parsed pass/fail/skipped/xfailed counts and duration when available.
+    5.  **Analytics (Advanced)**:
+        *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
+        *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
+        *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
+    6.  **Artifacts**:
+        *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
+        *   Source-log and linked-thread correlation so artifact cards can be traced back to the originating transcript event and sub-thread.
+        *   Test artifacts include parsed test-run details (command, scope, counts, timing, status) via card detail modals for cross-session traceability.
+    7.  **App Impact**:
+        *   Outcome-and-correlation layer derived from currently captured data:
+            *   file/code footprint (`updatedFiles`, action mix, net line delta)
+            *   validation/test movement (`sessionForensics.testExecution` + parsed run fallback)
+            *   delivery traceability (artifact and linked-feature correlation)
+            *   workflow risk signals (queue pressure, API/tool errors).
+        *   Includes:
+            *   summary KPI cards
+            *   correlation insights
+            *   pipeline coverage health panel
+            *   filterable impact event stream.
+        *   **Boundary vs Analytics**:
+            *   `Analytics` explains *resource/behavior telemetry* (tokens, costs, allocations).
+            *   `App Impact` explains *delivery outcomes and inferred conclusions*.
+    8.  **Agents**:
+        *   Card view of all participating agents (e.g., Architect, Coder, Planner).
+        *   Click-to-filter transcript by specific agent.
+        *   Sub-thread labels resolve to captured `subagent_type` when available for more stable cross-session naming.
+    9.  **Files**:
+        *   Aggregated table with one row per file touched by the root thread.
+        *   Multi-action chips (`Read`, `Create`, `Update`, `Delete`) per file.
+        *   Touch/session counts, net diff, and open actions.
+    10.  **Activity**:
+        *   Chronological timeline of log entries, file actions, and linked artifacts.
+        *   Includes `sourceLogId`-driven deep-link highlighting from Transcript.
 
 ### 7. Codebase Explorer
 *   **Route**: `/codebase` with a 3-pane explorer (tree, file list, detail).
@@ -162,7 +181,7 @@ The primary unit of delivery. Aggregates:
 ### AgentSession
 The atomic unit of work. Contains:
 *   `logs`: The conversation and tool execution stream.
-*   `impactHistory`: Persisted time-series impact data (rehydrated from cache DB).
+*   `impactHistory`: Persisted impact-event stream (rehydrated from cache DB), including parser-derived progress and execution outcome signals; also supports legacy numeric snapshots.
 *   `updatedFiles`: List of file modifications.
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
     *   Includes parser-captured runtime artifacts such as `skill`, `command`, `agent`, `task`, `hook`, and `test_run` with source-log correlation.
