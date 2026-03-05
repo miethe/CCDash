@@ -66,6 +66,44 @@ def _safe_json_list(raw: str | list | None) -> list:
         return []
 
 
+def _string_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(v) for v in raw if isinstance(v, str) and str(v).strip()]
+    if isinstance(raw, str) and raw.strip():
+        return [raw.strip()]
+    return []
+
+
+def _linked_feature_ref_list(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        feature = str(item.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        confidence: float | None = None
+        confidence_raw = item.get("confidence")
+        if confidence_raw is not None:
+            try:
+                confidence = max(0.0, min(1.0, float(confidence_raw)))
+            except Exception:
+                confidence = None
+        refs.append(
+            {
+                "feature": feature,
+                "type": str(item.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_"),
+                "source": str(item.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_"),
+                "confidence": confidence,
+                "notes": str(item.get("notes") or ""),
+                "evidence": _string_list(item.get("evidence")),
+            }
+        )
+    return refs
+
+
 def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
     raw = metadata.get("bashCommand")
     if isinstance(raw, str) and raw.strip():
@@ -877,11 +915,13 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
     normalized_canonical = normalize_ref_path(canonical_path) or canonical_path
     path_segments = [segment for segment in normalized_canonical.split("/") if segment]
 
-    linked_features = fm.get("linkedFeatures")
-    if not isinstance(linked_features, list):
-        linked_features = []
+    linked_features = _string_list(fm.get("linkedFeatures"))
+    linked_feature_refs = _linked_feature_ref_list(fm.get("linkedFeatureRefs"))
+    if not linked_feature_refs:
+        linked_feature_refs = _linked_feature_ref_list(metadata.get("linkedFeatureRefs"))
     feature_candidates = sorted({
-        *[str(v) for v in linked_features if isinstance(v, str)],
+        *linked_features,
+        *[str(v.get("feature") or "") for v in linked_feature_refs if isinstance(v, dict)],
         str(row.get("feature_slug_hint") or ""),
         str(row.get("feature_slug_canonical") or ""),
     })
@@ -906,22 +946,32 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         timeline = []
 
     frontmatter_obj = {
-        "tags": fm.get("tags") if isinstance(fm.get("tags"), list) else [],
-        "linkedFeatures": fm.get("linkedFeatures") if isinstance(fm.get("linkedFeatures"), list) else [],
-        "linkedSessions": fm.get("linkedSessions") if isinstance(fm.get("linkedSessions"), list) else [],
+        "tags": _string_list(fm.get("tags")),
+        "linkedFeatures": linked_features,
+        "linkedFeatureRefs": linked_feature_refs,
+        "linkedSessions": _string_list(fm.get("linkedSessions")),
+        "linkedTasks": _string_list(fm.get("linkedTasks")),
         "lineageFamily": str(fm.get("lineageFamily") or ""),
         "lineageParent": str(fm.get("lineageParent") or ""),
-        "lineageChildren": fm.get("lineageChildren") if isinstance(fm.get("lineageChildren"), list) else [],
+        "lineageChildren": _string_list(fm.get("lineageChildren")),
         "lineageType": str(fm.get("lineageType") or ""),
         "version": fm.get("version"),
-        "commits": fm.get("commits") if isinstance(fm.get("commits"), list) else [],
-        "prs": fm.get("prs") if isinstance(fm.get("prs"), list) else [],
-        "relatedRefs": fm.get("relatedRefs") if isinstance(fm.get("relatedRefs"), list) else [],
-        "pathRefs": fm.get("pathRefs") if isinstance(fm.get("pathRefs"), list) else [],
-        "slugRefs": fm.get("slugRefs") if isinstance(fm.get("slugRefs"), list) else [],
+        "commits": _string_list(fm.get("commits")),
+        "prs": _string_list(fm.get("prs")),
+        "requestLogIds": _string_list(fm.get("requestLogIds")),
+        "commitRefs": _string_list(fm.get("commitRefs")),
+        "prRefs": _string_list(fm.get("prRefs")),
+        "relatedRefs": _string_list(fm.get("relatedRefs")),
+        "pathRefs": _string_list(fm.get("pathRefs")),
+        "slugRefs": _string_list(fm.get("slugRefs")),
         "prd": str(fm.get("prd") or ""),
-        "prdRefs": fm.get("prdRefs") if isinstance(fm.get("prdRefs"), list) else [],
-        "fieldKeys": fm.get("fieldKeys") if isinstance(fm.get("fieldKeys"), list) else [],
+        "prdRefs": _string_list(fm.get("prdRefs")),
+        "sourceDocuments": _string_list(fm.get("sourceDocuments")),
+        "filesAffected": _string_list(fm.get("filesAffected")),
+        "filesModified": _string_list(fm.get("filesModified")),
+        "contextFiles": _string_list(fm.get("contextFiles")),
+        "integritySignalRefs": _string_list(fm.get("integritySignalRefs")),
+        "fieldKeys": _string_list(fm.get("fieldKeys")),
         "raw": fm.get("raw") if isinstance(fm.get("raw"), dict) else fm,
     }
 
@@ -964,6 +1014,25 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         phaseToken=str(row.get("phase_token") or ""),
         phaseNumber=row.get("phase_number"),
         overallProgress=row.get("overall_progress"),
+        completionEstimate=str(metadata.get("completionEstimate") or ""),
+        description=str(metadata.get("description") or ""),
+        summary=str(metadata.get("summary") or ""),
+        priority=str(metadata.get("priority") or ""),
+        riskLevel=str(metadata.get("riskLevel") or ""),
+        complexity=str(metadata.get("complexity") or ""),
+        track=str(metadata.get("track") or ""),
+        timelineEstimate=str(metadata.get("timelineEstimate") or ""),
+        targetRelease=str(metadata.get("targetRelease") or ""),
+        milestone=str(metadata.get("milestone") or ""),
+        decisionStatus=str(metadata.get("decisionStatus") or ""),
+        executionReadiness=str(metadata.get("executionReadiness") or ""),
+        testImpact=str(metadata.get("testImpact") or ""),
+        primaryDocRole=str(metadata.get("primaryDocRole") or ""),
+        featureSlug=str(metadata.get("featureSlug") or ""),
+        featureFamily=str(metadata.get("featureFamily") or ""),
+        featureVersion=str(metadata.get("featureVersion") or ""),
+        planRef=str(metadata.get("planRef") or ""),
+        implementationPlanRef=str(metadata.get("implementationPlanRef") or ""),
         totalTasks=int(row.get("total_tasks") or 0),
         completedTasks=int(row.get("completed_tasks") or 0),
         inProgressTasks=int(row.get("in_progress_tasks") or 0),
@@ -975,16 +1044,53 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
             "phase": str(metadata.get("phase") or row.get("phase_token") or ""),
             "phaseNumber": metadata.get("phaseNumber", row.get("phase_number")),
             "overallProgress": metadata.get("overallProgress", row.get("overall_progress")),
+            "completionEstimate": str(metadata.get("completionEstimate") or ""),
+            "description": str(metadata.get("description") or ""),
+            "summary": str(metadata.get("summary") or ""),
+            "priority": str(metadata.get("priority") or ""),
+            "riskLevel": str(metadata.get("riskLevel") or ""),
+            "complexity": str(metadata.get("complexity") or ""),
+            "track": str(metadata.get("track") or ""),
+            "timelineEstimate": str(metadata.get("timelineEstimate") or ""),
+            "targetRelease": str(metadata.get("targetRelease") or ""),
+            "milestone": str(metadata.get("milestone") or ""),
+            "decisionStatus": str(metadata.get("decisionStatus") or ""),
+            "executionReadiness": str(metadata.get("executionReadiness") or ""),
+            "testImpact": str(metadata.get("testImpact") or ""),
+            "primaryDocRole": str(metadata.get("primaryDocRole") or ""),
+            "featureSlug": str(metadata.get("featureSlug") or ""),
+            "featureFamily": str(metadata.get("featureFamily") or ""),
+            "featureVersion": str(metadata.get("featureVersion") or ""),
+            "planRef": str(metadata.get("planRef") or ""),
+            "implementationPlanRef": str(metadata.get("implementationPlanRef") or ""),
             "taskCounts": {
                 "total": int(metadata_task_counts.get("total", row.get("total_tasks") or 0)),
                 "completed": int(metadata_task_counts.get("completed", row.get("completed_tasks") or 0)),
                 "inProgress": int(metadata_task_counts.get("inProgress", row.get("in_progress_tasks") or 0)),
                 "blocked": int(metadata_task_counts.get("blocked", row.get("blocked_tasks") or 0)),
             },
-            "owners": metadata.get("owners", []),
-            "contributors": metadata.get("contributors", []),
-            "requestLogIds": metadata.get("requestLogIds", []),
-            "commitRefs": metadata.get("commitRefs", []),
+            "owners": _string_list(metadata.get("owners")),
+            "contributors": _string_list(metadata.get("contributors")),
+            "reviewers": _string_list(metadata.get("reviewers")),
+            "approvers": _string_list(metadata.get("approvers")),
+            "audience": _string_list(metadata.get("audience")),
+            "labels": _string_list(metadata.get("labels")),
+            "linkedTasks": _string_list(metadata.get("linkedTasks")),
+            "requestLogIds": _string_list(metadata.get("requestLogIds")),
+            "commitRefs": _string_list(metadata.get("commitRefs")),
+            "prRefs": _string_list(metadata.get("prRefs")),
+            "sourceDocuments": _string_list(metadata.get("sourceDocuments")),
+            "filesAffected": _string_list(metadata.get("filesAffected")),
+            "filesModified": _string_list(metadata.get("filesModified")),
+            "contextFiles": _string_list(metadata.get("contextFiles")),
+            "integritySignalRefs": _string_list(metadata.get("integritySignalRefs")),
+            "executionEntrypoints": [
+                entry
+                for entry in metadata.get("executionEntrypoints", [])
+                if isinstance(entry, dict)
+            ] if isinstance(metadata.get("executionEntrypoints"), list) else [],
+            "linkedFeatureRefs": linked_feature_refs,
+            "docTypeFields": metadata.get("docTypeFields", {}) if isinstance(metadata.get("docTypeFields"), dict) else {},
             "featureSlugHint": metadata.get("featureSlugHint", row.get("feature_slug_hint") or ""),
             "canonicalPath": metadata.get("canonicalPath", normalized_canonical),
         },

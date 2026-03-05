@@ -145,6 +145,51 @@ def _normalize_tags(raw: Any) -> list[str]:
     return []
 
 
+def _normalize_string_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(v) for v in raw if isinstance(v, str) and str(v).strip()]
+    if isinstance(raw, str):
+        value = raw.strip()
+        return [value] if value else []
+    return []
+
+
+def _normalize_linked_feature_refs(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        feature = str(item.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        relation_type = str(item.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(item.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        key = (feature, relation_type, source)
+        if key in seen:
+            continue
+        seen.add(key)
+        confidence: float | None = None
+        if item.get("confidence") is not None:
+            try:
+                confidence = max(0.0, min(1.0, float(item.get("confidence"))))
+            except Exception:
+                confidence = None
+        refs.append(
+            {
+                "feature": feature,
+                "type": relation_type,
+                "source": source,
+                "confidence": confidence,
+                "notes": str(item.get("notes") or ""),
+                "evidence": _normalize_string_list(item.get("evidence")),
+            }
+        )
+    return refs
+
+
 def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
     if not isinstance(raw, list):
         return []
@@ -168,6 +213,7 @@ def _normalize_linked_docs(raw: Any) -> list[LinkedDocument]:
             frontmatterKeys=[str(v) for v in (item.get("frontmatterKeys") or []) if isinstance(v, str)],
             relatedRefs=[str(v) for v in (item.get("relatedRefs") or []) if isinstance(v, str)],
             prdRef=str(item.get("prdRef") or ""),
+            linkedFeatures=_normalize_linked_feature_refs(item.get("linkedFeatures")),
             dates=item.get("dates") if isinstance(item.get("dates"), dict) else {},
             timeline=item.get("timeline") if isinstance(item.get("timeline"), list) else [],
         ))
@@ -568,11 +614,28 @@ async def list_features(
                 deferredTasks=deferred_tasks,
                 category=str(f.get("category") or ""),
                 tags=_normalize_tags(data.get("tags", [])),
+                description=str(data.get("description") or ""),
+                summary=str(data.get("summary") or ""),
+                priority=str(data.get("priority") or ""),
+                riskLevel=str(data.get("riskLevel") or ""),
+                complexity=str(data.get("complexity") or ""),
+                track=str(data.get("track") or ""),
+                timelineEstimate=str(data.get("timelineEstimate") or ""),
+                targetRelease=str(data.get("targetRelease") or ""),
+                milestone=str(data.get("milestone") or ""),
+                owners=_normalize_string_list(data.get("owners")),
+                contributors=_normalize_string_list(data.get("contributors")),
+                requestLogIds=_normalize_string_list(data.get("requestLogIds")),
+                commitRefs=_normalize_string_list(data.get("commitRefs")),
+                prRefs=_normalize_string_list(data.get("prRefs")),
+                executionReadiness=str(data.get("executionReadiness") or ""),
+                testImpact=str(data.get("testImpact") or ""),
                 updatedAt=str(f.get("updated_at") or ""),
                 plannedAt=str(data.get("plannedAt") or ""),
                 startedAt=str(data.get("startedAt") or ""),
                 completedAt=str(data.get("completedAt") or ""),
                 linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
+                linkedFeatures=_normalize_linked_feature_refs(data.get("linkedFeatures")),
                 phases=phases,
                 relatedFeatures=[str(v) for v in related_features if str(v).strip()],
                 dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
@@ -878,11 +941,28 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
         deferredTasks=deferred_tasks,
         category=str(f.get("category") or ""),
         tags=_normalize_tags(data.get("tags", [])),
+        description=str(data.get("description") or ""),
+        summary=str(data.get("summary") or ""),
+        priority=str(data.get("priority") or ""),
+        riskLevel=str(data.get("riskLevel") or ""),
+        complexity=str(data.get("complexity") or ""),
+        track=str(data.get("track") or ""),
+        timelineEstimate=str(data.get("timelineEstimate") or ""),
+        targetRelease=str(data.get("targetRelease") or ""),
+        milestone=str(data.get("milestone") or ""),
+        owners=_normalize_string_list(data.get("owners")),
+        contributors=_normalize_string_list(data.get("contributors")),
+        requestLogIds=_normalize_string_list(data.get("requestLogIds")),
+        commitRefs=_normalize_string_list(data.get("commitRefs")),
+        prRefs=_normalize_string_list(data.get("prRefs")),
+        executionReadiness=str(data.get("executionReadiness") or ""),
+        testImpact=str(data.get("testImpact") or ""),
         updatedAt=str(f.get("updated_at") or ""),
         plannedAt=str(data.get("plannedAt") or ""),
         startedAt=str(data.get("startedAt") or ""),
         completedAt=str(data.get("completedAt") or ""),
         linkedDocs=_normalize_linked_docs(data.get("linkedDocs", [])),
+        linkedFeatures=_normalize_linked_feature_refs(data.get("linkedFeatures")),
         phases=phases,
         relatedFeatures=[str(v) for v in related_features if str(v).strip()],
         dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},

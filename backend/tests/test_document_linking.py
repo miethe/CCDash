@@ -70,6 +70,15 @@ class DocumentLinkingTests(unittest.TestCase):
     def test_classify_doc_type_detects_progress(self) -> None:
         self.assertEqual(classify_doc_type("progress/collection-data-consistency/phase-1-progress.md"), "progress")
 
+    def test_classify_doc_type_maps_design_spec_to_design_doc(self) -> None:
+        self.assertEqual(
+            classify_doc_type(
+                "docs/project_plans/design-specs/features/alpha-v1.md",
+                {"doc_type": "design_spec"},
+            ),
+            "design_doc",
+        )
+
     def test_infer_project_root_supports_docs_and_dot_claude_progress(self) -> None:
         docs_dir = Path("/tmp/workspace/docs/project_plans")
         progress_dir = Path("/tmp/workspace/.claude/progress")
@@ -120,6 +129,29 @@ class DocumentLinkingTests(unittest.TestCase):
         self.assertIn("alpha-v1", feature_refs)
         self.assertIn("REQ-20260101-alpha-1", request_refs)
         self.assertIn("abc1234", commit_refs)
+
+    def test_extract_frontmatter_references_parses_typed_linked_features(self) -> None:
+        refs = extract_frontmatter_references(
+            {
+                "linked_features": [
+                    {
+                        "feature": "feature-alpha-v2",
+                        "type": "enhancement",
+                        "source": "manual",
+                        "confidence": 0.82,
+                    },
+                    "feature-beta-v1",
+                ],
+            }
+        )
+        typed_feature_refs = refs.get("typedFeatureRefs", [])
+        feature_refs = refs.get("featureRefs", [])
+        assert isinstance(typed_feature_refs, list)
+        assert isinstance(feature_refs, list)
+        self.assertTrue(any(isinstance(v, dict) and v.get("feature") == "feature-alpha-v2" for v in typed_feature_refs))
+        self.assertIn("feature-alpha-v2", feature_refs)
+        self.assertIn("feature-beta-v1", feature_refs)
+        self.assertNotIn("manual", feature_refs)
 
 
 if __name__ == "__main__":

@@ -73,6 +73,7 @@ _SESSION_KEYS = ("session", "session_id", "sessionid", "sessions", "linked_sessi
 _REQUEST_KEYS = (
     "request_log",
     "request_log_id",
+    "request_log_ids",
     "source_req",
     "source_request",
     "related_request_logs",
@@ -102,12 +103,15 @@ _OWNER_KEYS = ("owner", "owners", "assigned_to", "contributors", "maintainers")
 _FEATURE_KEYS = (
     "feature",
     "feature_slug",
+    "feature_family",
+    "feature_version",
     "feature_ref",
     "feature_id",
     "feature_slug_hint",
     "linked_features",
     "linkedfeatures",
     "related_features",
+    "impacted_features",
     "lineage_parent",
     "lineage_children",
     "parent_feature",
@@ -167,6 +171,14 @@ _DOC_TYPE_ALIASES = {
     "specification": "spec",
     "technical_spec": "spec",
     "api_spec": "spec",
+    "design_doc": "design_doc",
+    "design_document": "design_doc",
+    "design": "design_doc",
+    "design_spec": "design_doc",
+    "design_specs": "design_doc",
+    "wireframe": "design_doc",
+    "interaction_spec": "design_doc",
+    "design_system": "design_doc",
     "progress": "progress",
 }
 
@@ -230,6 +242,7 @@ _DOC_SUBTYPE_ALIASES = {
     "api_spec": "spec",
     "design_spec": "design_spec",
     "design_doc": "design_doc",
+    "design_document": "design_doc",
     "spike": "spike",
     "idea": "idea",
     "bug_doc": "bug_doc",
@@ -261,10 +274,95 @@ _CANONICAL_DOC_SUBTYPES = {
     "document",
 }
 
+_LINKED_FEATURE_TYPE_ALIASES = {
+    "bugfix": "bug_fix",
+    "bug_fix": "bug_fix",
+    "enhancement": "enhancement",
+    "iteration": "iteration",
+    "refactor": "refactor",
+    "followup": "follow_up",
+    "follow_up": "follow_up",
+    "phase": "phase",
+    "roadmap": "roadmap",
+    "spike": "spike",
+    "dependency": "dependency",
+    "related": "related",
+    "expansion": "expansion",
+    "supersedes": "supersedes",
+}
+
+_CANONICAL_LINKED_FEATURE_TYPES = {
+    "",
+    "iteration",
+    "enhancement",
+    "bug_fix",
+    "refactor",
+    "follow_up",
+    "expansion",
+    "phase",
+    "roadmap",
+    "spike",
+    "dependency",
+    "related",
+    "supersedes",
+}
+
+_LINKED_FEATURE_SOURCE_ALIASES = {
+    "manual": "manual",
+    "explicit": "explicit_doc_field",
+    "explicit_doc_field": "explicit_doc_field",
+    "derived": "derived_lineage",
+    "derived_lineage": "derived_lineage",
+    "correlated": "correlated_ref",
+    "correlated_ref": "correlated_ref",
+    "inferred": "inferred",
+}
+
+_CANONICAL_LINKED_FEATURE_SOURCES = {
+    "",
+    "manual",
+    "explicit_doc_field",
+    "derived_lineage",
+    "correlated_ref",
+    "inferred",
+}
+
 
 def _normalize_token(value: str) -> str:
     token = re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower())
     return re.sub(r"_+", "_", token).strip("_")
+
+
+def _normalize_linked_feature_type(value: str) -> str:
+    token = _normalize_token(value)
+    if not token:
+        return ""
+    mapped = _LINKED_FEATURE_TYPE_ALIASES.get(token, token)
+    return mapped if mapped in _CANONICAL_LINKED_FEATURE_TYPES else ""
+
+
+def _normalize_linked_feature_source(value: str, default: str = "") -> str:
+    token = _normalize_token(value)
+    if not token:
+        return default
+    mapped = _LINKED_FEATURE_SOURCE_ALIASES.get(token, token)
+    if mapped in _CANONICAL_LINKED_FEATURE_SOURCES:
+        return mapped
+    return default
+
+
+def _normalize_confidence(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed < 0:
+        return 0.0
+    if parsed > 1:
+        return 1.0
+    return parsed
 
 
 def normalize_doc_status(value: str, default: str = "pending") -> str:
@@ -296,6 +394,8 @@ def normalize_doc_type(value: str, default: str = "document") -> str:
         return "prd"
     if "report" in token:
         return "report"
+    if token.startswith("design") or "wireframe" in token or "interaction" in token:
+        return "design_doc"
     if "spec" in token:
         return "spec"
     return default
@@ -324,7 +424,7 @@ def normalize_doc_subtype(
             return "progress_phase"
         return "progress_other"
 
-    if normalized_doc_type in {"prd", "implementation_plan", "phase_plan", "report", "spec"}:
+    if normalized_doc_type in {"prd", "implementation_plan", "phase_plan", "report", "spec", "design_doc"}:
         return normalized_doc_type
 
     return default
@@ -565,6 +665,88 @@ def _flatten_string_values(value: Any) -> list[str]:
     return []
 
 
+def _flatten_feature_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (list, tuple, set)):
+        collected: list[str] = []
+        for item in value:
+            collected.extend(_flatten_feature_values(item))
+        return collected
+    if isinstance(value, dict):
+        collected: list[str] = []
+        for key in ("feature", "ref", "id", "slug", "path", "value", "target"):
+            if key in value:
+                collected.extend(_flatten_feature_values(value.get(key)))
+        return collected
+    return []
+
+
+def _coerce_feature_ref(value: str) -> str:
+    token = (value or "").strip()
+    if not token:
+        return ""
+    path_feature = feature_slug_from_path(token)
+    if path_feature:
+        return path_feature.lower()
+    normalized = token.lower()
+    if is_feature_like_token(normalized):
+        return normalized
+    return ""
+
+
+def _extract_typed_linked_features(value: Any, default_source: str = "explicit_doc_field") -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+
+    if isinstance(value, str):
+        feature = _coerce_feature_ref(value)
+        if feature:
+            result.append({
+                "feature": feature,
+                "type": "",
+                "source": default_source,
+                "confidence": None,
+                "notes": "",
+                "evidence": [],
+            })
+        return result
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            result.extend(_extract_typed_linked_features(item, default_source=default_source))
+        return result
+
+    if isinstance(value, dict):
+        raw_feature = ""
+        for key in ("feature", "ref", "id", "slug", "path", "value", "target"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                raw_feature = candidate
+                break
+        feature = _coerce_feature_ref(raw_feature)
+        if not feature:
+            return result
+        result.append(
+            {
+                "feature": feature,
+                "type": _normalize_linked_feature_type(str(value.get("type") or value.get("relationship") or "")),
+                "source": _normalize_linked_feature_source(
+                    str(value.get("source") or ""),
+                    default=default_source,
+                ),
+                "confidence": _normalize_confidence(value.get("confidence")),
+                "notes": str(value.get("notes") or ""),
+                "evidence": [
+                    str(v)
+                    for v in _flatten_string_values(value.get("evidence"))
+                    if isinstance(v, str) and str(v).strip()
+                ],
+            }
+        )
+    return result
+
+
 def alias_tokens_from_path(path_value: str) -> set[str]:
     normalized = normalize_ref_path(path_value)
     if not normalized:
@@ -599,7 +781,7 @@ def alias_tokens_from_path(path_value: str) -> set[str]:
 def classify_doc_type(path_value: str, frontmatter: dict[str, Any] | None = None) -> str:
     normalized = normalize_ref_path(path_value).lower()
     fm = frontmatter or {}
-    explicit = normalize_doc_type(str(fm.get("doc_type") or fm.get("doctype") or ""), default="")
+    explicit = normalize_doc_type(str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or ""), default="")
     if explicit:
         return explicit
     if normalized.startswith("progress/") or "/progress/" in normalized:
@@ -613,6 +795,10 @@ def classify_doc_type(path_value: str, frontmatter: dict[str, Any] | None = None
         return "implementation_plan"
     if normalized.startswith("reports/") or "/reports/" in normalized:
         return "report"
+    if normalized.startswith("design-specs/") or "/design-specs/" in normalized:
+        return "design_doc"
+    if normalized.startswith("design/") or "/design/" in normalized:
+        return "design_doc"
     if normalized.startswith("specs/") or "/specs/" in normalized or "/spec/" in normalized:
         return "spec"
     return "document"
@@ -631,7 +817,6 @@ def classify_doc_subtype(path_value: str, frontmatter: dict[str, Any] | None = N
     normalized = normalize_ref_path(path_value).lower()
     fm = frontmatter or {}
     explicit_type_raw = str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or "")
-    explicit_type = normalize_doc_type(explicit_type_raw, default="")
     explicit_type_token = _normalize_token(explicit_type_raw)
     explicit_subtype = str(fm.get("doc_subtype") or fm.get("docSubtype") or fm.get("subtype") or "").strip()
     stem = Path(normalized).stem.lower() if normalized else ""
@@ -650,6 +835,10 @@ def classify_doc_subtype(path_value: str, frontmatter: dict[str, Any] | None = N
     doc_type = classify_doc_type(normalized, fm)
     if explicit_subtype:
         return normalize_doc_subtype(explicit_subtype, root_kind=root_kind, doc_type=doc_type)
+    if doc_type == "design_doc" and explicit_type_token == "design_spec":
+        return "design_spec"
+    if doc_type == "design_doc":
+        return "design_doc"
     if doc_type == "phase_plan":
         return "phase_plan"
     if doc_type == "implementation_plan":
@@ -693,16 +882,21 @@ def classify_doc_category(path_value: str, frontmatter: dict[str, Any] | None = 
     return ""
 
 
-def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[str, list[str] | str]:
+def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[str, Any]:
     fm = frontmatter or {}
     refs_raw: list[str] = []
     prd_values: list[str] = []
     session_values: list[str] = []
+    task_values: list[str] = []
     request_values: list[str] = []
     commit_values: list[str] = []
+    pr_values: list[str] = []
     file_values: list[str] = []
+    source_document_values: list[str] = []
+    integrity_signal_values: list[str] = []
     owner_values: list[str] = []
     feature_values: list[str] = []
+    typed_feature_refs: list[dict[str, Any]] = []
 
     lowered_map = {str(key).strip().lower(): value for key, value in fm.items()}
     for key, value in lowered_map.items():
@@ -712,16 +906,39 @@ def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[s
             prd_values.extend(_flatten_string_values(value))
         if key in _SESSION_KEYS:
             session_values.extend(_flatten_string_values(value))
+        if key in {"linked_tasks", "linkedtasks"}:
+            task_values.extend(_flatten_string_values(value))
         if key in _REQUEST_KEYS:
             request_values.extend(_flatten_string_values(value))
         if key in _COMMIT_KEYS:
             commit_values.extend(_flatten_string_values(value))
+        if key in {"pr_refs", "prs", "pull_requests", "pullrequests"}:
+            pr_values.extend(_flatten_string_values(value))
         if key in _FILE_KEYS:
             file_values.extend(_flatten_string_values(value))
+        if key in {"source_documents", "sourcedocuments"}:
+            source_document_values.extend(_flatten_string_values(value))
+        if key in {"integrity_signal_refs", "integritysignalrefs"}:
+            integrity_signal_values.extend(_flatten_string_values(value))
         if key in _OWNER_KEYS:
             owner_values.extend(_flatten_string_values(value))
         if key in _FEATURE_KEYS:
-            feature_values.extend(_flatten_string_values(value))
+            feature_values.extend(_flatten_feature_values(value))
+            default_source = (
+                "derived_lineage"
+                if key in {
+                    "lineage_parent",
+                    "lineage_children",
+                    "parent_feature",
+                    "parent_feature_slug",
+                    "extends_feature",
+                    "derived_from",
+                    "supersedes",
+                    "superseded_by",
+                }
+                else "explicit_doc_field"
+            )
+            typed_feature_refs.extend(_extract_typed_linked_features(value, default_source=default_source))
 
     # Include obvious markdown path references in any scalar field.
     for value in fm.values():
@@ -731,16 +948,48 @@ def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[s
 
     prd_values = _unique(prd_values)
     session_values = _unique(session_values)
+    task_values = _unique(task_values)
     request_values = _unique(request_values)
     commit_values = _unique(commit_values)
+    pr_values = _unique(pr_values)
     file_values = _unique(file_values)
+    source_document_values = _unique(source_document_values)
+    integrity_signal_values = _unique(integrity_signal_values)
     owner_values = _unique(owner_values)
-    feature_values = _unique(feature_values)
+    feature_values = _unique([value for value in feature_values if _coerce_feature_ref(value)])
+    typed_feature_refs = [
+        ref
+        for ref in typed_feature_refs
+        if isinstance(ref, dict) and str(ref.get("feature") or "").strip()
+    ]
+    typed_unique: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for ref in typed_feature_refs:
+        feature = str(ref.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        ref_type = _normalize_linked_feature_type(str(ref.get("type") or ""))
+        ref_source = _normalize_linked_feature_source(str(ref.get("source") or ""), default="explicit_doc_field")
+        key = (feature, ref_type, ref_source)
+        typed_unique[key] = {
+            "feature": feature,
+            "type": ref_type,
+            "source": ref_source,
+            "confidence": _normalize_confidence(ref.get("confidence")),
+            "notes": str(ref.get("notes") or ""),
+            "evidence": [
+                str(v)
+                for v in _flatten_string_values(ref.get("evidence"))
+                if isinstance(v, str) and str(v).strip()
+            ],
+        }
+    typed_feature_refs = list(typed_unique.values())
+
     refs_raw = _unique(refs_raw + prd_values + file_values + feature_values)
     path_refs, slug_refs = split_path_and_slug_refs(refs_raw)
     path_feature_refs = [feature_slug_from_path(path_ref) for path_ref in path_refs]
+    typed_feature_values = [str(ref.get("feature") or "") for ref in typed_feature_refs if isinstance(ref, dict)]
     slug_feature_refs = [slug for slug in slug_refs if is_feature_like_token(slug)] + [
-        slug for slug in feature_values if is_feature_like_token(slug)
+        slug for slug in [*feature_values, *typed_feature_values] if is_feature_like_token(slug)
     ]
     feature_refs = _unique([
         *path_feature_refs,
@@ -756,8 +1005,13 @@ def extract_frontmatter_references(frontmatter: dict[str, Any] | None) -> dict[s
         "prdRefs": prd_values,
         "prd": prd_primary,
         "sessionRefs": session_values,
+        "taskRefs": task_values,
         "requestRefs": request_values,
         "commitRefs": commit_values,
+        "prRefs": pr_values,
         "fileRefs": _unique(file_values + path_refs),
+        "sourceDocumentRefs": source_document_values,
+        "integritySignalRefs": integrity_signal_values,
         "ownerRefs": owner_values,
+        "typedFeatureRefs": typed_feature_refs,
     }

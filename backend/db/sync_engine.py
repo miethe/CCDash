@@ -4374,6 +4374,18 @@ class SyncEngine:
                 for raw in linked_features:
                     if isinstance(raw, str) and raw.strip():
                         explicit_feature_refs.add(raw.strip())
+                    elif isinstance(raw, dict):
+                        feature_value = raw.get("feature")
+                        if isinstance(feature_value, str) and feature_value.strip():
+                            explicit_feature_refs.add(feature_value.strip())
+            linked_feature_refs = fm_dict.get("linkedFeatureRefs", [])
+            if isinstance(linked_feature_refs, list):
+                for raw in linked_feature_refs:
+                    if not isinstance(raw, dict):
+                        continue
+                    feature_value = raw.get("feature")
+                    if isinstance(feature_value, str) and feature_value.strip():
+                        explicit_feature_refs.add(feature_value.strip())
 
             for raw in refs.get("featureRefs", []):
                 if isinstance(raw, str) and raw.strip():

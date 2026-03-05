@@ -75,6 +75,74 @@ Body
             self.assertEqual(doc.frontmatter.lineageType, "expansion")
             self.assertIn("composite-artifact-infrastructure-v1", doc.frontmatter.linkedFeatures)
 
+    def test_parse_canonical_fields_and_typed_linked_features(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans" / "design-specs" / "features"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            path = docs_dir / "feature-alpha-v2.md"
+            path.write_text(
+                """---
+title: Feature Alpha UX
+doc_type: design_spec
+description: Detailed design scope.
+summary: Design summary.
+priority: high
+risk_level: medium
+complexity: high
+track: design
+timeline_estimate: 2 weeks
+target_release: R2
+milestone: M2
+decision_status: approved
+execution_readiness: ready
+test_impact: medium
+primary_doc_role: supporting_design
+feature_slug: feature-alpha-v2
+feature_family: feature-alpha
+feature_version: v2
+plan_ref: docs/project_plans/implementation_plans/features/feature-alpha-v2.md
+implementation_plan_ref: docs/project_plans/implementation_plans/features/feature-alpha-v2.md
+linked_features:
+  - feature-beta-v1
+  - feature: feature-gamma-v1
+    type: dependency
+    source: manual
+    confidence: 0.9
+linked_tasks:
+  - TASK-2.1
+request_log_ids:
+  - REQ-20260301-feature-alpha-2
+commit_refs:
+  - abc1234
+pr_refs:
+  - "321"
+---
+Body
+""",
+                encoding="utf-8",
+            )
+
+            doc = parse_document_file(path, root / "docs" / "project_plans", project_root=root)
+            self.assertIsNotNone(doc)
+            assert doc is not None
+            self.assertEqual(doc.docType, "design_doc")
+            self.assertEqual(doc.docSubtype, "design_spec")
+            self.assertEqual(doc.priority, "high")
+            self.assertEqual(doc.riskLevel, "medium")
+            self.assertEqual(doc.metadata.executionReadiness, "ready")
+            self.assertEqual(doc.metadata.testImpact, "medium")
+            self.assertEqual(doc.metadata.primaryDocRole, "supporting_design")
+            self.assertEqual(doc.featureSlug, "feature-alpha-v2")
+            self.assertEqual(doc.featureFamily, "feature-alpha")
+            self.assertEqual(doc.featureVersion, "v2")
+            self.assertIn("feature-gamma-v1", doc.frontmatter.linkedFeatures)
+            self.assertTrue(any(ref.feature == "feature-gamma-v1" for ref in doc.frontmatter.linkedFeatureRefs))
+            self.assertIn("TASK-2.1", doc.frontmatter.linkedTasks)
+            self.assertIn("REQ-20260301-feature-alpha-2", doc.frontmatter.requestLogIds)
+            self.assertIn("abc1234", doc.frontmatter.commitRefs)
+            self.assertIn("321", doc.frontmatter.prRefs)
+
 
 if __name__ == "__main__":
     unittest.main()
