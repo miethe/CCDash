@@ -123,6 +123,81 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertEqual(payload_signals.get("payloadTypeCounts", {}).get("function_call_output"), 1)
         self.assertEqual(payload_signals.get("toolNameCounts", {}).get("exec_command"), 1)
 
+    def test_codex_agent_tool_creates_agent_artifact_and_links_subthread(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "turn_context",
+                    "timestamp": "2026-03-05T09:00:00Z",
+                    "payload": {
+                        "type": "turn_context",
+                        "model": "gpt-5-codex",
+                        "cli_version": "0.9.3",
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-03-05T09:00:01Z",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "Agent",
+                        "call_id": "call-agent-1",
+                        "arguments": {
+                            "description": "TASK-5.1: Replace direct session usage",
+                            "prompt": "Migrate router to repository DI.",
+                            "subagent_type": "python-backend-engineer",
+                            "mode": "bypassPermissions",
+                            "run_in_background": True,
+                        },
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-03-05T09:00:02Z",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call-agent-1",
+                        "status": "success",
+                        "isAsync": True,
+                        "output": {
+                            "status": "async_launched",
+                            "agentId": "agent-xyz987",
+                        },
+                    },
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-03-05T09:00:03Z",
+                    "payload": {
+                        "type": "task_complete",
+                        "summary": "Task complete",
+                    },
+                },
+            ],
+            relative_path=".codex/sessions/2026/03/05/session-agent.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [log for log in session.logs if log.type == "tool" and log.toolCall and log.toolCall.name == "Agent"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("taskId"), "TASK-5.1")
+        self.assertEqual(metadata.get("taskSubagentType"), "python-backend-engineer")
+        self.assertEqual(metadata.get("taskMode"), "bypassPermissions")
+        self.assertEqual(metadata.get("taskRunInBackground"), True)
+        self.assertEqual(tool_logs[0].linkedSessionId, "S-agent-xyz987")
+
+        start_logs = [log for log in session.logs if log.type == "subagent_start"]
+        self.assertEqual(len(start_logs), 1)
+        self.assertEqual(start_logs[0].linkedSessionId, "S-agent-xyz987")
+        self.assertEqual(start_logs[0].metadata.get("subagentType"), "python-backend-engineer")
+
+        agent_artifacts = [artifact for artifact in session.linkedArtifacts if artifact.type == "agent"]
+        self.assertTrue(any(artifact.title == "python-backend-engineer" for artifact in agent_artifacts))
+
     def test_scan_sessions_supports_nested_codex_paths(self) -> None:
         path = self._write_jsonl(
             [

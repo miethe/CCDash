@@ -248,6 +248,7 @@ const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: 
 };
 
 const TASK_ID_TEXT_PATTERN = /\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b/;
+const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent']);
 
 const toTextBlob = (value: unknown): string => {
     if (typeof value === 'string') {
@@ -274,6 +275,7 @@ const extractTaskIdFromText = (...values: unknown[]): string | null => {
 };
 
 interface TaskToolDetails {
+    toolName: string;
     taskId: string | null;
     name: string | null;
     description: string | null;
@@ -282,25 +284,49 @@ interface TaskToolDetails {
     subagentType: string | null;
     mode: string | null;
     model: string | null;
+    runInBackground: boolean | null;
+    args: Record<string, unknown> | null;
 }
 
+const isSubagentToolCallName = (name?: string | null): boolean =>
+    SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
+
 const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
-    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+    if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
         return null;
     }
     const args = parseToolArgs(log.toolCall?.args);
     const metadata = asRecord(log.metadata);
+    const toolName = takeString(log.toolCall?.name) || 'Task';
 
     const name = takeString(metadata.taskName, args?.name);
     const description = takeString(metadata.taskDescription, args?.description);
     const promptText = takeString(metadata.taskPromptPreview, args?.prompt ? toTextBlob(args.prompt) : null);
     const taskId = takeString(metadata.taskId, extractTaskIdFromText(name, description, promptText));
-    const subagentType = takeString(metadata.taskSubagentType, args?.subagent_type, args?.subagentType);
+    const subagentType = takeString(
+        metadata.taskSubagentType,
+        args?.subagent_type,
+        args?.subagentType,
+        args?.agent_name,
+        args?.agentName,
+    );
     const mode = takeString(metadata.taskMode, args?.mode);
     const model = takeString(metadata.taskModel, args?.model);
     const promptPreview = promptText && promptText.length > 320 ? `${promptText.slice(0, 320)}...` : promptText;
+    const runInBackground = (() => {
+        if (typeof metadata.taskRunInBackground === 'boolean') return metadata.taskRunInBackground;
+        const raw = args?.run_in_background ?? args?.runInBackground;
+        if (typeof raw === 'boolean') return raw;
+        if (typeof raw === 'string') {
+            const normalized = raw.trim().toLowerCase();
+            if (normalized === 'true') return true;
+            if (normalized === 'false') return false;
+        }
+        return null;
+    })();
 
     return {
+        toolName,
         taskId,
         name,
         description,
@@ -309,6 +335,8 @@ const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
         subagentType,
         mode,
         model,
+        runInBackground,
+        args,
     };
 };
 
@@ -809,15 +837,18 @@ const LogItemBlurb: React.FC<{
                 {taskToolDetails ? (
                     <div className="min-w-0 space-y-0.5">
                         <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-amber-400'}`}>
-                            Task Invocation
+                            {taskToolDetails.toolName} Invocation
                         </div>
                         <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
-                            {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Task tool call'}
+                            {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Subagent tool call'}
                         </div>
                         <div className="flex items-center gap-1 text-[10px] text-slate-500">
                             {taskToolDetails.taskId && <span className="font-mono">{taskToolDetails.taskId}</span>}
                             {taskToolDetails.subagentType && <span>{taskToolDetails.subagentType}</span>}
                             {taskToolDetails.model && <span>{taskToolDetails.model}</span>}
+                            {typeof taskToolDetails.runInBackground === 'boolean' && (
+                                <span>{taskToolDetails.runInBackground ? 'background' : 'foreground'}</span>
+                            )}
                         </div>
                     </div>
                 ) : (mappedNonMessageLabel && formattedMessage?.mapped && mappedNonMessageAccent) ? (
@@ -901,6 +932,7 @@ const DetailPane: React.FC<{
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
+        if (log.type === 'tool' && taskToolDetails) return `${taskToolDetails.toolName} Invocation`;
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
         if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
@@ -1070,7 +1102,7 @@ const DetailPane: React.FC<{
 
                             {taskToolDetails && (
                                 <div className="p-4 border-b border-slate-800 bg-amber-500/5">
-                                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">Task Details</div>
+                                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">{taskToolDetails.toolName} Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         {taskToolDetails.taskId && (
                                             <div>
@@ -1102,6 +1134,12 @@ const DetailPane: React.FC<{
                                                 <div className="text-slate-300">{taskToolDetails.model}</div>
                                             </div>
                                         )}
+                                        {typeof taskToolDetails.runInBackground === 'boolean' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Run In Background</div>
+                                                <div className="text-slate-300">{taskToolDetails.runInBackground ? 'true' : 'false'}</div>
+                                            </div>
+                                        )}
                                         {taskToolDetails.promptPreview && (
                                             <div className="sm:col-span-2">
                                                 <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Prompt (Preview)</div>
@@ -1121,6 +1159,14 @@ const DetailPane: React.FC<{
                                         <pre className="mt-3 text-xs font-mono text-slate-300 bg-slate-900/60 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
                                             {taskToolDetails.prompt}
                                         </pre>
+                                    )}
+                                    {taskToolDetails.args && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Invocation Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(taskToolDetails.args, null, 2)}
+                                            </pre>
+                                        </div>
                                     )}
                                 </div>
                             )}
@@ -2753,7 +2799,7 @@ const ArtifactsView: React.FC<{
             }
             if (group.type === 'agent') {
                 for (const log of session.logs) {
-                    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+                    if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
                         continue;
                     }
                     const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
@@ -4943,7 +4989,7 @@ const SessionDetail: React.FC<{
         const names = new Map<string, string>();
 
         for (const log of session.logs) {
-            if (log.type !== 'tool' || log.toolCall?.name !== 'Task' || !log.linkedSessionId) {
+            if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name) || !log.linkedSessionId) {
                 continue;
             }
             const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);

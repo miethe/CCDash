@@ -40,6 +40,7 @@ _BATCH_HEADER_PATTERN = re.compile(r"(?:\*\*)?\s*Batch\s+([A-Za-z0-9_-]+)\s*(?:\
 _BATCH_BULLET_PATTERN = re.compile(r"^\s*-\s*\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$")
 _MODEL_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,}$")
 _MODEL_COMMAND_STOPWORDS = {"set", "to", "use", "default", "auto", "list", "show", "current", "model"}
+_SUBAGENT_TOOL_NAMES = {"task", "agent"}
 
 # Tools we treat as concrete file actions for session file tracking.
 _FILE_ACTION_BY_TOOL: dict[str, str] = {
@@ -1080,6 +1081,10 @@ def _extract_task_id(*values: Any) -> str:
     return ""
 
 
+def _is_subagent_tool_name(name: str) -> bool:
+    return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
+
+
 def _classify_bash_result(output_text: str, is_error: bool) -> str:
     if is_error:
         return "error"
@@ -1749,6 +1754,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         raw_agent_id: str,
         event_timestamp: str,
         source: str,
+        source_tool_name: str | None = None,
     ) -> None:
         if not parent_tool_call_id:
             return
@@ -1783,10 +1789,10 @@ def parse_session_file(path: Path) -> AgentSession | None:
         add_artifact(
             kind="agent",
             title=f"agent-{clean_agent_id}",
-            description="Subagent thread spawned from a Task tool call",
+            description="Subagent thread spawned from an Agent/Task tool call",
             source=source,
             source_log_id=start_log.id,
-            source_tool_name="Task",
+            source_tool_name=source_tool_name or "Task",
         )
 
     def record_entry_context(entry: dict[str, Any]) -> None:
@@ -2491,13 +2497,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
                                 "sourceLogId": tool_log.id,
                                 "artifactId": artifact_id or "",
                             }
-                if tool_name == "Task" and isinstance(tool_input, dict):
+                if _is_subagent_tool_name(tool_name) and isinstance(tool_input, dict):
                     sub_type = tool_input.get("subagent_type")
-                    title = str(sub_type) if isinstance(sub_type, str) and sub_type else "Task subagent"
+                    if not isinstance(sub_type, str) or not sub_type.strip():
+                        sub_type = tool_input.get("subagentType")
+                    fallback_title = f"{tool_name} subagent" if tool_name else "Task subagent"
+                    title = str(sub_type) if isinstance(sub_type, str) and sub_type else fallback_title
                     add_artifact(
                         kind="agent",
                         title=title,
-                        description="Task tool invocation that may spawn a subagent",
+                        description=f"{tool_name} tool invocation that may spawn a subagent",
                         source="tool",
                         source_log_id=tool_log.id,
                         source_tool_name=tool_name,
@@ -2507,6 +2516,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     task_prompt = _coerce_text_blob(tool_input.get("prompt"))
                     task_mode = str(tool_input.get("mode") or "").strip()
                     task_model = str(tool_input.get("model") or "").strip()
+                    task_run_in_background = tool_input.get("run_in_background")
 
                     if task_name:
                         tool_log.metadata["taskName"] = task_name[:240]
@@ -2519,6 +2529,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         tool_log.metadata["taskMode"] = task_mode[:120]
                     if task_model:
                         tool_log.metadata["taskModel"] = task_model[:120]
+                    if isinstance(task_run_in_background, bool):
+                        tool_log.metadata["taskRunInBackground"] = task_run_in_background
+                    elif isinstance(task_run_in_background, str):
+                        lowered = task_run_in_background.strip().lower()
+                        if lowered in {"true", "false"}:
+                            tool_log.metadata["taskRunInBackground"] = lowered == "true"
 
                     task_id = _extract_task_id(task_name, task_description, task_prompt)
                     if task_id:
@@ -2534,6 +2550,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         )
                     if isinstance(sub_type, str) and sub_type.strip():
                         tool_log.metadata["taskSubagentType"] = sub_type.strip()
+                        tool_log.metadata["toolCategory"] = "agent"
+                        tool_log.metadata["toolLabel"] = sub_type.strip()
 
             elif block_type == "tool_result":
                 related_id = block.get("tool_use_id")
@@ -2594,12 +2612,18 @@ def parse_session_file(path: Path) -> AgentSession | None:
                             if file_update.sourceLogId == related_log.id and file_update.action == "update":
                                 file_update.action = "create"
                     if (
-                        tool_name == "Task"
+                        _is_subagent_tool_name(str(tool_name or ""))
                         and isinstance(related_id, str)
                         and launch_agent_id
                         and (launch_status == "async_launched" or "agentid:" in output_text.lower())
                     ):
-                        link_subagent_to_task_call(related_id, launch_agent_id, current_ts, "tool-result")
+                        link_subagent_to_task_call(
+                            related_id,
+                            launch_agent_id,
+                            current_ts,
+                            "tool-result",
+                            source_tool_name=str(tool_name or "Task"),
+                        )
                         if isinstance(related_log.metadata, dict):
                             related_log.metadata["taskLaunchStatus"] = launch_status
                             if isinstance(tool_use_result, dict):
@@ -2890,7 +2914,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
     task_tool_logs = [
         log for log in logs
-        if log.type == "tool" and log.toolCall and str(log.toolCall.name or "") == "Task"
+        if log.type == "tool" and log.toolCall and _is_subagent_tool_name(str(log.toolCall.name or ""))
     ]
     linked_subagent_ids = {
         str(log.linkedSessionId)

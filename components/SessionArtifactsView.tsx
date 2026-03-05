@@ -28,6 +28,8 @@ const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null 
   }
 };
 
+const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent']);
+
 const takeString = (...values: unknown[]): string | null => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
@@ -36,6 +38,9 @@ const takeString = (...values: unknown[]): string | null => {
   }
   return null;
 };
+
+const isSubagentToolCallName = (name?: string | null): boolean =>
+  SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
 
 const asRecord = (value: unknown): Record<string, any> => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -321,7 +326,7 @@ export const SessionArtifactsView: React.FC<{
       }
       if (group.type === 'agent') {
         for (const log of session.logs) {
-          if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+          if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
             continue;
           }
           const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);

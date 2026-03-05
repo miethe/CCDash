@@ -341,6 +341,74 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(len(task_artifacts), 1)
         self.assertEqual(task_artifacts[0].title, "SSO-1.5")
 
+    def test_agent_tool_extracts_metadata_and_links_subthread(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_agent_1",
+                                "name": "Agent",
+                                "input": {
+                                    "description": "TASK-5.1: Replace direct session usage",
+                                    "prompt": "Migrate router to repository DI.",
+                                    "subagent_type": "python-backend-engineer",
+                                    "mode": "bypassPermissions",
+                                    "run_in_background": True,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T10:00:01Z",
+                    "toolUseResult": {
+                        "status": "async_launched",
+                        "isAsync": True,
+                        "agentId": "abc123",
+                    },
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_agent_1",
+                                "content": [{"type": "text", "text": "agentId: abc123"}],
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        agent_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Agent"]
+        self.assertEqual(len(agent_tools), 1)
+        metadata = agent_tools[0].metadata
+        self.assertEqual(metadata.get("taskId"), "TASK-5.1")
+        self.assertEqual(metadata.get("taskDescription"), "TASK-5.1: Replace direct session usage")
+        self.assertEqual(metadata.get("taskSubagentType"), "python-backend-engineer")
+        self.assertEqual(metadata.get("taskMode"), "bypassPermissions")
+        self.assertEqual(metadata.get("taskRunInBackground"), True)
+        self.assertEqual(agent_tools[0].linkedSessionId, "S-agent-abc123")
+
+        starts = [l for l in session.logs if l.type == "subagent_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0].linkedSessionId, "S-agent-abc123")
+
+        agent_titles = {a.title for a in session.linkedArtifacts if a.type == "agent"}
+        self.assertIn("python-backend-engineer", agent_titles)
+
     def test_thinking_becomes_thought_log_and_extracts_artifacts_and_files(self) -> None:
         path = self._write_jsonl(
             [
