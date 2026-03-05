@@ -380,6 +380,7 @@ const getTestRunDetails = (log: SessionLog): TestRunDetails | null => {
         return null;
     }
     const metadata = asRecord(log.metadata);
+    const toolCategory = String(metadata.toolCategory || '').trim().toLowerCase();
     const args = parseToolArgs(log.toolCall?.args);
     const testRun = asRecord(metadata.testRun);
     const result = asRecord(testRun.result);
@@ -394,11 +395,12 @@ const getTestRunDetails = (log: SessionLog): TestRunDetails | null => {
         args?.cmd,
         args?.script,
     ) || '';
+    const inferredFramework = inferTestFrameworkFromCommand(command);
     const framework = takeString(
         testRun.framework,
         metadata.testFramework,
-        metadata.toolLabel,
-        inferTestFrameworkFromCommand(command),
+        inferredFramework,
+        toolCategory === 'test' ? 'test' : '',
     );
     if (!framework) {
         return null;
@@ -529,6 +531,18 @@ const getTranscriptSourceText = (log: SessionLog): string => {
         const skillName = takeString(log.skillDetails?.name, asRecord(log.metadata).skill, log.content);
         const skillToken = skillName ? toSkillMentionToken(skillName) : null;
         if (skillToken) return skillToken;
+    }
+
+    if (log.type === 'system') {
+        const metadata = asRecord(log.metadata);
+        if (String(metadata.eventType || '').trim().toLowerCase() === 'hook_progress') {
+            return takeString(
+                metadata.hookPath,
+                metadata.hookCommand,
+                metadata.hookName,
+                log.content,
+            );
+        }
     }
 
     return String(log.content || '');
@@ -1632,7 +1646,11 @@ const TranscriptView: React.FC<{
     const formattedMessagesByLogId = useMemo(() => {
         const map = new Map<string, TranscriptFormattedMessage>();
         logs.forEach(log => {
-            if (log.type === 'message' || log.type === 'command' || log.type === 'tool' || log.type === 'skill') {
+            const isHookSystemEvent = (
+                log.type === 'system'
+                && String(asRecord(log.metadata).eventType || '').trim().toLowerCase() === 'hook_progress'
+            );
+            if (log.type === 'message' || log.type === 'command' || log.type === 'tool' || log.type === 'skill' || isHookSystemEvent) {
                 const sourceText = getTranscriptSourceText(log);
                 map.set(log.id, parseTranscriptMessage(sourceText, {
                     mappings: transcriptMappings,

@@ -239,6 +239,45 @@ class SessionParserTests(unittest.TestCase):
         task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
         self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a123")
 
+    def test_hook_progress_creates_hook_artifact_with_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "progress",
+                    "timestamp": "2026-03-05T11:00:00Z",
+                    "data": {
+                        "type": "hook_progress",
+                        "hookName": "notebooklm-sync-hook.sh",
+                        "hookEvent": "post-tool",
+                        "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notebooklm-sync-hook.sh --session abc",
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        hook_logs = [
+            log
+            for log in session.logs
+            if log.type == "system" and log.metadata.get("eventType") == "hook_progress"
+        ]
+        self.assertEqual(len(hook_logs), 1)
+        self.assertEqual(hook_logs[0].metadata.get("hookName"), "notebooklm-sync-hook.sh")
+        self.assertEqual(hook_logs[0].metadata.get("hookEvent"), "post-tool")
+        self.assertIn(".claude/hooks/notebooklm-sync-hook.sh", str(hook_logs[0].metadata.get("hookPath") or ""))
+
+        hook_artifacts = [a for a in session.linkedArtifacts if a.type == "hook"]
+        self.assertEqual(len(hook_artifacts), 1)
+        self.assertEqual(hook_artifacts[0].title, "notebooklm-sync-hook.sh")
+        self.assertEqual(hook_artifacts[0].source, "hook_progress")
+
+        hook_forensics = session.sessionForensics.get("entryContext", {}).get("hookInvocations", [])
+        self.assertEqual(len(hook_forensics), 1)
+        self.assertEqual(hook_forensics[0].get("hookName"), "notebooklm-sync-hook.sh")
+
     def test_async_task_tool_result_creates_subagent_start_link(self) -> None:
         path = self._write_jsonl(
             [

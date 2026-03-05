@@ -45,6 +45,7 @@ _TASK_ID_PATTERN = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b"
 _BATCH_HEADER_PATTERN = re.compile(r"(?:\*\*)?\s*Batch\s+([A-Za-z0-9_-]+)\s*(?:\*\*)?", re.IGNORECASE)
 _BATCH_BULLET_PATTERN = re.compile(r"^\s*-\s*\*\*([^*]+)\*\*\s*:\s*(.+?)\s*$")
 _MODEL_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,}$")
+_HOOK_PATH_FRAGMENT_PATTERN = re.compile(r"\.claude/hooks/[A-Za-z0-9._-]+", re.IGNORECASE)
 _MODEL_COMMAND_STOPWORDS = {"set", "to", "use", "default", "auto", "list", "show", "current", "model"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
 
@@ -1091,6 +1092,46 @@ def _is_subagent_tool_name(name: str) -> bool:
     return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
 
 
+def _extract_hook_path(value: Any) -> str:
+    text = _coerce_text_blob(value).replace("\\", "/")
+    if not text:
+        return ""
+    match = _HOOK_PATH_FRAGMENT_PATTERN.search(text)
+    if not match:
+        return ""
+
+    fragment_start = match.start()
+    start = fragment_start
+    while start > 0 and text[start - 1] not in {" ", "\t", "\n", "'", '"', "`", "|", "&", ";", "(", ")", "<", ">"}:
+        start -= 1
+
+    end = match.end()
+    while end < len(text) and text[end] not in {" ", "\t", "\n", "'", '"', "`", "|", "&", ";", "(", ")", "<", ">"}:
+        end += 1
+    return text[start:end].strip().strip("'\"`")
+
+
+def _parse_hook_progress(data: dict[str, Any]) -> dict[str, str]:
+    command = _coerce_text_blob(data.get("command") or data.get("cmd") or data.get("script"))
+    hook_name = str(data.get("hookName") or data.get("name") or "").strip()
+    hook_event = str(data.get("hookEvent") or data.get("event") or "").strip()
+    hook_path = _extract_hook_path(data.get("hookPath") or data.get("path"))
+    if not hook_path:
+        hook_path = _extract_hook_path(command)
+    if not hook_path:
+        hook_path = _extract_hook_path(hook_name)
+    if not hook_name and hook_path:
+        hook_name = Path(hook_path).name
+    summary = command or hook_path or hook_name or hook_event or "Hook progress"
+    return {
+        "summary": summary,
+        "command": command,
+        "hookName": hook_name,
+        "hookPath": hook_path,
+        "hookEvent": hook_event,
+    }
+
+
 def _classify_bash_result(output_text: str, is_error: bool) -> str:
     if is_error:
         return "error"
@@ -1428,6 +1469,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "skillLoads": [],
         "planStatusUpdates": [],
         "batchExecutions": [],
+        "hookInvocations": [],
     }
     resource_observations: list[dict[str, Any]] = []
     resource_observation_seen: set[tuple[str, str, str, str]] = set()
@@ -2166,14 +2208,48 @@ def parse_session_file(path: Path) -> AgentSession | None:
                                 )
 
             elif isinstance(data, dict) and data.get("type") == "hook_progress":
-                msg = data.get("command") or data.get("hookName") or data.get("hookEvent") or "Hook progress"
-                append_log(
+                hook_info = _parse_hook_progress(data)
+                metadata = {
+                    "eventType": "hook_progress",
+                    "hook": hook_info.get("hookName", ""),
+                    "hookName": hook_info.get("hookName", ""),
+                    "hookPath": hook_info.get("hookPath", ""),
+                    "hookEvent": hook_info.get("hookEvent", ""),
+                    "hookCommand": hook_info.get("command", ""),
+                }
+                hook_log_idx = append_log(
                     timestamp=current_ts,
                     speaker="system",
                     type="system",
-                    content=str(msg),
-                    metadata={"hook": data.get("hookName", "")},
+                    content=str(hook_info.get("summary") or "Hook progress"),
+                    metadata=metadata,
                 )
+                hook_title = (
+                    hook_info.get("hookName")
+                    or (Path(hook_info["hookPath"]).name if hook_info.get("hookPath") else "")
+                    or "hook"
+                )
+                hook_description_parts = [
+                    "Hook invocation captured from progress event.",
+                    f"Event: {hook_info['hookEvent']}" if hook_info.get("hookEvent") else "",
+                    f"Path: {hook_info['hookPath']}" if hook_info.get("hookPath") else "",
+                ]
+                add_artifact(
+                    kind="hook",
+                    title=hook_title,
+                    description=" ".join(part for part in hook_description_parts if part).strip(),
+                    source="hook_progress",
+                    source_log_id=logs[hook_log_idx].id,
+                    source_tool_name="Hook",
+                )
+                session_context["hookInvocations"].append({
+                    "timestamp": current_ts,
+                    "hookName": hook_info.get("hookName", ""),
+                    "hookPath": hook_info.get("hookPath", ""),
+                    "hookEvent": hook_info.get("hookEvent", ""),
+                    "hookCommand": hook_info.get("command", ""),
+                    "sourceLogId": logs[hook_log_idx].id,
+                })
 
             label = data.get("message") if isinstance(data, dict) else "Progress event"
             if isinstance(label, str) and label:
@@ -3118,6 +3194,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "skillLoads": list(session_context.get("skillLoads", []))[:200],
             "planStatusUpdates": list(session_context.get("planStatusUpdates", []))[:400],
             "batchExecutions": list(session_context.get("batchExecutions", []))[:200],
+            "hookInvocations": list(session_context.get("hookInvocations", []))[:400],
         },
         "sidecars": {
             "todos": todo_sidecar,
