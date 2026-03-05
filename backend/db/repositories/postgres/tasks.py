@@ -77,6 +77,29 @@ class PostgresTaskRepository:
             rows = await self.db.fetch("SELECT * FROM tasks ORDER BY updated_at DESC")
         return [dict(r) for r in rows]
 
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+        if project_id:
+            rows = await self.db.fetch(
+                "SELECT * FROM tasks WHERE project_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
+                project_id,
+                limit,
+                offset,
+            )
+        else:
+            rows = await self.db.fetch(
+                "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT $1 OFFSET $2",
+                limit,
+                offset,
+            )
+        return [dict(r) for r in rows]
+
+    async def count(self, project_id: str | None = None) -> int:
+        if project_id:
+            value = await self.db.fetchval("SELECT COUNT(*) FROM tasks WHERE project_id = $1", project_id)
+        else:
+            value = await self.db.fetchval("SELECT COUNT(*) FROM tasks")
+        return int(value or 0)
+
     async def list_by_feature(self, feature_id: str, phase_id: str | None = None) -> list[dict]:
         if phase_id:
             rows = await self.db.fetch(

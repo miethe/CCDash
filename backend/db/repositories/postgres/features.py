@@ -63,6 +63,29 @@ class PostgresFeatureRepository:
             rows = await self.db.fetch("SELECT * FROM features ORDER BY name")
         return [dict(r) for r in rows]
 
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+        if project_id:
+            rows = await self.db.fetch(
+                "SELECT * FROM features WHERE project_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
+                project_id,
+                limit,
+                offset,
+            )
+        else:
+            rows = await self.db.fetch(
+                "SELECT * FROM features ORDER BY name LIMIT $1 OFFSET $2",
+                limit,
+                offset,
+            )
+        return [dict(r) for r in rows]
+
+    async def count(self, project_id: str | None = None) -> int:
+        if project_id:
+            value = await self.db.fetchval("SELECT COUNT(*) FROM features WHERE project_id = $1", project_id)
+        else:
+            value = await self.db.fetchval("SELECT COUNT(*) FROM features")
+        return int(value or 0)
+
     async def upsert_phases(self, feature_id: str, phases: list[dict]) -> None:
         await self.db.execute("DELETE FROM feature_phases WHERE feature_id = $1", feature_id)
 

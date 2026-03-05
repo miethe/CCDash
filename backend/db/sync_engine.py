@@ -10,11 +10,13 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import re
 import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,9 @@ from backend.parsers.sessions import parse_session_file
 from backend.parsers.documents import parse_document_file
 from backend.parsers.progress import parse_progress_file
 from backend.parsers.features import scan_features
+from backend.parsers.test_adapters import parse_test_artifact
+from backend.services.test_ingest import ingest_run as ingest_test_run
+from backend.services.test_config import ResolvedTestSource
 from backend.document_linking import (
     alias_tokens_from_path,
     canonical_project_path,
@@ -43,6 +48,11 @@ from backend.document_linking import (
     slug_from_path,
 )
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
+from backend.session_mappings import (
+    load_session_mappings,
+    workflow_command_exemptions,
+    workflow_command_markers,
+)
 
 from backend.db.factory import (
     get_session_repository,
@@ -59,16 +69,6 @@ logger = logging.getLogger("ccdash.sync")
 
 _COMMAND_NAME_TAG_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_TAG_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
-_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
-_KEY_WORKFLOW_COMMANDS = (
-    "/dev:execute-phase",
-    "/recovering-sessions",
-    "/dev:quick-feature",
-    "/plan:plan-feature",
-    "/dev:implement-story",
-    "/dev:complete-user-story",
-    "/fix:debug",
-)
 _LINK_STATE_METADATA_KEY = "entity_link_state"
 _COMMIT_HEAD_METADATA_KEY = "session_commit_head"
 _PULL_REQUEST_RE = re.compile(r"(?:/pull/|/pulls/|#)(\d+)")
@@ -132,46 +132,60 @@ def _command_token(command_name: str) -> str:
     return normalized.split()[0]
 
 
-def _is_non_consequential_command(command_name: str) -> bool:
-    return _command_token(command_name) in _NON_CONSEQUENTIAL_COMMAND_PREFIXES
+def _is_non_consequential_command(command_name: str, exclusions: set[str] | None = None) -> bool:
+    allowed_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
+    return _command_token(command_name) in allowed_exclusions
 
 
-def _command_priority_rank(command_name: str) -> int:
+def _command_priority_rank(command_name: str, workflow_markers: tuple[str, ...] | None = None) -> int:
+    markers = workflow_markers or workflow_command_markers()
     lowered = _normalize_command_label(command_name).lower()
     if not lowered:
-        return len(_KEY_WORKFLOW_COMMANDS) + 1
-    for idx, marker in enumerate(_KEY_WORKFLOW_COMMANDS):
+        return len(markers) + 1
+    for idx, marker in enumerate(markers):
         if marker in lowered:
             return idx
-    return len(_KEY_WORKFLOW_COMMANDS)
+    return len(markers)
 
 
-def _select_linking_commands(command_names: set[str]) -> list[str]:
+def _select_linking_commands(
+    command_names: set[str],
+    workflow_markers: tuple[str, ...] | None = None,
+    exclusions: set[str] | None = None,
+) -> list[str]:
+    markers = workflow_markers or workflow_command_markers()
+    command_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
     unique: list[str] = []
     seen: set[str] = set()
     for raw in command_names:
         normalized = _normalize_command_label(raw)
-        if not normalized or _is_non_consequential_command(normalized):
+        if not normalized or _is_non_consequential_command(normalized, command_exclusions):
             continue
         key = normalized.lower()
         if key in seen:
             continue
         seen.add(key)
         unique.append(normalized)
-    unique.sort(key=lambda value: (_command_priority_rank(value), value.lower()))
+    unique.sort(key=lambda value: (_command_priority_rank(value, markers), value.lower()))
     return unique
 
 
-def _select_preferred_command_event(command_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _select_preferred_command_event(
+    command_events: list[dict[str, Any]],
+    workflow_markers: tuple[str, ...] | None = None,
+    exclusions: set[str] | None = None,
+) -> dict[str, Any] | None:
+    markers = workflow_markers or workflow_command_markers()
+    command_exclusions = exclusions if exclusions is not None else workflow_command_exemptions()
     meaningful = [
         event
         for event in command_events
-        if isinstance(event, dict) and not _is_non_consequential_command(str(event.get("name") or ""))
+        if isinstance(event, dict) and not _is_non_consequential_command(str(event.get("name") or ""), command_exclusions)
     ]
     if not meaningful:
         return None
 
-    for marker in _KEY_WORKFLOW_COMMANDS:
+    for marker in markers:
         for event in meaningful:
             command_name = _normalize_command_label(str(event.get("name") or ""))
             if marker in command_name.lower():
@@ -938,6 +952,8 @@ class SyncEngine:
         self._git_doc_dates_cache_index: dict[str, dict[str, str]] = {}
         self._git_doc_dates_cache_dirty: set[str] = set()
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
+        self._test_source_errors: dict[str, str] = {}
+        self._test_source_synced_at: dict[str, str] = {}
 
     async def _replace_session_telemetry_events(
         self,
@@ -1804,6 +1820,80 @@ class SyncEngine:
         """Create an observable operation and return its ID."""
         return await self._start_operation(kind, project_id, trigger, metadata or {})
 
+    async def update_operation(
+        self,
+        operation_id: str,
+        *,
+        phase: str | None = None,
+        message: str | None = None,
+        progress: dict[str, Any] | None = None,
+        counters: dict[str, Any] | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> None:
+        """Public wrapper for updating operation observability payloads."""
+        await self._update_operation(
+            operation_id,
+            phase=phase,
+            message=message,
+            progress=progress,
+            counters=counters,
+            stats=stats,
+        )
+
+    async def finish_operation(
+        self,
+        operation_id: str,
+        *,
+        status: str,
+        stats: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        """Public wrapper for finalizing operation status."""
+        await self._finish_operation(
+            operation_id,
+            status=status,
+            stats=stats,
+            error=error,
+        )
+
+    async def capture_analytics_snapshot(
+        self,
+        project_id: str,
+        *,
+        trigger: str = "api",
+    ) -> dict[str, Any]:
+        """Capture analytics snapshot as a first-class observable operation."""
+        operation_id = await self._start_operation(
+            "analytics_snapshot",
+            project_id,
+            trigger,
+            {"projectId": project_id},
+        )
+        stats: dict[str, Any] = {"operation_id": operation_id}
+        try:
+            await self._update_operation(
+                operation_id,
+                phase="analytics",
+                message="Capturing analytics snapshot",
+            )
+            await self._capture_analytics(project_id)
+            await self._update_operation(
+                operation_id,
+                phase="completed",
+                message="Analytics snapshot completed",
+                stats=stats,
+            )
+            await self._finish_operation(operation_id, status="completed", stats=stats)
+            return stats
+        except Exception as exc:
+            await self._finish_operation(
+                operation_id,
+                status="failed",
+                stats=stats,
+                error=str(exc),
+            )
+            raise
+
     async def list_operations(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return latest operation snapshots, newest first."""
         async with self._ops_lock:
@@ -2376,9 +2466,315 @@ class SyncEngine:
             "suspects": suspects_as_dicts(suspects),
         }
 
+    def _source_state_key(self, source: ResolvedTestSource) -> str:
+        return f"{source.platform_id}:{source.resolved_dir}"
+
+    def get_source_runtime_state(self, source: ResolvedTestSource) -> tuple[str, str]:
+        key = self._source_state_key(source)
+        return (
+            self._test_source_errors.get(key, ""),
+            self._test_source_synced_at.get(key, ""),
+        )
+
+    def _path_matches_source(self, source: ResolvedTestSource, path: Path) -> bool:
+        if path == source.resolved_dir:
+            return False
+        if source.resolved_dir not in path.parents:
+            return False
+        if not source.patterns:
+            return True
+        rel_path = path.relative_to(source.resolved_dir).as_posix()
+        file_name = path.name
+        for pattern in source.patterns:
+            token = pattern.strip()
+            if not token:
+                continue
+            if fnmatch(rel_path, token) or Path(rel_path).match(token):
+                return True
+            if token.startswith("**/"):
+                leaf = token[3:]
+                if fnmatch(file_name, leaf):
+                    return True
+            if "/" not in token and fnmatch(file_name, token):
+                return True
+        return False
+
+    def _match_source_for_path(self, sources: list[ResolvedTestSource], path: Path) -> ResolvedTestSource | None:
+        for source in sources:
+            if self._path_matches_source(source, path):
+                return source
+        return None
+
+    def _discover_source_files(
+        self,
+        source: ResolvedTestSource,
+        *,
+        changed_files: list[Path] | None = None,
+        max_files_per_scan: int = 500,
+    ) -> list[Path]:
+        if not source.resolved_dir.exists():
+            return []
+
+        discovered: list[Path] = []
+        if changed_files is not None:
+            for path in changed_files:
+                if not path.exists():
+                    continue
+                if self._path_matches_source(source, path):
+                    discovered.append(path)
+        elif source.patterns:
+            for pattern in source.patterns:
+                discovered.extend(source.resolved_dir.glob(pattern))
+        else:
+            discovered.extend(source.resolved_dir.rglob("*"))
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for path in sorted(discovered):
+            if not path.is_file():
+                continue
+            key = os.path.realpath(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(path)
+            if len(unique) >= max_files_per_scan:
+                break
+        return unique
+
+    async def _store_test_metrics(self, project_id: str, metrics: list[dict[str, Any]]) -> int:
+        if not metrics:
+            return 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        inserted = 0
+        if isinstance(self.db, aiosqlite.Connection):
+            for metric in metrics:
+                await self.db.execute(
+                    """
+                    INSERT INTO test_metrics (
+                        project_id, run_id, platform, metric_type, metric_name,
+                        metric_value, unit, metadata_json, source_file, collected_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        str(metric.get("run_id") or "").strip(),
+                        str(metric.get("platform") or "").strip(),
+                        str(metric.get("metric_type") or "").strip(),
+                        str(metric.get("metric_name") or "").strip(),
+                        float(metric.get("metric_value") or 0.0),
+                        str(metric.get("unit") or "").strip(),
+                        json.dumps(metric.get("metadata", {})),
+                        str(metric.get("source_file") or "").strip(),
+                        now_iso,
+                    ),
+                )
+                inserted += 1
+            await self.db.commit()
+            return inserted
+
+        for metric in metrics:
+            await self.db.execute(
+                """
+                INSERT INTO test_metrics (
+                    project_id, run_id, platform, metric_type, metric_name,
+                    metric_value, unit, metadata_json, source_file, collected_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                """,
+                project_id,
+                str(metric.get("run_id") or "").strip(),
+                str(metric.get("platform") or "").strip(),
+                str(metric.get("metric_type") or "").strip(),
+                str(metric.get("metric_name") or "").strip(),
+                float(metric.get("metric_value") or 0.0),
+                str(metric.get("unit") or "").strip(),
+                json.dumps(metric.get("metadata", {})),
+                str(metric.get("source_file") or "").strip(),
+                now_iso,
+            )
+            inserted += 1
+        return inserted
+
+    async def _sync_single_test_source(
+        self,
+        project_id: str,
+        source: ResolvedTestSource,
+        path: Path,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        file_path = str(path)
+        mtime = path.stat().st_mtime
+        state_key = self._source_state_key(source)
+
+        if not force:
+            cached = await self.sync_repo.get_sync_state(file_path)
+            if cached and cached["file_mtime"] == mtime:
+                return {"synced": False, "metrics": 0, "errors": []}
+
+        overall_t0 = time.monotonic()
+        file_hash = _file_hash(path)
+
+        try:
+            with observability.start_span(
+                "ccdash.sync.test_results.parse",
+                {
+                    "ccdash.project_id": project_id,
+                    "ccdash.file_path": file_path,
+                    "ccdash.platform": source.platform_id,
+                },
+            ):
+                t0 = time.monotonic()
+                parsed = parse_test_artifact(source.platform_id, path, project_id)
+                parse_ms = int((time.monotonic() - t0) * 1000)
+        except Exception:
+            observability.record_parser_failure("test_results", project_id=project_id)
+            raise
+
+        errors = list(parsed.errors)
+        metrics_inserted = 0
+        if parsed.run_payload is not None:
+            response = await ingest_test_run(parsed.run_payload, self.db)
+            if response.errors:
+                errors.extend(response.errors)
+        if parsed.metrics:
+            metrics_inserted = await self._store_test_metrics(project_id, parsed.metrics)
+
+        await self.sync_repo.upsert_sync_state(
+            {
+                "file_path": file_path,
+                "file_hash": file_hash,
+                "file_mtime": mtime,
+                "entity_type": f"test_result:{source.platform_id}",
+                "project_id": project_id,
+                "last_synced": datetime.now(timezone.utc).isoformat(),
+                "parse_ms": parse_ms,
+            }
+        )
+
+        if errors:
+            self._test_source_errors[state_key] = "; ".join(errors)[:1500]
+        else:
+            self._test_source_errors.pop(state_key, None)
+        self._test_source_synced_at[state_key] = datetime.now(timezone.utc).isoformat()
+
+        observability.record_ingestion(
+            "test_results",
+            "success",
+            (time.monotonic() - overall_t0) * 1000.0,
+            project_id=project_id,
+        )
+        return {"synced": True, "metrics": metrics_inserted, "errors": errors}
+
+    async def sync_test_sources(
+        self,
+        project_id: str,
+        sources: list[ResolvedTestSource],
+        *,
+        force: bool = False,
+        changed_files: list[Path] | None = None,
+        max_files_per_scan: int = 500,
+        max_parse_concurrency: int = 4,
+    ) -> dict[str, Any]:
+        stats: dict[str, Any] = {
+            "synced": 0,
+            "skipped": 0,
+            "errors": 0,
+            "metrics": 0,
+            "platforms": {},
+        }
+        if not config.CCDASH_TEST_VISUALIZER_ENABLED:
+            return stats
+
+        work_items: list[tuple[ResolvedTestSource, Path]] = []
+        for source in sources:
+            if not source.enabled:
+                continue
+            files = self._discover_source_files(
+                source,
+                changed_files=changed_files,
+                max_files_per_scan=max_files_per_scan,
+            )
+            for file_path in files:
+                work_items.append((source, file_path))
+
+        if not work_items:
+            return stats
+
+        semaphore = asyncio.Semaphore(max(1, int(max_parse_concurrency)))
+
+        async def _run_one(source: ResolvedTestSource, file_path: Path) -> tuple[str, dict[str, Any]]:
+            async with semaphore:
+                try:
+                    result = await self._sync_single_test_source(project_id, source, file_path, force=force)
+                except Exception as exc:
+                    logger.error("Failed to sync %s artifact %s: %s", source.platform_id, file_path, exc)
+                    state_key = self._source_state_key(source)
+                    self._test_source_errors[state_key] = str(exc)[:1500]
+                    return source.platform_id, {"synced": False, "metrics": 0, "errors": [str(exc)], "failed": True}
+                return source.platform_id, result
+
+        results = await asyncio.gather(*[_run_one(source, file_path) for source, file_path in work_items])
+        for platform_id, result in results:
+            platform_stats = stats["platforms"].setdefault(
+                platform_id, {"synced": 0, "skipped": 0, "errors": 0, "metrics": 0}
+            )
+            if result.get("failed"):
+                stats["errors"] += 1
+                platform_stats["errors"] += 1
+                continue
+            if result.get("synced"):
+                stats["synced"] += 1
+                platform_stats["synced"] += 1
+            else:
+                stats["skipped"] += 1
+                platform_stats["skipped"] += 1
+            metrics_count = int(result.get("metrics") or 0)
+            stats["metrics"] += metrics_count
+            platform_stats["metrics"] += metrics_count
+            if result.get("errors"):
+                stats["errors"] += 1
+                platform_stats["errors"] += 1
+
+        return stats
+
+    async def sync_test_results(
+        self,
+        project_id: str,
+        results_dir: Path,
+        force: bool = False,
+        changed_files: list[Path] | None = None,
+    ) -> dict:
+        """Backward-compatible JUnit-only sync wrapper."""
+        source = ResolvedTestSource(
+            platform_id="pytest",
+            enabled=True,
+            watch=True,
+            results_dir=str(results_dir),
+            resolved_dir=results_dir,
+            patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
+        )
+        stats = await self.sync_test_sources(
+            project_id,
+            [source],
+            force=force,
+            changed_files=changed_files,
+            max_files_per_scan=500,
+            max_parse_concurrency=2,
+        )
+        return {
+            "synced": int(stats.get("synced", 0)),
+            "skipped": int(stats.get("skipped", 0)),
+            "errors": int(stats.get("errors", 0)),
+            "metrics": int(stats.get("metrics", 0)),
+            "platforms": stats.get("platforms", {}),
+        }
+
     async def sync_changed_files(
         self, project_id: str, changed_files: list[tuple[str, Path]],
         sessions_dir: Path, docs_dir: Path, progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
         operation_id: str | None = None,
         trigger: str = "watcher",
     ) -> dict:
@@ -2386,7 +2782,15 @@ class SyncEngine:
 
         changed_files: list of (change_type, path) where change_type is 'modified'|'added'|'deleted'
         """
-        stats = {"sessions": 0, "documents": 0, "tasks": 0, "features": 0, "links_created": 0, "operation_id": ""}
+        stats = {
+            "sessions": 0,
+            "documents": 0,
+            "tasks": 0,
+            "tests": 0,
+            "features": 0,
+            "links_created": 0,
+            "operation_id": "",
+        }
         if not operation_id and trigger != "watcher":
             operation_id = await self._start_operation(
                 "sync_changed_files",
@@ -2408,6 +2812,25 @@ class SyncEngine:
         should_resync_features = False
         should_rebuild_links = False
         project_root = infer_project_root(docs_dir, progress_dir)
+        resolved_test_sources = list(test_sources or [])
+        if not resolved_test_sources:
+            resolved_test_results_dir = test_results_dir
+            if not resolved_test_results_dir and config.TEST_RESULTS_DIR:
+                configured = Path(config.TEST_RESULTS_DIR)
+                resolved_test_results_dir = (
+                    configured if configured.is_absolute() else (project_root / configured)
+                )
+            if resolved_test_results_dir:
+                resolved_test_sources = [
+                    ResolvedTestSource(
+                        platform_id="pytest",
+                        enabled=True,
+                        watch=True,
+                        results_dir=str(resolved_test_results_dir),
+                        resolved_dir=resolved_test_results_dir,
+                        patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
+                    )
+                ]
         root_scopes: list[Path] = []
         if docs_dir.exists():
             root_scopes.append(docs_dir)
@@ -2441,6 +2864,8 @@ class SyncEngine:
                         await self.session_repo.delete_by_source(str(path))
                         stats["sessions"] += 1
                         should_rebuild_links = True
+                    elif self._match_source_for_path(resolved_test_sources, path):
+                        stats["tests"] += 1
                     elif path.suffix == ".md":
                         await self.document_repo.delete_by_source(str(path))
                         await self.task_repo.delete_by_source(str(path))
@@ -2456,7 +2881,14 @@ class SyncEngine:
                         if await self._sync_single_session(project_id, path):
                             stats["sessions"] += 1
                             should_rebuild_links = True
-                    elif path.suffix == ".md":
+                    else:
+                        matched_source = self._match_source_for_path(resolved_test_sources, path)
+                        if matched_source:
+                            result = await self._sync_single_test_source(project_id, matched_source, path)
+                            if result.get("synced"):
+                                stats["tests"] += 1
+                            continue
+                    if path.suffix == ".md":
                         if docs_dir in path.parents:
                             synced = await self._sync_single_document(
                                 project_id,
@@ -3199,7 +3631,11 @@ class SyncEngine:
             if latest_summary:
                 return latest_summary[:160], "summary", 0.92
 
-            preferred = _select_preferred_command_event(command_events)
+            preferred = _select_preferred_command_event(
+                command_events,
+                workflow_markers,
+                command_exclusions,
+            )
             if preferred:
                 command_name = str(preferred.get("name") or "")
                 parsed = preferred.get("parsed") if isinstance(preferred.get("parsed"), dict) else {}
@@ -3252,7 +3688,11 @@ class SyncEngine:
                         return f"Debug - {basis}", "command-template", 0.62
                     return "Debug", "command-template", 0.55
 
-            ordered_commands = _select_linking_commands(command_names)
+            ordered_commands = _select_linking_commands(
+                command_names,
+                workflow_markers,
+                command_exclusions,
+            )
             if ordered_commands:
                 primary = ordered_commands[0]
                 if evidence_feature_slug:
@@ -3497,6 +3937,9 @@ class SyncEngine:
                 )
 
         # Build feature ↔ session links from session evidence.
+        session_mapping_rules = await load_session_mappings(self.db, project_id)
+        workflow_markers = workflow_command_markers(session_mapping_rules)
+        command_exclusions = workflow_command_exemptions()
         total_sessions = await self.session_repo.count(project_id, {"include_subagents": True})
         await self._update_operation(
             operation_id,
@@ -3632,7 +4075,11 @@ class SyncEngine:
                 for event in command_events
                 if isinstance(event.get("name"), str) and event.get("name", "").strip()
             )
-            ordered_commands = _select_linking_commands(command_name_candidates)
+            ordered_commands = _select_linking_commands(
+                command_name_candidates,
+                workflow_markers,
+                command_exclusions,
+            )
             command_names = set(ordered_commands)
 
             session_commit_hashes: set[str] = set()
@@ -4203,3 +4650,180 @@ class SyncEngine:
 
             await insert_metric("tool_call_count", tool_stats.get("calls", 0), metadata={"scope": "project"})
             await insert_metric("tool_success_rate", tool_stats.get("success_rate", 0.0), metadata={"scope": "project", "unit": "percent"})
+
+            # 5. File churn (project)
+            if isinstance(self.db, aiosqlite.Connection):
+                async with self.db.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM session_file_updates fu
+                    JOIN sessions s ON s.id = fu.session_id
+                    WHERE s.project_id = ?
+                    """,
+                    (project_id,),
+                ) as cur:
+                    row = await cur.fetchone()
+                    project_file_churn = int(row[0]) if row else 0
+            else:
+                row = await self.db.fetchrow(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM session_file_updates fu
+                    JOIN sessions s ON s.id = fu.session_id
+                    WHERE s.project_id = $1
+                    """,
+                    project_id,
+                )
+                project_file_churn = int((row["count"] if row else 0) or 0)
+
+            await insert_metric("file_churn", project_file_churn, metadata={"scope": "project"})
+
+            # 6. Feature-scoped metrics (multi-entity analytics links)
+            feature_rows = await self.feature_repo.list_all(project_id)
+            for feature_row in feature_rows:
+                feature_id = str(feature_row.get("id") or "").strip()
+                if not feature_id:
+                    continue
+                feature_name = str(feature_row.get("name") or "")
+                feature_links = [("project", project_id), ("feature", feature_id)]
+
+                feature_tasks = await self.task_repo.list_by_feature(feature_id, None)
+                total_feature_tasks = len(feature_tasks)
+                completed_feature_tasks = sum(
+                    1
+                    for task in feature_tasks
+                    if str(task.get("status") or "").strip().lower() in {"done", "deferred", "completed"}
+                )
+                completion_pct = (
+                    (float(completed_feature_tasks) / float(total_feature_tasks) * 100.0)
+                    if total_feature_tasks > 0
+                    else 0.0
+                )
+
+                total_tasks_row = _coerce_int(feature_row.get("total_tasks"))
+                completed_tasks_row = _coerce_int(feature_row.get("completed_tasks"))
+                progress_total = total_tasks_row if total_tasks_row > 0 else total_feature_tasks
+                progress_completed = completed_tasks_row if completed_tasks_row > 0 else completed_feature_tasks
+                feature_progress = (
+                    (float(progress_completed) / float(progress_total) * 100.0)
+                    if progress_total > 0
+                    else 0.0
+                )
+
+                feature_meta = {
+                    "scope": "feature",
+                    "featureId": feature_id,
+                    "featureName": feature_name,
+                }
+                await insert_metric(
+                    "task_velocity",
+                    completed_feature_tasks,
+                    metadata={**feature_meta, "terminalStatuses": ["done", "deferred", "completed"]},
+                    entity_links=feature_links,
+                )
+                await insert_metric(
+                    "task_completion_pct",
+                    completion_pct,
+                    metadata={**feature_meta, "unit": "percent", "taskCount": total_feature_tasks},
+                    entity_links=feature_links,
+                )
+                await insert_metric(
+                    "feature_progress",
+                    feature_progress,
+                    metadata={**feature_meta, "unit": "percent"},
+                    entity_links=feature_links,
+                )
+
+                feature_session_links = await self.link_repo.get_links_for("feature", feature_id, "related")
+                linked_session_ids: set[str] = set()
+                for link in feature_session_links:
+                    if str(link.get("source_type") or "") != "feature":
+                        continue
+                    if str(link.get("source_id") or "") != feature_id:
+                        continue
+                    if str(link.get("target_type") or "") != "session":
+                        continue
+                    target_id = str(link.get("target_id") or "").strip()
+                    if target_id:
+                        linked_session_ids.add(target_id)
+
+                if not linked_session_ids:
+                    continue
+
+                feature_session_count = 0
+                feature_cost = 0.0
+                feature_tokens = 0
+                feature_duration = 0.0
+                feature_tool_calls = 0
+                feature_tool_success = 0
+                feature_file_churn = 0
+
+                for session_id in linked_session_ids:
+                    session_row = await self.session_repo.get_by_id(session_id)
+                    if not session_row:
+                        continue
+
+                    feature_session_count += 1
+                    feature_cost += _coerce_float(session_row.get("total_cost"))
+                    feature_tokens += _coerce_int(session_row.get("tokens_in")) + _coerce_int(session_row.get("tokens_out"))
+                    feature_duration += _coerce_float(session_row.get("duration_seconds"))
+
+                    tool_rows = await self.session_repo.get_tool_usage(session_id)
+                    for tool_row in tool_rows:
+                        call_count = _coerce_int(tool_row.get("call_count"))
+                        success_count = _coerce_int(tool_row.get("success_count"))
+                        feature_tool_calls += max(0, call_count)
+                        feature_tool_success += max(0, min(call_count, success_count))
+
+                    file_updates = await self.session_repo.get_file_updates(session_id)
+                    feature_file_churn += len(file_updates)
+
+                if feature_session_count > 0:
+                    feature_tool_success_rate = (
+                        (float(feature_tool_success) / float(feature_tool_calls) * 100.0)
+                        if feature_tool_calls > 0
+                        else 0.0
+                    )
+                    feature_duration_avg = float(feature_duration) / float(feature_session_count)
+                    session_meta = {
+                        **feature_meta,
+                        "scope": "feature",
+                        "linkedSessionCount": feature_session_count,
+                    }
+                    await insert_metric("session_count", feature_session_count, metadata=session_meta, entity_links=feature_links)
+                    await insert_metric(
+                        "session_cost",
+                        feature_cost,
+                        metadata={**session_meta, "unit": "usd"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "session_tokens",
+                        feature_tokens,
+                        metadata={**session_meta, "unit": "tokens"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "session_duration",
+                        feature_duration_avg,
+                        metadata={**session_meta, "unit": "seconds", "aggregation": "avg"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "tool_call_count",
+                        feature_tool_calls,
+                        metadata=session_meta,
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "tool_success_rate",
+                        feature_tool_success_rate,
+                        metadata={**session_meta, "unit": "percent"},
+                        entity_links=feature_links,
+                    )
+                    await insert_metric(
+                        "file_churn",
+                        feature_file_churn,
+                        metadata=session_meta,
+                        entity_links=feature_links,
+                    )

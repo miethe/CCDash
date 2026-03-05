@@ -16,13 +16,19 @@ import {
   Play,
   RefreshCw,
   Search,
+  ShieldAlert,
   Terminal,
+  TestTube2,
   Users,
+  X,
 } from 'lucide-react';
 
 import { useData } from '../contexts/DataContext';
 import {
   AgentSession,
+  ExecutionPolicyResult,
+  ExecutionRun,
+  ExecutionRunEvent,
   Feature,
   FeatureExecutionContext,
   FeatureExecutionSessionLink,
@@ -31,16 +37,32 @@ import {
   PlanDocument,
   ProjectTask,
 } from '../types';
-import { getFeatureExecutionContext, trackExecutionEvent } from '../services/execution';
+import {
+  approveExecutionRun,
+  cancelExecutionRun,
+  checkExecutionPolicy,
+  createExecutionRun,
+  getExecutionRun,
+  getFeatureExecutionContext,
+  listExecutionRunEvents,
+  listExecutionRuns,
+  retryExecutionRun,
+  trackExecutionEvent,
+} from '../services/execution';
+import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { DocumentModal } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
+import { TestStatusView } from './TestVisualizer/TestStatusView';
+import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
+import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
+import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
 
-type WorkbenchTab = 'overview' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics';
+type WorkbenchTab = 'overview' | 'runs' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics' | 'test-status';
 type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 
@@ -67,13 +89,21 @@ interface FeatureHistoryEvent {
 
 const TAB_ITEMS: Array<{ id: WorkbenchTab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
   { id: 'overview', label: 'Overview', icon: Layers },
+  { id: 'runs', label: 'Runs', icon: Command },
   { id: 'phases', label: 'Phases', icon: Play },
   { id: 'documents', label: 'Documents', icon: BookOpen },
   { id: 'sessions', label: 'Sessions', icon: Terminal },
   { id: 'artifacts', label: 'Artifacts', icon: Users },
   { id: 'history', label: 'History', icon: Calendar },
   { id: 'analytics', label: 'Analytics', icon: LineChart },
+  { id: 'test-status', label: 'Test Status', icon: TestTube2 },
 ];
+
+const WORKBENCH_TAB_IDS = new Set<WorkbenchTab>(TAB_ITEMS.map(item => item.id));
+
+const isWorkbenchTab = (value: string | null): value is WorkbenchTab => (
+  Boolean(value) && WORKBENCH_TAB_IDS.has(value as WorkbenchTab)
+);
 
 const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
   {
@@ -207,6 +237,22 @@ const toEpoch = (value?: string): number => {
 const formatStatus = (value: string): string => {
   const normalized = (value || 'unknown').replace(/-/g, ' ');
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const executionVerdictClass = (value?: string): string => {
+  const normalized = (value || '').toLowerCase();
+  if (normalized === 'allow') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
+  if (normalized === 'requires_approval') return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
+  if (normalized === 'deny') return 'border-rose-500/40 bg-rose-500/10 text-rose-200';
+  return 'border-slate-600 bg-slate-800/60 text-slate-200';
+};
+
+const executionRiskClass = (value?: string): string => {
+  const normalized = (value || '').toLowerCase();
+  if (normalized === 'low') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  if (normalized === 'medium') return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+  if (normalized === 'high') return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
+  return 'border-slate-600 bg-slate-800/60 text-slate-200';
 };
 
 const parsePhaseNumber = (value: string, allowBareNumber = false): number | null => {
@@ -445,11 +491,15 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { features, refreshFeatures, documents, getSessionById } = useData();
+  const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
+  const featureParam = searchParams.get('feature') || '';
+  const tabParam = searchParams.get('tab');
 
-  const [selectedFeatureId, setSelectedFeatureId] = useState<string>(searchParams.get('feature') || '');
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string>(featureParam);
   const [query, setQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>('overview');
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => {
+    return isWorkbenchTab(tabParam) ? tabParam : 'overview';
+  });
   const [context, setContext] = useState<FeatureExecutionContext | null>(null);
   const [fullFeature, setFullFeature] = useState<Feature | null>(null);
   const [loading, setLoading] = useState(false);
@@ -465,6 +515,26 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [expandedSubthreadsBySessionId, setExpandedSubthreadsBySessionId] = useState<Set<string>>(new Set());
   const [artifactSourceSessions, setArtifactSourceSessions] = useState<AgentSession[]>([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [hasFeatureTestRuns, setHasFeatureTestRuns] = useState(false);
+  const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState('');
+  const [selectedRunId, setSelectedRunId] = useState('');
+  const [selectedRunEvents, setSelectedRunEvents] = useState<ExecutionRunEvent[]>([]);
+  const [selectedRunEventsLoading, setSelectedRunEventsLoading] = useState(false);
+  const [selectedRunNextSequence, setSelectedRunNextSequence] = useState(0);
+  const [runActionLoading, setRunActionLoading] = useState(false);
+  const [runActionError, setRunActionError] = useState('');
+  const [reviewCommand, setReviewCommand] = useState('');
+  const [reviewRuleId, setReviewRuleId] = useState('');
+  const [reviewCwd, setReviewCwd] = useState('.');
+  const [reviewEnvProfile, setReviewEnvProfile] = useState('default');
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewPolicy, setReviewPolicy] = useState<ExecutionPolicyResult | null>(null);
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [approvalRun, setApprovalRun] = useState<ExecutionRun | null>(null);
+  const selectedRunNextSequenceRef = useRef(0);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
 
   useEffect(() => {
@@ -484,16 +554,37 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   }, [features, query]);
 
   useEffect(() => {
-    const fromQuery = searchParams.get('feature') || '';
-    if (fromQuery && fromQuery !== selectedFeatureId) {
-      setSelectedFeatureId(fromQuery);
+    if (featureParam) {
+      setSelectedFeatureId(prev => (prev === featureParam ? prev : featureParam));
       return;
     }
-    if (!selectedFeatureId && features.length > 0) {
+    if (features.length === 0) return;
+    setSelectedFeatureId(prev => {
+      if (prev) return prev;
       const first = [...features].sort((a, b) => a.name.localeCompare(b.name))[0];
-      setSelectedFeatureId(first.id);
+      return first?.id || prev;
+    });
+  }, [featureParam, features]);
+
+  useEffect(() => {
+    if (isWorkbenchTab(tabParam)) {
+      setActiveTab(prev => (prev === tabParam ? prev : tabParam));
     }
-  }, [features, searchParams, selectedFeatureId]);
+  }, [tabParam]);
+
+  useEffect(() => {
+    const currentTab = tabParam;
+    if (activeTab === 'overview' && !currentTab) return;
+    if (activeTab === currentTab) return;
+    const nextParams = new URLSearchParams(searchParams);
+    if (activeTab === 'overview') {
+      nextParams.delete('tab');
+    } else {
+      nextParams.set('tab', activeTab);
+    }
+    if (nextParams.toString() === searchParams.toString()) return;
+    setSearchParams(nextParams, { replace: true });
+  }, [activeTab, searchParams, setSearchParams, tabParam]);
 
   const selectFeature = useCallback(
     (featureId: string) => {
@@ -509,10 +600,273 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     [searchParams, setSearchParams],
   );
 
+  const upsertExecutionRun = useCallback((nextRun: ExecutionRun) => {
+    setExecutionRuns(prev => {
+      const idx = prev.findIndex(run => run.id === nextRun.id);
+      const next = idx >= 0
+        ? [...prev.slice(0, idx), nextRun, ...prev.slice(idx + 1)]
+        : [nextRun, ...prev];
+      return next.sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt));
+    });
+  }, []);
+
+  const refreshExecutionRuns = useCallback(async (featureId: string = selectedFeatureId) => {
+    if (!featureId) {
+      setExecutionRuns([]);
+      setRunsError('');
+      return;
+    }
+    setRunsLoading(true);
+    try {
+      const rows = await listExecutionRuns({ featureId, limit: 60, offset: 0 });
+      setExecutionRuns(rows);
+      setRunsError('');
+    } catch (err) {
+      setRunsError(err instanceof Error ? err.message : 'Failed to load run history');
+    } finally {
+      setRunsLoading(false);
+    }
+  }, [selectedFeatureId]);
+
+  useEffect(() => {
+    if (!selectedFeatureId) {
+      setExecutionRuns([]);
+      setSelectedRunId('');
+      setSelectedRunEvents([]);
+      setSelectedRunNextSequence(0);
+      selectedRunNextSequenceRef.current = 0;
+      return;
+    }
+    void refreshExecutionRuns(selectedFeatureId);
+  }, [refreshExecutionRuns, selectedFeatureId]);
+
+  useEffect(() => {
+    setSelectedRunId(prev => {
+      if (prev && executionRuns.some(run => run.id === prev)) return prev;
+      return executionRuns[0]?.id || '';
+    });
+  }, [executionRuns]);
+
+  const selectedRun = useMemo(
+    () => executionRuns.find(run => run.id === selectedRunId) || null,
+    [executionRuns, selectedRunId],
+  );
+
+  useEffect(() => {
+    selectedRunNextSequenceRef.current = selectedRunNextSequence;
+  }, [selectedRunNextSequence]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setSelectedRunEvents([]);
+      setSelectedRunNextSequence(0);
+      selectedRunNextSequenceRef.current = 0;
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedRunEventsLoading(true);
+    void listExecutionRunEvents(selectedRunId, { afterSequence: 0, limit: 400 })
+      .then(page => {
+        if (cancelled) return;
+        setSelectedRunEvents(page.items);
+        setSelectedRunNextSequence(page.nextSequence);
+        selectedRunNextSequenceRef.current = page.nextSequence;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedRunEvents([]);
+        setSelectedRunNextSequence(0);
+        selectedRunNextSequenceRef.current = 0;
+      })
+      .finally(() => {
+        if (!cancelled) setSelectedRunEventsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRun || (selectedRun.status !== 'queued' && selectedRun.status !== 'running')) return;
+
+    let cancelled = false;
+    const runId = selectedRun.id;
+    const poll = async () => {
+      try {
+        const [latestRun, page] = await Promise.all([
+          getExecutionRun(runId),
+          listExecutionRunEvents(runId, {
+            afterSequence: selectedRunNextSequenceRef.current,
+            limit: 120,
+          }),
+        ]);
+        if (cancelled) return;
+        upsertExecutionRun(latestRun);
+        if (page.items.length > 0) {
+          setSelectedRunEvents(prev => [...prev, ...page.items]);
+          setSelectedRunNextSequence(page.nextSequence);
+          selectedRunNextSequenceRef.current = page.nextSequence;
+        }
+      } catch {
+        // Polling failures should not break the page.
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 900);
+    void poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedRun, upsertExecutionRun]);
+
+  const openRunReview = useCallback(async (command: string, ruleId: string) => {
+    setReviewCommand(command);
+    setReviewRuleId(ruleId);
+    setReviewPolicy(null);
+    setReviewOpen(true);
+    setRunActionError('');
+    setReviewLoading(true);
+    try {
+      const policy = await checkExecutionPolicy({
+        command,
+        cwd: reviewCwd,
+        envProfile: reviewEnvProfile,
+      });
+      setReviewPolicy(policy);
+    } catch (err) {
+      setReviewPolicy(null);
+      setRunActionError(err instanceof Error ? err.message : 'Policy check failed');
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [reviewCwd, reviewEnvProfile]);
+
+  const recheckReviewPolicy = useCallback(async () => {
+    if (!reviewCommand.trim()) return;
+    setReviewLoading(true);
+    try {
+      const policy = await checkExecutionPolicy({
+        command: reviewCommand,
+        cwd: reviewCwd,
+        envProfile: reviewEnvProfile,
+      });
+      setReviewPolicy(policy);
+      setRunActionError('');
+    } catch (err) {
+      setReviewPolicy(null);
+      setRunActionError(err instanceof Error ? err.message : 'Policy check failed');
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [reviewCommand, reviewCwd, reviewEnvProfile]);
+
+  const handleLaunchReviewRun = useCallback(async () => {
+    if (!reviewCommand.trim() || !context?.feature.id) return;
+    if (reviewPolicy?.verdict === 'deny') {
+      setRunActionError('Command is denied by execution policy. Update command or working directory before running.');
+      return;
+    }
+    setRunActionLoading(true);
+    try {
+      const run = await createExecutionRun({
+        command: reviewCommand,
+        cwd: reviewCwd,
+        envProfile: reviewEnvProfile,
+        featureId: context.feature.id,
+        recommendationRuleId: reviewRuleId,
+        metadata: {
+          launchedFrom: 'execution-workbench',
+        },
+      });
+      upsertExecutionRun(run);
+      setSelectedRunId(run.id);
+      setActiveTab('runs');
+      setReviewOpen(false);
+      setRunActionError('');
+      if (run.requiresApproval && run.status === 'blocked') {
+        setApprovalRun(run);
+        setApprovalOpen(true);
+      }
+      await refreshExecutionRuns(context.feature.id);
+    } catch (err) {
+      setRunActionError(err instanceof Error ? err.message : 'Failed to start run');
+    } finally {
+      setRunActionLoading(false);
+    }
+  }, [context?.feature.id, refreshExecutionRuns, reviewCommand, reviewCwd, reviewEnvProfile, reviewPolicy?.verdict, reviewRuleId, upsertExecutionRun]);
+
+  const handleApprovalSubmit = useCallback(async (decision: 'approved' | 'denied', reason: string) => {
+    if (!approvalRun) return;
+    setRunActionLoading(true);
+    try {
+      const updated = await approveExecutionRun(approvalRun.id, {
+        decision,
+        reason,
+        actor: 'user',
+      });
+      upsertExecutionRun(updated);
+      setSelectedRunId(updated.id);
+      setApprovalOpen(false);
+      setApprovalRun(null);
+      if (context?.feature.id) await refreshExecutionRuns(context.feature.id);
+    } catch (err) {
+      setRunActionError(err instanceof Error ? err.message : 'Failed to resolve approval');
+    } finally {
+      setRunActionLoading(false);
+    }
+  }, [approvalRun, context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
+
+  const handleCancelRun = useCallback(async (run: ExecutionRun) => {
+    setRunActionLoading(true);
+    try {
+      const updated = await cancelExecutionRun(run.id, { reason: 'Canceled from workbench', actor: 'user' });
+      upsertExecutionRun(updated);
+      setSelectedRunId(updated.id);
+    } catch (err) {
+      setRunActionError(err instanceof Error ? err.message : 'Failed to cancel run');
+    } finally {
+      setRunActionLoading(false);
+    }
+  }, [upsertExecutionRun]);
+
+  const handleRetryRun = useCallback(async (run: ExecutionRun) => {
+    if (run.status === 'failed') {
+      const confirmed = window.confirm('Retry failed run? This will launch a new execution run.');
+      if (!confirmed) return;
+    }
+    setRunActionLoading(true);
+    try {
+      const retried = await retryExecutionRun(run.id, {
+        acknowledgeFailure: true,
+        actor: 'user',
+        metadata: { retriedFrom: run.id },
+      });
+      upsertExecutionRun(retried);
+      setSelectedRunId(retried.id);
+      setActiveTab('runs');
+      if (retried.requiresApproval && retried.status === 'blocked') {
+        setApprovalRun(retried);
+        setApprovalOpen(true);
+      }
+      if (context?.feature.id) await refreshExecutionRuns(context.feature.id);
+    } catch (err) {
+      setRunActionError(err instanceof Error ? err.message : 'Failed to retry run');
+    } finally {
+      setRunActionLoading(false);
+    }
+  }, [context?.feature.id, refreshExecutionRuns, upsertExecutionRun]);
+
   useEffect(() => {
     if (!selectedFeatureId) {
       setContext(null);
       setFullFeature(null);
+      setHasFeatureTestRuns(false);
       return;
     }
 
@@ -557,6 +911,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       cancelled = true;
     };
   }, [selectedFeatureId]);
+
+  useEffect(() => {
+    if (!selectedFeatureId || !activeProject?.id) {
+      setHasFeatureTestRuns(false);
+      return;
+    }
+
+    let cancelled = false;
+    void listTestRuns({
+      projectId: activeProject.id,
+      featureId: selectedFeatureId,
+      limit: 1,
+    })
+      .then(payload => {
+        if (!cancelled) {
+          setHasFeatureTestRuns(payload.items.length > 0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasFeatureTestRuns(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, selectedFeatureId]);
 
   useEffect(() => {
     const featureId = context?.feature.id || '';
@@ -1220,6 +1602,25 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     );
   }, [expandedSubthreadsBySessionId, renderSessionCard]);
 
+  const isSessionActive = useMemo(
+    () => executionSessions.some(session => {
+      const normalized = String(session.status || '').toLowerCase();
+      return normalized === 'active' || normalized === 'running';
+    }),
+    [executionSessions],
+  );
+
+  const visibleTabItems = useMemo(
+    () => TAB_ITEMS.filter(tab => tab.id !== 'test-status' || hasFeatureTestRuns),
+    [hasFeatureTestRuns],
+  );
+
+  useEffect(() => {
+    if (activeTab === 'test-status' && !hasFeatureTestRuns) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, hasFeatureTestRuns]);
+
   if (!loading && !context && !error) {
     return (
       <div className="space-y-5">
@@ -1359,6 +1760,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
               <div className="flex flex-wrap gap-2">
                 <button
+                  onClick={() => void openRunReview(context.recommendations.primary.command, context.recommendations.primary.ruleId)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 text-xs font-semibold hover:bg-emerald-500/30"
+                >
+                  <Play size={14} />
+                  Run in Workbench
+                </button>
+                <button
                   onClick={() => handleCopyCommand(context.recommendations.primary.command)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 text-xs font-semibold hover:bg-indigo-500/30"
                 >
@@ -1385,15 +1793,29 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       <code className="text-xs text-cyan-200 block whitespace-pre-wrap break-all">{option.command}</code>
                       <div className="mt-2 flex items-center justify-between gap-2">
                         <span className="text-[10px] text-slate-500">{option.ruleId}</span>
-                        <button
-                          onClick={() => handleCopyCommand(option.command)}
-                          className="text-[11px] text-slate-300 hover:text-white"
-                        >
-                          Copy
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => void openRunReview(option.command, option.ruleId)}
+                            className="text-[11px] text-emerald-300 hover:text-emerald-200"
+                          >
+                            Run
+                          </button>
+                          <button
+                            onClick={() => handleCopyCommand(option.command)}
+                            className="text-[11px] text-slate-300 hover:text-white"
+                          >
+                            Copy
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {runActionError && (
+                <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+                  {runActionError}
                 </div>
               )}
 
@@ -1445,7 +1867,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
             <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
-                {TAB_ITEMS.map(tab => (
+                {visibleTabItems.map(tab => (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
@@ -1513,6 +1935,36 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {activeTab === 'runs' && (
+                <div className="mt-4 space-y-3">
+                  {runsError && (
+                    <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+                      {runsError}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-3">
+                    <ExecutionRunHistory
+                      runs={executionRuns}
+                      selectedRunId={selectedRunId}
+                      loading={runsLoading}
+                      onSelect={setSelectedRunId}
+                      onRefresh={() => { void refreshExecutionRuns(context.feature.id); }}
+                    />
+                    <ExecutionRunPanel
+                      run={selectedRun}
+                      events={selectedRunEvents}
+                      loading={selectedRunEventsLoading || runActionLoading}
+                      onCancel={run => { void handleCancelRun(run); }}
+                      onRetry={run => { void handleRetryRun(run); }}
+                      onOpenApproval={run => {
+                        setApprovalRun(run);
+                        setApprovalOpen(true);
+                      }}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -1845,10 +2297,185 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {activeTab === 'test-status' && context.feature && (
+                <div className="mt-4">
+                  {activeProject?.id ? (
+                    <TestStatusView
+                      projectId={activeProject.id}
+                      filter={{ featureId: context.feature.id }}
+                      mode="tab"
+                      isLive={isSessionActive}
+                      onNavigateToTestingPage={() => navigate(`/tests?featureId=${encodeURIComponent(context.feature.id)}`)}
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                      Select an active project to view test status.
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           </div>
         </div>
       )}
+
+      {reviewOpen && (
+        <div className="fixed inset-0 z-[75] bg-black/50 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl rounded-xl border border-slate-700 bg-slate-900 shadow-2xl">
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-100">
+                <Terminal size={15} />
+                <h3 className="text-sm font-semibold">Review and Launch Run</h3>
+              </div>
+              <button
+                onClick={() => setReviewOpen(false)}
+                disabled={runActionLoading}
+                className="p-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50"
+                aria-label="Close review dialog"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wide text-slate-500">Command</span>
+                <textarea
+                  rows={3}
+                  value={reviewCommand}
+                  onChange={event => setReviewCommand(event.target.value)}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-3">
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wide text-slate-500">Working Directory</span>
+                  <input
+                    value={reviewCwd}
+                    onChange={event => setReviewCwd(event.target.value)}
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wide text-slate-500">Env Profile</span>
+                  <select
+                    value={reviewEnvProfile}
+                    onChange={event => setReviewEnvProfile(event.target.value)}
+                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  >
+                    <option value="default">default</option>
+                    <option value="minimal">minimal</option>
+                    <option value="project">project</option>
+                    <option value="ci">ci</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">Policy Evaluation</p>
+                  <button
+                    onClick={() => { void recheckReviewPolicy(); }}
+                    disabled={reviewLoading || runActionLoading}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-slate-300 text-[11px] hover:border-slate-500 disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={reviewLoading ? 'animate-spin' : ''} />
+                    Re-check
+                  </button>
+                </div>
+
+                {reviewLoading && (
+                  <div className="text-xs text-slate-400 inline-flex items-center gap-1.5">
+                    <Loader2 size={12} className="animate-spin" />
+                    Evaluating command policy...
+                  </div>
+                )}
+
+                {!reviewLoading && reviewPolicy && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-[10px] uppercase px-2 py-0.5 rounded border font-semibold ${executionVerdictClass(reviewPolicy.verdict)}`}>
+                        verdict: {reviewPolicy.verdict}
+                      </span>
+                      <span className={`text-[10px] uppercase px-2 py-0.5 rounded border font-semibold ${executionRiskClass(reviewPolicy.riskLevel)}`}>
+                        risk: {reviewPolicy.riskLevel}
+                      </span>
+                      {reviewPolicy.requiresApproval && (
+                        <span className="text-[10px] uppercase px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-200">
+                          approval required
+                        </span>
+                      )}
+                    </div>
+                    {reviewPolicy.reasonCodes.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {reviewPolicy.reasonCodes.map(reason => (
+                          <span
+                            key={reason}
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300 font-mono"
+                          >
+                            {reason}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {reviewPolicy.verdict === 'deny' && (
+                      <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200 inline-flex items-start gap-2">
+                        <ShieldAlert size={13} className="mt-0.5 shrink-0" />
+                        Command is blocked by policy. Adjust command, cwd, or env profile and re-check before running.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {runActionError && (
+                <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+                  {runActionError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-2">
+              <div className="text-[11px] text-slate-500">
+                Rule: <span className="font-mono text-slate-400">{reviewRuleId || 'manual'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setReviewOpen(false)}
+                  disabled={runActionLoading}
+                  className="px-3 py-1.5 rounded border border-slate-700 text-slate-200 text-xs hover:border-slate-500 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { void handleLaunchReviewRun(); }}
+                  disabled={runActionLoading || reviewLoading || !reviewCommand.trim() || reviewPolicy?.verdict === 'deny'}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-100 text-xs disabled:opacity-50"
+                >
+                  {runActionLoading ? <Loader2 size={12} className="animate-spin" /> : <Play size={13} />}
+                  Launch Run
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ExecutionApprovalDialog
+        open={approvalOpen}
+        run={approvalRun}
+        loading={runActionLoading}
+        onClose={() => {
+          if (runActionLoading) return;
+          setApprovalOpen(false);
+          setApprovalRun(null);
+        }}
+        onSubmit={(decision, reason) => {
+          void handleApprovalSubmit(decision, reason);
+        }}
+      />
 
       {viewingDoc && (
         <DocumentModal

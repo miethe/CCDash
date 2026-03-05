@@ -326,6 +326,106 @@ class Notification(BaseModel):
     isRead: bool = False
 
 
+# ── Project test config models ─────────────────────────────────────
+
+TestPlatformId = Literal[
+    "pytest",
+    "jest",
+    "playwright",
+    "coverage",
+    "benchmark",
+    "lighthouse",
+    "locust",
+    "triage",
+]
+
+
+class ProjectTestFlags(BaseModel):
+    testVisualizerEnabled: bool = True
+    integritySignalsEnabled: bool = True
+    liveTestUpdatesEnabled: bool = True
+    semanticMappingEnabled: bool = True
+
+
+class ProjectTestPlatformConfig(BaseModel):
+    id: TestPlatformId
+    enabled: bool = False
+    resultsDir: str = ""
+    watch: bool = False
+    patterns: list[str] = Field(default_factory=list)
+
+
+def _default_project_test_platforms() -> list["ProjectTestPlatformConfig"]:
+    return [
+        ProjectTestPlatformConfig(
+            id="pytest",
+            enabled=True,
+            resultsDir="test-results",
+            watch=True,
+            patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
+        ),
+        ProjectTestPlatformConfig(
+            id="jest",
+            enabled=False,
+            resultsDir="skillmeat/web",
+            watch=True,
+            patterns=["**/jest-results*.json", "**/coverage/coverage-final.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="playwright",
+            enabled=False,
+            resultsDir="skillmeat/web/test-results",
+            watch=True,
+            patterns=["**/results.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="coverage",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/coverage.xml", "**/coverage.json", "**/lcov.info", "**/coverage-final.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="benchmark",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/benchmark*_results.json", "**/benchmark*.json"],
+        ),
+        ProjectTestPlatformConfig(
+            id="lighthouse",
+            enabled=False,
+            resultsDir="skillmeat/web/lighthouse-reports",
+            watch=False,
+            patterns=["**/*.json", "**/*.html"],
+        ),
+        ProjectTestPlatformConfig(
+            id="locust",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/locust_report.html", "**/locust_results*.csv"],
+        ),
+        ProjectTestPlatformConfig(
+            id="triage",
+            enabled=False,
+            resultsDir=".",
+            watch=False,
+            patterns=["**/test-failures.json", "**/test-failures-summary.txt", "**/test-failures.md"],
+        ),
+    ]
+
+
+class ProjectTestConfig(BaseModel):
+    flags: ProjectTestFlags = Field(default_factory=ProjectTestFlags)
+    platforms: list[ProjectTestPlatformConfig] = Field(default_factory=_default_project_test_platforms)
+    autoSyncOnStartup: bool = True
+    maxFilesPerScan: int = 500
+    maxParseConcurrency: int = 4
+    instructionProfile: str = "skillmeat"
+    instructionNotes: str = ""
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):
@@ -338,6 +438,7 @@ class Project(BaseModel):
     planDocsPath: str = "docs/project_plans/"
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
     progressPath: str = "progress"  # relative to project root
+    testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
 
 
 # ── Feature models ─────────────────────────────────────────────────
@@ -443,3 +544,410 @@ class FeatureExecutionContext(BaseModel):
     recommendations: ExecutionRecommendation
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
     generatedAt: str = ""
+
+
+ExecutionPolicyVerdict = Literal["allow", "requires_approval", "deny"]
+ExecutionRunStatus = Literal["queued", "running", "succeeded", "failed", "canceled", "blocked"]
+ExecutionRiskLevel = Literal["low", "medium", "high"]
+ExecutionApprovalDecision = Literal["pending", "approved", "denied"]
+ExecutionEventStream = Literal["stdout", "stderr", "system"]
+
+
+class ExecutionPolicyResultDTO(BaseModel):
+    verdict: ExecutionPolicyVerdict
+    riskLevel: ExecutionRiskLevel
+    requiresApproval: bool = False
+    normalizedCommand: str = ""
+    commandTokens: list[str] = Field(default_factory=list)
+    resolvedCwd: str = ""
+    reasonCodes: list[str] = Field(default_factory=list)
+
+
+class ExecutionPolicyCheckRequest(BaseModel):
+    command: str
+    cwd: str = "."
+    envProfile: str = "default"
+
+
+class ExecutionRunCreateRequest(BaseModel):
+    command: str
+    cwd: str = "."
+    envProfile: str = "default"
+    featureId: str = ""
+    recommendationRuleId: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionRunDTO(BaseModel):
+    id: str
+    projectId: str
+    featureId: str = ""
+    provider: str = "local"
+    sourceCommand: str
+    normalizedCommand: str
+    cwd: str
+    envProfile: str = "default"
+    recommendationRuleId: str = ""
+    riskLevel: ExecutionRiskLevel = "medium"
+    policyVerdict: ExecutionPolicyVerdict = "allow"
+    requiresApproval: bool = False
+    approvedBy: str = ""
+    approvedAt: str = ""
+    status: ExecutionRunStatus = "queued"
+    exitCode: Optional[int] = None
+    startedAt: str = ""
+    endedAt: str = ""
+    retryOfRunId: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class ExecutionRunEventDTO(BaseModel):
+    id: Optional[int] = None
+    runId: str
+    sequenceNo: int
+    stream: ExecutionEventStream = "system"
+    eventType: str = "status"
+    payloadText: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurredAt: str = ""
+
+
+class ExecutionRunEventPageDTO(BaseModel):
+    runId: str
+    items: list[ExecutionRunEventDTO] = Field(default_factory=list)
+    nextSequence: int = 0
+
+
+class ExecutionApprovalDTO(BaseModel):
+    id: Optional[int] = None
+    runId: str
+    decision: ExecutionApprovalDecision = "pending"
+    reason: str = ""
+    requestedAt: str = ""
+    resolvedAt: str = ""
+    requestedBy: str = ""
+    resolvedBy: str = ""
+
+
+class ExecutionApprovalRequest(BaseModel):
+    decision: Literal["approved", "denied"]
+    reason: str = ""
+    actor: str = "user"
+
+
+class ExecutionCancelRequest(BaseModel):
+    reason: str = ""
+    actor: str = "user"
+
+
+class ExecutionRetryRequest(BaseModel):
+    acknowledgeFailure: bool = False
+    actor: str = "user"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Test Visualizer DTOs ───────────────────────────────────────────
+
+class TestRunDTO(BaseModel):
+    run_id: str
+    project_id: str
+    timestamp: str
+    git_sha: str = ""
+    branch: str = ""
+    agent_session_id: str = ""
+    env_fingerprint: str = ""
+    trigger: str = "local"
+    status: str = "complete"
+    total_tests: int = 0
+    passed_tests: int = 0
+    failed_tests: int = 0
+    skipped_tests: int = 0
+    duration_ms: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TestDefinitionDTO(BaseModel):
+    test_id: str
+    project_id: str
+    path: str
+    name: str
+    framework: str = "pytest"
+    tags: list[str] = Field(default_factory=list)
+    owner: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class TestResultDTO(BaseModel):
+    run_id: str
+    test_id: str
+    status: str
+    duration_ms: int = 0
+    error_fingerprint: str = ""
+    error_message: str = ""
+    artifact_refs: list[str] = Field(default_factory=list)
+    stdout_ref: str = ""
+    stderr_ref: str = ""
+    created_at: str = ""
+
+
+class TestDomainDTO(BaseModel):
+    domain_id: str
+    project_id: str
+    name: str
+    parent_id: Optional[str] = None
+    description: str = ""
+    tier: str = "core"
+    sort_order: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class TestFeatureMappingDTO(BaseModel):
+    mapping_id: int
+    project_id: str
+    test_id: str
+    feature_id: str
+    domain_id: Optional[str] = None
+    provider_source: str
+    confidence: float = 0.5
+    version: int = 1
+    snapshot_hash: str = ""
+    is_primary: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TestIntegritySignalDTO(BaseModel):
+    signal_id: str
+    project_id: str
+    git_sha: str
+    file_path: str
+    test_id: Optional[str] = None
+    signal_type: str
+    severity: str = "medium"
+    details: dict[str, Any] = Field(default_factory=dict)
+    linked_run_ids: list[str] = Field(default_factory=list)
+    agent_session_id: str = ""
+    created_at: str = ""
+
+
+class DomainHealthRollupDTO(BaseModel):
+    domain_id: str
+    domain_name: str
+    tier: str = "core"
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pass_rate: float = 0.0
+    integrity_score: float = 1.0
+    confidence_score: float = 0.0
+    last_run_at: Optional[str] = None
+    children: list["DomainHealthRollupDTO"] = Field(default_factory=list)
+
+
+class FeatureTestHealthDTO(BaseModel):
+    feature_id: str
+    feature_name: str
+    domain_id: Optional[str] = None
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pass_rate: float = 0.0
+    integrity_score: float = 1.0
+    confidence_score: float = 0.0
+    last_run_at: Optional[str] = None
+    open_signals: int = 0
+
+
+class CursorPaginatedResponse(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    limit: int
+    next_cursor: Optional[str] = None
+
+
+class TestResultHistoryDTO(BaseModel):
+    run_id: str
+    test_id: str
+    status: str
+    duration_ms: int = 0
+    error_fingerprint: str = ""
+    error_message: str = ""
+    artifact_refs: list[str] = Field(default_factory=list)
+    stdout_ref: str = ""
+    stderr_ref: str = ""
+    created_at: str = ""
+    run_timestamp: str = ""
+    git_sha: str = ""
+    agent_session_id: str = ""
+
+
+class TestRunDetailDTO(BaseModel):
+    run: TestRunDTO
+    results: list[TestResultDTO] = Field(default_factory=list)
+    definitions: dict[str, TestDefinitionDTO] = Field(default_factory=dict)
+    integrity_signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+
+
+class RunResultPageDTO(BaseModel):
+    items: list[TestResultDTO] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    next_cursor: Optional[str] = None
+    definitions: dict[str, TestDefinitionDTO] = Field(default_factory=dict)
+
+
+class FeatureTimelinePointDTO(BaseModel):
+    date: str
+    pass_rate: float = 0.0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    run_ids: list[str] = Field(default_factory=list)
+    signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+
+
+class FeatureTimelineResponseDTO(BaseModel):
+    feature_id: str
+    feature_name: str = ""
+    timeline: list[FeatureTimelinePointDTO] = Field(default_factory=list)
+    first_green: Optional[str] = None
+    last_red: Optional[str] = None
+    last_known_good: Optional[str] = None
+
+
+class TestCorrelationResponseDTO(BaseModel):
+    run: TestRunDTO
+    agent_session: Optional[AgentSession] = None
+    commit_correlation: Optional[dict[str, Any]] = None
+    features: list[FeatureTestHealthDTO] = Field(default_factory=list)
+    integrity_signals: list[TestIntegritySignalDTO] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)
+
+
+class IngestRunRequest(BaseModel):
+    run_id: str
+    project_id: str
+    timestamp: str
+    git_sha: str = ""
+    branch: str = ""
+    agent_session_id: str = ""
+    env_fingerprint: str = ""
+    trigger: str = "local"
+    test_definitions: list[dict[str, Any]] = Field(default_factory=list)
+    test_results: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestRunResponse(BaseModel):
+    run_id: str
+    status: str  # created | updated | skipped
+    test_definitions_upserted: int = 0
+    test_results_inserted: int = 0
+    test_results_skipped: int = 0
+    mapping_trigger_queued: bool = False
+    integrity_check_queued: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+
+class EffectiveTestFlagsDTO(BaseModel):
+    testVisualizerEnabled: bool = False
+    integritySignalsEnabled: bool = False
+    liveTestUpdatesEnabled: bool = False
+    semanticMappingEnabled: bool = False
+
+
+class TestSourceStatusDTO(BaseModel):
+    platformId: str
+    enabled: bool = False
+    watch: bool = False
+    resultsDir: str = ""
+    resolvedDir: str = ""
+    patterns: list[str] = Field(default_factory=list)
+    exists: bool = False
+    readable: bool = False
+    matchedFiles: int = 0
+    sampleFiles: list[str] = Field(default_factory=list)
+    lastError: str = ""
+    lastSyncedAt: str = ""
+
+
+class TestVisualizerConfigDTO(BaseModel):
+    projectId: str
+    flags: ProjectTestFlags = Field(default_factory=ProjectTestFlags)
+    effectiveFlags: EffectiveTestFlagsDTO = Field(default_factory=EffectiveTestFlagsDTO)
+    autoSyncOnStartup: bool = True
+    maxFilesPerScan: int = 500
+    maxParseConcurrency: int = 4
+    instructionProfile: str = "skillmeat"
+    instructionNotes: str = ""
+    parserHealth: dict[str, bool] = Field(default_factory=dict)
+    sources: list[TestSourceStatusDTO] = Field(default_factory=list)
+
+
+class SyncTestsRequest(BaseModel):
+    project_id: str
+    platforms: list[TestPlatformId] = Field(default_factory=list)
+    force: bool = False
+
+
+class SyncTestsResponse(BaseModel):
+    project_id: str
+    stats: dict[str, Any] = Field(default_factory=dict)
+    sources: list[TestSourceStatusDTO] = Field(default_factory=list)
+
+
+class BackfillTestMappingsRequest(BaseModel):
+    project_id: str
+    run_limit: int = Field(default=100, ge=1, le=5000)
+    force_recompute: bool = False
+    provider_sources: list[str] = Field(default_factory=list)
+    source: str = "backfill"
+
+
+class BackfillTestMappingsResponse(BaseModel):
+    project_id: str
+    run_limit: int
+    runs_processed: int = 0
+    tests_considered: int = 0
+    tests_resolved: int = 0
+    tests_reused_cached: int = 0
+    mappings_stored: int = 0
+    primary_mappings: int = 0
+    resolver_version: str = ""
+    cache_state: dict[str, Any] = Field(default_factory=dict)
+    total_errors: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class MappingResolverRunDetailDTO(BaseModel):
+    run_id: str
+    timestamp: str = ""
+    branch: str = ""
+    git_sha: str = ""
+    agent_session_id: str = ""
+    total_results: int = 0
+    mapped_primary_tests: int = 0
+    unmapped_tests: int = 0
+    coverage: float = 0.0
+
+
+class MappingResolverDetailResponseDTO(BaseModel):
+    project_id: str
+    run_limit: int
+    generated_at: str = ""
+    runs: list[MappingResolverRunDetailDTO] = Field(default_factory=list)
+
+
+class TestMetricSummaryDTO(BaseModel):
+    project_id: str
+    total_metrics: int = 0
+    by_platform: dict[str, int] = Field(default_factory=dict)
+    by_metric_type: dict[str, int] = Field(default_factory=dict)
+    latest_collected_at: str = ""

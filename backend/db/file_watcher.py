@@ -12,6 +12,8 @@ from typing import Optional
 
 from watchfiles import awatch, Change
 
+from backend.services.test_config import ResolvedTestSource
+
 logger = logging.getLogger("ccdash.watcher")
 
 
@@ -32,6 +34,8 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
     ) -> None:
         """Start watching project directories in a background task."""
         if self._running:
@@ -40,7 +44,15 @@ class FileWatcher:
 
         self._running = True
         self._task = asyncio.create_task(
-            self._watch_loop(sync_engine, project_id, sessions_dir, docs_dir, progress_dir)
+            self._watch_loop(
+                sync_engine,
+                project_id,
+                sessions_dir,
+                docs_dir,
+                progress_dir,
+                test_results_dir,
+                test_sources,
+            )
         )
         logger.info(f"File watcher started for project {project_id}")
 
@@ -67,9 +79,17 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
     ) -> None:
         """Main watching loop. Watches all project dirs for changes."""
         watch_paths = [p for p in [sessions_dir, docs_dir, progress_dir] if p.exists()]
+        if test_results_dir and test_results_dir.exists():
+            watch_paths.append(test_results_dir)
+        for source in test_sources or []:
+            if source.watch and source.enabled and source.resolved_dir.exists():
+                watch_paths.append(source.resolved_dir)
+        watch_paths = list(dict.fromkeys(watch_paths))
 
         if not watch_paths:
             logger.warning("No watch paths exist, watcher has nothing to monitor")
@@ -83,13 +103,22 @@ class FileWatcher:
                 if not self._running:
                     break
 
-                classified = self._classify_changes(changes, sessions_dir, docs_dir, progress_dir)
+                classified = self._classify_changes(
+                    changes,
+                    sessions_dir,
+                    docs_dir,
+                    progress_dir,
+                    test_results_dir,
+                    test_sources,
+                )
                 if classified:
                     logger.info(f"Detected {len(classified)} file changes, syncing...")
                     try:
                         await sync_engine.sync_changed_files(
                             project_id, classified,
                             sessions_dir, docs_dir, progress_dir,
+                            test_results_dir=test_results_dir,
+                            test_sources=test_sources,
                         )
                     except Exception as e:
                         logger.error(f"Error syncing changed files: {e}")
@@ -106,17 +135,31 @@ class FileWatcher:
         sessions_dir: Path,
         docs_dir: Path,
         progress_dir: Path,
+        test_results_dir: Path | None = None,
+        test_sources: list[ResolvedTestSource] | None = None,
     ) -> list[tuple[str, Path]]:
         """Classify raw watchfiles changes into (change_type, path) pairs.
 
-        Only returns relevant file types (.jsonl, .md).
+        Returns relevant session/doc/test artifact file types.
         """
+        artifact_suffixes = {".xml", ".json", ".csv", ".html", ".txt", ".info"}
         result = []
         for change_type, path_str in changes:
             path = Path(path_str)
 
-            # Only care about session JSONL files and markdown docs
-            if path.suffix not in (".jsonl", ".md"):
+            if path.suffix in artifact_suffixes:
+                in_legacy_dir = bool(
+                    test_results_dir
+                    and (path == test_results_dir or test_results_dir in path.parents)
+                )
+                in_test_source = False
+                for source in test_sources or []:
+                    if path == source.resolved_dir or source.resolved_dir in path.parents:
+                        in_test_source = True
+                        break
+                if not in_legacy_dir and not in_test_source:
+                    continue
+            elif path.suffix not in (".jsonl", ".md"):
                 continue
 
             if change_type == Change.deleted:

@@ -86,6 +86,31 @@ class SqliteTaskRepository:
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
+    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+        if project_id:
+            async with self.db.execute(
+                "SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (project_id, limit, offset),
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+        async with self.db.execute(
+            "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def count(self, project_id: str | None = None) -> int:
+        if project_id:
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM tasks WHERE project_id = ?",
+                (project_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+        async with self.db.execute("SELECT COUNT(*) FROM tasks") as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+
     async def list_by_feature(self, feature_id: str, phase_id: str | None = None) -> list[dict]:
         if phase_id:
             async with self.db.execute(

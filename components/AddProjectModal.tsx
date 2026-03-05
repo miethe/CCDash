@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { Project } from '../types';
+import { defaultTestConfig } from '../services/testConfigDefaults';
 
 interface AddProjectModalProps {
     isOpen: boolean;
@@ -40,6 +41,7 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                 planDocsPath,
                 sessionsPath,
                 progressPath,
+                testConfig: defaultTestConfig(),
             };
             await addProject(newProject);
             onClose();

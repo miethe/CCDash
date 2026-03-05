@@ -1,6 +1,7 @@
 """Cache + sync observability API."""
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -8,7 +9,9 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from backend.db import connection
 from backend.db.file_watcher import file_watcher
+from backend.db.factory import get_entity_link_repository
 from backend.project_manager import project_manager
 
 logger = logging.getLogger("ccdash.cache")
@@ -38,6 +41,46 @@ class SyncPathsRequest(BaseModel):
     paths: list[ChangedPathSpec]
     background: bool = False
     trigger: str = "api"
+
+
+class EntityLinkCreate(BaseModel):
+    sourceType: str = Field(..., min_length=1)
+    sourceId: str = Field(..., min_length=1)
+    targetType: str = Field(..., min_length=1)
+    targetId: str = Field(..., min_length=1)
+    linkType: str = Field(default="related", min_length=1)
+    origin: str = Field(default="manual", min_length=1)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    depth: int = Field(default=0, ge=0)
+    sortOrder: int = 0
+    metadata: dict[str, Any] | None = None
+
+
+def _map_link_row(link: dict[str, Any]) -> dict[str, Any]:
+    metadata_raw = link.get("metadata_json")
+    metadata: dict[str, Any] = {}
+    if isinstance(metadata_raw, str) and metadata_raw:
+        try:
+            parsed = json.loads(metadata_raw)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except json.JSONDecodeError:
+            metadata = {}
+
+    return {
+        "id": int(link.get("id") or 0),
+        "sourceType": str(link.get("source_type") or ""),
+        "sourceId": str(link.get("source_id") or ""),
+        "targetType": str(link.get("target_type") or ""),
+        "targetId": str(link.get("target_id") or ""),
+        "linkType": str(link.get("link_type") or "related"),
+        "origin": str(link.get("origin") or "auto"),
+        "confidence": float(link.get("confidence") or 0.0),
+        "depth": int(link.get("depth") or 0),
+        "sortOrder": int(link.get("sort_order") or 0),
+        "createdAt": str(link.get("created_at") or ""),
+        "metadata": metadata,
+    }
 
 
 def _get_sync_engine(request: Request):
@@ -77,6 +120,72 @@ def _resolve_changed_path(raw_path: str, project_root: Path, sessions_dir: Path,
             detail=f"Path outside allowed project roots: {raw_path}",
         )
     return candidate
+
+
+@links_router.get("/{entity_type}/{entity_id}")
+async def get_entity_links(
+    entity_type: str,
+    entity_id: str,
+    link_type: str | None = Query(None, description="Optional link-type filter"),
+):
+    """Return all bidirectional links for an entity."""
+    db = await connection.get_connection()
+    repo = get_entity_link_repository(db)
+    rows = await repo.get_links_for(entity_type, entity_id, link_type)
+    items = [_map_link_row(row) for row in rows]
+    return {
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "linkType": link_type or "",
+        "count": len(items),
+        "items": items,
+    }
+
+
+@links_router.post("")
+async def create_entity_link(payload: EntityLinkCreate):
+    """Create or upsert a manual entity link."""
+    source_type = payload.sourceType.strip()
+    source_id = payload.sourceId.strip()
+    target_type = payload.targetType.strip()
+    target_id = payload.targetId.strip()
+    link_type = payload.linkType.strip()
+    origin = payload.origin.strip() or "manual"
+    if not source_type or not source_id or not target_type or not target_id or not link_type:
+        raise HTTPException(status_code=400, detail="source/target/linkType cannot be blank")
+
+    db = await connection.get_connection()
+    repo = get_entity_link_repository(db)
+    link_id = await repo.upsert(
+        {
+            "source_type": source_type,
+            "source_id": source_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "link_type": link_type,
+            "origin": origin,
+            "confidence": float(payload.confidence),
+            "depth": int(payload.depth),
+            "sort_order": int(payload.sortOrder),
+            "metadata_json": json.dumps(payload.metadata or {}),
+        }
+    )
+    return {"status": "ok", "id": int(link_id)}
+
+
+@links_router.get("/{entity_type}/{entity_id}/tree")
+async def get_entity_tree(entity_type: str, entity_id: str):
+    """Return parent/child/related link sets for tree rendering."""
+    db = await connection.get_connection()
+    repo = get_entity_link_repository(db)
+    tree = await repo.get_tree(entity_type, entity_id)
+    return {
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "children": [_map_link_row(row) for row in tree.get("children", [])],
+        "parents": [_map_link_row(row) for row in tree.get("parents", [])],
+        "related": [_map_link_row(row) for row in tree.get("related", [])],
+    }
 
 
 @cache_router.get("/status")

@@ -23,6 +23,7 @@ logger = logging.getLogger("ccdash.db")
 # Database file location
 DB_DIR = config.PROJECT_ROOT / "data"
 DB_PATH = Path(os.getenv("CCDASH_DB_PATH", str(DB_DIR / "ccdash_cache.db")))
+SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("CCDASH_SQLITE_BUSY_TIMEOUT_MS", "30000")))
 
 # Type alias for DB connection/pool
 DbConnection = Union[aiosqlite.Connection, Any] # Any to support asyncpg.Pool
@@ -50,7 +51,7 @@ async def get_connection() -> DbConnection:
         # Enable WAL mode for better concurrent read performance
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.execute("PRAGMA busy_timeout=5000")
+        await conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
         logger.info(f"Database connection established: {DB_PATH}")
         _connection = conn
         return _connection

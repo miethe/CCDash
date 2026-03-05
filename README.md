@@ -9,6 +9,12 @@
 2.  **Forensics & Debugging**: Detailed introspection into Agent "thought processes," tool usage, and costs.
 3.  **Local Context**: Tightly coupled with the local filesystem, Git history, and Markdown frontmatter.
 
+## 🔌 Session Ingestion Platforms
+
+- **Claude Code**: native JSONL parsing plus sidecar enrichment (`todos`, `tasks`, `teams`, `session-env`, `tool-results`).
+- **Codex**: JSONL payload parsing (`response_item`, `event_msg`, `turn_context`) with tool/result correlation and payload signal extraction.
+- **Platform registry**: parser routing is centralized so additional platforms can be added without changing API/UI contracts.
+
 ---
 
 ## 🛠️ Technology Stack
@@ -91,6 +97,14 @@ The core debugging loop for AI interactions.
     7.  **Agents**:
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
+    8.  **Forensics**:
+        *   Full forensic payload exploration from parser-derived telemetry.
+        *   **Queue Pressure**: queue operation/status/task-type distributions and `waiting_for_task` signals.
+        *   **Resource Footprint**: command-derived external/internal targets (`api`, `database`, `docker`, `ssh`, `service`).
+        *   **Subagent Topology**: task fan-out, linked subagent sessions, and orphan linkage tracking.
+        *   **Tool Result Intensity**: `tool-results` sidecar file volume and largest file inspection.
+        *   **Platform Telemetry**: project-level platform config telemetry (for example MCP server inventory for Claude).
+        *   **Codex Payload Signals**: payload/tool distributions for Codex sessions.
 
 ### 7. Codebase Explorer
 *   **Route**: `/codebase` with a 3-pane explorer (tree, file list, detail).
@@ -104,6 +118,25 @@ The core debugging loop for AI interactions.
 ### 8. Settings
 *   **Alert Rules Engine**: Persisted alert CRUD (`POST/PATCH/DELETE /api/analytics/alerts`) for threshold-based monitoring.
 *   **Toggle System**: Activate/Deactivate alerts with backend persistence.
+*   **Project Testing Configuration**: Per-project Testing settings to configure platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export.
+
+### 9. Execution Workbench (In-App Local Terminal)
+*   **Route**: `/execution` with feature-scoped execution context and command recommendations.
+*   **Run Launch UX**: `Run in Workbench` actions open a pre-run review modal with:
+    *   editable command text
+    *   working-directory selection
+    *   env profile selection (`default`, `minimal`, `project`, `ci`)
+    *   policy re-check before launch
+*   **Safety Pipeline**:
+    *   `allow` commands run immediately.
+    *   `requires_approval` commands enter `blocked` until explicit approve/deny.
+    *   `deny` commands are blocked until changed and re-evaluated.
+*   **Runs Tab**:
+    *   run history list for the selected feature
+    *   active run metadata/status
+    *   streamed terminal output (`stdout`/`stderr`)
+    *   actions for cancel and retry
+*   **Backend API**: `/api/execution/*` endpoints persist runs, events, and approvals for auditable run lifecycles.
 
 ---
 
@@ -123,6 +156,10 @@ The atomic unit of work. Contains:
 *   `updatedFiles`: List of file modifications.
 *   `linkedArtifacts`: References to external systems (SkillMeat, MeatyCapture).
 *   `dates` / `timeline`: Persisted date metadata and event timeline.
+*   `sessionForensics`: Structured platform-aware forensic payload including:
+    *   `entryContext`, `sidecars`, `analysisSignals`
+    *   `queuePressure`, `resourceFootprint`, `subagentTopology`, `toolResultIntensity`
+    *   `platformTelemetry` (Claude) and `codexPayloadSignals` (Codex)
 
 ### ProjectTask
 Represents a specific unit of implementation.
@@ -155,6 +192,7 @@ Represents Markdown documentation. Contains:
 4.  **Useful scripts**:
     *   `npm run dev:backend` - backend only (reload mode)
     *   `npm run dev:frontend` - frontend only
+    *   `npm run discover:sessions` - run session signal discovery (default profile: `claude_code`)
     *   `npm run build` - build frontend assets
     *   `npm run start:backend` - production-style backend startup
     *   `npm run start:frontend` - serve built frontend (`vite preview`)
@@ -163,6 +201,10 @@ Represents Markdown documentation. Contains:
     *   `GEMINI_API_KEY`: Enables AI insight features.
     *   `CCDASH_BACKEND_HOST` / `CCDASH_BACKEND_PORT`: Backend bind host/port for startup scripts.
     *   `CCDASH_API_PROXY_TARGET`: Vite proxy target for `/api` requests.
+    *   `CCDASH_TEST_VISUALIZER_ENABLED`: Global hard gate for `/api/tests/*` and `/tests` data.
+    *   `CCDASH_INTEGRITY_SIGNALS_ENABLED`: Global hard gate for integrity signal features.
+    *   `CCDASH_LIVE_TEST_UPDATES_ENABLED`: Global hard gate for live test updates.
+    *   `CCDASH_SEMANTIC_MAPPING_ENABLED`: Global hard gate for semantic mapping.
     *   `CCDASH_LINKING_LOGIC_VERSION`: Link-rebuild version gate (default `1`). Bump when link inference logic changes to force one full relink.
     *   `CCDASH_STARTUP_SYNC_LIGHT_MODE`: run startup sync in lightweight mode first (default `true`).
     *   `CCDASH_STARTUP_SYNC_DELAY_SECONDS`: delay before startup sync starts (default `2`).
@@ -170,6 +212,17 @@ Represents Markdown documentation. Contains:
     *   `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS`: delay before deferred rebuild (default `45`).
     *   `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS`: capture analytics during deferred rebuild (default `false`).
 
+6.  **Test Mapping Workflow (recommended)**:
+    *   Run one initial backfill for each project (`POST /api/tests/mappings/backfill`) to bootstrap mappings across existing runs.
+    *   Resolver uses cached primary mappings for unchanged tests and remaps only new/changed tests on future runs.
+    *   Pass `force_recompute=true` only when mapping logic changes and you want a full remap.
+    *   Domain mapping now supports hierarchical sub-domains and adaptive depth for large test groups.
+    *   Mapping providers are pluggable; current built-ins are `test_metadata`, `repo_heuristics`, and low-priority `path_fallback`, with semantic import support via `POST /api/tests/mappings/import`.
+    *   Backfill prunes stale unmapped leaf domains to keep domain drilldown cleaner after resolver changes.
+
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).  
+For project-scoped Testing configuration and `/tests` ingestion flow, see [`docs/testing-user-guide.md`](docs/testing-user-guide.md).  
+For end-user execution flow in `/execution`, see [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md).  
 For sync/rebuild operation behavior, see [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md).  
 For codebase explorer backend and scoring details, see [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md).
+For execution run architecture and API integration details, see [`docs/execution-workbench-developer-reference.md`](docs/execution-workbench-developer-reference.md).

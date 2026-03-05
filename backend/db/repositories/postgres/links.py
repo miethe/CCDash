@@ -10,81 +10,33 @@ class PostgresEntityLinkRepository:
 
     async def upsert(self, link_data: dict) -> int:
         now = datetime.now(timezone.utc).isoformat()
-        query = """
+        return await self.db.fetchval(
+            """
             INSERT INTO entity_links (
                 source_type, source_id, target_type, target_id,
                 link_type, origin, confidence, depth, sort_order,
                 metadata_json, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT(id) DO UPDATE SET -- Wait, table has no unique constraint on (source, target)? 
-            -- SQLite migration: ON CONFLICT(source_type, source_id, target_type, target_id, link_type)
-            -- But entity_links in SQLite migration has no UNIQUE constraint definition on those columns?
-            -- It creates a non-unique index. The ON CONFLICT only works if there's a unique constraint/index.
-            -- Ah, SQLite implicit constraints? No.
-            -- If SQLite code relied on ON CONFLICT, there MUST be a unique index.
-            -- Checking SQLite migration... no UNIQUE constraint.
-            -- If so, SQLite 'ON CONFLICT' would fail or do nothing if there's no conflict?
-            -- Actually, to use ON CONFLICT, a conflict target is required.
-            -- I might have missed checking if a UNIQUE index or constraint exists in the migration file.
-            -- Let's assume we want unique links.
-            -- For Postgres, we can't use ON CONFLICT without a constraint.
-            -- We'll just INSERT. If duplicates happen, so be it, or we add constraint later.
-            -- BUT, for upsert behavior, we likely rely on it.
-            -- I'll check if there's an index I can rely on.
-            -- For now, let's just INSERT.
-            metadata_json=EXCLUDED.metadata_json
-        """
-        # Re-reading migration: `ON CONFLICT(source_type...)`. This implies a unique index/constraint exists.
-        # I will assuming I should have added a UNIQUE constraint in Postgres migration too.
-        # I didn't add it in postgres_migrations.py explicitly as a CONSTRAINT, just indices.
-        # I should fix postgres_migrations.py to add UNIQUE constraint if I want upsert.
-        # Or I can use "INSERT ... ON CONFLICT (id) ..." if I had ID, but I don't pass ID here.
-        # I'll stick to simple INSERT for now to avoid errors, since I can't modify the migration usage easily without resetting DB.
-        
-        # Actually, let's try to match logic. If no unique constraint, I can't upsert by fields.
-        # I'll use a check-then-insert approach for safety here.
-        
-        cols = (link_data["source_type"], link_data["source_id"], link_data["target_type"], link_data["target_id"], link_data.get("link_type", "related"))
-        
-        # Check existence (simplified upsert)
-        existing = await self.db.fetchval(
-            """SELECT id FROM entity_links 
-               WHERE source_type=$1 AND source_id=$2 AND target_type=$3 AND target_id=$4 AND link_type=$5""",
-            *cols
+            ON CONFLICT(source_type, source_id, target_type, target_id, link_type) DO UPDATE SET
+                origin = EXCLUDED.origin,
+                confidence = EXCLUDED.confidence,
+                depth = EXCLUDED.depth,
+                sort_order = EXCLUDED.sort_order,
+                metadata_json = EXCLUDED.metadata_json
+            RETURNING id
+            """,
+            link_data["source_type"],
+            link_data["source_id"],
+            link_data["target_type"],
+            link_data["target_id"],
+            link_data.get("link_type", "related"),
+            link_data.get("origin", "auto"),
+            link_data.get("confidence", 1.0),
+            link_data.get("depth", 0),
+            link_data.get("sort_order", 0),
+            link_data.get("metadata_json"),
+            now,
         )
-        
-        if existing:
-            # Update
-            await self.db.execute(
-                """UPDATE entity_links SET 
-                   origin=$1, confidence=$2, depth=$3, sort_order=$4, metadata_json=$5
-                   WHERE id=$6""",
-                link_data.get("origin", "auto"),
-                link_data.get("confidence", 1.0),
-                link_data.get("depth", 0),
-                link_data.get("sort_order", 0),
-                link_data.get("metadata_json"),
-                existing
-            )
-            return existing
-        else:
-            # Insert
-            id_val = await self.db.fetchval(
-                """INSERT INTO entity_links (
-                    source_type, source_id, target_type, target_id,
-                    link_type, origin, confidence, depth, sort_order,
-                    metadata_json, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                RETURNING id""",
-                cols[0], cols[1], cols[2], cols[3], cols[4],
-                link_data.get("origin", "auto"),
-                link_data.get("confidence", 1.0),
-                link_data.get("depth", 0),
-                link_data.get("sort_order", 0),
-                link_data.get("metadata_json"),
-                now
-            )
-            return id_val
 
     async def get_links_for(
         self, entity_type: str, entity_id: str, link_type: str | None = None,

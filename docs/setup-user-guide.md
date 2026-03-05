@@ -22,6 +22,10 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_BACKEND_PORT` (default `8000`)
 - `CCDASH_API_PROXY_TARGET` (default `http://127.0.0.1:8000`)
 - `CCDASH_PYTHON` (optional explicit Python path)
+- `CCDASH_TEST_VISUALIZER_ENABLED` (default `false`; global gate for `/api/tests/*` and `/tests`)
+- `CCDASH_INTEGRITY_SIGNALS_ENABLED` (default `false`; integrity signal features)
+- `CCDASH_LIVE_TEST_UPDATES_ENABLED` (default `false`; live update polling features)
+- `CCDASH_SEMANTIC_MAPPING_ENABLED` (default `false`; semantic mapping features)
 - `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
 - `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`; startup runs a light sync first)
 - `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`; delay before startup sync begins)
@@ -121,3 +125,13 @@ Then load the UI again and inspect backend stack traces.
 - Confirm `npm run dev` shows backend health before frontend startup.
 - Confirm `CCDASH_API_PROXY_TARGET` points to the running backend.
 - Confirm `GET /api/health` responds with `status: ok`.
+
+### `/tests` disabled, empty, or returning `503`
+
+1. Confirm env gates are enabled (`CCDASH_TEST_VISUALIZER_ENABLED=true` at minimum).
+2. In CCDash, open `Settings` -> `Projects` -> `Testing Configuration`.
+3. Enable `Test Visualizer` for the project and configure at least one enabled platform.
+4. Click `Validate Paths`, review `Source Status`, then click `Run Sync Now`.
+5. Reload `/tests` and click `Refresh`.
+
+For the complete project-scoped testing setup flow (platforms, patterns, setup script export), see [`docs/testing-user-guide.md`](./testing-user-guide.md).

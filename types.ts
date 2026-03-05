@@ -707,6 +707,41 @@ export interface Notification {
   isRead: boolean;
 }
 
+export type TestPlatformId =
+  | 'pytest'
+  | 'jest'
+  | 'playwright'
+  | 'coverage'
+  | 'benchmark'
+  | 'lighthouse'
+  | 'locust'
+  | 'triage';
+
+export interface ProjectTestFlags {
+  testVisualizerEnabled: boolean;
+  integritySignalsEnabled: boolean;
+  liveTestUpdatesEnabled: boolean;
+  semanticMappingEnabled: boolean;
+}
+
+export interface ProjectTestPlatformConfig {
+  id: TestPlatformId;
+  enabled: boolean;
+  resultsDir: string;
+  watch: boolean;
+  patterns: string[];
+}
+
+export interface ProjectTestConfig {
+  flags: ProjectTestFlags;
+  platforms: ProjectTestPlatformConfig[];
+  autoSyncOnStartup: boolean;
+  maxFilesPerScan: number;
+  maxParseConcurrency: number;
+  instructionProfile: string;
+  instructionNotes: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -717,6 +752,7 @@ export interface Project {
   planDocsPath: string;
   sessionsPath: string;
   progressPath: string;
+  testConfig: ProjectTestConfig;
 }
 
 export interface LinkedDocument {
@@ -906,6 +942,288 @@ export interface FeatureExecutionContext {
   recommendations: ExecutionRecommendation;
   warnings: FeatureExecutionWarning[];
   generatedAt: string;
+}
+
+export type ExecutionPolicyVerdict = 'allow' | 'requires_approval' | 'deny';
+export type ExecutionRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'blocked';
+export type ExecutionRiskLevel = 'low' | 'medium' | 'high';
+export type ExecutionApprovalDecision = 'pending' | 'approved' | 'denied';
+export type ExecutionEventStream = 'stdout' | 'stderr' | 'system';
+
+export interface ExecutionPolicyResult {
+  verdict: ExecutionPolicyVerdict;
+  riskLevel: ExecutionRiskLevel;
+  requiresApproval: boolean;
+  normalizedCommand: string;
+  commandTokens: string[];
+  resolvedCwd: string;
+  reasonCodes: string[];
+}
+
+export interface ExecutionRun {
+  id: string;
+  projectId: string;
+  featureId: string;
+  provider: string;
+  sourceCommand: string;
+  normalizedCommand: string;
+  cwd: string;
+  envProfile: string;
+  recommendationRuleId: string;
+  riskLevel: ExecutionRiskLevel;
+  policyVerdict: ExecutionPolicyVerdict;
+  requiresApproval: boolean;
+  approvedBy: string;
+  approvedAt: string;
+  status: ExecutionRunStatus;
+  exitCode: number | null;
+  startedAt: string;
+  endedAt: string;
+  retryOfRunId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionRunEvent {
+  id: number | null;
+  runId: string;
+  sequenceNo: number;
+  stream: ExecutionEventStream;
+  eventType: string;
+  payloadText: string;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+}
+
+export interface ExecutionRunEventPage {
+  runId: string;
+  items: ExecutionRunEvent[];
+  nextSequence: number;
+}
+
+export interface ExecutionApproval {
+  id: number | null;
+  runId: string;
+  decision: ExecutionApprovalDecision;
+  reason: string;
+  requestedAt: string;
+  resolvedAt: string;
+  requestedBy: string;
+  resolvedBy: string;
+}
+
+// ── Test Visualizer Types ──────────────────────────────────────────
+
+export type TestStatus =
+  | 'passed'
+  | 'failed'
+  | 'skipped'
+  | 'error'
+  | 'xfailed'
+  | 'xpassed'
+  | 'unknown'
+  | 'running';
+
+export type TestRunStatus = 'running' | 'complete' | 'failed';
+
+export interface TestRun {
+  runId: string;
+  projectId: string;
+  timestamp: string;
+  gitSha: string;
+  branch: string;
+  agentSessionId: string;
+  envFingerprint: string;
+  trigger: 'local' | 'ci' | string;
+  status: TestRunStatus;
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  skippedTests: number;
+  durationMs: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface TestDefinition {
+  testId: string;
+  projectId: string;
+  path: string;
+  name: string;
+  framework: string;
+  tags: string[];
+  owner: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestResult {
+  runId: string;
+  testId: string;
+  status: TestStatus;
+  durationMs: number;
+  errorFingerprint: string;
+  errorMessage: string;
+  artifactRefs: string[];
+  stdoutRef: string;
+  stderrRef: string;
+  createdAt: string;
+}
+
+export interface TestDomain {
+  domainId: string;
+  projectId: string;
+  name: string;
+  parentId: string | null;
+  description: string;
+  tier: 'core' | 'extras' | 'nonfunc' | string;
+  sortOrder: number;
+}
+
+export interface TestFeatureMapping {
+  mappingId: number;
+  projectId: string;
+  testId: string;
+  featureId: string;
+  domainId: string | null;
+  providerSource: string;
+  confidence: number;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface TestIntegritySignal {
+  signalId: string;
+  projectId: string;
+  gitSha: string;
+  filePath: string;
+  testId: string | null;
+  signalType:
+    | 'assertion_removed'
+    | 'skip_introduced'
+    | 'xfail_added'
+    | 'broad_exception'
+    | 'edited_before_green'
+    | string;
+  severity: 'low' | 'medium' | 'high' | string;
+  details: Record<string, unknown>;
+  linkedRunIds: string[];
+  agentSessionId: string;
+  createdAt: string;
+}
+
+export interface DomainHealthRollup {
+  domainId: string;
+  domainName: string;
+  tier: 'core' | 'extras' | 'nonfunc' | string;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  passRate: number;
+  integrityScore: number;
+  confidenceScore?: number;
+  lastRunAt: string | null;
+  children: DomainHealthRollup[];
+}
+
+export interface FeatureTestHealth {
+  featureId: string;
+  featureName: string;
+  domainId: string | null;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  passRate: number;
+  integrityScore: number;
+  confidenceScore?: number;
+  lastRunAt: string | null;
+  openSignals: number;
+}
+
+export interface TestTimelinePoint {
+  date: string;
+  passRate: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  runIds: string[];
+  signals: TestIntegritySignal[];
+}
+
+export interface FeatureTestTimeline {
+  featureId: string;
+  featureName: string;
+  timeline: TestTimelinePoint[];
+  firstGreen: string | null;
+  lastRed: string | null;
+  lastKnownGood: string | null;
+}
+
+export interface TestRunDetail {
+  run: TestRun;
+  results: TestResult[];
+  definitions: Record<string, TestDefinition>;
+  integritySignals: TestIntegritySignal[];
+}
+
+export interface CorrelatedTestRun {
+  run: TestRun;
+  agentSession: AgentSession | null;
+  features: FeatureTestHealth[];
+  integritySignals: TestIntegritySignal[];
+  links: Record<string, string>;
+}
+
+export interface TestSourceStatus {
+  platformId: string;
+  enabled: boolean;
+  watch: boolean;
+  resultsDir: string;
+  resolvedDir: string;
+  patterns: string[];
+  exists: boolean;
+  readable: boolean;
+  matchedFiles: number;
+  sampleFiles: string[];
+  lastError: string;
+  lastSyncedAt: string;
+}
+
+export interface EffectiveTestFlags {
+  testVisualizerEnabled: boolean;
+  integritySignalsEnabled: boolean;
+  liveTestUpdatesEnabled: boolean;
+  semanticMappingEnabled: boolean;
+}
+
+export interface TestVisualizerConfig {
+  projectId: string;
+  flags: ProjectTestFlags;
+  effectiveFlags: EffectiveTestFlags;
+  autoSyncOnStartup: boolean;
+  maxFilesPerScan: number;
+  maxParseConcurrency: number;
+  instructionProfile: string;
+  instructionNotes: string;
+  parserHealth: Record<string, boolean>;
+  sources: TestSourceStatus[];
+}
+
+export interface TestSyncResponse {
+  projectId: string;
+  stats: Record<string, unknown>;
+  sources: TestSourceStatus[];
+}
+
+export interface TestMetricSummary {
+  projectId: string;
+  totalMetrics: number;
+  byPlatform: Record<string, number>;
+  byMetricType: Record<string, number>;
+  latestCollectedAt: string;
 }
 
 export interface PaginatedResponse<T> {

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
+import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 
 export interface SessionFilters {
     status?: string;
@@ -94,6 +95,9 @@ const POLL_INTERVAL_MS = 30_000; // 30 seconds
 const FEATURE_POLL_INTERVAL_MS = 5_000; // 5 seconds
 const SESSIONS_PER_PAGE = 50;
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
+const isTestsHashRoute = (): boolean => (
+    typeof window !== 'undefined' && window.location.hash.startsWith('#/tests')
+);
 
 const matchesPhase = (phase: Feature['phases'][number], phaseId: string): boolean =>
     phase.id === phaseId || phase.phase === phaseId;
@@ -144,7 +148,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [activeProject, setActiveProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isTestsRoute, setIsTestsRoute] = useState<boolean>(isTestsHashRoute);
     const sessionsCountRef = useRef(0);
+    const hasLoadedOnceRef = useRef(false);
+    const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
+    const refreshFeaturesInFlightRef = useRef<Promise<void> | null>(null);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onHashChange = () => setIsTestsRoute(isTestsHashRoute());
+        window.addEventListener('hashchange', onHashChange);
+        return () => window.removeEventListener('hashchange', onHashChange);
+    }, []);
 
     const upsertFeatureInState = useCallback((updatedFeature: Feature) => {
         setFeatures(prev => {
@@ -290,8 +305,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const refreshTasks = useCallback(async () => {
         try {
-            const data = await fetchJson<ProjectTask[]>('/tasks');
-            setTasks(data);
+            const data = await fetchJson<PaginatedResponse<ProjectTask> | ProjectTask[]>('/tasks?offset=0&limit=5000');
+            setTasks(Array.isArray(data) ? data : (data.items || []));
         } catch (e) {
             console.error('Failed to fetch tasks:', e);
         }
@@ -316,21 +331,35 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, []);
 
     const refreshFeatures = useCallback(async () => {
+        if (refreshFeaturesInFlightRef.current) {
+            return refreshFeaturesInFlightRef.current;
+        }
+        const task = (async () => {
+            try {
+                const data = await fetchJson<PaginatedResponse<Feature> | Feature[]>('/features?offset=0&limit=5000');
+                const items = Array.isArray(data) ? data : (data.items || []);
+                setFeatures(applyPendingFeatureStatuses(items));
+            } catch (e) {
+                console.error('Failed to fetch features:', e);
+            }
+        })();
+        refreshFeaturesInFlightRef.current = task;
         try {
-            const data = await fetchJson<Feature[]>('/features');
-            setFeatures(applyPendingFeatureStatuses(data));
-        } catch (e) {
-            console.error('Failed to fetch features:', e);
+            await task;
+        } finally {
+            if (refreshFeaturesInFlightRef.current === task) {
+                refreshFeaturesInFlightRef.current = null;
+            }
         }
     }, [applyPendingFeatureStatuses]);
 
     const refreshProjects = useCallback(async () => {
         try {
             const data = await fetchJson<Project[]>('/projects');
-            setProjects(data);
+            setProjects(data.map(project => ({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) })));
             try {
                 const active = await fetchJson<Project>('/projects/active');
-                setActiveProject(active);
+                setActiveProject({ ...active, testConfig: ensureProjectTestConfig(active.testConfig) });
             } catch (e) {
                 setActiveProject(null);
             }
@@ -575,24 +604,46 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [upsertFeatureInState]);
 
     const refreshAll = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            await Promise.all([
-                refreshSessions(),
-                refreshDocuments(),
-                refreshTasks(),
-                refreshFeatures(),
-                refreshAlerts(),
-                refreshNotifications(),
-                refreshProjects(),
-            ]);
-        } catch (e: any) {
-            setError(e.message || 'Failed to load data');
-        } finally {
-            setLoading(false);
+        if (refreshAllInFlightRef.current) {
+            return refreshAllInFlightRef.current;
         }
-    }, [refreshSessions, refreshDocuments, refreshTasks, refreshFeatures, refreshAlerts, refreshNotifications, refreshProjects]);
+        const isInitialLoad = !hasLoadedOnceRef.current;
+        if (isInitialLoad) {
+            setLoading(true);
+        }
+        setError(null);
+        const task = (async () => {
+            try {
+                const tasksToRun: Promise<unknown>[] = [
+                    refreshSessions(),
+                    refreshDocuments(),
+                    refreshTasks(),
+                    refreshAlerts(),
+                    refreshNotifications(),
+                    refreshProjects(),
+                ];
+                if (!isTestsRoute) {
+                    tasksToRun.push(refreshFeatures());
+                }
+                await Promise.all(tasksToRun);
+            } catch (e: any) {
+                setError(e.message || 'Failed to load data');
+            } finally {
+                if (isInitialLoad) {
+                    setLoading(false);
+                    hasLoadedOnceRef.current = true;
+                }
+            }
+        })();
+        refreshAllInFlightRef.current = task;
+        try {
+            await task;
+        } finally {
+            if (refreshAllInFlightRef.current === task) {
+                refreshAllInFlightRef.current = null;
+            }
+        }
+    }, [isTestsRoute, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures, refreshAlerts, refreshNotifications, refreshProjects]);
 
     const refreshAllRef = useRef(refreshAll);
     const refreshFeaturesRef = useRef(refreshFeatures);
@@ -620,11 +671,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Faster feature polling to keep Kanban and Feature modal responsive to background updates.
     useEffect(() => {
+        if (isTestsRoute) {
+            return undefined;
+        }
         const interval = setInterval(() => {
             void refreshFeaturesRef.current();
         }, FEATURE_POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, []);
+    }, [isTestsRoute]);
 
     return (
         <DataContext.Provider

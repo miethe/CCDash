@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 import asyncpg
 
+from backend import config
+
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 13
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -435,6 +437,251 @@ CREATE TABLE IF NOT EXISTS alert_configs (
     is_active  INTEGER DEFAULT 1,
     scope      TEXT DEFAULT 'session'
 );
+
+-- ── 12. Execution Workbench Runs ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS execution_runs (
+    id                    TEXT PRIMARY KEY,
+    project_id            TEXT NOT NULL,
+    feature_id            TEXT DEFAULT '',
+    provider              TEXT NOT NULL DEFAULT 'local',
+    source_command        TEXT NOT NULL,
+    normalized_command    TEXT NOT NULL,
+    cwd                   TEXT NOT NULL,
+    env_profile           TEXT NOT NULL DEFAULT 'default',
+    recommendation_rule_id TEXT DEFAULT '',
+    risk_level            TEXT NOT NULL DEFAULT 'medium',
+    policy_verdict        TEXT NOT NULL DEFAULT 'allow',
+    requires_approval     INTEGER NOT NULL DEFAULT 0,
+    approved_by           TEXT DEFAULT '',
+    approved_at           TEXT DEFAULT '',
+    status                TEXT NOT NULL DEFAULT 'queued',
+    exit_code             INTEGER,
+    started_at            TEXT DEFAULT '',
+    ended_at              TEXT DEFAULT '',
+    retry_of_run_id       TEXT DEFAULT '',
+    metadata_json         JSONB DEFAULT '{}'::jsonb,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_feature_created
+    ON execution_runs(project_id, feature_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_status_updated
+    ON execution_runs(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_runs_metadata_json
+    ON execution_runs USING GIN (metadata_json);
+
+CREATE TABLE IF NOT EXISTS execution_run_events (
+    id            BIGSERIAL PRIMARY KEY,
+    run_id        TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    sequence_no   INTEGER NOT NULL,
+    stream        TEXT NOT NULL DEFAULT 'system',
+    event_type    TEXT NOT NULL DEFAULT 'status',
+    payload_text  TEXT DEFAULT '',
+    payload_json  JSONB DEFAULT '{}'::jsonb,
+    occurred_at   TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_run_events_seq
+    ON execution_run_events(run_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_execution_run_events_lookup
+    ON execution_run_events(run_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_execution_run_events_payload_json
+    ON execution_run_events USING GIN (payload_json);
+
+CREATE TABLE IF NOT EXISTS execution_approvals (
+    id            BIGSERIAL PRIMARY KEY,
+    run_id        TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    decision      TEXT NOT NULL DEFAULT 'pending',
+    reason        TEXT DEFAULT '',
+    requested_at  TEXT NOT NULL,
+    resolved_at   TEXT DEFAULT '',
+    requested_by  TEXT DEFAULT '',
+    resolved_by   TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
+    ON execution_approvals(run_id, requested_at DESC);
+"""
+
+_TEST_VISUALIZER_TABLES = """
+-- ── 12. Test Visualizer ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS test_runs (
+    run_id              TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    timestamp           TEXT NOT NULL,
+    git_sha             TEXT DEFAULT '',
+    branch              TEXT DEFAULT '',
+    agent_session_id    TEXT DEFAULT '',
+    env_fingerprint     TEXT DEFAULT '',
+    trigger             TEXT DEFAULT 'local',
+    status              TEXT DEFAULT 'complete',
+    total_tests         INTEGER DEFAULT 0,
+    passed_tests        INTEGER DEFAULT 0,
+    failed_tests        INTEGER DEFAULT 0,
+    skipped_tests       INTEGER DEFAULT 0,
+    duration_ms         INTEGER DEFAULT 0,
+    metadata_json       JSONB DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_runs_project
+    ON test_runs(project_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_test_runs_session
+    ON test_runs(project_id, agent_session_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_test_runs_sha
+    ON test_runs(project_id, git_sha);
+CREATE INDEX IF NOT EXISTS idx_test_runs_metadata_json
+    ON test_runs USING GIN (metadata_json);
+
+CREATE TABLE IF NOT EXISTS test_definitions (
+    test_id         TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    framework       TEXT DEFAULT 'pytest',
+    tags_json       JSONB DEFAULT '[]'::jsonb,
+    owner           TEXT DEFAULT '',
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_defs_project
+    ON test_definitions(project_id);
+CREATE INDEX IF NOT EXISTS idx_test_defs_path
+    ON test_definitions(project_id, path);
+CREATE INDEX IF NOT EXISTS idx_test_defs_tags_json
+    ON test_definitions USING GIN (tags_json);
+
+CREATE TABLE IF NOT EXISTS test_results (
+    run_id              TEXT NOT NULL REFERENCES test_runs(run_id) ON DELETE CASCADE,
+    test_id             TEXT NOT NULL REFERENCES test_definitions(test_id),
+    status              TEXT NOT NULL,
+    duration_ms         INTEGER DEFAULT 0,
+    error_fingerprint   TEXT DEFAULT '',
+    error_message       TEXT DEFAULT '',
+    artifact_refs_json  JSONB DEFAULT '[]'::jsonb,
+    stdout_ref          TEXT DEFAULT '',
+    stderr_ref          TEXT DEFAULT '',
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (run_id, test_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_results_test
+    ON test_results(test_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_status
+    ON test_results(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_fingerprint
+    ON test_results(error_fingerprint) WHERE error_fingerprint <> '';
+CREATE INDEX IF NOT EXISTS idx_test_results_run
+    ON test_results(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_results_run_status
+    ON test_results(run_id, status, test_id);
+CREATE INDEX IF NOT EXISTS idx_test_results_test_run
+    ON test_results(test_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_test_results_artifact_refs_json
+    ON test_results USING GIN (artifact_refs_json);
+
+CREATE TABLE IF NOT EXISTS test_domains (
+    domain_id       TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    parent_id       TEXT REFERENCES test_domains(domain_id),
+    description     TEXT DEFAULT '',
+    tier            TEXT DEFAULT 'core',
+    sort_order      INTEGER DEFAULT 0,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_domains_project
+    ON test_domains(project_id);
+CREATE INDEX IF NOT EXISTS idx_test_domains_parent
+    ON test_domains(parent_id) WHERE parent_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS test_feature_mappings (
+    mapping_id          BIGSERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    test_id             TEXT NOT NULL REFERENCES test_definitions(test_id),
+    feature_id          TEXT NOT NULL,
+    domain_id           TEXT REFERENCES test_domains(domain_id),
+    provider_source     TEXT NOT NULL,
+    confidence          DOUBLE PRECISION DEFAULT 0.5,
+    version             INTEGER DEFAULT 1,
+    snapshot_hash       TEXT DEFAULT '',
+    is_primary          INTEGER DEFAULT 0,
+    metadata_json       JSONB DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mappings_test
+    ON test_feature_mappings(project_id, test_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_mappings_feature
+    ON test_feature_mappings(project_id, feature_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_mappings_domain
+    ON test_feature_mappings(project_id, domain_id);
+CREATE INDEX IF NOT EXISTS idx_mappings_primary_feature_test
+    ON test_feature_mappings(project_id, feature_id, test_id)
+    WHERE is_primary = 1;
+CREATE INDEX IF NOT EXISTS idx_mappings_primary_domain_test
+    ON test_feature_mappings(project_id, domain_id, test_id)
+    WHERE is_primary = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mappings_upsert
+    ON test_feature_mappings(test_id, feature_id, provider_source, version);
+CREATE INDEX IF NOT EXISTS idx_mappings_metadata_json
+    ON test_feature_mappings USING GIN (metadata_json);
+
+CREATE TABLE IF NOT EXISTS test_integrity_signals (
+    signal_id           TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    git_sha             TEXT NOT NULL,
+    file_path           TEXT NOT NULL,
+    test_id             TEXT REFERENCES test_definitions(test_id),
+    signal_type         TEXT NOT NULL,
+    severity            TEXT DEFAULT 'medium',
+    details_json        JSONB DEFAULT '{}'::jsonb,
+    linked_run_ids_json JSONB DEFAULT '[]'::jsonb,
+    agent_session_id    TEXT DEFAULT '',
+    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_integrity_project
+    ON test_integrity_signals(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_integrity_sha
+    ON test_integrity_signals(project_id, git_sha);
+CREATE INDEX IF NOT EXISTS idx_integrity_test
+    ON test_integrity_signals(test_id) WHERE test_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_integrity_type
+    ON test_integrity_signals(project_id, signal_type, severity);
+CREATE INDEX IF NOT EXISTS idx_integrity_project_agent_created
+    ON test_integrity_signals(project_id, agent_session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_integrity_details_json
+    ON test_integrity_signals USING GIN (details_json);
+CREATE INDEX IF NOT EXISTS idx_integrity_linked_runs_json
+    ON test_integrity_signals USING GIN (linked_run_ids_json);
+
+CREATE TABLE IF NOT EXISTS test_metrics (
+    metric_id            BIGSERIAL PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    run_id               TEXT DEFAULT '',
+    platform             TEXT NOT NULL,
+    metric_type          TEXT NOT NULL,
+    metric_name          TEXT NOT NULL,
+    metric_value         DOUBLE PRECISION DEFAULT 0,
+    unit                 TEXT DEFAULT '',
+    metadata_json        JSONB DEFAULT '{}'::jsonb,
+    source_file          TEXT DEFAULT '',
+    collected_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_test_metrics_project
+    ON test_metrics(project_id, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_platform
+    ON test_metrics(project_id, platform, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_metric_type
+    ON test_metrics(project_id, metric_type, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_metrics_metadata_json
+    ON test_metrics USING GIN (metadata_json);
 """
 
 _SEED_METRIC_TYPES = """
@@ -480,6 +727,35 @@ async def _ensure_column(db: asyncpg.Connection, table: str, column: str, defini
         return
     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+
+async def _ensure_test_visualizer_tables(db: asyncpg.Connection) -> None:
+    if not config.CCDASH_TEST_VISUALIZER_ENABLED:
+        return
+    await db.execute(_TEST_VISUALIZER_TABLES)
+
+
+async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
+    # Deduplicate legacy rows before enforcing unique upsert key.
+    await db.execute(
+        """
+        DELETE FROM entity_links a
+        USING entity_links b
+        WHERE a.id < b.id
+          AND a.source_type = b.source_type
+          AND a.source_id = b.source_id
+          AND a.target_type = b.target_type
+          AND a.target_id = b.target_id
+          AND a.link_type = b.link_type
+        """
+    )
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_links_upsert
+            ON entity_links(source_type, source_id, target_type, target_id, link_type)
+        """
+    )
+
+
 async def run_migrations(db: asyncpg.Connection) -> None:
     """Create all tables and seed data. Idempotent."""
     # Check current schema version
@@ -491,6 +767,8 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         current_version = 0
 
     if current_version >= SCHEMA_VERSION:
+        await _ensure_test_visualizer_tables(db)
+        await _ensure_entity_link_uniqueness(db)
         logger.info(f"Schema is up to date (version {current_version})")
         return
 
@@ -499,6 +777,8 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     # Execute all CREATE TABLE statements (split by semicolon if needed, but asyncpg execute() handles multiple statements?)
     # asyncpg execute() supports multiple statements.
     await db.execute(_TABLES)
+    await _ensure_test_visualizer_tables(db)
+    await _ensure_entity_link_uniqueness(db)
 
     # Explicit table upgrades for existing DBs.
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")

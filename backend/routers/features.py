@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.models import (
@@ -21,6 +21,7 @@ from backend.models import (
     FeatureExecutionAnalyticsSummary,
     FeatureExecutionContext,
     FeatureExecutionWarning,
+    PaginatedResponse,
 )
 from backend.project_manager import project_manager
 from backend.db import connection
@@ -38,7 +39,12 @@ from backend.parsers.features import (
     resolve_file_for_phase,
 )
 from backend.parsers.status_writer import update_frontmatter_field, update_task_in_frontmatter
-from backend.session_mappings import classify_session_key_metadata, load_session_mappings
+from backend.session_mappings import (
+    classify_session_key_metadata,
+    load_session_mappings,
+    workflow_command_exemptions,
+    workflow_command_markers,
+)
 from backend.model_identity import derive_model_identity
 from backend.session_badges import derive_session_badges
 from backend.document_linking import canonical_slug
@@ -52,15 +58,6 @@ from backend.services.feature_execution import (
 features_router = APIRouter(prefix="/api/features", tags=["features"])
 logger = logging.getLogger("ccdash.features")
 
-_NON_CONSEQUENTIAL_COMMAND_PREFIXES = {"/clear", "/model"}
-_KEY_WORKFLOW_COMMAND_MARKERS = (
-    "/dev:execute-phase",
-    "/dev:quick-feature",
-    "/plan:plan-feature",
-    "/dev:implement-story",
-    "/dev:complete-user-story",
-    "/fix:debug",
-)
 _EXECUTION_TELEMETRY_EVENTS = {
     "execution_workbench_opened",
     "execution_begin_work_clicked",
@@ -282,7 +279,12 @@ def _command_token(command_name: str) -> str:
     return normalized.split()[0]
 
 
-def _normalize_link_commands(commands: list[str]) -> list[str]:
+def _normalize_link_commands(
+    commands: list[str],
+    workflow_markers: tuple[str, ...] | None = None,
+) -> list[str]:
+    markers = workflow_markers or workflow_command_markers()
+    exclusions = workflow_command_exemptions()
     seen: set[str] = set()
     deduped: list[str] = []
     for raw in commands:
@@ -290,7 +292,7 @@ def _normalize_link_commands(commands: list[str]) -> list[str]:
         if not command:
             continue
         token = _command_token(command)
-        if token in _NON_CONSEQUENTIAL_COMMAND_PREFIXES:
+        if token in exclusions:
             continue
         lowered = command.lower()
         if lowered in seen:
@@ -299,7 +301,7 @@ def _normalize_link_commands(commands: list[str]) -> list[str]:
         deduped.append(command)
     deduped.sort(
         key=lambda command: (
-            next((idx for idx, marker in enumerate(_KEY_WORKFLOW_COMMAND_MARKERS) if marker in command.lower()), len(_KEY_WORKFLOW_COMMAND_MARKERS)),
+            next((idx for idx, marker in enumerate(markers) if marker in command.lower()), len(markers)),
             command.lower(),
         )
     )
@@ -307,10 +309,11 @@ def _normalize_link_commands(commands: list[str]) -> list[str]:
 
 
 def _normalize_link_title(title: str, commands: list[str], feature_id: str) -> str:
+    exclusions = workflow_command_exemptions()
     normalized = " ".join((title or "").strip().split())
     if not normalized:
         return ""
-    if _command_token(normalized) in _NON_CONSEQUENTIAL_COMMAND_PREFIXES:
+    if _command_token(normalized) in exclusions:
         if commands:
             return f"{commands[0]} - {feature_id}"
         return ""
@@ -504,19 +507,23 @@ def _task_from_feature_blob(task_data: dict[str, Any], feature_id: str, phase_id
 
 # ── GET endpoints ───────────────────────────────────────────────────
 
-@features_router.get("", response_model=list[Feature])
-async def list_features():
-    """Return all discovered features from DB."""
+@features_router.get("", response_model=PaginatedResponse[Feature])
+async def list_features(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=5000),
+):
+    """Return paginated discovered features from DB."""
     project = project_manager.get_active_project()
     if not project:
-        return []
+        return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
     db = await connection.get_connection()
     repo = get_feature_repository(db)
-    
-    features_data = await repo.list_all(project.id)
-    
-    results = []
+
+    features_data = await repo.list_paginated(project.id, offset, limit)
+    total = await repo.count(project.id)
+
+    results: list[Feature] = []
     for f in features_data:
         try:
             data = _safe_json(f.get("data_json"))
@@ -574,7 +581,7 @@ async def list_features():
         except Exception:
             logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
             continue
-    return results
+    return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
 
 
 @features_router.get("/task-source", response_model=TaskSourceResponse)
@@ -969,7 +976,10 @@ async def get_feature_linked_sessions(feature_id: str):
         commands = metadata.get("commands", [])
         if not isinstance(commands, list):
             commands = []
-        normalized_commands = _normalize_link_commands([str(v) for v in commands if isinstance(v, str)])
+        normalized_commands = _normalize_link_commands(
+            [str(v) for v in commands if isinstance(v, str)],
+            workflow_command_markers(mappings),
+        )
 
         pull_requests_by_key: dict[str, dict[str, str]] = {}
 
@@ -1154,7 +1164,11 @@ async def get_feature_linked_sessions(feature_id: str):
                 if related_task.phase:
                     phase_candidates.append(related_task.phase)
 
-        session_metadata = classify_session_key_metadata(command_events, mappings)
+        session_metadata = classify_session_key_metadata(
+            command_events,
+            mappings,
+            platform_type=str(session_row.get("platform_type") or ""),
+        )
         if session_metadata and isinstance(session_metadata.get("relatedPhases"), list):
             phase_candidates.extend(str(value) for value in session_metadata.get("relatedPhases", []) if str(value).strip())
 

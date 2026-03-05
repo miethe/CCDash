@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
@@ -22,11 +23,14 @@ from backend.routers.features import features_router
 from backend.routers.cache import cache_router, links_router
 from backend.routers.session_mappings import session_mappings_router
 from backend.routers.codebase import codebase_router
+from backend.routers.test_visualizer import test_visualizer_router
+from backend.routers.execution import execution_router
 
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
 from backend.project_manager import project_manager
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
+from backend.services.test_config import effective_test_flags, resolve_test_sources
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ccdash")
@@ -52,6 +56,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting initial project sync...")
     sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
     active_project = project_manager.get_active_project()
+    test_sources = resolve_test_sources(active_project) if active_project else []
+    flags = effective_test_flags(active_project)
+    test_results_dir: Optional[Path] = test_sources[0].resolved_dir if test_sources else None
     
     if active_project:
         async def _run_startup_sync_pipeline() -> None:
@@ -69,6 +76,14 @@ async def lifespan(app: FastAPI):
                 rebuild_links=not light_mode,
                 capture_analytics=not light_mode,
             )
+            if flags.testVisualizerEnabled and active_project.testConfig.autoSyncOnStartup:
+                test_stats = await sync.sync_test_sources(
+                    active_project.id,
+                    test_sources,
+                    max_files_per_scan=active_project.testConfig.maxFilesPerScan,
+                    max_parse_concurrency=active_project.testConfig.maxParseConcurrency,
+                )
+                logger.info("Startup test result sync stats: %s", test_stats)
 
             if light_mode and bool(getattr(config, "STARTUP_DEFERRED_REBUILD_LINKS", True)):
                 stagger = max(0, int(getattr(config, "STARTUP_DEFERRED_REBUILD_DELAY_SECONDS", 0)))
@@ -88,7 +103,40 @@ async def lifespan(app: FastAPI):
         
         # 5. Start File Watcher
         await file_watcher.start(
-            sync, active_project.id, sessions_dir, docs_dir, progress_dir
+            sync,
+            active_project.id,
+            sessions_dir,
+            docs_dir,
+            progress_dir,
+            test_results_dir=test_results_dir,
+            test_sources=test_sources,
+        )
+
+    analytics_interval = max(0, int(getattr(config, "ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0)))
+    if analytics_interval > 0:
+        async def _run_periodic_analytics_snapshots() -> None:
+            while True:
+                await asyncio.sleep(analytics_interval)
+                current_project = project_manager.get_active_project()
+                if not current_project:
+                    continue
+                try:
+                    await sync.capture_analytics_snapshot(
+                        current_project.id,
+                        trigger="periodic_timer",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Periodic analytics snapshot failed for project '%s'",
+                        current_project.id,
+                    )
+
+        app.state.analytics_snapshot_task = asyncio.create_task(_run_periodic_analytics_snapshots())
+        logger.info(
+            "Started periodic analytics snapshots (interval=%ss)",
+            analytics_interval,
         )
     
     yield
@@ -100,6 +148,13 @@ async def lifespan(app: FastAPI):
         app.state.sync_task.cancel()
         try:
             await app.state.sync_task
+        except asyncio.CancelledError:
+            pass
+
+    if hasattr(app.state, "analytics_snapshot_task"):
+        app.state.analytics_snapshot_task.cancel()
+        try:
+            await app.state.analytics_snapshot_task
         except asyncio.CancelledError:
             pass
             
@@ -139,6 +194,8 @@ app.include_router(cache_router)
 app.include_router(links_router)
 app.include_router(session_mappings_router)
 app.include_router(codebase_router)
+app.include_router(test_visualizer_router)
+app.include_router(execution_router)
 
 
 @app.get("/api/health")

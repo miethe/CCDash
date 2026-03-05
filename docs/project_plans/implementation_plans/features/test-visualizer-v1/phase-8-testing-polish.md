@@ -2,9 +2,9 @@
 title: "Phase 8: Testing & Polish - Test Visualizer"
 schema_version: 2
 doc_type: phase_plan
-status: draft
+status: in_progress
 created: 2026-02-28
-updated: 2026-02-28
+updated: 2026-03-01
 feature_slug: "test-visualizer"
 feature_version: "v1"
 phase: 8
@@ -42,6 +42,21 @@ tags: [implementation, testing, polish, test-visualizer, performance, accessibil
 ## Overview
 
 This phase hardens the Test Visualizer subsystem for production use. It covers backend unit and integration tests, performance validation, live update end-to-end testing, feature flag rollback verification, edge case handling, accessibility compliance, and UI polish. Some test files were created in earlier phases as stubs — this phase completes them.
+
+## Execution Update (2026-03-01)
+
+- Completed backend testing scope for this phase:
+  - Added `backend/tests/test_test_visualizer_performance.py` (ingest + domain health benchmarks)
+  - Added `backend/tests/test_mapping_resolver.py` and `backend/tests/test_integrity_detector.py`
+  - Expanded `backend/tests/test_test_visualizer_router.py` with semantic mapping import endpoint coverage
+- Verified benchmark targets in local run:
+  - `ingest_run(100 tests) < 500ms`
+  - `get_domain_rollups(100 domains, 1000 tests) < 500ms`
+- Verified edge handling in automated tests:
+  - semantic mapping invalid payload -> `400`
+  - semantic mapping feature flag disabled -> `503`
+  - integrity detector graceful behavior when Git unavailable
+- Frontend accessibility and manual live-update walkthrough remain tracked here for explicit manual QA execution (axe-core + keyboard run-through).
 
 ---
 

@@ -72,6 +72,9 @@ if (uvicornCheck.status !== 0) {
 
 const backendEnv = {
   ...process.env,
+  ...(process.env.CCDASH_TEST_VISUALIZER_ENABLED === undefined && reload
+    ? { CCDASH_TEST_VISUALIZER_ENABLED: 'true' }
+    : {}),
   PYTHONPATH: process.env.PYTHONPATH ? `${root}${delimiter}${process.env.PYTHONPATH}` : root,
 };
 

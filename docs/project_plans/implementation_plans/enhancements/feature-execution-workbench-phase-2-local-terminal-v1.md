@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: draft
+status: in-progress
 category: enhancements
 
 title: "Implementation Plan: Feature Execution Workbench Phase 2 - Local Terminal Execution"
@@ -8,7 +8,7 @@ description: "Implement secure in-app local command execution with policy checks
 author: codex
 audience: [ai-agents, developers, engineering-leads, security]
 created: 2026-02-27
-updated: 2026-02-27
+updated: 2026-03-03
 
 tags: [implementation, execution, terminal, policy, audit, backend, frontend]
 feature_slug: feature-execution-workbench-phase-2-local-terminal-v1
@@ -32,7 +32,8 @@ plan_ref: feature-execution-workbench-phase-2-local-terminal-v1
 linked_sessions: []
 
 request_log_id: ""
-commits: []
+commits:
+  - 22a0abf
 prs: []
 owner: platform-engineering
 owners: [platform-engineering, security-engineering]
@@ -207,11 +208,16 @@ Add components:
 2. Add backend model classes for run payloads.
 3. Add repository protocol and both DB implementations.
 
-## Phase 2: Policy engine
+## Phase 2: Policy engine (Completed 2026-03-03)
 
-1. Implement command normalization and risk classification.
-2. Implement allow/approval/deny evaluation.
-3. Add policy unit tests and fixture cases.
+1. Implement command normalization and risk classification. ✅
+2. Implement allow/approval/deny evaluation. ✅
+3. Add policy unit tests and fixture cases. ✅
+
+Completed artifacts:
+
+1. `backend/services/execution_policy.py`
+2. `backend/tests/test_execution_policy_service.py`
 
 ## Phase 3: Runtime engine
 

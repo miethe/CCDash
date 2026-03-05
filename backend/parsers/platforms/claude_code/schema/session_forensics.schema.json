@@ -1,6 +1,6 @@
 {
   "platform": "claude_code",
-  "schema_version": 2,
+  "schema_version": 3,
   "thinking": {
     "levels": [
       "low",
@@ -50,6 +50,12 @@
     "session_env": {
       "dir": "session-env/{session_id}",
       "glob": "*"
+    },
+    "tool_results": {
+      "dir": "tool-results",
+      "glob": "*.txt",
+      "checksum_sample_limit": 8,
+      "max_files": 500
     }
   }
 }
