@@ -146,6 +146,54 @@ const getPrimaryDocumentDate = (doc: PlanDocument): { label: string; value: stri
     return { label: 'Updated', value: updated, confidence: doc.dates?.updatedAt?.confidence };
 };
 
+const getDocumentSummaryLine = (doc: PlanDocument): string => (
+    (doc.description || doc.metadata?.description || doc.summary || doc.metadata?.summary || '').trim()
+);
+
+const getSecondaryMetadataLine = (doc: PlanDocument): string => {
+    const normalizedType = normalizeDocumentType(doc.docType || '');
+    if (normalizedType === 'prd') {
+        const parts = [
+            doc.priority || doc.metadata?.priority,
+            doc.targetRelease || doc.metadata?.targetRelease || doc.milestone || doc.metadata?.milestone,
+        ].filter(Boolean);
+        return parts.length > 0 ? parts.join(' • ') : 'PRD metadata unavailable';
+    }
+    if (normalizedType === 'implementation_plan') {
+        const phaseCount = Number(doc.metadata?.docTypeFields?.phases?.length || 0);
+        const parts = [
+            doc.complexity || doc.metadata?.complexity,
+            doc.track || doc.metadata?.track,
+            phaseCount > 0 ? `${phaseCount} phases` : '',
+        ].filter(Boolean);
+        return parts.length > 0 ? parts.join(' • ') : 'Implementation plan metadata unavailable';
+    }
+    if (normalizedType === 'phase_plan') {
+        const phaseToken = doc.phaseToken || doc.metadata?.phase || '';
+        const counts = doc.metadata?.taskCounts;
+        const taskText = counts ? `${counts.completed}/${counts.total} tasks` : '';
+        const parts = [phaseToken ? `Phase ${phaseToken}` : '', taskText].filter(Boolean);
+        return parts.length > 0 ? parts.join(' • ') : 'Phase metadata unavailable';
+    }
+    if (normalizedType === 'progress') {
+        const progressValue = doc.overallProgress ?? doc.metadata?.overallProgress;
+        const counts = doc.metadata?.taskCounts;
+        const parts = [
+            progressValue !== undefined && progressValue !== null ? `${progressValue}% progress` : '',
+            counts ? `${counts.blocked} blocked` : '',
+        ].filter(Boolean);
+        return parts.length > 0 ? parts.join(' • ') : 'Progress metadata unavailable';
+    }
+    if (normalizedType === 'report') {
+        return `${normalizeDocumentSubtype(doc.docSubtype || '', doc.rootKind || '', doc.docType || '')} report`;
+    }
+    if (normalizedType === 'spec' || normalizeDocumentSubtype(doc.docSubtype || '', doc.rootKind || '', doc.docType || '') === 'design_doc') {
+        const linkedCount = (doc.frontmatter?.linkedFeatureRefs?.length || doc.frontmatter?.linkedFeatures?.length || 0);
+        return linkedCount > 0 ? `${linkedCount} linked features` : 'Supporting metadata available';
+    }
+    return 'Supporting document';
+};
+
 const FolderTreeItem = ({
     name,
     path,
@@ -748,6 +796,8 @@ export const PlanCatalog: React.FC = () => {
                                     </div>
                                     <h3 className="font-bold text-slate-200 mb-1 group-hover:text-indigo-400 transition-colors">{doc.title}</h3>
                                     <p className="text-xs text-slate-500 font-mono mb-4 truncate">{doc.filePath}</p>
+                                    <p className="text-xs text-slate-300 mb-2 line-clamp-2">{getDocumentSummaryLine(doc) || 'No summary available.'}</p>
+                                    <p className="text-[11px] text-slate-500 mb-3">{getSecondaryMetadataLine(doc)}</p>
 
                                     <div className="flex flex-wrap gap-2 mb-4">
                                         {doc.frontmatter.tags.slice(0, 3).map(tag => (
@@ -756,8 +806,8 @@ export const PlanCatalog: React.FC = () => {
                                     </div>
 
                                     <div className="border-t border-slate-800 pt-3 flex justify-between items-center text-xs text-slate-500">
-                                        <span>{doc.author}</span>
-                                        <span>
+                                        <span>{doc.docType || 'document'}</span>
+                                        <span className="text-right">
                                             {primaryDate.label}: {primaryDate.value ? new Date(primaryDate.value).toLocaleDateString() : '-'}
                                             {primaryDate.confidence ? ` (${primaryDate.confidence})` : ''}
                                         </span>
@@ -771,28 +821,37 @@ export const PlanCatalog: React.FC = () => {
                 {/* LIST VIEW */}
                 {viewMode === 'list' && (
                     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
-                        <div className="grid grid-cols-12 gap-4 p-4 border-b border-slate-800 bg-slate-950/50 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        <div className="grid grid-cols-16 gap-3 p-4 border-b border-slate-800 bg-slate-950/50 text-xs font-bold text-slate-500 uppercase tracking-wider">
                             <div className="col-span-4">Name</div>
-                            <div className="col-span-3">Path</div>
-                            <div className="col-span-2">Status</div>
-                            <div className="col-span-2">Author</div>
-                            <div className="col-span-1">Version</div>
+                            <div className="col-span-2">Type</div>
+                            <div className="col-span-2">Subtype</div>
+                            <div className="col-span-2">Linked Feature</div>
+                            <div className="col-span-1">Priority</div>
+                            <div className="col-span-3">Updated</div>
+                            <div className="col-span-2">Date Confidence</div>
                         </div>
                         <div className="overflow-y-auto flex-1">
-                            {filteredDocs.map(doc => (
-                                <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="grid grid-cols-12 gap-4 p-4 border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer transition-colors items-center text-sm">
-                                    <div className="col-span-4 font-semibold text-slate-200 flex items-center gap-2">
-                                        <FileText size={16} className="text-indigo-400" /> {doc.title}
+                            {filteredDocs.map(doc => {
+                                const primaryDate = getPrimaryDocumentDate(doc);
+                                const linkedFeature = resolveLinkedFeatures(doc)[0]?.id || doc.featureSlugCanonical || doc.featureSlugHint || '-';
+                                return (
+                                    <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="grid grid-cols-16 gap-3 p-4 border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer transition-colors items-center text-sm">
+                                        <div className="col-span-4 font-semibold text-slate-200 flex items-center gap-2 min-w-0">
+                                            <FileText size={16} className="text-indigo-400" /> {doc.title}
+                                        </div>
+                                        <div className="col-span-2 text-xs text-slate-300">{doc.docType || 'document'}</div>
+                                        <div className="col-span-2 text-xs text-slate-400">{doc.docSubtype || '-'}</div>
+                                        <div className="col-span-2 text-xs text-slate-300 font-mono truncate">{linkedFeature}</div>
+                                        <div className="col-span-1 text-xs text-slate-300">{doc.priority || doc.metadata?.priority || '-'}</div>
+                                        <div className="col-span-3 text-xs text-slate-400">
+                                            {primaryDate.value ? new Date(primaryDate.value).toLocaleDateString() : '-'}
+                                        </div>
+                                        <div className="col-span-2 text-xs text-slate-400">
+                                            {primaryDate.confidence || '-'}
+                                        </div>
                                     </div>
-                                    <div className="col-span-3 text-slate-500 font-mono text-xs truncate">{doc.filePath}</div>
-                                    <div className="col-span-2">
-                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700 text-slate-400'
-                                            }`}>{doc.status}</span>
-                                    </div>
-                                    <div className="col-span-2 text-slate-400">{doc.author}</div>
-                                    <div className="col-span-1 font-mono text-xs text-slate-500">{doc.frontmatter.version || '-'}</div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 )}
@@ -848,24 +907,56 @@ export const PlanCatalog: React.FC = () => {
                             {activeDoc ? (
                                 <div className="p-4 space-y-6">
                                     <div>
-                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Status</div>
-                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${activeDoc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700 text-slate-400'
-                                            }`}>{activeDoc.status}</span>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Type</div>
+                                        <div className="text-xs text-slate-300">{activeDoc.docType || 'document'} / {activeDoc.docSubtype || '-'}</div>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Author</div>
-                                        <div className="text-sm text-slate-300 flex items-center gap-2">
-                                            <User size={12} /> {activeDoc.author}
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Summary</div>
+                                        <p className="text-xs text-slate-300 leading-relaxed">{getDocumentSummaryLine(activeDoc) || 'No summary available.'}</p>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Status</div>
+                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${activeDoc.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-700 text-slate-400'
+                                            }`}>{activeDoc.statusNormalized || activeDoc.status}</span>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Delivery</div>
+                                        <div className="text-xs text-slate-300 space-y-1">
+                                            <div>Priority: {activeDoc.priority || activeDoc.metadata?.priority || '-'}</div>
+                                            <div>Risk: {activeDoc.riskLevel || activeDoc.metadata?.riskLevel || '-'}</div>
+                                            <div>Readiness: {activeDoc.executionReadiness || activeDoc.metadata?.executionReadiness || '-'}</div>
+                                            <div>Track: {activeDoc.track || activeDoc.metadata?.track || '-'}</div>
                                         </div>
                                     </div>
                                     <div>
                                         <div className="text-[10px] text-slate-500 uppercase mb-1">Primary Date</div>
-                                        <div className="text-sm text-slate-300">
+                                        <div className="text-xs text-slate-300">
                                             {(() => {
                                                 const primaryDate = getPrimaryDocumentDate(activeDoc);
                                                 if (!primaryDate.value) return '-';
-                                                return `${primaryDate.label}: ${new Date(primaryDate.value).toLocaleDateString()}`;
+                                                return `${primaryDate.label}: ${new Date(primaryDate.value).toLocaleDateString()}${primaryDate.confidence ? ` (${primaryDate.confidence})` : ''}`;
                                             })()}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-2">Linked Features</div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {resolveLinkedFeatures(activeDoc).map(linkedFeature => {
+                                                const style = getFeatureStatusStyle(linkedFeature.status);
+                                                return (
+                                                    <button
+                                                        key={linkedFeature.id}
+                                                        type="button"
+                                                        onClick={() => navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`)}
+                                                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors ${style.badge}`}
+                                                    >
+                                                        {linkedFeature.id}
+                                                    </button>
+                                                );
+                                            })}
+                                            {resolveLinkedFeatures(activeDoc).length === 0 && (
+                                                <span className="text-[11px] text-slate-500">None</span>
+                                            )}
                                         </div>
                                     </div>
                                     <div>
@@ -874,28 +965,17 @@ export const PlanCatalog: React.FC = () => {
                                             {activeDoc.frontmatter.tags.map(t => (
                                                 <span key={t} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">{t}</span>
                                             ))}
+                                            {activeDoc.frontmatter.tags.length === 0 && (
+                                                <span className="text-[11px] text-slate-500">No tags</span>
+                                            )}
                                         </div>
                                     </div>
-                                    {activeDoc.frontmatter.linkedFeatures && (
-                                        <div>
-                                            <div className="text-[10px] text-slate-500 uppercase mb-2">Linked Features</div>
-                                            <div className="flex flex-wrap gap-1.5">
-                                                {resolveLinkedFeatures(activeDoc).map(linkedFeature => {
-                                                    const style = getFeatureStatusStyle(linkedFeature.status);
-                                                    return (
-                                                        <button
-                                                            key={linkedFeature.id}
-                                                            type="button"
-                                                            onClick={() => navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`)}
-                                                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors ${style.badge}`}
-                                                        >
-                                                            {linkedFeature.id}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Owner</div>
+                                        <div className="text-sm text-slate-300 flex items-center gap-2">
+                                            <User size={12} /> {activeDoc.author}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="p-4 text-xs text-slate-600 italic">No document selected.</div>

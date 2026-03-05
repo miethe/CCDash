@@ -100,6 +100,25 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
    phaseToken: raw.phaseToken || fallback.phaseToken,
    phaseNumber: raw.phaseNumber ?? fallback.phaseNumber,
    overallProgress: raw.overallProgress ?? fallback.overallProgress,
+   completionEstimate: raw.completionEstimate ?? fallback.completionEstimate,
+   description: raw.description ?? fallback.description,
+   summary: raw.summary ?? fallback.summary,
+   priority: raw.priority ?? fallback.priority,
+   riskLevel: raw.riskLevel ?? fallback.riskLevel,
+   complexity: raw.complexity ?? fallback.complexity,
+   track: raw.track ?? fallback.track,
+   timelineEstimate: raw.timelineEstimate ?? fallback.timelineEstimate,
+   targetRelease: raw.targetRelease ?? fallback.targetRelease,
+   milestone: raw.milestone ?? fallback.milestone,
+   decisionStatus: raw.decisionStatus ?? fallback.decisionStatus,
+   executionReadiness: raw.executionReadiness ?? fallback.executionReadiness,
+   testImpact: raw.testImpact ?? fallback.testImpact,
+   primaryDocRole: raw.primaryDocRole ?? fallback.primaryDocRole,
+   featureSlug: raw.featureSlug ?? fallback.featureSlug,
+   featureFamily: raw.featureFamily ?? fallback.featureFamily,
+   featureVersion: raw.featureVersion ?? fallback.featureVersion,
+   planRef: raw.planRef ?? fallback.planRef,
+   implementationPlanRef: raw.implementationPlanRef ?? fallback.implementationPlanRef,
    totalTasks: raw.totalTasks ?? fallback.totalTasks ?? 0,
    completedTasks: raw.completedTasks ?? fallback.completedTasks ?? 0,
    inProgressTasks: raw.inProgressTasks ?? fallback.inProgressTasks ?? 0,
@@ -119,8 +138,36 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       },
       owners: raw.metadata?.owners ?? fallback.metadata?.owners ?? [],
       contributors: raw.metadata?.contributors ?? fallback.metadata?.contributors ?? [],
+      reviewers: raw.metadata?.reviewers ?? fallback.metadata?.reviewers ?? [],
+      approvers: raw.metadata?.approvers ?? fallback.metadata?.approvers ?? [],
+      audience: raw.metadata?.audience ?? fallback.metadata?.audience ?? [],
+      labels: raw.metadata?.labels ?? fallback.metadata?.labels ?? [],
+      description: raw.metadata?.description ?? fallback.metadata?.description ?? '',
+      summary: raw.metadata?.summary ?? fallback.metadata?.summary ?? '',
+      priority: raw.metadata?.priority ?? fallback.metadata?.priority ?? '',
+      riskLevel: raw.metadata?.riskLevel ?? fallback.metadata?.riskLevel ?? '',
+      complexity: raw.metadata?.complexity ?? fallback.metadata?.complexity ?? '',
+      track: raw.metadata?.track ?? fallback.metadata?.track ?? '',
+      timelineEstimate: raw.metadata?.timelineEstimate ?? fallback.metadata?.timelineEstimate ?? '',
+      targetRelease: raw.metadata?.targetRelease ?? fallback.metadata?.targetRelease ?? '',
+      milestone: raw.metadata?.milestone ?? fallback.metadata?.milestone ?? '',
+      decisionStatus: raw.metadata?.decisionStatus ?? fallback.metadata?.decisionStatus ?? '',
+      executionReadiness: raw.metadata?.executionReadiness ?? fallback.metadata?.executionReadiness ?? '',
+      testImpact: raw.metadata?.testImpact ?? fallback.metadata?.testImpact ?? '',
+      planRef: raw.metadata?.planRef ?? fallback.metadata?.planRef ?? '',
+      implementationPlanRef: raw.metadata?.implementationPlanRef ?? fallback.metadata?.implementationPlanRef ?? '',
       requestLogIds: raw.metadata?.requestLogIds ?? fallback.metadata?.requestLogIds ?? [],
       commitRefs: raw.metadata?.commitRefs ?? fallback.metadata?.commitRefs ?? [],
+      prRefs: raw.metadata?.prRefs ?? fallback.metadata?.prRefs ?? [],
+      sourceDocuments: raw.metadata?.sourceDocuments ?? fallback.metadata?.sourceDocuments ?? [],
+      filesAffected: raw.metadata?.filesAffected ?? fallback.metadata?.filesAffected ?? [],
+      filesModified: raw.metadata?.filesModified ?? fallback.metadata?.filesModified ?? [],
+      contextFiles: raw.metadata?.contextFiles ?? fallback.metadata?.contextFiles ?? [],
+      integritySignalRefs: raw.metadata?.integritySignalRefs ?? fallback.metadata?.integritySignalRefs ?? [],
+      linkedTasks: raw.metadata?.linkedTasks ?? fallback.metadata?.linkedTasks ?? [],
+      executionEntrypoints: raw.metadata?.executionEntrypoints ?? fallback.metadata?.executionEntrypoints ?? [],
+      linkedFeatureRefs: raw.metadata?.linkedFeatureRefs ?? fallback.metadata?.linkedFeatureRefs ?? [],
+      docTypeFields: raw.metadata?.docTypeFields ?? fallback.metadata?.docTypeFields ?? {},
       featureSlugHint: raw.metadata?.featureSlugHint ?? fallback.metadata?.featureSlugHint ?? '',
       canonicalPath: raw.metadata?.canonicalPath ?? fallback.metadata?.canonicalPath ?? '',
    },
@@ -135,7 +182,9 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
    frontmatter: {
       tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
       linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
+      linkedFeatureRefs: Array.isArray(raw.frontmatter?.linkedFeatureRefs) ? raw.frontmatter.linkedFeatureRefs : (fallback.frontmatter?.linkedFeatureRefs || []),
       linkedSessions: Array.isArray(raw.frontmatter?.linkedSessions) ? raw.frontmatter.linkedSessions : (fallback.frontmatter?.linkedSessions || []),
+      linkedTasks: Array.isArray(raw.frontmatter?.linkedTasks) ? raw.frontmatter.linkedTasks : (fallback.frontmatter?.linkedTasks || []),
       lineageFamily: raw.frontmatter?.lineageFamily ?? fallback.frontmatter?.lineageFamily,
       lineageParent: raw.frontmatter?.lineageParent ?? fallback.frontmatter?.lineageParent,
       lineageChildren: Array.isArray(raw.frontmatter?.lineageChildren) ? raw.frontmatter.lineageChildren : (fallback.frontmatter?.lineageChildren || []),
@@ -144,11 +193,19 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       version: raw.frontmatter?.version ?? fallback.frontmatter?.version,
       commits: Array.isArray(raw.frontmatter?.commits) ? raw.frontmatter.commits : (fallback.frontmatter?.commits || []),
       prs: Array.isArray(raw.frontmatter?.prs) ? raw.frontmatter.prs : (fallback.frontmatter?.prs || []),
+      requestLogIds: Array.isArray(raw.frontmatter?.requestLogIds) ? raw.frontmatter.requestLogIds : (fallback.frontmatter?.requestLogIds || []),
+      commitRefs: Array.isArray(raw.frontmatter?.commitRefs) ? raw.frontmatter.commitRefs : (fallback.frontmatter?.commitRefs || []),
+      prRefs: Array.isArray(raw.frontmatter?.prRefs) ? raw.frontmatter.prRefs : (fallback.frontmatter?.prRefs || []),
       relatedRefs: Array.isArray(raw.frontmatter?.relatedRefs) ? raw.frontmatter.relatedRefs : (fallback.frontmatter?.relatedRefs || []),
       pathRefs: Array.isArray(raw.frontmatter?.pathRefs) ? raw.frontmatter.pathRefs : (fallback.frontmatter?.pathRefs || []),
       slugRefs: Array.isArray(raw.frontmatter?.slugRefs) ? raw.frontmatter.slugRefs : (fallback.frontmatter?.slugRefs || []),
       prd: raw.frontmatter?.prd ?? fallback.frontmatter?.prd,
       prdRefs: Array.isArray(raw.frontmatter?.prdRefs) ? raw.frontmatter.prdRefs : (fallback.frontmatter?.prdRefs || []),
+      sourceDocuments: Array.isArray(raw.frontmatter?.sourceDocuments) ? raw.frontmatter.sourceDocuments : (fallback.frontmatter?.sourceDocuments || []),
+      filesAffected: Array.isArray(raw.frontmatter?.filesAffected) ? raw.frontmatter.filesAffected : (fallback.frontmatter?.filesAffected || []),
+      filesModified: Array.isArray(raw.frontmatter?.filesModified) ? raw.frontmatter.filesModified : (fallback.frontmatter?.filesModified || []),
+      contextFiles: Array.isArray(raw.frontmatter?.contextFiles) ? raw.frontmatter.contextFiles : (fallback.frontmatter?.contextFiles || []),
+      integritySignalRefs: Array.isArray(raw.frontmatter?.integritySignalRefs) ? raw.frontmatter.integritySignalRefs : (fallback.frontmatter?.integritySignalRefs || []),
       fieldKeys: Array.isArray(raw.frontmatter?.fieldKeys) ? raw.frontmatter.fieldKeys : (fallback.frontmatter?.fieldKeys || []),
       raw: raw.frontmatter?.raw ?? fallback.frontmatter?.raw,
    },
@@ -163,7 +220,7 @@ export const DocumentModal = ({
 }: DocumentModalProps) => {
    const navigate = useNavigate();
    const { sessions, features } = useData();
-   const [activeTab, setActiveTab] = React.useState<'overview' | 'content' | 'linked_docs' | 'linked_entities'>('overview');
+   const [activeTab, setActiveTab] = React.useState<'summary' | 'delivery' | 'relationships' | 'content' | 'timeline' | 'raw'>('summary');
    const [fullDoc, setFullDoc] = React.useState<PlanDocument>(() => normalizeDoc(initialDoc, initialDoc));
    const [links, setLinks] = React.useState<DocumentLinksResponse | null>(null);
 
@@ -285,6 +342,41 @@ export const DocumentModal = ({
       const confidence = value.confidence ? ` (${value.confidence})` : '';
       return `${formatDate(value.value)}${confidence}`;
    };
+   const timelineEvents = React.useMemo(() => {
+      const fromTimeline = Array.isArray(doc.timeline) ? doc.timeline : [];
+      if (fromTimeline.length > 0) {
+         return [...fromTimeline].sort((a, b) => Date.parse(b.timestamp || '') - Date.parse(a.timestamp || ''));
+      }
+      return [
+         doc.dates?.updatedAt?.value ? {
+            id: 'doc-updated',
+            timestamp: doc.dates.updatedAt.value,
+            label: 'Updated',
+            kind: 'updated',
+            confidence: doc.dates.updatedAt.confidence,
+            source: doc.dates.updatedAt.source,
+            description: doc.dates.updatedAt.reason,
+         } : null,
+         doc.dates?.createdAt?.value ? {
+            id: 'doc-created',
+            timestamp: doc.dates.createdAt.value,
+            label: 'Created',
+            kind: 'created',
+            confidence: doc.dates.createdAt.confidence,
+            source: doc.dates.createdAt.source,
+            description: doc.dates.createdAt.reason,
+         } : null,
+         doc.dates?.completedAt?.value ? {
+            id: 'doc-completed',
+            timestamp: doc.dates.completedAt.value,
+            label: 'Completed',
+            kind: 'completed',
+            confidence: doc.dates.completedAt.confidence,
+            source: doc.dates.completedAt.source,
+            description: doc.dates.completedAt.reason,
+         } : null,
+      ].filter(Boolean);
+   }, [doc.timeline, doc.dates]);
 
    return (
       <div className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200`} onClick={onClose}>
@@ -341,18 +433,21 @@ export const DocumentModal = ({
 
             <div className="px-6 border-b border-slate-800 bg-slate-900/50 flex gap-6">
                {[
-                  { id: 'overview', label: 'Overview' },
-                  { id: 'content', label: 'Contents' },
-                  { id: 'linked_docs', label: 'Linked Docs', count: linkedDocs.length + (doc.frontmatter.pathRefs?.length || 0) },
-                  { id: 'linked_entities', label: 'Linked Entities', count: linkedFeatures.length + linkedTasks.length + linkedSessions.length },
+                  { id: 'summary', label: 'Summary' },
+                  { id: 'delivery', label: 'Delivery' },
+                  { id: 'relationships', label: 'Relationships', count: linkedFeatures.length + linkedTasks.length + linkedSessions.length + linkedDocs.length },
+                  { id: 'content', label: 'Content' },
+                  { id: 'timeline', label: 'Timeline', count: timelineEvents.length },
+                  { id: 'raw', label: 'Raw' },
                ].map(tab => (
                   <button
                      key={tab.id}
-                     onClick={() => setActiveTab(tab.id as any)}
-                     className={`flex items-center gap-2 py-4 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
-                        ? 'border-indigo-500 text-indigo-400'
-                        : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'
-                        }`}
+                     onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                     className={`flex items-center gap-2 py-4 text-sm font-medium border-b-2 transition-colors ${
+                        activeTab === tab.id
+                           ? 'border-indigo-500 text-indigo-400'
+                           : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                     }`}
                   >
                      {tab.label}
                      {tab.count !== undefined && tab.count > 0 && (
@@ -363,95 +458,158 @@ export const DocumentModal = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
-               {activeTab === 'overview' && (
+               {activeTab === 'summary' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                      <div className="space-y-4">
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Core Metadata</h3>
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Identity & Lifecycle</h3>
                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between text-slate-400"><span>Type</span><span className="text-slate-200">{doc.docType || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Subtype</span><span className="text-slate-200">{doc.docSubtype || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Status</span><span className="text-slate-200">{doc.statusNormalized || doc.status}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Author</span><span className="text-slate-200">{doc.author || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Created</span><span className="text-slate-200">{dateChip('createdAt') || formatDate(doc.createdAt)}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Updated</span><span className="text-slate-200">{dateChip('updatedAt') || formatDate(doc.updatedAt || doc.lastModified)}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Completed</span><span className="text-slate-200">{dateChip('completedAt') || formatDate(doc.completedAt)}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Category</span><span className="text-slate-200">{doc.category || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Feature Hint</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Lineage Family</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageFamily || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Lineage Parent</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageParent || '-'}</span></div>
-                              <div className="flex justify-between text-slate-400"><span>Lineage Type</span><span className="text-slate-200">{doc.frontmatter.lineageType || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Canonical Path</span><span className="text-slate-200 font-mono text-xs">{doc.canonicalPath || doc.filePath}</span></div>
                            </div>
                         </div>
-
-                        {isProgressDoc && (
-                           <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                              <h3 className="text-sm font-semibold text-slate-200 mb-3">Progress Metrics</h3>
-                              <div className="grid grid-cols-2 gap-3 text-xs">
-                                 <div className="p-2 rounded bg-slate-950 border border-slate-800">
-                                    <div className="text-slate-500 uppercase">Phase</div>
-                                    <div className="text-slate-200 font-mono mt-1">{doc.phaseToken || doc.metadata?.phase || '-'}</div>
-                                 </div>
-                                 <div className="p-2 rounded bg-slate-950 border border-slate-800">
-                                    <div className="text-slate-500 uppercase">Progress</div>
-                                    <div className="text-slate-200 font-mono mt-1">{doc.overallProgress ?? doc.metadata?.overallProgress ?? '-'}%</div>
-                                 </div>
-                                 <div className="p-2 rounded bg-slate-950 border border-slate-800">
-                                    <div className="text-slate-500 uppercase">Tasks</div>
-                                    <div className="text-slate-200 font-mono mt-1">{taskCounts.completed}/{taskCounts.total}</div>
-                                 </div>
-                                 <div className="p-2 rounded bg-slate-950 border border-slate-800">
-                                    <div className="text-slate-500 uppercase">In Progress/Blocked</div>
-                                    <div className="text-slate-200 font-mono mt-1">{taskCounts.inProgress}/{taskCounts.blocked}</div>
-                                 </div>
-                              </div>
-                           </div>
-                        )}
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Summary</h3>
+                           <p className="text-sm text-slate-300 whitespace-pre-wrap">{doc.description || doc.summary || 'No description provided.'}</p>
+                           {doc.summary && doc.description && (
+                              <p className="mt-2 text-xs text-slate-400 whitespace-pre-wrap">{doc.summary}</p>
+                           )}
+                        </div>
                      </div>
-
                      <div className="space-y-4">
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Refs & Ownership</h3>
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Ownership & Classification</h3>
                            <div className="space-y-2 text-xs">
-                              <div>
-                                 <div className="text-slate-500 uppercase mb-1">Owners</div>
-                                 <div className="text-slate-300">{(doc.metadata?.owners || []).join(', ') || '-'}</div>
-                              </div>
-                              <div>
-                                 <div className="text-slate-500 uppercase mb-1">Contributors</div>
-                                 <div className="text-slate-300">{(doc.metadata?.contributors || []).join(', ') || '-'}</div>
-                              </div>
-                              <div>
-                                 <div className="text-slate-500 uppercase mb-1">Request IDs</div>
-                                 <div className="text-slate-300 font-mono break-all">{(doc.metadata?.requestLogIds || []).join(', ') || '-'}</div>
-                              </div>
-                              <div>
-                                 <div className="text-slate-500 uppercase mb-1">Commit Refs</div>
-                                 <div className="text-slate-300 font-mono break-all">{(doc.metadata?.commitRefs || doc.frontmatter.commits || []).join(', ') || '-'}</div>
-                              </div>
-                              <div>
-                                 <div className="text-slate-500 uppercase mb-1">Lineage Children</div>
-                                 <div className="text-slate-300 font-mono break-all">{(doc.frontmatter.lineageChildren || []).join(', ') || '-'}</div>
+                              <div><div className="text-slate-500 uppercase mb-1">Owners</div><div className="text-slate-300">{(doc.metadata?.owners || []).join(', ') || '-'}</div></div>
+                              <div><div className="text-slate-500 uppercase mb-1">Contributors</div><div className="text-slate-300">{(doc.metadata?.contributors || []).join(', ') || '-'}</div></div>
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                 <div className="bg-slate-950 border border-slate-800 rounded p-2"><div className="text-slate-500 uppercase">Priority</div><div className="text-slate-200 mt-1">{doc.priority || doc.metadata?.priority || '-'}</div></div>
+                                 <div className="bg-slate-950 border border-slate-800 rounded p-2"><div className="text-slate-500 uppercase">Risk</div><div className="text-slate-200 mt-1">{doc.riskLevel || doc.metadata?.riskLevel || '-'}</div></div>
+                                 <div className="bg-slate-950 border border-slate-800 rounded p-2"><div className="text-slate-500 uppercase">Complexity</div><div className="text-slate-200 mt-1">{doc.complexity || doc.metadata?.complexity || '-'}</div></div>
+                                 <div className="bg-slate-950 border border-slate-800 rounded p-2"><div className="text-slate-500 uppercase">Track</div><div className="text-slate-200 mt-1">{doc.track || doc.metadata?.track || '-'}</div></div>
                               </div>
                            </div>
                         </div>
-
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Tags & Link Counts</h3>
-                           <div className="flex flex-wrap gap-2 mb-3">
-                              {(doc.frontmatter.tags || []).map(tag => (
-                                 <span key={tag} className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">
-                                    {tag}
-                                 </span>
-                              ))}
-                              {(doc.frontmatter.tags || []).length === 0 && (
-                                 <span className="text-xs text-slate-500">No tags</span>
-                              )}
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Anchors</h3>
+                           <div className="space-y-2 text-xs">
+                              <div className="flex justify-between text-slate-400"><span>Feature</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Plan Ref</span><span className="text-slate-200 font-mono">{doc.planRef || doc.metadata?.planRef || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Implementation Plan Ref</span><span className="text-slate-200 font-mono">{doc.implementationPlanRef || doc.metadata?.implementationPlanRef || '-'}</span></div>
                            </div>
-                           <div className="grid grid-cols-4 gap-2 text-[10px]">
-                              <div className="bg-slate-950 border border-slate-800 rounded p-2 text-center"><div className="text-slate-500">Features</div><div className="text-slate-200 mt-1">{linkedFeatures.length}</div></div>
-                              <div className="bg-slate-950 border border-slate-800 rounded p-2 text-center"><div className="text-slate-500">Tasks</div><div className="text-slate-200 mt-1">{linkedTasks.length}</div></div>
-                              <div className="bg-slate-950 border border-slate-800 rounded p-2 text-center"><div className="text-slate-500">Sessions</div><div className="text-slate-200 mt-1">{linkedSessions.length}</div></div>
-                              <div className="bg-slate-950 border border-slate-800 rounded p-2 text-center"><div className="text-slate-500">Docs</div><div className="text-slate-200 mt-1">{linkedDocs.length}</div></div>
+                        </div>
+                     </div>
+                  </div>
+               )}
+
+               {activeTab === 'delivery' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-200 mb-3">Execution & Quality</h3>
+                        <div className="space-y-2 text-xs">
+                           <div className="flex justify-between text-slate-400"><span>Execution Readiness</span><span className="text-slate-200">{doc.executionReadiness || doc.metadata?.executionReadiness || '-'}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Timeline Estimate</span><span className="text-slate-200">{doc.timelineEstimate || doc.metadata?.timelineEstimate || '-'}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Test Impact</span><span className="text-slate-200">{doc.testImpact || doc.metadata?.testImpact || '-'}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Completion Estimate</span><span className="text-slate-200">{doc.completionEstimate || doc.metadata?.completionEstimate || '-'}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Overall Progress</span><span className="text-slate-200">{doc.overallProgress ?? doc.metadata?.overallProgress ?? '-'}%</span></div>
+                        </div>
+                     </div>
+                     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-200 mb-3">Task Counters</h3>
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                           <div className="p-2 rounded bg-slate-950 border border-slate-800"><div className="text-slate-500 uppercase">Total</div><div className="text-slate-200 font-mono mt-1">{taskCounts.total}</div></div>
+                           <div className="p-2 rounded bg-slate-950 border border-slate-800"><div className="text-slate-500 uppercase">Completed</div><div className="text-slate-200 font-mono mt-1">{taskCounts.completed}</div></div>
+                           <div className="p-2 rounded bg-slate-950 border border-slate-800"><div className="text-slate-500 uppercase">In Progress</div><div className="text-slate-200 font-mono mt-1">{taskCounts.inProgress}</div></div>
+                           <div className="p-2 rounded bg-slate-950 border border-slate-800"><div className="text-slate-500 uppercase">Blocked</div><div className="text-slate-200 font-mono mt-1">{taskCounts.blocked}</div></div>
+                        </div>
+                     </div>
+                  </div>
+               )}
+
+               {activeTab === 'relationships' && (
+                  <div className="space-y-4">
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><User size={14} /> Features</h3>
+                           <div className="flex flex-wrap gap-2">
+                              {linkedFeatures.map(feature => {
+                                 const style = getFeatureStatusStyle(feature.status);
+                                 return (
+                                    <button
+                                       key={feature.id}
+                                       onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
+                                       className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${style.badge}`}
+                                    >
+                                       {feature.id}
+                                    </button>
+                                 );
+                              })}
+                              {linkedFeatures.length === 0 && <span className="text-xs text-slate-500 italic">No linked features.</span>}
+                           </div>
+                        </div>
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Lineage</h3>
+                           <div className="space-y-2 text-xs">
+                              <div className="flex justify-between text-slate-400"><span>Family</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageFamily || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Parent</span><span className="text-slate-200 font-mono">{doc.frontmatter.lineageParent || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Type</span><span className="text-slate-200">{doc.frontmatter.lineageType || '-'}</span></div>
+                              <div className="text-slate-400"><span className="mr-2">Children</span><span className="text-slate-200 font-mono">{(doc.frontmatter.lineageChildren || []).join(', ') || '-'}</span></div>
+                           </div>
+                        </div>
+                     </div>
+                     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><FolderTree size={14} /> Documents</h3>
+                        <div className="space-y-2">
+                           {linkedDocs.map(linkedDoc => (
+                              <div key={linkedDoc.id} className="flex items-center gap-3 p-2 bg-slate-950 border border-slate-800 rounded">
+                                 <Link2 size={14} className="text-slate-500" />
+                                 <div className="min-w-0">
+                                    <div className="text-xs text-slate-200 truncate">{linkedDoc.title || linkedDoc.id}</div>
+                                    <div className="text-[11px] text-slate-500 font-mono truncate">{linkedDoc.canonicalPath || linkedDoc.filePath}</div>
+                                 </div>
+                              </div>
+                           ))}
+                           {(doc.frontmatter.pathRefs || []).map(pathRef => (
+                              <div key={pathRef} className="text-xs text-slate-300 font-mono p-2 bg-slate-950 border border-slate-800 rounded">{pathRef}</div>
+                           ))}
+                           {linkedDocs.length === 0 && (doc.frontmatter.pathRefs || []).length === 0 && <p className="text-xs text-slate-500 italic">No linked docs.</p>}
+                        </div>
+                     </div>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><ListTodo size={14} /> Tasks</h3>
+                           <div className="space-y-2">
+                              {linkedTasks.map(task => (
+                                 <div key={task.id} className="p-2 bg-slate-950 border border-slate-800 rounded">
+                                    <div className="text-xs font-mono text-slate-500">{task.id}</div>
+                                    <div className="text-xs text-slate-200">{task.title}</div>
+                                 </div>
+                              ))}
+                              {linkedTasks.length === 0 && <p className="text-xs text-slate-500 italic">No linked tasks.</p>}
+                           </div>
+                        </div>
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><Terminal size={14} /> Sessions</h3>
+                           <div className="space-y-2">
+                              {linkedSessions.map(session => (
+                                 <button
+                                    key={session.id}
+                                    onClick={() => { onClose(); navigate(`/sessions/${encodeURIComponent(session.id)}`); }}
+                                    className="w-full text-left p-2 bg-slate-950 border border-slate-800 rounded hover:border-indigo-500/40"
+                                 >
+                                    <div className="flex justify-between items-center">
+                                       <span className="text-xs font-mono text-indigo-400">{session.id}</span>
+                                       <span className="text-[10px] text-slate-500">{session.status}</span>
+                                    </div>
+                                 </button>
+                              ))}
+                              {linkedSessions.length === 0 && <p className="text-xs text-slate-500 italic">No linked sessions.</p>}
                            </div>
                         </div>
                      </div>
@@ -468,98 +626,44 @@ export const DocumentModal = ({
                   </div>
                )}
 
-               {activeTab === 'linked_docs' && (
+               {activeTab === 'timeline' && (
                   <div className="space-y-2">
-                     {linkedDocs.map(linkedDoc => (
-                        <div key={linkedDoc.id} className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-800 rounded-lg">
-                           <FolderTree size={16} className="text-slate-500" />
-                           <div className="min-w-0">
-                              <div className="text-sm text-slate-200 truncate">{linkedDoc.title || linkedDoc.id}</div>
-                              <div className="text-xs text-slate-500 font-mono truncate">{linkedDoc.canonicalPath || linkedDoc.filePath}</div>
+                     {timelineEvents.map(event => (
+                        <div key={event.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                           <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm text-slate-200">{event.label}</span>
+                              <span className="text-xs text-slate-500">{formatDate(event.timestamp)}</span>
                            </div>
+                           <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-2">
+                              <span className="uppercase">{event.kind || 'event'}</span>
+                              <span>{event.confidence || 'low'}</span>
+                              {event.source && <span className="font-mono truncate">{event.source}</span>}
+                           </div>
+                           {event.description && <p className="mt-2 text-xs text-slate-400">{event.description}</p>}
                         </div>
                      ))}
-                     {(doc.frontmatter.pathRefs || []).map(pathRef => (
-                        <div key={pathRef} className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-800 rounded-lg">
-                           <Link2 size={16} className="text-slate-500" />
-                           <span className="text-slate-300 font-mono text-sm">{pathRef}</span>
-                        </div>
-                     ))}
-                     {linkedDocs.length === 0 && (doc.frontmatter.pathRefs || []).length === 0 && (
-                        <p className="text-slate-500 italic">No linked documents.</p>
-                     )}
+                     {timelineEvents.length === 0 && <p className="text-sm text-slate-500 italic">No timeline events available.</p>}
                   </div>
                )}
 
-               {activeTab === 'linked_entities' && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                     <div>
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><User size={14} /> Features</h3>
-                        <div className="space-y-2">
-                           {linkedFeatures.map(feature => {
-                              const style = getFeatureStatusStyle(feature.status);
-                              return (
-                                 <button
-                                    key={feature.id}
-                                    onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
-                                    className="w-full text-left p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all"
-                                 >
-                                    <div className="flex items-center justify-between gap-2">
-                                       <div className="text-xs font-mono text-indigo-400">{feature.id}</div>
-                                       <span className={`text-[10px] font-semibold rounded-full border px-1.5 py-0.5 ${style.badge}`}>
-                                          {style.label}
-                                       </span>
-                                    </div>
-                                    <div className="text-sm text-slate-200 truncate">{feature.name || feature.id}</div>
-                                 </button>
-                              );
-                           })}
-                           {linkedFeatures.length === 0 && <p className="text-slate-500 text-sm italic">No linked features.</p>}
-                        </div>
+               {activeTab === 'raw' && (
+                  <div className="grid grid-cols-1 gap-4">
+                     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-200 mb-2">Normalized Metadata</h3>
+                        <pre className="text-[11px] text-slate-300 overflow-auto">{JSON.stringify({
+                           id: doc.id,
+                           title: doc.title,
+                           status: doc.status,
+                           docType: doc.docType,
+                           docSubtype: doc.docSubtype,
+                           metadata: doc.metadata,
+                           dates: doc.dates,
+                           timeline: doc.timeline,
+                        }, null, 2)}</pre>
                      </div>
-
-                     <div>
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><ListTodo size={14} /> Tasks</h3>
-                        <div className="space-y-2">
-                           {linkedTasks.map(task => (
-                              <div key={task.id} className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
-                                 <div className="text-xs font-mono text-slate-500">{task.id}</div>
-                                 <div className="text-sm text-slate-200 truncate">{task.title}</div>
-                                 {task.sessionId && (
-                                    <button
-                                       onClick={() => { onClose(); navigate(`/sessions?session=${encodeURIComponent(task.sessionId || '')}`); }}
-                                       className="mt-1 text-[11px] text-indigo-400 hover:text-indigo-300"
-                                    >
-                                       Session: {task.sessionId}
-                                    </button>
-                                 )}
-                              </div>
-                           ))}
-                           {linkedTasks.length === 0 && <p className="text-slate-500 text-sm italic">No linked tasks.</p>}
-                        </div>
-                     </div>
-
-                     <div>
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><Terminal size={14} /> Sessions</h3>
-                        <div className="space-y-2">
-                           {linkedSessions.map(session => (
-                              <button
-                                 key={session.id}
-                                 onClick={() => { onClose(); navigate(`/sessions/${encodeURIComponent(session.id)}`); }}
-                                 className="w-full text-left p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all"
-                              >
-                                 <div className="flex justify-between items-center">
-                                    <span className="text-xs font-mono text-indigo-400">{session.id}</span>
-                                    <span className="text-[10px] text-slate-500">{session.status}</span>
-                                 </div>
-                                 <div className="text-xs text-slate-400 mt-1">{session.model || 'Unknown model'}</div>
-                                 {session.totalCost > 0 && (
-                                    <div className="text-[10px] text-emerald-400 mt-1">${session.totalCost.toFixed(2)}</div>
-                                 )}
-                              </button>
-                           ))}
-                           {linkedSessions.length === 0 && <p className="text-slate-500 text-sm italic">No linked sessions.</p>}
-                        </div>
+                     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                        <h3 className="text-sm font-semibold text-slate-200 mb-2">Raw Frontmatter</h3>
+                        <pre className="text-[11px] text-slate-300 overflow-auto">{JSON.stringify(doc.frontmatter?.raw || doc.frontmatter || {}, null, 2)}</pre>
                      </div>
                   </div>
                )}
