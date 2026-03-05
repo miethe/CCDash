@@ -86,21 +86,26 @@ The core debugging loop for AI interactions.
         *   Aggregated table with one row per file touched by the root thread.
         *   Multi-action chips (`Read`, `Create`, `Update`, `Delete`) per file.
         *   Touch/session counts, net diff, and open actions.
-    4.  **Artifacts**:
+    4.  **Test Status**:
+        *   Scrollable `Modified Tests During This Session` list derived from all test file actions (including reads/edits).
+        *   `Tests Run During This Session` list with one row per detected run from transcript tool calls.
+        *   Per-run telemetry includes framework/status, grouped targets/domains/flags, and parsed pass/fail/skipped/xfailed counts and duration when available.
+    5.  **Artifacts**:
         *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
         *   Source-log and linked-thread correlation so artifact cards can be traced back to the originating transcript event and sub-thread.
-    5.  **App Impact**:
+        *   Test artifacts include parsed test-run details (command, scope, counts, timing, status) via card detail modals for cross-session traceability.
+    6.  **App Impact**:
         *   **Codebase Impact Chart**: Line chart tracking LOC added/removed and file touch-counts over the session duration.
         *   **Test Stability Chart**: Area chart visualizing Test Pass vs. Fail counts over time.
-    6.  **Analytics (Advanced)**:
+    7.  **Analytics (Advanced)**:
         *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
         *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
-    7.  **Agents**:
+    8.  **Agents**:
         *   Card view of all participating agents (e.g., Architect, Coder, Planner).
         *   Click-to-filter transcript by specific agent.
         *   Sub-thread labels resolve to captured `subagent_type` when available for more stable cross-session naming.
-    8.  **Forensics**:
+    9.  **Forensics**:
         *   Full forensic payload exploration from parser-derived telemetry.
         *   **Queue Pressure**: queue operation/status/task-type distributions and `waiting_for_task` signals.
         *   **Resource Footprint**: command-derived external/internal targets (`api`, `database`, `docker`, `ssh`, `service`).

@@ -23,11 +23,17 @@
 
 - Session transcript formatting now supports stronger mapped-event rendering for captured invocation artifacts, including hooks and enriched test runs.
 - Session artifact correlation in inspector flows now has stronger linkage between tool logs, mapped transcript cards, artifact groups, and linked sub-thread sessions.
+- Session Inspector `Test Status` tab now includes:
+  - scrollable `Modified Tests During This Session` list covering all test-file reads/creates/updates/deletes.
+  - `Tests Run During This Session` list with one entry per detected test run and parsed result telemetry (framework/status/targets/domains/flags/counts/duration).
+- Session `Artifacts` test cards now surface parsed test-run details from correlated source logs so each test artifact can be inspected with run-level metadata.
+- Session forensics test-run aggregation now retains full run row history (removed prior run-row truncation).
 
 ### Fixed
 
 - Fixed unintended `Test Run` labeling regression where non-test shell/tool commands could appear as tests.
   - UI now requires explicit test signals (`testRun` metadata, explicit/inferred test framework, or `toolCategory=test`) before rendering test-run formatting.
+- Fixed pytest output parsing gaps for truncated outputs (for example `tail/head` pipelines) by accepting pytest signal patterns without requiring full session headers.
 
 ### Docs
 

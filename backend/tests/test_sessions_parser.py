@@ -1028,6 +1028,73 @@ class SessionParserTests(unittest.TestCase):
         analysis_signals = session.sessionForensics.get("analysisSignals", {})
         self.assertTrue(bool(analysis_signals.get("hasTestRunSignals")))
 
+    def test_bash_pytest_truncated_output_without_header_still_parses_results(self) -> None:
+        output_text = (
+            "FAILED tests/api/test_marketplace_router.py::test_requires_auth - assert 401 == 200\n"
+            "=========================== short test summary info ============================\n"
+            "FAILED tests/api/test_marketplace_router.py::test_requires_auth - assert 401 == 200\n"
+            "======================== 1 failed, 21 passed in 13.35s ========================\n"
+        )
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T13:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_truncated_1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "python -m pytest tests/api/test_marketplace_router.py -x -q --tb=short 2>&1 | tail -20",
+                                    "description": "Run API tests after agent changes",
+                                    "timeout": 120000,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T13:00:03Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_truncated_1",
+                                "content": output_text,
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.id == "toolu_pytest_truncated_1"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("toolCategory"), "test")
+        self.assertEqual(metadata.get("testFramework"), "pytest")
+        self.assertEqual(metadata.get("testStatus"), "failed")
+        self.assertEqual(metadata.get("testTotal"), 22)
+        counts = metadata.get("testCounts", {})
+        self.assertEqual(counts.get("passed"), 21)
+        self.assertEqual(counts.get("failed"), 1)
+
+        test_execution = session.sessionForensics.get("testExecution", {})
+        self.assertEqual(test_execution.get("runCount"), 1)
+        self.assertEqual(test_execution.get("statusCounts", {}).get("failed"), 1)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("passed"), 21)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("failed"), 1)
+
     def test_recent_session_without_terminal_marker_is_active(self) -> None:
         path = self._write_jsonl(
             [

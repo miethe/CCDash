@@ -15,6 +15,8 @@ _PYTEST_SUMMARY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_COUNT_TOKEN_PATTERN = re.compile(r"(?P<count>\d+)\s+(?P<label>[A-Za-z][A-Za-z _-]+)", re.IGNORECASE)
+_PYTEST_FAILURE_LINE_PATTERN = re.compile(r"(?m)^(FAILED|ERROR)\s+.+$")
+_PYTEST_SHORT_SUMMARY_HEADER_PATTERN = re.compile(r"(?m)^=+\s*short test summary info\s*=+\s*$", re.IGNORECASE)
 _PYTEST_COLLECTED_PATTERN = re.compile(r"(?m)^\s*collected\s+(\d+)\s+items?\b")
 _PYTEST_WORKERS_ITEMS_PATTERN = re.compile(r"(?m)^\s*(\d+)\s+workers\s*\[(\d+)\s+items?\]\s*$")
 _PYTEST_CREATED_WORKERS_PATTERN = re.compile(r"(?m)^\s*created:\s*(\d+)\s*/\s*(\d+)\s+workers\s*$", re.IGNORECASE)
@@ -355,6 +357,15 @@ def _parse_pytest_output(output_text: str) -> dict[str, Any]:
             key = _normalize_status_key(token.group("label"))
             if key:
                 counts[key] += _coerce_int(token.group("count"), 0)
+    else:
+        # Fallback for truncated pytest output (for example tail/head pipelines)
+        # where the session header is missing but failure lines are still present.
+        for match in _PYTEST_FAILURE_LINE_PATTERN.finditer(text):
+            label = _safe_text(match.group(1)).upper()
+            if label == "FAILED":
+                counts["failed"] += 1
+            elif label == "ERROR":
+                counts["error"] += 1
 
     collected = 0
     workers = 0
@@ -393,6 +404,16 @@ def _parse_pytest_output(output_text: str) -> dict[str, Any]:
     failed_like = tracked_counts.get("failed", 0) + tracked_counts.get("error", 0) + tracked_counts.get("xpassed", 0)
     status = "failed" if failed_like > 0 else ("passed" if total > 0 else "unknown")
     pass_rate = round((_coerce_float(tracked_counts.get("passed", 0)) / total), 4) if total > 0 else 0.0
+    has_signal = bool(
+        summary_matches
+        or collected > 0
+        or workers > 0
+        or sum(tracked_counts.values()) > 0
+        or _PYTEST_SESSION_PATTERN.search(text)
+        or _PYTEST_VERSION_PATTERN.search(text)
+        or _PYTEST_SHORT_SUMMARY_HEADER_PATTERN.search(text)
+        or _PYTEST_FAILURE_LINE_PATTERN.search(text)
+    )
 
     return {
         "framework": "pytest",
@@ -410,6 +431,7 @@ def _parse_pytest_output(output_text: str) -> dict[str, Any]:
         "plugins": plugins[:40],
         "timeoutSeconds": _coerce_float(timeout_match.group(1), 0.0) if timeout_match else 0.0,
         "summary": summary_line[:500],
+        "hasSignal": has_signal,
     }
 
 
@@ -419,8 +441,11 @@ def parse_test_run_output(output_text: str, framework: str = "") -> dict[str, An
         return None
 
     normalized_framework = _safe_text(framework).lower()
-    if normalized_framework in {"", "pytest"} and (_PYTEST_SESSION_PATTERN.search(text) or _PYTEST_VERSION_PATTERN.search(text)):
-        return _parse_pytest_output(text)
+    if normalized_framework in {"", "pytest"}:
+        parsed = _parse_pytest_output(text)
+        has_signal = bool(parsed.pop("hasSignal", False))
+        if has_signal:
+            return parsed
     return None
 
 
@@ -526,11 +551,16 @@ def aggregate_test_runs(test_runs: list[dict[str, Any]]) -> dict[str, Any]:
                 "framework": framework,
                 "status": status,
                 "domain": _safe_text(run.get("primaryDomain")).lower(),
+                "primaryDomain": _safe_text(run.get("primaryDomain")).lower(),
                 "domains": domains,
                 "targetCount": _coerce_int(run.get("targetCount"), 0),
                 "targets": list(run.get("targets") or [])[:20] if isinstance(run.get("targets"), list) else [],
                 "flags": list(run.get("flags") or [])[:30] if isinstance(run.get("flags"), list) else [],
                 "description": _safe_text(run.get("description"))[:300],
+                "command": _safe_text(run.get("command"))[:4000],
+                "commandSegment": _safe_text(run.get("commandSegment"))[:2000],
+                "sourceLogId": _safe_text(run.get("sourceLogId")),
+                "toolName": _safe_text(run.get("toolName")),
                 "timeoutMs": _coerce_int(run.get("timeoutMs"), 0),
                 "durationSeconds": round(duration_seconds, 3) if duration_seconds > 0 else 0.0,
                 "counts": normalized_counts,
@@ -558,5 +588,5 @@ def aggregate_test_runs(test_runs: list[dict[str, Any]]) -> dict[str, Any]:
         "totalTests": total_tests,
         "passRate": pass_rate,
         "totalDurationSeconds": round(total_duration, 3) if total_duration > 0 else 0.0,
-        "runs": run_rows[:120],
+        "runs": run_rows,
     }

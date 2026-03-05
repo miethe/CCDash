@@ -5722,6 +5722,7 @@ const SessionDetail: React.FC<{
                             sessionId={session.id}
                             sessionStatus={session.status}
                             sessionFileUpdates={session.updatedFiles || []}
+                            sessionLogs={session.logs || []}
                             onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
                         />
                     ) : (

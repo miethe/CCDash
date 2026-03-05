@@ -198,8 +198,13 @@ What is captured when test signals are detected:
    - run details are persisted in `sessionForensics.testExecution`
    - linked artifacts are captured for traceability
    - Session Inspector transcript cards and detail panes use this data for test run formatting
+   - Session Inspector `Test Status` uses this data to render:
+     - all modified test files touched in-session (read/create/update/delete), with scrollable history
+     - all parsed test runs in-session (one row per run) with framework/status/targets/domains/flags/counts
 
 Important behavior:
 
 - CCDash only labels transcript entries as test runs when explicit test signals exist.
 - Non-test shell commands (for example generic Bash scripts, Git commands, or skill helper scripts) are not classified as test runs.
+- Test artifact cards in `Session > Artifacts` include parsed run details from correlated logs so run-level outcomes can be reviewed directly from artifact details.
+- Pytest parsing supports truncated output captures (for example `| tail -20`) and still extracts summary/failure metrics when sufficient pytest signals are present.
