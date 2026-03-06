@@ -4,6 +4,7 @@ from pathlib import Path
 from backend.document_linking import (
     alias_tokens_from_path,
     canonical_project_path,
+    classify_doc_category,
     classify_doc_type,
     classify_doc_subtype,
     extract_frontmatter_references,
@@ -77,6 +78,28 @@ class DocumentLinkingTests(unittest.TestCase):
                 {"doc_type": "design_spec"},
             ),
             "design_doc",
+        )
+
+    def test_classify_doc_type_handles_legacy_root_spec_docs(self) -> None:
+        self.assertEqual(
+            classify_doc_type("docs/document-entity-spec.md"),
+            "spec",
+        )
+        self.assertEqual(
+            classify_doc_type("docs/document-frontmatter-current-implementation-spec-2026-02-19.md"),
+            "spec",
+        )
+
+    def test_classify_doc_subtype_handles_legacy_root_spec_docs(self) -> None:
+        self.assertEqual(
+            classify_doc_subtype("docs/document-entity-spec.md"),
+            "spec",
+        )
+
+    def test_classify_doc_category_handles_legacy_root_spec_docs(self) -> None:
+        self.assertEqual(
+            classify_doc_category("docs/document-entity-spec.md"),
+            "specs",
         )
 
     def test_infer_project_root_supports_docs_and_dot_claude_progress(self) -> None:

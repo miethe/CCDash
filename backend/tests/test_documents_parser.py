@@ -143,6 +143,71 @@ Body
             self.assertIn("abc1234", doc.frontmatter.commitRefs)
             self.assertIn("321", doc.frontmatter.prRefs)
 
+    def test_parse_legacy_alias_fields_for_backfill_compatibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+
+            legacy_spec = docs_dir / "document-entity-spec.md"
+            legacy_spec.write_text(
+                """---
+title: Document Entity Spec
+status: review
+duration: 3 days
+api_contracts:
+  - endpoint: /api/documents
+compatibility_notes:
+  - Keep legacy keys ingestible
+breaking_changes:
+  - Drop deprecated aliases after migration
+---
+Spec body
+""",
+                encoding="utf-8",
+            )
+
+            plan_dir = root / "docs" / "project_plans" / "implementation_plans" / "features"
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            legacy_plan = plan_dir / "feature-legacy-v1.md"
+            legacy_plan.write_text(
+                """---
+title: "Implementation Plan: Legacy Feature"
+status: in-progress
+effort_estimate:
+  engineering_weeks: 2
+  story_points: 13
+release_target: 2026-Q3
+test_strategy:
+  - Validate parser migration logic
+readiness: ready
+testing_impact: high
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+
+            spec_doc = parse_document_file(legacy_spec, root / "docs", project_root=root)
+            self.assertIsNotNone(spec_doc)
+            assert spec_doc is not None
+            self.assertEqual(spec_doc.docType, "spec")
+            self.assertEqual(spec_doc.docSubtype, "spec")
+            self.assertEqual(spec_doc.category, "specs")
+            self.assertEqual(spec_doc.timelineEstimate, "3 days")
+            self.assertIn("interfaces", spec_doc.metadata.docTypeFields)
+            self.assertIn("migration_notes", spec_doc.metadata.docTypeFields)
+
+            plan_doc = parse_document_file(legacy_plan, root / "docs" / "project_plans", project_root=root)
+            self.assertIsNotNone(plan_doc)
+            assert plan_doc is not None
+            self.assertEqual(plan_doc.docType, "implementation_plan")
+            self.assertEqual(plan_doc.timelineEstimate, "2 weeks, 13 points")
+            self.assertEqual(plan_doc.targetRelease, "2026-Q3")
+            self.assertEqual(plan_doc.executionReadiness, "ready")
+            self.assertEqual(plan_doc.testImpact, "high")
+            self.assertIn("testing_strategy", plan_doc.metadata.docTypeFields)
+
 
 if __name__ == "__main__":
     unittest.main()

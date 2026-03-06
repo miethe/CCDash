@@ -147,6 +147,12 @@ _FEATURE_TYPE_DIR_TOKENS = {
     "bugs",
     "quick-features",
 }
+_LEGACY_ROOT_DOC_TYPE_STEM_HINTS: dict[str, str] = {
+    "document-frontmatter-improvement-spec-2026-02-19": "spec",
+    "document-frontmatter-current-implementation-spec-2026-02-19": "spec",
+    "document-frontmatter-lineage-v2-spec-2026-02-19": "spec",
+    "document-entity-spec": "spec",
+}
 
 _DOC_TYPE_ALIASES = {
     "prd": "prd",
@@ -778,12 +784,33 @@ def alias_tokens_from_path(path_value: str) -> set[str]:
     return aliases
 
 
+def _legacy_root_doc_type_hint(path_value: str) -> str:
+    normalized = normalize_ref_path(path_value).lower()
+    if not normalized:
+        return ""
+    path = Path(normalized)
+    parts = [part.lower() for part in path.parts]
+    if len(parts) != 2 or parts[0] != "docs":
+        return ""
+    stem = path.stem.lower()
+    if stem in _LEGACY_ROOT_DOC_TYPE_STEM_HINTS:
+        return _LEGACY_ROOT_DOC_TYPE_STEM_HINTS[stem]
+    if stem.endswith("-spec") or "-spec-" in stem:
+        return "spec"
+    if stem.endswith("-report") or "-report-" in stem:
+        return "report"
+    return ""
+
+
 def classify_doc_type(path_value: str, frontmatter: dict[str, Any] | None = None) -> str:
     normalized = normalize_ref_path(path_value).lower()
     fm = frontmatter or {}
     explicit = normalize_doc_type(str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or ""), default="")
     if explicit:
         return explicit
+    legacy_root_doc_type = _legacy_root_doc_type_hint(normalized)
+    if legacy_root_doc_type:
+        return legacy_root_doc_type
     if normalized.startswith("progress/") or "/progress/" in normalized:
         return "progress"
     if normalized.startswith("prds/") or "/prds/" in normalized:
@@ -849,6 +876,11 @@ def classify_doc_subtype(path_value: str, frontmatter: dict[str, Any] | None = N
         return "report"
     if doc_type == "spec":
         return "spec"
+    legacy_root_doc_type = _legacy_root_doc_type_hint(normalized)
+    if legacy_root_doc_type == "spec":
+        return "spec"
+    if legacy_root_doc_type == "report":
+        return "report"
     if normalized.startswith("design-specs/") or "/design-specs/" in normalized:
         return "design_spec"
     if normalized.startswith("design/") or "/design/" in normalized:
@@ -870,6 +902,11 @@ def classify_doc_category(path_value: str, frontmatter: dict[str, Any] | None = 
     normalized = normalize_ref_path(path_value)
     if not normalized:
         return ""
+    legacy_root_doc_type = _legacy_root_doc_type_hint(normalized)
+    if legacy_root_doc_type == "spec":
+        return "specs"
+    if legacy_root_doc_type == "report":
+        return "reports"
     parts = [p for p in Path(normalized).parts if p]
     lowered = [p.lower() for p in parts]
     for marker in ("implementation_plans", "prds", "reports", "progress"):

@@ -147,6 +147,15 @@ _DOC_TYPE_FIELD_KEYS: dict[str, set[str]] = {
         "open_questions",
     },
 }
+_DOC_TYPE_FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "implementation_plan": {
+        "testing_strategy": ("test_strategy",),
+    },
+    "spec": {
+        "interfaces": ("api_contracts",),
+        "migration_notes": ("compatibility_notes", "breaking_changes"),
+    },
+}
 
 
 def _extract_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
@@ -259,9 +268,14 @@ def _extract_doc_type_fields(doc_type: str, fm: dict[str, Any]) -> dict[str, Any
     keys = _DOC_TYPE_FIELD_KEYS.get(doc_type, set())
     if not keys:
         return {}
+    aliases = _DOC_TYPE_FIELD_ALIASES.get(doc_type, {})
     fields: dict[str, Any] = {}
     for key in keys:
         if key not in fm:
+            for alias_key in aliases.get(key, ()):
+                if alias_key in fm:
+                    fields[key] = _json_safe(fm.get(alias_key))
+                    break
             continue
         fields[key] = _json_safe(fm.get(key))
     return fields
@@ -337,6 +351,34 @@ def _normalize_status(status: str) -> str:
         return "pending"
     mapped = _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
     return normalize_doc_status(mapped, default="pending")
+
+
+def _stringify_timeline_estimate(value: Any) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+    if isinstance(value, dict):
+        engineering_weeks = value.get("engineering_weeks")
+        story_points = value.get("story_points")
+        chunks: list[str] = []
+        if isinstance(engineering_weeks, (int, float)) and engineering_weeks > 0:
+            unit = "week" if engineering_weeks == 1 else "weeks"
+            chunks.append(f"{int(engineering_weeks) if float(engineering_weeks).is_integer() else engineering_weeks} {unit}")
+        if isinstance(story_points, (int, float)) and story_points > 0:
+            chunks.append(
+                f"{int(story_points) if float(story_points).is_integer() else story_points} points"
+            )
+        if chunks:
+            return ", ".join(chunks)
+    for token in _to_string_list(value):
+        if token:
+            return token
+    return ""
 
 
 def _frontmatter_date(fm: dict[str, Any], *keys: str) -> str:
@@ -620,12 +662,24 @@ def parse_document_file(
     risk_level = _normalize_choice(fm.get("risk_level"), _RISK_LEVELS)
     complexity = _first_non_empty(fm.get("complexity"))
     track = _first_non_empty(fm.get("track"))
-    timeline_estimate = _first_non_empty(fm.get("timeline_estimate"), fm.get("timeline"), fm.get("estimate"))
-    target_release = _first_non_empty(fm.get("target_release"), fm.get("release"))
+    timeline_estimate = _first_non_empty(
+        _stringify_timeline_estimate(fm.get("timeline_estimate")),
+        _stringify_timeline_estimate(fm.get("timeline")),
+        _stringify_timeline_estimate(fm.get("estimate")),
+        _stringify_timeline_estimate(fm.get("effort_estimate")),
+        _stringify_timeline_estimate(fm.get("duration")),
+    )
+    target_release = _first_non_empty(fm.get("target_release"), fm.get("release_target"), fm.get("release"))
     milestone = _first_non_empty(fm.get("milestone"))
     decision_status = _normalize_choice(fm.get("decision_status"), _DECISION_STATUSES)
-    execution_readiness = _normalize_choice(fm.get("execution_readiness"), _EXECUTION_READINESS_STATES)
-    test_impact = _normalize_choice(fm.get("test_impact"), _TEST_IMPACT_LEVELS)
+    execution_readiness = _normalize_choice(
+        fm.get("execution_readiness") if fm.get("execution_readiness") is not None else fm.get("readiness"),
+        _EXECUTION_READINESS_STATES,
+    )
+    test_impact = _normalize_choice(
+        fm.get("test_impact") if fm.get("test_impact") is not None else fm.get("testing_impact"),
+        _TEST_IMPACT_LEVELS,
+    )
     primary_doc_role = _first_non_empty(fm.get("primary_doc_role"))
 
     frontmatter_type = str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or "").strip()
