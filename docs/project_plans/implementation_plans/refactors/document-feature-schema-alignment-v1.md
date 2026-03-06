@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: pending
+status: in_progress
 category: refactors
 title: "Implementation Plan: Document + Feature Schema Alignment V1"
 description: "Adopt the canonical document frontmatter schemas, normalize the missing fields, expand document and feature surfaces, and add typed linked-feature relationships."
@@ -143,6 +143,20 @@ Acceptance criteria:
 1. Document parsing tests cover every canonical doc type.
 2. Feature aggregation tests cover lineage-derived and manual feature relationships.
 
+## Phase 6-7 execution log
+
+Completed implementation checkpoints:
+
+1. `fc2e7e1` — Added phase-6 migration compatibility:
+   - legacy root-level spec doc typing/classification
+   - legacy frontmatter alias normalization for parser backfill
+   - regression tests for compatibility mappings
+2. `886fbba` — Added phase-7 rollout coverage:
+   - parser coverage across canonical doc types
+   - feature aggregation precedence and relationship-source tests
+   - document/feature surface snapshot normalization tests
+   - schema reference hygiene test for superseded spec paths
+
 ## Risks
 
 1. The parser currently preserves raw frontmatter but normalizes only a narrow slice; adding too many unstable columns too early would increase churn.
@@ -157,4 +171,3 @@ Acceptance criteria:
 4. Feature surfaces
 5. Resync/backfill
 6. Cleanup and reference updates
-
