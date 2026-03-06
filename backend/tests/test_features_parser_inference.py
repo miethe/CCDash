@@ -621,6 +621,158 @@ PRD body
                 )
             )
 
+    def test_feature_rollups_apply_precedence_rules_for_bubbled_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            (docs_dir / "implementation_plans" / "features" / "feature-precedence-v1.md").write_text(
+                """---
+title: "Implementation Plan: Precedence"
+status: in-progress
+description: "Plan description"
+summary: "Plan summary"
+priority: critical
+risk_level: high
+complexity: high
+track: migration
+timeline_estimate: "3 weeks"
+target_release: "2026-Q4"
+milestone: "Plan Milestone"
+execution_readiness: ready
+test_impact: low
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-precedence-v1.md").write_text(
+                """---
+title: "PRD: Precedence"
+status: in-progress
+description: "PRD description"
+summary: "PRD summary"
+priority: low
+risk_level: medium
+target_release: "2026-Q3"
+milestone: "PRD Milestone"
+execution_readiness: review
+test_impact: high
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            self.assertEqual(len(features), 1)
+            feature = features[0]
+
+            self.assertEqual(feature.description, "PRD description")
+            self.assertEqual(feature.summary, "PRD summary")
+            self.assertEqual(feature.priority, "low")
+            self.assertEqual(feature.riskLevel, "medium")
+            self.assertEqual(feature.complexity, "high")
+            self.assertEqual(feature.track, "migration")
+            self.assertEqual(feature.timelineEstimate, "3 weeks")
+            self.assertEqual(feature.targetRelease, "2026-Q3")
+            self.assertEqual(feature.milestone, "PRD Milestone")
+            self.assertEqual(feature.testImpact, "high")
+            self.assertEqual(feature.executionReadiness, "review")
+
+    def test_linked_feature_refs_preserve_manual_plus_derived_relationships(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            shared_ref = "docs/project_plans/specs/shared-contract.md"
+
+            (docs_dir / "implementation_plans" / "features" / "feature-a-v1.md").write_text(
+                f"""---
+title: "Implementation Plan: Feature A"
+status: in-progress
+related_documents:
+  - {shared_ref}
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-a-v1.md").write_text(
+                """---
+title: "PRD: Feature A"
+status: in-progress
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            (docs_dir / "implementation_plans" / "features" / "feature-b-v1.md").write_text(
+                f"""---
+title: "Implementation Plan: Feature B"
+status: in-progress
+lineage_parent: feature-a-v1
+related_documents:
+  - {shared_ref}
+linked_features:
+  - feature: feature-a-v1
+    type: dependency
+    source: manual
+    confidence: 0.88
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-b-v1.md").write_text(
+                """---
+title: "PRD: Feature B"
+status: in-progress
+lineage_parent: feature-a-v1
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            by_id = {feature.id: feature for feature in features}
+            refs_b = by_id["feature-b-v1"].linkedFeatures
+
+            self.assertTrue(
+                any(
+                    ref.feature == "feature-a-v1"
+                    and ref.source == "manual"
+                    and ref.type == "dependency"
+                    for ref in refs_b
+                )
+            )
+            self.assertTrue(
+                any(
+                    ref.feature == "feature-a-v1"
+                    and ref.source == "derived_lineage"
+                    and ref.type == "lineage_parent"
+                    for ref in refs_b
+                )
+            )
+            self.assertTrue(
+                any(
+                    ref.feature == "feature-a-v1"
+                    and ref.source == "inferred"
+                    and ref.type == "shared_document_context"
+                    for ref in refs_b
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

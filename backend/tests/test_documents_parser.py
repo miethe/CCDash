@@ -208,6 +208,139 @@ Plan body
             self.assertEqual(plan_doc.testImpact, "high")
             self.assertIn("testing_strategy", plan_doc.metadata.docTypeFields)
 
+    def test_parse_each_canonical_doc_type_schema_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_root = root / "docs" / "project_plans"
+            progress_root = root / ".claude" / "progress"
+
+            fixtures = [
+                {
+                    "path": docs_root / "PRDs" / "features" / "feature-canonical-v1.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "PRD: Canonical"
+status: in_progress
+problem_statement: "Problem"
+---
+Body
+""",
+                    "expected_type": "prd",
+                    "expected_field": "problem_statement",
+                },
+                {
+                    "path": docs_root / "implementation_plans" / "features" / "feature-canonical-v1.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "Plan: Canonical"
+status: in_progress
+objective: "Ship this"
+---
+Body
+""",
+                    "expected_type": "implementation_plan",
+                    "expected_field": "objective",
+                },
+                {
+                    "path": docs_root / "implementation_plans" / "features" / "feature-canonical-v1" / "phase-1-core.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "Phase 1"
+status: pending
+phase_title: "Core"
+---
+Body
+""",
+                    "expected_type": "phase_plan",
+                    "expected_field": "phase_title",
+                },
+                {
+                    "path": progress_root / "feature-canonical-v1" / "phase-1-progress.md",
+                    "base_dir": progress_root,
+                    "contents": """---
+title: "Progress 1"
+status: in_progress
+completion_estimate: "Tomorrow"
+---
+Body
+""",
+                    "expected_type": "progress",
+                    "expected_field": "completion_estimate",
+                },
+                {
+                    "path": docs_root / "reports" / "feature-canonical-audit.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "Report: Canonical"
+status: completed
+report_kind: audit
+---
+Body
+""",
+                    "expected_type": "report",
+                    "expected_field": "report_kind",
+                },
+                {
+                    "path": docs_root / "design-specs" / "features" / "feature-canonical-v1.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "Design: Canonical"
+status: review
+surfaces:
+  - dashboard
+---
+Body
+""",
+                    "expected_type": "design_doc",
+                    "expected_field": "surfaces",
+                },
+                {
+                    "path": docs_root / "specs" / "feature-canonical-api.md",
+                    "base_dir": docs_root,
+                    "contents": """---
+title: "Spec: Canonical"
+status: review
+interfaces:
+  - name: DocumentsAPI
+---
+Body
+""",
+                    "expected_type": "spec",
+                    "expected_field": "interfaces",
+                },
+                {
+                    "path": root / "docs" / "notes" / "feature-canonical-notes.md",
+                    "base_dir": root / "docs",
+                    "contents": """---
+title: "General Document"
+status: pending
+---
+Body
+""",
+                    "expected_type": "document",
+                    "expected_field": "",
+                },
+            ]
+
+            for fixture in fixtures:
+                fixture_path = fixture["path"]
+                fixture_path.parent.mkdir(parents=True, exist_ok=True)
+                fixture_path.write_text(str(fixture["contents"]), encoding="utf-8")
+
+            for fixture in fixtures:
+                with self.subTest(path=str(fixture["path"])):
+                    doc = parse_document_file(
+                        fixture["path"],
+                        fixture["base_dir"],
+                        project_root=root,
+                    )
+                    self.assertIsNotNone(doc)
+                    assert doc is not None
+                    self.assertEqual(doc.docType, fixture["expected_type"])
+                    expected_field = str(fixture["expected_field"])
+                    if expected_field:
+                        self.assertIn(expected_field, doc.metadata.docTypeFields)
+
 
 if __name__ == "__main__":
     unittest.main()
