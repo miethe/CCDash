@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-03-06
+
+### Added
+
+- Document schema-alignment migration compatibility:
+  - legacy root-level superseded schema docs now classify as `spec` for ingestion/backfill compatibility.
+  - legacy frontmatter aliases now normalize into canonical fields (for example `test_strategy`, `api_contracts`, `compatibility_notes`, `breaking_changes`, `effort_estimate`, `duration`, `release_target`).
+- Rollout coverage for document/feature schema alignment:
+  - parser coverage for all canonical document types (`prd`, `implementation_plan`, `phase_plan`, `progress`, `report`, `design_doc`, `spec`, `document`).
+  - feature aggregation precedence tests and typed linked-feature source derivation tests.
+  - document/feature surface snapshot normalization tests.
+  - schema reference hygiene test for superseded spec path references.
+
+### Changed
+
+- Implementation plan status and rollout log for document/feature schema alignment now reflects completed phase 6-7 execution and validation.
+- Document schema catalog now includes current rollout status notes for migration compatibility and test coverage.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/document-entity-user-guide.md`
+  - `docs/schemas/document_frontmatter/README.md`
+  - `docs/project_plans/implementation_plans/refactors/document-feature-schema-alignment-v1.md`
+
 ## 2026-03-05
 
 ### Added

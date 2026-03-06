@@ -65,10 +65,10 @@
     *   **List**: Sortable table view.
     *   **Folder/Explorer**: 3-pane IDE-style file explorer for navigating documentation hierarchies.
 *   **Document Modal**:
-    *   **Markdown Preview**: Renders document content.
-    *   **Metadata**: Parses frontmatter (Authors, Version, Status).
-    *   **Version Control**: Lists linked Commits and PRs.
-    *   **Bi-directional Linking**: Tabs showing "Linked Files" and "Linked Entities" (Tasks/Sessions).
+    *   Canonical tabs: **Summary**, **Delivery**, **Relationships**, **Content**, **Timeline**, **Raw**.
+    *   Typed metadata from canonical schema fields (priority/risk/complexity/track, timeline/release/milestone, readiness/test impact, ownership/audience).
+    *   Relationship surfaces include typed `linked_features[]` (type/source/confidence), related docs, request IDs, commit refs, and PR refs.
+    *   **Raw** tab includes normalized and raw frontmatter payloads for migration/debugging parity.
 
 ### 6. Session Inspector (Agent Forensics)
 The core debugging loop for AI interactions.
@@ -177,6 +177,8 @@ The primary unit of delivery. Aggregates:
 *   `phases`: Implementation phases containing granular `ProjectTask` items.
 *   `relatedFeatures`: Bi-directional links to other version variants of the same feature.
 *   `deferredTasks`: Count of terminal-complete tasks deferred for later follow-up.
+*   Rollup metadata from linked docs: `description`, `summary`, `priority`, `riskLevel`, `complexity`, `track`, `timelineEstimate`, `targetRelease`, `milestone`, `executionReadiness`, `testImpact`.
+*   Structured context blocks: `primaryDocuments`, `documentCoverage`, `qualitySignals`, and typed `linkedFeatures`.
 
 ### AgentSession
 The atomic unit of work. Contains:
@@ -198,7 +200,9 @@ Represents a specific unit of implementation.
 
 ### PlanDocument
 Represents Markdown documentation. Contains:
-*   `frontmatter`: Metadata for linking back to Tasks and Sessions.
+*   Typed identity/classification metadata (`docType`, `docSubtype`, `rootKind`, canonical status).
+*   Canonical delivery/classification fields (`description`, `summary`, `priority`, `riskLevel`, `complexity`, `track`, `timelineEstimate`, `targetRelease`, `milestone`, `executionReadiness`, `testImpact`).
+*   `frontmatter` + `metadata` blocks for normalized linking (`linkedFeatureRefs`, related docs, request/commit/PR refs, source/context files, doc-type-specific fields).
 
 ---
 

@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: in_progress
+status: completed
 category: refactors
 title: "Implementation Plan: Document + Feature Schema Alignment V1"
 description: "Adopt the canonical document frontmatter schemas, normalize the missing fields, expand document and feature surfaces, and add typed linked-feature relationships."
@@ -12,7 +12,7 @@ summary: "Refactor document parsing, storage, API shapes, and UI surfaces so CCD
 author: codex
 audience: [ai-agents, developers, engineering-leads]
 created: 2026-03-05
-updated: 2026-03-05
+updated: 2026-03-06
 tags: [documents, features, schemas, mapping, ui, refactor]
 priority: high
 risk_level: medium
@@ -156,6 +156,11 @@ Completed implementation checkpoints:
    - feature aggregation precedence and relationship-source tests
    - document/feature surface snapshot normalization tests
    - schema reference hygiene test for superseded spec paths
+
+Validation summary:
+
+1. Targeted backend coverage for document linking/parser/feature rollups/surface snapshots is passing (`37 passed`).
+2. Legacy alias compatibility and root-level superseded-spec handling are covered by regression tests.
 
 ## Risks
 

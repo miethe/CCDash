@@ -1,6 +1,6 @@
 # CCDash Document Schema Catalog
 
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 Status: Canonical
 
 This directory is the active source of truth for CCDash document frontmatter and document-to-feature mapping.
@@ -95,3 +95,8 @@ The implementation plan for adopting these schemas is:
 
 - [document-feature-schema-alignment-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/refactors/document-feature-schema-alignment-v1.md)
 
+Current rollout status:
+
+- Parser/repository normalization, feature bubble-up, and document/feature UI surfaces are implemented.
+- Legacy frontmatter aliases and superseded root-level spec doc classification are supported for migration/backfill.
+- Parser/aggregation/snapshot coverage was expanded in backend tests for rollout safety.
