@@ -121,8 +121,13 @@ class SessionPlatformTransition(BaseModel):
 
 class ImpactPoint(BaseModel):
     timestamp: str
-    label: str
+    label: str = ""
     type: str = "info"  # "info" | "warning" | "error" | "success"
+    locAdded: int = 0
+    locDeleted: int = 0
+    fileCount: int = 0
+    testPassCount: int = 0
+    testFailCount: int = 0
 
 
 class SessionMetadataField(BaseModel):
@@ -194,7 +199,9 @@ class AgentSession(BaseModel):
 class DocumentFrontmatter(BaseModel):
     tags: list[str] = Field(default_factory=list)
     linkedFeatures: list[str] = Field(default_factory=list)
+    linkedFeatureRefs: list["LinkedFeatureRef"] = Field(default_factory=list)
     linkedSessions: list[str] = Field(default_factory=list)
+    linkedTasks: list[str] = Field(default_factory=list)
     lineageFamily: str = ""
     lineageParent: str = ""
     lineageChildren: list[str] = Field(default_factory=list)
@@ -202,11 +209,19 @@ class DocumentFrontmatter(BaseModel):
     version: Optional[str] = None
     commits: list[str] = Field(default_factory=list)
     prs: list[str] = Field(default_factory=list)
+    requestLogIds: list[str] = Field(default_factory=list)
+    commitRefs: list[str] = Field(default_factory=list)
+    prRefs: list[str] = Field(default_factory=list)
     relatedRefs: list[str] = Field(default_factory=list)
     pathRefs: list[str] = Field(default_factory=list)
     slugRefs: list[str] = Field(default_factory=list)
     prd: str = ""
     prdRefs: list[str] = Field(default_factory=list)
+    sourceDocuments: list[str] = Field(default_factory=list)
+    filesAffected: list[str] = Field(default_factory=list)
+    filesModified: list[str] = Field(default_factory=list)
+    contextFiles: list[str] = Field(default_factory=list)
+    integritySignalRefs: list[str] = Field(default_factory=list)
     fieldKeys: list[str] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
 
@@ -222,11 +237,44 @@ class DocumentMetadata(BaseModel):
     phase: str = ""
     phaseNumber: Optional[int] = None
     overallProgress: Optional[float] = None
+    completionEstimate: str = ""
+    description: str = ""
+    summary: str = ""
+    priority: str = ""
+    riskLevel: str = ""
+    complexity: str = ""
+    track: str = ""
+    timelineEstimate: str = ""
+    targetRelease: str = ""
+    milestone: str = ""
+    decisionStatus: str = ""
+    executionReadiness: str = ""
+    testImpact: str = ""
+    primaryDocRole: str = ""
+    featureSlug: str = ""
+    featureFamily: str = ""
+    featureVersion: str = ""
+    planRef: str = ""
+    implementationPlanRef: str = ""
     taskCounts: DocumentTaskCounts = Field(default_factory=DocumentTaskCounts)
     owners: list[str] = Field(default_factory=list)
     contributors: list[str] = Field(default_factory=list)
+    reviewers: list[str] = Field(default_factory=list)
+    approvers: list[str] = Field(default_factory=list)
+    audience: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    linkedTasks: list[str] = Field(default_factory=list)
     requestLogIds: list[str] = Field(default_factory=list)
     commitRefs: list[str] = Field(default_factory=list)
+    prRefs: list[str] = Field(default_factory=list)
+    sourceDocuments: list[str] = Field(default_factory=list)
+    filesAffected: list[str] = Field(default_factory=list)
+    filesModified: list[str] = Field(default_factory=list)
+    contextFiles: list[str] = Field(default_factory=list)
+    integritySignalRefs: list[str] = Field(default_factory=list)
+    executionEntrypoints: list[dict[str, Any]] = Field(default_factory=list)
+    linkedFeatureRefs: list["LinkedFeatureRef"] = Field(default_factory=list)
+    docTypeFields: dict[str, Any] = Field(default_factory=dict)
     featureSlugHint: str = ""
     canonicalPath: str = ""
 
@@ -262,6 +310,25 @@ class PlanDocument(BaseModel):
     phaseToken: str = ""
     phaseNumber: Optional[int] = None
     overallProgress: Optional[float] = None
+    completionEstimate: str = ""
+    description: str = ""
+    summary: str = ""
+    priority: str = ""
+    riskLevel: str = ""
+    complexity: str = ""
+    track: str = ""
+    timelineEstimate: str = ""
+    targetRelease: str = ""
+    milestone: str = ""
+    decisionStatus: str = ""
+    executionReadiness: str = ""
+    testImpact: str = ""
+    primaryDocRole: str = ""
+    featureSlug: str = ""
+    featureFamily: str = ""
+    featureVersion: str = ""
+    planRef: str = ""
+    implementationPlanRef: str = ""
     totalTasks: int = 0
     completedTasks: int = 0
     inProgressTasks: int = 0
@@ -443,11 +510,20 @@ class Project(BaseModel):
 
 # ── Feature models ─────────────────────────────────────────────────
 
+class LinkedFeatureRef(BaseModel):
+    feature: str
+    type: str = ""
+    source: str = ""
+    confidence: Optional[float] = None
+    notes: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
 class LinkedDocument(BaseModel):
     id: str
     title: str
     filePath: str
-    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "progress" | "spec"
+    docType: str  # "prd" | "implementation_plan" | "report" | "phase_plan" | "progress" | "design_doc" | "spec"
     category: str = ""
     slug: str = ""
     canonicalSlug: str = ""
@@ -458,6 +534,7 @@ class LinkedDocument(BaseModel):
     lineageParent: str = ""
     lineageChildren: list[str] = Field(default_factory=list)
     lineageType: str = ""
+    linkedFeatures: list[LinkedFeatureRef] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
@@ -474,6 +551,30 @@ class FeaturePhase(BaseModel):
     tasks: list[ProjectTask] = Field(default_factory=list)
 
 
+class FeaturePrimaryDocuments(BaseModel):
+    prd: Optional[LinkedDocument] = None
+    implementationPlan: Optional[LinkedDocument] = None
+    phasePlans: list[LinkedDocument] = Field(default_factory=list)
+    progressDocs: list[LinkedDocument] = Field(default_factory=list)
+    supportingDocs: list[LinkedDocument] = Field(default_factory=list)
+
+
+class FeatureDocumentCoverage(BaseModel):
+    present: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    countsByType: dict[str, int] = Field(default_factory=dict)
+    coverageScore: float = 0.0
+
+
+class FeatureQualitySignals(BaseModel):
+    blockerCount: int = 0
+    atRiskTaskCount: int = 0
+    integritySignalRefs: list[str] = Field(default_factory=list)
+    reportFindingsBySeverity: dict[str, int] = Field(default_factory=dict)
+    testImpact: str = ""
+    hasBlockingSignals: bool = False
+
+
 class Feature(BaseModel):
     id: str  # slug, e.g. "discovery-import-fixes-v1"
     name: str
@@ -483,11 +584,31 @@ class Feature(BaseModel):
     deferredTasks: int = 0
     category: str = ""
     tags: list[str] = Field(default_factory=list)
+    description: str = ""
+    summary: str = ""
+    priority: str = ""
+    riskLevel: str = ""
+    complexity: str = ""
+    track: str = ""
+    timelineEstimate: str = ""
+    targetRelease: str = ""
+    milestone: str = ""
+    owners: list[str] = Field(default_factory=list)
+    contributors: list[str] = Field(default_factory=list)
+    requestLogIds: list[str] = Field(default_factory=list)
+    commitRefs: list[str] = Field(default_factory=list)
+    prRefs: list[str] = Field(default_factory=list)
+    executionReadiness: str = ""
+    testImpact: str = ""
     updatedAt: str = ""
     plannedAt: str = ""
     startedAt: str = ""
     completedAt: str = ""
     linkedDocs: list[LinkedDocument] = Field(default_factory=list)
+    linkedFeatures: list[LinkedFeatureRef] = Field(default_factory=list)
+    primaryDocuments: FeaturePrimaryDocuments = Field(default_factory=FeaturePrimaryDocuments)
+    documentCoverage: FeatureDocumentCoverage = Field(default_factory=FeatureDocumentCoverage)
+    qualitySignals: FeatureQualitySignals = Field(default_factory=FeatureQualitySignals)
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)

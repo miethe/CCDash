@@ -60,6 +60,102 @@ _NORMALIZED_STATUS = {
     "archived": "archived",
 }
 _COMPLETION_EQUIVALENT_STATUSES = {"completed", "inferred_complete", "deferred"}
+_PRIORITY_LEVELS = {"low", "medium", "high", "critical"}
+_RISK_LEVELS = {"low", "medium", "high", "critical"}
+_TEST_IMPACT_LEVELS = {"none", "low", "medium", "high", "critical"}
+_DECISION_STATUSES = {"proposed", "approved", "accepted", "superseded", "rejected", "draft"}
+_EXECUTION_READINESS_STATES = {"unknown", "not_ready", "needs_inputs", "ready", "in_progress", "complete"}
+_DOC_TYPE_FIELD_KEYS: dict[str, set[str]] = {
+    "prd": {
+        "problem_statement",
+        "context",
+        "goals",
+        "non_goals",
+        "users",
+        "jobs_to_be_done",
+        "success_metrics",
+        "functional_requirements",
+        "non_functional_requirements",
+        "acceptance_criteria",
+        "assumptions",
+        "dependencies",
+        "risks",
+        "decisions",
+    },
+    "implementation_plan": {
+        "objective",
+        "scope",
+        "architecture_summary",
+        "rollout_strategy",
+        "rollback_strategy",
+        "observability_plan",
+        "testing_strategy",
+        "security_considerations",
+        "data_considerations",
+        "phases",
+        "dependencies",
+        "risks",
+        "execution_entrypoints",
+    },
+    "phase_plan": {
+        "phase_title",
+        "phase_goal",
+        "depends_on_phases",
+        "entry_criteria",
+        "exit_criteria",
+        "tasks",
+        "parallelization",
+        "blockers",
+        "success_criteria",
+        "files_modified",
+    },
+    "progress": {
+        "completion_estimate",
+        "deferred_tasks",
+        "at_risk_tasks",
+        "blockers",
+        "success_criteria",
+        "next_steps",
+        "files_modified",
+        "tasks",
+        "parallelization",
+    },
+    "report": {
+        "report_kind",
+        "scope",
+        "evidence",
+        "findings",
+        "recommendations",
+        "impacted_features",
+    },
+    "design_doc": {
+        "surfaces",
+        "user_flows",
+        "ux_goals",
+        "components",
+        "accessibility_notes",
+        "motion_notes",
+        "asset_refs",
+    },
+    "spec": {
+        "spec_kind",
+        "interfaces",
+        "entities",
+        "data_contracts",
+        "validation_rules",
+        "migration_notes",
+        "open_questions",
+    },
+}
+_DOC_TYPE_FIELD_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "implementation_plan": {
+        "testing_strategy": ("test_strategy",),
+    },
+    "spec": {
+        "interfaces": ("api_contracts",),
+        "migration_notes": ("compatibility_notes", "breaking_changes"),
+    },
+}
 
 
 def _extract_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
@@ -105,6 +201,84 @@ def _to_string_list(value: Any) -> list[str]:
 def _first_string(value: Any) -> str:
     values = _to_string_list(value)
     return values[0] if values else ""
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        token = _first_string(value)
+        if token:
+            return token
+    return ""
+
+
+def _normalize_choice(value: Any, allowed: set[str]) -> str:
+    token = _first_string(value).strip().lower().replace("-", "_").replace(" ", "_")
+    return token if token in allowed else ""
+
+
+def _normalize_feature_identity(value: Any, *, canonicalize: bool = False) -> str:
+    token = _normalize_feature_ref(_first_string(value))
+    if not token:
+        return ""
+    return canonical_slug(token) if canonicalize else token
+
+
+def _normalize_linked_feature_refs(raw_refs: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_refs, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in raw_refs:
+        if not isinstance(raw, dict):
+            continue
+        feature = str(raw.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        relation_type = str(raw.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(raw.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        key = (feature, relation_type, source)
+        if key in seen:
+            continue
+        seen.add(key)
+        confidence_value: float | None = None
+        confidence_raw = raw.get("confidence")
+        if confidence_raw is not None:
+            try:
+                confidence_value = max(0.0, min(1.0, float(confidence_raw)))
+            except Exception:
+                confidence_value = None
+        normalized.append(
+            {
+                "feature": feature,
+                "type": relation_type,
+                "source": source,
+                "confidence": confidence_value,
+                "notes": str(raw.get("notes") or ""),
+                "evidence": [
+                    str(v)
+                    for v in _to_string_list(raw.get("evidence"))
+                    if isinstance(v, str) and str(v).strip()
+                ],
+            }
+        )
+    return normalized
+
+
+def _extract_doc_type_fields(doc_type: str, fm: dict[str, Any]) -> dict[str, Any]:
+    keys = _DOC_TYPE_FIELD_KEYS.get(doc_type, set())
+    if not keys:
+        return {}
+    aliases = _DOC_TYPE_FIELD_ALIASES.get(doc_type, {})
+    fields: dict[str, Any] = {}
+    for key in keys:
+        if key not in fm:
+            for alias_key in aliases.get(key, ()):
+                if alias_key in fm:
+                    fields[key] = _json_safe(fm.get(alias_key))
+                    break
+            continue
+        fields[key] = _json_safe(fm.get(key))
+    return fields
 
 
 def _normalize_feature_ref(value: str) -> str:
@@ -177,6 +351,34 @@ def _normalize_status(status: str) -> str:
         return "pending"
     mapped = _NORMALIZED_STATUS.get(token, token.replace("-", "_"))
     return normalize_doc_status(mapped, default="pending")
+
+
+def _stringify_timeline_estimate(value: Any) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+    if isinstance(value, dict):
+        engineering_weeks = value.get("engineering_weeks")
+        story_points = value.get("story_points")
+        chunks: list[str] = []
+        if isinstance(engineering_weeks, (int, float)) and engineering_weeks > 0:
+            unit = "week" if engineering_weeks == 1 else "weeks"
+            chunks.append(f"{int(engineering_weeks) if float(engineering_weeks).is_integer() else engineering_weeks} {unit}")
+        if isinstance(story_points, (int, float)) and story_points > 0:
+            chunks.append(
+                f"{int(story_points) if float(story_points).is_integer() else story_points} points"
+            )
+        if chunks:
+            return ", ".join(chunks)
+    for token in _to_string_list(value):
+        if token:
+            return token
+    return ""
 
 
 def _frontmatter_date(fm: dict[str, Any], *keys: str) -> str:
@@ -405,11 +607,16 @@ def parse_document_file(
     slug_refs = [str(v) for v in refs.get("slugRefs", []) if isinstance(v, str)]
     related_refs = [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)]
     linked_feature_refs = [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)]
+    typed_linked_feature_refs = _normalize_linked_feature_refs(refs.get("typedFeatureRefs"))
     linked_session_refs = [str(v) for v in refs.get("sessionRefs", []) if isinstance(v, str)]
+    linked_task_refs = [str(v) for v in refs.get("taskRefs", []) if isinstance(v, str)]
     prd_refs = [str(v) for v in refs.get("prdRefs", []) if isinstance(v, str)]
     prd_primary = str(refs.get("prd") or "")
     request_refs = [str(v) for v in refs.get("requestRefs", []) if isinstance(v, str)]
     commit_refs = [str(v) for v in refs.get("commitRefs", []) if isinstance(v, str)]
+    pr_refs = [str(v) for v in refs.get("prRefs", []) if isinstance(v, str)]
+    source_document_refs = [str(v) for v in refs.get("sourceDocumentRefs", []) if isinstance(v, str)]
+    integrity_signal_refs = [str(v) for v in refs.get("integritySignalRefs", []) if isinstance(v, str)]
     owner_refs = [str(v) for v in refs.get("ownerRefs", []) if isinstance(v, str)]
 
     direct_commit_refs = _to_string_list(
@@ -426,6 +633,7 @@ def parse_document_file(
         or fm.get("pull_requests")
         or fm.get("pullRequests")
     )
+    all_pr_refs = sorted({*pr_refs, *prs})
     version = _first_string(fm.get("version"))
 
     doc_type = classify_doc_type(canonical_path, fm)
@@ -435,16 +643,62 @@ def parse_document_file(
     path_segments = list(Path(canonical_path).parts)
     phase_token, phase_number = _parse_phase_metadata(Path(canonical_path), fm)
     task_counts = _normalize_task_counts(fm)
+    doc_type_fields = _extract_doc_type_fields(doc_type, fm)
 
     overall_progress = _to_optional_float(
         fm.get("overall_progress")
         if fm.get("overall_progress") is not None
         else fm.get("progress")
     )
+    completion_estimate = _first_non_empty(
+        fm.get("completion_estimate"),
+        fm.get("eta"),
+        fm.get("target_date"),
+    )
+
+    description = _first_non_empty(fm.get("description"), fm.get("objective"))
+    summary = _first_non_empty(fm.get("summary"))
+    priority = _normalize_choice(fm.get("priority"), _PRIORITY_LEVELS)
+    risk_level = _normalize_choice(fm.get("risk_level"), _RISK_LEVELS)
+    complexity = _first_non_empty(fm.get("complexity"))
+    track = _first_non_empty(fm.get("track"))
+    timeline_estimate = _first_non_empty(
+        _stringify_timeline_estimate(fm.get("timeline_estimate")),
+        _stringify_timeline_estimate(fm.get("timeline")),
+        _stringify_timeline_estimate(fm.get("estimate")),
+        _stringify_timeline_estimate(fm.get("effort_estimate")),
+        _stringify_timeline_estimate(fm.get("duration")),
+    )
+    target_release = _first_non_empty(fm.get("target_release"), fm.get("release_target"), fm.get("release"))
+    milestone = _first_non_empty(fm.get("milestone"))
+    decision_status = _normalize_choice(fm.get("decision_status"), _DECISION_STATUSES)
+    execution_readiness = _normalize_choice(
+        fm.get("execution_readiness") if fm.get("execution_readiness") is not None else fm.get("readiness"),
+        _EXECUTION_READINESS_STATES,
+    )
+    test_impact = _normalize_choice(
+        fm.get("test_impact") if fm.get("test_impact") is not None else fm.get("testing_impact"),
+        _TEST_IMPACT_LEVELS,
+    )
+    primary_doc_role = _first_non_empty(fm.get("primary_doc_role"))
 
     frontmatter_type = str(fm.get("type") or fm.get("doc_type") or fm.get("doctype") or "").strip()
 
-    feature_slug_hint = str(fm.get("feature_slug") or fm.get("feature_slug_hint") or "").strip().lower()
+    feature_slug = _normalize_feature_identity(
+        fm.get("feature_slug")
+        or fm.get("feature")
+        or fm.get("feature_id")
+        or fm.get("feature_slug_hint")
+    )
+    feature_family = _normalize_feature_identity(
+        fm.get("feature_family") or fm.get("lineage_family"),
+        canonicalize=True,
+    )
+    feature_version = _first_non_empty(fm.get("feature_version"), fm.get("version"))
+    plan_ref = _first_non_empty(fm.get("plan_ref"))
+    implementation_plan_ref = _first_non_empty(fm.get("implementation_plan_ref"))
+
+    feature_slug_hint = feature_slug or str(fm.get("feature_slug_hint") or "").strip().lower()
     if not feature_slug_hint:
         feature_slug_hint = feature_slug_from_path(canonical_path)
     if not feature_slug_hint:
@@ -480,16 +734,19 @@ def parse_document_file(
     lineage_children = _normalize_feature_ref_list(lineage_children_raw)
     normalized_lineage_family = _normalize_feature_ref(lineage_family_raw)
     lineage_family = canonical_slug(
-        normalized_lineage_family or feature_slug_hint or feature_slug_canonical
+        normalized_lineage_family or feature_family or feature_slug_hint or feature_slug_canonical
     )
 
     all_linked_feature_refs = sorted(
         {
             *linked_feature_refs,
+            *[str(ref.get("feature") or "") for ref in typed_linked_feature_refs],
             *([lineage_parent] if lineage_parent else []),
             *lineage_children,
         }
     )
+    if feature_slug:
+        all_linked_feature_refs = sorted({*all_linked_feature_refs, feature_slug})
 
     feature_candidates = sorted(
         {
@@ -502,18 +759,66 @@ def parse_document_file(
     )
 
     contributors = [str(v) for v in _to_string_list(fm.get("contributors"))]
+    reviewers = [str(v) for v in _to_string_list(fm.get("reviewers"))]
+    approvers = [str(v) for v in _to_string_list(fm.get("approvers"))]
+    audience_values = [str(v) for v in _to_string_list(fm.get("audience"))]
+    labels = sorted({*tags, *[str(v) for v in _to_string_list(fm.get("labels"))]})
+    files_affected = [str(v) for v in _to_string_list(fm.get("files_affected") or fm.get("filesAffected"))]
+    files_modified = [str(v) for v in _to_string_list(fm.get("files_modified") or fm.get("filesModified"))]
+    context_files = [str(v) for v in _to_string_list(fm.get("context_files") or fm.get("contextFiles"))]
     owners = sorted({*owner_refs, *[str(v) for v in _to_string_list(fm.get("owner") or fm.get("owners"))]})
     contributors = sorted({*contributors, *owner_refs})
+    source_document_refs = sorted({*source_document_refs, *_to_string_list(fm.get("source_documents"))})
+    integrity_signal_refs = sorted({*integrity_signal_refs, *_to_string_list(fm.get("integrity_signal_refs"))})
+    execution_entrypoints_raw = fm.get("execution_entrypoints")
+    execution_entrypoints = [
+        _json_safe(entry)
+        for entry in execution_entrypoints_raw
+        if isinstance(entry, dict)
+    ] if isinstance(execution_entrypoints_raw, list) else []
 
     metadata = DocumentMetadata(
         phase=phase_token,
         phaseNumber=phase_number,
         overallProgress=overall_progress,
+        completionEstimate=completion_estimate,
+        description=description,
+        summary=summary,
+        priority=priority,
+        riskLevel=risk_level,
+        complexity=complexity,
+        track=track,
+        timelineEstimate=timeline_estimate,
+        targetRelease=target_release,
+        milestone=milestone,
+        decisionStatus=decision_status,
+        executionReadiness=execution_readiness,
+        testImpact=test_impact,
+        primaryDocRole=primary_doc_role,
+        featureSlug=feature_slug,
+        featureFamily=feature_family,
+        featureVersion=feature_version,
+        planRef=plan_ref,
+        implementationPlanRef=implementation_plan_ref,
         taskCounts=task_counts,
         owners=owners,
         contributors=contributors,
+        reviewers=reviewers,
+        approvers=approvers,
+        audience=audience_values,
+        labels=labels,
+        linkedTasks=linked_task_refs,
         requestLogIds=request_refs,
         commitRefs=all_commit_refs,
+        prRefs=all_pr_refs,
+        sourceDocuments=source_document_refs,
+        filesAffected=files_affected,
+        filesModified=files_modified,
+        contextFiles=context_files,
+        integritySignalRefs=integrity_signal_refs,
+        executionEntrypoints=execution_entrypoints,
+        linkedFeatureRefs=typed_linked_feature_refs,
+        docTypeFields=doc_type_fields,
         featureSlugHint=feature_slug_hint,
         canonicalPath=canonical_path,
     )
@@ -542,6 +847,25 @@ def parse_document_file(
         phaseToken=phase_token,
         phaseNumber=phase_number,
         overallProgress=overall_progress,
+        completionEstimate=completion_estimate,
+        description=description,
+        summary=summary,
+        priority=priority,
+        riskLevel=risk_level,
+        complexity=complexity,
+        track=track,
+        timelineEstimate=timeline_estimate,
+        targetRelease=target_release,
+        milestone=milestone,
+        decisionStatus=decision_status,
+        executionReadiness=execution_readiness,
+        testImpact=test_impact,
+        primaryDocRole=primary_doc_role,
+        featureSlug=feature_slug,
+        featureFamily=feature_family,
+        featureVersion=feature_version,
+        planRef=plan_ref,
+        implementationPlanRef=implementation_plan_ref,
         totalTasks=task_counts.total,
         completedTasks=task_counts.completed,
         inProgressTasks=task_counts.inProgress,
@@ -551,7 +875,9 @@ def parse_document_file(
         frontmatter=DocumentFrontmatter(
             tags=tags,
             linkedFeatures=all_linked_feature_refs,
+            linkedFeatureRefs=typed_linked_feature_refs,
             linkedSessions=linked_session_refs,
+            linkedTasks=linked_task_refs,
             lineageFamily=lineage_family,
             lineageParent=lineage_parent,
             lineageChildren=lineage_children,
@@ -559,11 +885,19 @@ def parse_document_file(
             version=version or None,
             commits=all_commit_refs,
             prs=prs,
+            requestLogIds=request_refs,
+            commitRefs=all_commit_refs,
+            prRefs=all_pr_refs,
             relatedRefs=related_refs,
             pathRefs=path_refs,
             slugRefs=slug_refs,
             prd=prd_primary,
             prdRefs=prd_refs,
+            sourceDocuments=source_document_refs,
+            filesAffected=files_affected,
+            filesModified=files_modified,
+            contextFiles=context_files,
+            integritySignalRefs=integrity_signal_refs,
             fieldKeys=sorted(str(key) for key in fm.keys()),
             raw=_json_safe({str(k): v for k, v in fm.items()}),
         ),

@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from backend.date_utils import file_metadata_dates, make_date_value
-from backend.models import AgentSession, SessionLog, ToolCallInfo, ToolUsage
+from backend.models import AgentSession, ImpactPoint, SessionLog, ToolCallInfo, ToolUsage
+from backend.parsers.platforms.test_runs import (
+    aggregate_test_runs,
+    enrich_test_run_with_output,
+    flatten_test_run_metadata,
+    parse_test_run_from_command,
+)
 
 _ACTIVE_SESSION_WINDOW_SECONDS = 10 * 60
 _PATH_PATTERN = re.compile(r"(?:/[^\s\"'<>]+|\b(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+\b)")
@@ -22,12 +28,15 @@ _DB_TOOL_PATTERN = re.compile(r"\b(psql|mysql|sqlite3|mongosh|mongo|redis-cli|pg
 _DOCKER_PATTERN = re.compile(r"\bdocker(?:\s+compose|[- ]compose|\s+\w+)")
 _SERVICE_PATTERN = re.compile(r"\b(pm2|systemctl)\b")
 _COMMAND_TOOL_NAMES = {"exec_command", "shell_command", "shell"}
+_SUBAGENT_TOOL_NAMES = {"task", "agent"}
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>\s*([^<\n]+)\s*</command-name>", re.IGNORECASE)
 _COMMAND_ARGS_PATTERN = re.compile(r"<command-args>\s*([\s\S]*?)\s*</command-args>", re.IGNORECASE)
 _SLASH_COMMAND_LINE_PATTERN = re.compile(
     r"(?m)^\s*(/[a-z][a-z0-9_-]*(?::[a-z0-9_-]+)?)\b(?:\s+([^\n]+))?\s*$",
     re.IGNORECASE,
 )
+_TASK_ID_PATTERN = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b")
+_AGENT_ID_OUTPUT_PATTERN = re.compile(r"\bagentid\s*:\s*([A-Za-z0-9._:-]+)\b", re.IGNORECASE)
 _FILE_READ_MARKERS = ("cat ", "sed -n", "head ", "tail ", "grep ", "rg ")
 _FILE_UPDATE_MARKERS = ("apply_patch", "tee ", "echo ", "printf ", "cp ", "mv ", "touch ")
 _FILE_DELETE_MARKERS = ("rm ", "unlink ")
@@ -92,6 +101,85 @@ def _extract_paths_from_text(text: str) -> list[str]:
         if normalized and "/" in normalized:
             matches.append(normalized)
     return matches
+
+
+def _coerce_text_blob(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value, ensure_ascii=True).strip()
+    except Exception:
+        return str(value).strip()
+
+
+def _extract_task_id(*values: Any) -> str:
+    for value in values:
+        text = _coerce_text_blob(value)
+        if not text:
+            continue
+        match = _TASK_ID_PATTERN.search(text)
+        if match and match.group(1):
+            return match.group(1)
+    return ""
+
+
+def _is_subagent_tool_name(name: str) -> bool:
+    return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
+
+
+def _extract_subagent_identifier(*values: Any) -> str:
+    key_candidates = (
+        "agent_session_id",
+        "agentSessionId",
+        "agent_id",
+        "agentId",
+        "subagent_id",
+        "subagentId",
+    )
+    seen_ids: set[int] = set()
+    queue: list[Any] = list(values)
+    while queue:
+        current = queue.pop(0)
+        marker = id(current)
+        if marker in seen_ids:
+            continue
+        seen_ids.add(marker)
+
+        if isinstance(current, dict):
+            for key in key_candidates:
+                raw = current.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+            queue.extend(current.values())
+            continue
+
+        if isinstance(current, list):
+            queue.extend(current)
+            continue
+
+        if isinstance(current, str):
+            text = current.strip()
+            if not text:
+                continue
+            if text.startswith("{") or text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if parsed is not None:
+                    queue.append(parsed)
+            for key in key_candidates:
+                pattern = re.compile(rf'(?i)"{re.escape(key)}"\s*:\s*"([^"]+)"')
+                match = pattern.search(text)
+                if match and match.group(1).strip():
+                    return match.group(1).strip()
+            match = _AGENT_ID_OUTPUT_PATTERN.search(text)
+            if match and match.group(1).strip():
+                return match.group(1).strip()
+
+    return ""
 
 
 def _split_command_segments(command: str) -> list[str]:
@@ -327,6 +415,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tool_success: Counter[str] = Counter()
     tool_total: Counter[str] = Counter()
     tool_duration_ms: Counter[str] = Counter()
+    impacts: list[ImpactPoint] = []
     updated_files: list[dict[str, Any]] = []
     linked_artifacts: list[dict[str, Any]] = []
 
@@ -342,6 +431,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
     resource_seen: set[tuple[str, str, str, str]] = set()
     tool_logs_by_call_id: dict[str, int] = {}
     tool_started_at_by_call_id: dict[str, str] = {}
+    emitted_subagent_starts: set[tuple[str, str]] = set()
     log_idx = 0
 
     def append_log(**kwargs: Any) -> int:
@@ -405,6 +495,157 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     "rootSessionId": session_id,
                 }
             )
+
+    def add_artifact(
+        kind: str,
+        title: str,
+        description: str,
+        source: str,
+        source_log_id: str | None,
+        source_tool_name: str | None,
+        url: str | None = None,
+    ) -> str | None:
+        clean_title = str(title or "").strip()
+        if not clean_title:
+            return None
+        artifact_id = hashlib.sha1(
+            f"{session_id}|{kind}|{clean_title}|{source_log_id or ''}".encode("utf-8")
+        ).hexdigest()[:24]
+        existing = next((item for item in linked_artifacts if str(item.get("id") or "") == artifact_id), None)
+        if existing:
+            if description and not existing.get("description"):
+                existing["description"] = description
+            if source_tool_name and not existing.get("sourceToolName"):
+                existing["sourceToolName"] = source_tool_name
+            if url and not existing.get("url"):
+                existing["url"] = url
+            return artifact_id
+        linked_artifacts.append(
+            {
+                "id": artifact_id,
+                "title": clean_title,
+                "type": kind,
+                "description": description,
+                "source": source,
+                "url": url,
+                "sourceLogId": source_log_id,
+                "sourceToolName": source_tool_name,
+            }
+        )
+        return artifact_id
+
+    def add_test_run_artifacts(test_run: dict[str, Any], source_log_id: str, source_tool_name: str) -> None:
+        framework = str(test_run.get("framework") or "test").strip() or "test"
+        primary_domain = str(test_run.get("primaryDomain") or "").strip()
+        target_count = _coerce_int(test_run.get("targetCount"), 0)
+        targets = test_run.get("targets") if isinstance(test_run.get("targets"), list) else []
+        result = test_run.get("result") if isinstance(test_run.get("result"), dict) else {}
+        status = str(result.get("status") or "").strip().lower()
+        counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+        passed = _coerce_int(counts.get("passed"), 0)
+        failed = _coerce_int(counts.get("failed"), 0) + _coerce_int(counts.get("error"), 0) + _coerce_int(counts.get("xpassed"), 0)
+
+        title_parts = [framework]
+        if primary_domain:
+            title_parts.append(primary_domain)
+        if target_count > 0:
+            title_parts.append(f"{target_count} target(s)")
+        title = " | ".join(title_parts)
+
+        description = f"{framework} test run"
+        if status:
+            description = f"{description} ({status})"
+        if passed > 0 or failed > 0:
+            description = f"{description}: {passed} passed, {failed} failed-like"
+
+        add_artifact(
+            kind="test_run",
+            title=title[:200],
+            description=description[:500],
+            source="tool",
+            source_log_id=source_log_id,
+            source_tool_name=source_tool_name,
+        )
+
+        domains = test_run.get("domains") if isinstance(test_run.get("domains"), list) else []
+        for domain in domains[:8]:
+            domain_name = str(domain or "").strip()
+            if not domain_name:
+                continue
+            add_artifact(
+                kind="test_domain",
+                title=domain_name,
+                description=f"Test domain inferred from {framework} command",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
+        for target in targets[:16]:
+            target_name = str(target or "").strip()
+            if not target_name:
+                continue
+            add_artifact(
+                kind="test_target",
+                title=target_name[:300],
+                description=f"Test target executed via {framework}",
+                source="tool",
+                source_log_id=source_log_id,
+                source_tool_name=source_tool_name,
+            )
+
+    def link_subagent_to_tool_call(
+        call_id: str,
+        raw_agent_id: str,
+        event_timestamp: str,
+        source: str,
+    ) -> None:
+        clean = str(raw_agent_id or "").strip()
+        if not clean:
+            return
+        if clean.lower().startswith("agent-"):
+            clean = clean.split("agent-", 1)[-1] or clean
+
+        linked_session = _normalize_session_id(f"agent-{clean}")
+        tool_log_idx = tool_logs_by_call_id.get(call_id)
+        subagent_name = ""
+        source_tool_name = "Agent"
+        if tool_log_idx is not None:
+            tool_log = logs[tool_log_idx]
+            tool_log.linkedSessionId = linked_session
+            tool_log.metadata["subagentAgentId"] = clean
+            subagent_name = str(tool_log.metadata.get("taskSubagentType") or "").strip()
+            if tool_log.toolCall and tool_log.toolCall.name:
+                source_tool_name = str(tool_log.toolCall.name)
+
+        emit_key = (call_id, linked_session)
+        if emit_key in emitted_subagent_starts:
+            return
+        emitted_subagent_starts.add(emit_key)
+
+        metadata: dict[str, Any] = {"agentId": clean}
+        if subagent_name:
+            metadata["subagentName"] = subagent_name
+            metadata["subagentType"] = subagent_name
+
+        start_idx = append_log(
+            timestamp=event_timestamp,
+            speaker="system",
+            type="subagent_start",
+            content=f"Subagent started: {clean}",
+            linkedSessionId=linked_session,
+            relatedToolCallId=call_id,
+            metadata=metadata,
+        )
+        start_title = subagent_name or f"agent-{clean}"
+        add_artifact(
+            kind="agent",
+            title=start_title,
+            description="Subagent thread spawned from an Agent/Task tool call",
+            source=source,
+            source_log_id=logs[start_idx].id,
+            source_tool_name=source_tool_name,
+        )
 
     for entry in entries:
         entry_type = str(entry.get("type") or "").strip()
@@ -555,12 +796,99 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     if resource_signals:
                         tool_log.metadata["resourceSignals"] = resource_signals[:20]
                     track_file_actions_from_command(command, tool_log.id, timestamp, tool_name)
+                    test_run = parse_test_run_from_command(
+                        command,
+                        description=args_payload.get("description"),
+                        timeout=args_payload.get("timeout"),
+                    )
+                    if test_run:
+                        tool_log.metadata["toolCategory"] = "test"
+                        tool_log.metadata["toolLabel"] = str(test_run.get("framework") or "test")
+                        tool_log.metadata.update(flatten_test_run_metadata(test_run))
+                        add_test_run_artifacts(test_run, tool_log.id, tool_name)
+
+            if str(tool_name or "").strip().lower() == "skill" and isinstance(args_payload, dict):
+                skill_name = str(args_payload.get("skill") or args_payload.get("name") or "").strip()
+                if skill_name:
+                    tool_log.metadata["toolCategory"] = "skill"
+                    tool_log.metadata["toolLabel"] = skill_name
+                    add_artifact(
+                        kind="skill",
+                        title=skill_name,
+                        description="Skill invocation in transcript",
+                        source="tool",
+                        source_log_id=tool_log.id,
+                        source_tool_name=tool_name,
+                    )
+
+            if _is_subagent_tool_name(tool_name) and isinstance(args_payload, dict):
+                subagent_type = str(
+                    args_payload.get("subagent_type")
+                    or args_payload.get("subagentType")
+                    or args_payload.get("agent_name")
+                    or args_payload.get("agentName")
+                    or ""
+                ).strip()
+                task_name = str(args_payload.get("name") or "").strip()
+                task_description = str(args_payload.get("description") or "").strip()
+                task_prompt = _coerce_text_blob(args_payload.get("prompt"))
+                task_mode = str(args_payload.get("mode") or "").strip()
+                task_model = str(args_payload.get("model") or "").strip()
+
+                if subagent_type:
+                    tool_log.metadata["taskSubagentType"] = subagent_type
+                    tool_log.metadata["toolCategory"] = "agent"
+                    tool_log.metadata["toolLabel"] = subagent_type
+                if task_name:
+                    tool_log.metadata["taskName"] = task_name[:240]
+                if task_description:
+                    tool_log.metadata["taskDescription"] = task_description[:500]
+                if task_prompt:
+                    tool_log.metadata["taskPromptPreview"] = task_prompt[:500]
+                    tool_log.metadata["taskPromptLength"] = len(task_prompt)
+                if task_mode:
+                    tool_log.metadata["taskMode"] = task_mode[:120]
+                if task_model:
+                    tool_log.metadata["taskModel"] = task_model[:120]
+
+                run_in_background = args_payload.get("run_in_background")
+                if isinstance(run_in_background, bool):
+                    tool_log.metadata["taskRunInBackground"] = run_in_background
+                elif isinstance(run_in_background, str):
+                    lowered = run_in_background.strip().lower()
+                    if lowered in {"true", "false"}:
+                        tool_log.metadata["taskRunInBackground"] = lowered == "true"
+
+                add_artifact(
+                    kind="agent",
+                    title=subagent_type or "Agent subagent",
+                    description=f"{tool_name} tool invocation that may spawn a subagent",
+                    source="tool",
+                    source_log_id=tool_log.id,
+                    source_tool_name=tool_name,
+                )
+
+                task_id = _extract_task_id(task_name, task_description, task_prompt)
+                if task_id:
+                    tool_log.metadata["taskId"] = task_id
+                    task_summary = task_description or task_name or task_prompt
+                    add_artifact(
+                        kind="task",
+                        title=task_id,
+                        description=(task_summary or "Task tool invocation")[:500],
+                        source="tool",
+                        source_log_id=tool_log.id,
+                        source_tool_name=tool_name,
+                    )
             continue
 
         is_tool_result = payload_type in {"function_call_output", "custom_tool_call_output"} or entry_type_lower == "function_call_output"
         if is_tool_result:
             call_id = str(payload_dict.get("call_id") or entry.get("call_id") or "").strip()
-            output_text = str(payload_dict.get("output") or entry.get("output") or "").strip()
+            output_raw = payload_dict.get("output")
+            if output_raw is None:
+                output_raw = entry.get("output")
+            output_text = _coerce_text_blob(output_raw)
             status = str(payload_dict.get("status") or "").strip().lower()
             is_error = status in {"error", "failed", "failure"}
             related_idx = tool_logs_by_call_id.get(call_id)
@@ -580,6 +908,69 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     elapsed_ms = max(0, int((finished_ts - started_ts).total_seconds() * 1000))
                     tool_duration_ms[related_log.toolCall.name] += elapsed_ms
                     related_log.metadata["durationMs"] = elapsed_ms
+                if (
+                    call_id
+                    and related_log.toolCall
+                    and _is_subagent_tool_name(str(related_log.toolCall.name or ""))
+                ):
+                    launched_agent_id = _extract_subagent_identifier(payload_dict, output_raw, output_text)
+                    if launched_agent_id:
+                        link_subagent_to_tool_call(call_id, launched_agent_id, timestamp, "tool-result")
+                    related_log.metadata["taskLaunchStatus"] = status
+                    is_async = payload_dict.get("is_async")
+                    if is_async is None:
+                        is_async = payload_dict.get("isAsync")
+                    if isinstance(is_async, bool):
+                        related_log.metadata["taskIsAsyncLaunch"] = is_async
+                if related_log.toolCall and str(related_log.toolCall.name or "").strip().lower() in _COMMAND_TOOL_NAMES:
+                    command_text = str(related_log.metadata.get("bashCommand") or "").strip()
+                    if not command_text and isinstance(related_log.toolCall.args, str):
+                        try:
+                            raw_args = json.loads(related_log.toolCall.args)
+                        except Exception:
+                            raw_args = {}
+                        if isinstance(raw_args, dict):
+                            command_text = str(raw_args.get("command") or raw_args.get("cmd") or "").strip()
+                    base_test_run = related_log.metadata.get("testRun")
+                    if not isinstance(base_test_run, dict) and command_text:
+                        base_test_run = parse_test_run_from_command(command_text)
+                    enriched_test_run = enrich_test_run_with_output(
+                        base_test_run if isinstance(base_test_run, dict) else None,
+                        output_text,
+                        is_error=is_error,
+                    )
+                    if enriched_test_run:
+                        related_log.metadata["toolCategory"] = "test"
+                        related_log.metadata["toolLabel"] = str(enriched_test_run.get("framework") or "test")
+                        related_log.metadata.update(flatten_test_run_metadata(enriched_test_run))
+                        add_test_run_artifacts(
+                            enriched_test_run,
+                            related_log.id,
+                            str(related_log.toolCall.name or "tool"),
+                        )
+                        if timestamp:
+                            result_payload = enriched_test_run.get("result") if isinstance(enriched_test_run.get("result"), dict) else {}
+                            framework = str(enriched_test_run.get("framework") or "test").strip() or "test"
+                            status_label = str(result_payload.get("status") or "").strip().lower() or ("failed" if is_error else "completed")
+                            total = _coerce_int(result_payload.get("total"), 0)
+                            failed_count = _coerce_int((result_payload.get("counts") or {}).get("failed") if isinstance(result_payload.get("counts"), dict) else 0, 0)
+                            error_count = _coerce_int((result_payload.get("counts") or {}).get("error") if isinstance(result_payload.get("counts"), dict) else 0, 0)
+                            impact_type = "error" if status_label in {"failed", "error"} else "success"
+                            suffix = []
+                            if total > 0:
+                                suffix.append(f"{total} tests")
+                            if failed_count > 0 or error_count > 0:
+                                suffix.append(f"{failed_count + error_count} failing")
+                            label = f"{framework} run {status_label}"
+                            if suffix:
+                                label = f"{label} ({', '.join(suffix)})"
+                            impacts.append(
+                                ImpactPoint(
+                                    timestamp=timestamp,
+                                    label=label[:200],
+                                    type=impact_type,
+                                )
+                            )
             else:
                 append_log(
                     timestamp=timestamp,
@@ -588,6 +979,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     content=f"Unmatched tool result for {call_id}: {output_text[:200]}",
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type, "isError": is_error},
                 )
+                if timestamp:
+                    impacts.append(
+                        ImpactPoint(
+                            timestamp=timestamp,
+                            label=f"Unmatched tool result for {call_id}"[:200],
+                            type="warning" if is_error else "info",
+                        )
+                    )
             continue
 
         if entry_type_lower == "event_msg":
@@ -599,6 +998,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     type="system",
                     content=summary_text or payload_type,
                     metadata={"entryType": entry_type_lower, "payloadType": payload_type},
+                )
+            if timestamp and (summary_text or payload_type):
+                impact_type = "info"
+                if payload_type in {"turn_aborted"}:
+                    impact_type = "error"
+                elif payload_type in {"task_complete", "item_completed"}:
+                    impact_type = "success"
+                elif payload_type in {"context_compacted", "thread_rolled_back"}:
+                    impact_type = "warning"
+                impacts.append(
+                    ImpactPoint(
+                        timestamp=timestamp,
+                        label=(summary_text or payload_type)[:200],
+                        type=impact_type,
+                    )
                 )
             continue
 
@@ -637,6 +1051,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
         if category and target:
             resource_target_counts[f"{category}:{target}"] += 1
 
+    extracted_test_runs: list[dict[str, Any]] = []
+    for log in logs:
+        if log.type != "tool":
+            continue
+        metadata = log.metadata if isinstance(log.metadata, dict) else {}
+        raw_test_run = metadata.get("testRun")
+        if not isinstance(raw_test_run, dict):
+            continue
+        test_run = dict(raw_test_run)
+        test_run["sourceLogId"] = log.id
+        if log.toolCall and log.toolCall.name:
+            test_run["toolName"] = str(log.toolCall.name)
+        extracted_test_runs.append(test_run)
+    test_execution = aggregate_test_runs(extracted_test_runs)
+
     session_forensics = {
         "platform": "codex",
         "schemaVersion": 1,
@@ -662,9 +1091,14 @@ def parse_session_file(path: Path) -> AgentSession | None:
             ],
             "observations": resource_observations[:200],
         },
+        "testExecution": test_execution,
         "codexPayloadSignals": {
             "payloadTypeCounts": dict(payload_type_counts),
             "toolNameCounts": {tool.name: tool.count for tool in tools_used},
+        },
+        "analysisSignals": {
+            "hasResourceSignals": bool(resource_observations),
+            "hasTestRunSignals": bool(_coerce_int(test_execution.get("runCount"), 0) > 0),
         },
     }
 
@@ -729,7 +1163,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
         updatedFiles=updated_files,
         linkedArtifacts=linked_artifacts,
         toolsUsed=tools_used,
-        impactHistory=[],
+        impactHistory=impacts,
         logs=logs,
         thinkingLevel="",
         sessionForensics=session_forensics,

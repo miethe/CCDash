@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
+import { useModelColors } from '../contexts/ModelColorsContext';
 import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
-import { Clock, Database, Terminal, CheckCircle2, XCircle, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, FileDiff, ShieldAlert, Check, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ComposedChart, ReferenceLine } from 'recharts';
+import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
+import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
-import { analyticsService } from '../services/analytics';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
@@ -248,6 +248,7 @@ const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: 
 };
 
 const TASK_ID_TEXT_PATTERN = /\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b/;
+const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent']);
 
 const toTextBlob = (value: unknown): string => {
     if (typeof value === 'string') {
@@ -274,6 +275,7 @@ const extractTaskIdFromText = (...values: unknown[]): string | null => {
 };
 
 interface TaskToolDetails {
+    toolName: string;
     taskId: string | null;
     name: string | null;
     description: string | null;
@@ -282,25 +284,100 @@ interface TaskToolDetails {
     subagentType: string | null;
     mode: string | null;
     model: string | null;
+    runInBackground: boolean | null;
+    args: Record<string, unknown> | null;
 }
 
+interface TestRunDetails {
+    framework: string;
+    command: string;
+    description: string | null;
+    timeoutMs: number | null;
+    domains: string[];
+    domain: string | null;
+    targets: string[];
+    flags: string[];
+    status: string | null;
+    durationSeconds: number | null;
+    total: number | null;
+    passRate: number | null;
+    workers: number | null;
+    collected: number | null;
+    rootdir: string | null;
+    pythonVersion: string | null;
+    pytestVersion: string | null;
+    counts: Record<string, number>;
+}
+
+interface ReadToolDetails {
+    filePath: string | null;
+    offset: number | null;
+    limit: number | null;
+    otherParams: Record<string, unknown>;
+}
+
+interface GrepToolMatch {
+    lineNumber: number | null;
+    content: string;
+}
+
+interface GrepToolFileMatch {
+    filePath: string;
+    matches: GrepToolMatch[];
+}
+
+interface GrepToolDetails {
+    pattern: string | null;
+    searchPath: string | null;
+    outputMode: string | null;
+    lineNumbersEnabled: boolean | null;
+    otherParams: Record<string, unknown>;
+    files: GrepToolFileMatch[];
+}
+
+const READ_TOOL_NAMES = new Set(['read', 'readfile']);
+const GREP_TOOL_NAMES = new Set(['grep']);
+const GREP_OUTPUT_LINE_PATTERN = /^(.*?):(\d+):(.*)$/;
+
+const isSubagentToolCallName = (name?: string | null): boolean =>
+    SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
+
 const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
-    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+    if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
         return null;
     }
     const args = parseToolArgs(log.toolCall?.args);
     const metadata = asRecord(log.metadata);
+    const toolName = takeString(log.toolCall?.name) || 'Task';
 
     const name = takeString(metadata.taskName, args?.name);
     const description = takeString(metadata.taskDescription, args?.description);
     const promptText = takeString(metadata.taskPromptPreview, args?.prompt ? toTextBlob(args.prompt) : null);
     const taskId = takeString(metadata.taskId, extractTaskIdFromText(name, description, promptText));
-    const subagentType = takeString(metadata.taskSubagentType, args?.subagent_type, args?.subagentType);
+    const subagentType = takeString(
+        metadata.taskSubagentType,
+        args?.subagent_type,
+        args?.subagentType,
+        args?.agent_name,
+        args?.agentName,
+    );
     const mode = takeString(metadata.taskMode, args?.mode);
     const model = takeString(metadata.taskModel, args?.model);
     const promptPreview = promptText && promptText.length > 320 ? `${promptText.slice(0, 320)}...` : promptText;
+    const runInBackground = (() => {
+        if (typeof metadata.taskRunInBackground === 'boolean') return metadata.taskRunInBackground;
+        const raw = args?.run_in_background ?? args?.runInBackground;
+        if (typeof raw === 'boolean') return raw;
+        if (typeof raw === 'string') {
+            const normalized = raw.trim().toLowerCase();
+            if (normalized === 'true') return true;
+            if (normalized === 'false') return false;
+        }
+        return null;
+    })();
 
     return {
+        toolName,
         taskId,
         name,
         description,
@@ -309,6 +386,211 @@ const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
         subagentType,
         mode,
         model,
+        runInBackground,
+        args,
+    };
+};
+
+const inferTestFrameworkFromCommand = (command: string): string | null => {
+    const lowered = String(command || '').toLowerCase();
+    if (!lowered.trim()) return null;
+    if (/\b(?:python(?:\d+(?:\.\d+)*)?\s+-m\s+)?pytest\b/.test(lowered)) return 'pytest';
+    if (/\bvitest\b/.test(lowered)) return 'vitest';
+    if (/\bjest\b/.test(lowered)) return 'jest';
+    if (/\bgo\s+test\b/.test(lowered)) return 'go-test';
+    if (/\bcargo\s+test\b/.test(lowered)) return 'cargo-test';
+    if (/\bpnpm\s+test\b/.test(lowered)) return 'pnpm-test';
+    if (/\bnpm\s+test\b/.test(lowered)) return 'npm-test';
+    if (/\byarn\s+test\b/.test(lowered)) return 'yarn-test';
+    return null;
+};
+
+const getTestRunDetails = (log: SessionLog): TestRunDetails | null => {
+    if (log.type !== 'tool') {
+        return null;
+    }
+    const metadata = asRecord(log.metadata);
+    const toolCategory = String(metadata.toolCategory || '').trim().toLowerCase();
+    const args = parseToolArgs(log.toolCall?.args);
+    const testRun = asRecord(metadata.testRun);
+    const result = asRecord(testRun.result);
+    const countsRecord = asRecord(result.counts || metadata.testCounts);
+
+    const command = takeString(
+        metadata.bashCommand,
+        testRun.command,
+        testRun.commandSegment,
+        metadata.command,
+        args?.command,
+        args?.cmd,
+        args?.script,
+    ) || '';
+    const inferredFramework = inferTestFrameworkFromCommand(command);
+    const framework = takeString(
+        testRun.framework,
+        metadata.testFramework,
+        inferredFramework,
+        toolCategory === 'test' ? 'test' : '',
+    );
+    if (!framework) {
+        return null;
+    }
+
+    const domains = asStringArray(testRun.domains && Array.isArray(testRun.domains) ? testRun.domains : metadata.testDomains);
+    const targets = asStringArray(testRun.targets && Array.isArray(testRun.targets) ? testRun.targets : metadata.testTargets);
+    const flags = asStringArray(testRun.flags && Array.isArray(testRun.flags) ? testRun.flags : metadata.testFlags);
+    const domain = takeString(testRun.primaryDomain, metadata.testDomain, domains[0]);
+    const description = takeString(testRun.description, metadata.testDescription, args?.description);
+    const timeoutMsRaw = asNumber(testRun.timeoutMs || metadata.testTimeoutMs || args?.timeout, 0);
+    const durationSource = result.durationSeconds ?? metadata.testDurationSeconds;
+    const durationSecondsRaw = asNumber(durationSource, -1);
+    const passRateSource = result.passRate ?? metadata.testPassRate;
+    const passRateRaw = asNumber(passRateSource, -1);
+    let total = asNumber(result.total || metadata.testTotal, 0);
+    const counts: Record<string, number> = {};
+    ['passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'deselected', 'rerun'].forEach(key => {
+        const count = asNumber(countsRecord[key], 0);
+        if (count > 0) {
+            counts[key] = count;
+        }
+    });
+    if (total <= 0) {
+        total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    }
+
+    const status = takeString(
+        result.status,
+        metadata.testStatus,
+        log.toolCall?.status === 'error' ? 'failed' : '',
+    );
+
+    return {
+        framework,
+        command,
+        description,
+        timeoutMs: timeoutMsRaw > 0 ? timeoutMsRaw : null,
+        domains,
+        domain,
+        targets,
+        flags,
+        status,
+        durationSeconds: durationSecondsRaw >= 0 ? durationSecondsRaw : null,
+        total: total > 0 ? total : null,
+        passRate: passRateRaw >= 0 ? passRateRaw : null,
+        workers: asNumber(result.workers || metadata.testWorkers, 0) || null,
+        collected: asNumber(result.collected || metadata.testCollected, 0) || null,
+        rootdir: takeString(result.rootdir, metadata.testRootdir),
+        pythonVersion: takeString(result.pythonVersion, metadata.testPythonVersion),
+        pytestVersion: takeString(result.pytestVersion, metadata.testPytestVersion),
+        counts,
+    };
+};
+
+const toOptionalNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+};
+
+const toOptionalBoolean = (value: unknown): boolean | null => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+        if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+    }
+    return null;
+};
+
+const collectOtherToolArgs = (
+    args: Record<string, unknown> | null,
+    excludedKeys: string[],
+): Record<string, unknown> => {
+    if (!args) return {};
+    const excluded = new Set(excludedKeys.map(key => key.toLowerCase()));
+    const other: Record<string, unknown> = {};
+    Object.entries(args).forEach(([key, value]) => {
+        if (!excluded.has(key.toLowerCase())) {
+            other[key] = value;
+        }
+    });
+    return other;
+};
+
+const parseGrepOutputByFile = (output: string | undefined): GrepToolFileMatch[] => {
+    const grouped = new Map<string, GrepToolFileMatch>();
+    const text = String(output || '').replace(/\r/g, '');
+    if (!text.trim()) return [];
+
+    text.split('\n').forEach(line => {
+        const normalized = line.replace(/\s+$/, '');
+        if (!normalized.trim()) return;
+        const match = GREP_OUTPUT_LINE_PATTERN.exec(normalized);
+        if (!match) return;
+        const filePath = String(match[1] || '').trim();
+        if (!filePath) return;
+        const lineNumber = Number.parseInt(String(match[2] || ''), 10);
+        const content = String(match[3] || '');
+        const existing = grouped.get(filePath) || { filePath, matches: [] };
+        existing.matches.push({
+            lineNumber: Number.isFinite(lineNumber) ? lineNumber : null,
+            content,
+        });
+        grouped.set(filePath, existing);
+    });
+
+    return Array.from(grouped.values());
+};
+
+const getReadToolDetails = (log: SessionLog): ReadToolDetails | null => {
+    if (log.type !== 'tool') return null;
+    const toolName = String(log.toolCall?.name || '').trim().toLowerCase();
+    if (!READ_TOOL_NAMES.has(toolName)) return null;
+
+    const args = parseToolArgs(log.toolCall?.args);
+    const filePath = takeString(
+        args?.file_path,
+        args?.filePath,
+        args?.path,
+        args?.filename,
+        args?.file,
+    );
+    const offset = toOptionalNumber(args?.offset);
+    const limit = toOptionalNumber(args?.limit);
+    const otherParams = collectOtherToolArgs(args, ['file_path', 'filePath', 'path', 'filename', 'file', 'offset', 'limit']);
+
+    return {
+        filePath,
+        offset,
+        limit,
+        otherParams,
+    };
+};
+
+const getGrepToolDetails = (log: SessionLog): GrepToolDetails | null => {
+    if (log.type !== 'tool') return null;
+    const toolName = String(log.toolCall?.name || '').trim().toLowerCase();
+    if (!GREP_TOOL_NAMES.has(toolName)) return null;
+
+    const args = parseToolArgs(log.toolCall?.args);
+    const pattern = takeString(args?.pattern, args?.query, args?.regex);
+    const searchPath = takeString(args?.path, args?.cwd, args?.directory, args?.root);
+    const outputMode = takeString(args?.output_mode, args?.outputMode, args?.mode);
+    const lineNumbersEnabled = toOptionalBoolean(args?.['-n'] ?? args?.n);
+    const otherParams = collectOtherToolArgs(args, ['pattern', 'query', 'regex', 'path', 'cwd', 'directory', 'root', 'output_mode', 'outputMode', 'mode', '-n', 'n']);
+    const files = parseGrepOutputByFile(log.toolCall?.output);
+
+    return {
+        pattern,
+        searchPath,
+        outputMode,
+        lineNumbersEnabled,
+        otherParams,
+        files,
     };
 };
 
@@ -389,16 +671,71 @@ const getTranscriptSourceText = (log: SessionLog): string => {
         if (skillToken) return skillToken;
     }
 
+    if (log.type === 'system') {
+        const metadata = asRecord(log.metadata);
+        if (String(metadata.eventType || '').trim().toLowerCase() === 'hook_progress') {
+            return takeString(
+                metadata.hookPath,
+                metadata.hookCommand,
+                metadata.hookName,
+                log.content,
+            );
+        }
+    }
+
     return String(log.content || '');
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+    const titled = (thread.title || '').trim();
     return (
         subagentNameBySessionId.get(thread.id) ||
+        (titled && titled !== thread.id ? titled : '') ||
         (thread.agentId ? `agent-${thread.agentId}` : '') ||
         thread.sessionType ||
         'thread'
     );
+};
+
+const collectSessionSubagentTypes = (session: AgentSession): string[] => {
+    const seen = new Set<string>();
+    const values: string[] = [];
+    const add = (candidate: unknown) => {
+        const normalized = String(candidate || '').trim();
+        if (!normalized) return;
+        const lowered = normalized.toLowerCase();
+        if (lowered === 'subagent' || lowered === 'agent') return;
+        if (/^agent[-_]/i.test(normalized)) return;
+        if (seen.has(lowered)) return;
+        seen.add(lowered);
+        values.push(normalized);
+    };
+
+    (session.logs || []).forEach(log => {
+        if (log.type === 'tool') {
+            const details = getTaskToolDetails(log);
+            add(details?.subagentType);
+        }
+        if (log.type === 'subagent_start') {
+            add(log.metadata?.subagentType);
+            add(log.metadata?.subagentName);
+            add(log.metadata?.taskSubagentType);
+        }
+    });
+
+    (session.linkedArtifacts || []).forEach(artifact => {
+        if ((artifact.type || '').trim().toLowerCase() !== 'agent') return;
+        add(artifact.title);
+    });
+
+    if ((session.sessionType || '').trim().toLowerCase() === 'subagent') {
+        const title = (session.title || '').trim();
+        if (title && title !== session.id) {
+            add(title);
+        }
+    }
+
+    return values.sort((a, b) => a.localeCompare(b));
 };
 
 const makeArtifactGroupKey = (artifact: SessionArtifact): string => {
@@ -424,6 +761,76 @@ interface ArtifactGroup {
     linkedThreads: AgentSession[];
 }
 
+type ToolGroupCategory = 'hooks' | 'git' | 'tests' | 'other';
+
+const HOOK_TOOL_CALL_PATTERNS = [
+    /\bhook(s)?\b/,
+    /\bpre-commit\b/,
+    /\bpost-commit\b/,
+    /\bpre-push\b/,
+    /\bpost-merge\b/,
+    /\bhusky\b/,
+    /\blint-staged\b/,
+];
+
+const GIT_TOOL_CALL_PATTERNS = [
+    /\bgit\b/,
+    /\bcommit\b/,
+    /\bcheckout\b/,
+    /\bbranch\b/,
+    /\brebase\b/,
+    /\bmerge\b/,
+    /\bcherry-pick\b/,
+    /\bstash\b/,
+    /\bdiff\b/,
+    /\breset\b/,
+    /\brestore\b/,
+    /\bpush\b/,
+    /\bpull\b/,
+];
+
+const TEST_TOOL_CALL_PATTERNS = [
+    /\btest(s|ing)?\b/,
+    /\bpytest\b/,
+    /\bjest\b/,
+    /\bvitest\b/,
+    /\bmocha\b/,
+    /\bcypress\b/,
+    /\bplaywright\b/,
+    /\bcoverage\b/,
+    /\bspec\b/,
+];
+
+const TOOL_GROUP_SECTION_DEFS: Array<{ id: ToolGroupCategory; label: string; emptyLabel: string }> = [
+    { id: 'hooks', label: 'Hooks', emptyLabel: 'No hook-related tool calls.' },
+    { id: 'git', label: 'Git Calls', emptyLabel: 'No git-related tool calls.' },
+    { id: 'tests', label: 'Tests', emptyLabel: 'No test-related tool calls.' },
+    { id: 'other', label: 'Other Tool Calls', emptyLabel: 'No other tool calls.' },
+];
+
+const anyPatternMatches = (value: string, patterns: RegExp[]): boolean =>
+    patterns.some(pattern => pattern.test(value));
+
+const classifyToolGroup = (group: ArtifactGroup): ToolGroupCategory => {
+    const toolSignals = [
+        group.type,
+        group.title,
+        group.description,
+        group.source,
+        ...group.sourceToolNames,
+        ...group.relatedToolLogs.map(log => log.toolCall?.name || ''),
+        ...group.relatedToolLogs.map(log => log.content || ''),
+    ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+    if (anyPatternMatches(toolSignals, HOOK_TOOL_CALL_PATTERNS)) return 'hooks';
+    if (anyPatternMatches(toolSignals, GIT_TOOL_CALL_PATTERNS)) return 'git';
+    if (anyPatternMatches(toolSignals, TEST_TOOL_CALL_PATTERNS)) return 'tests';
+    return 'other';
+};
+
 interface SessionFeatureLink {
     featureId: string;
     featureName: string;
@@ -445,6 +852,7 @@ interface SessionFeatureLink {
 const formatSessionReason = (reason: string): string => {
     const normalized = (reason || '').trim();
     if (!normalized) return 'related';
+    if (normalized === 'manual_set') return 'manually set';
     if (normalized === 'task_frontmatter') return 'task linkage';
     if (normalized === 'session_evidence') return 'session evidence';
     if (normalized === 'command_args_path') return 'command path';
@@ -795,6 +1203,7 @@ const LogItemBlurb: React.FC<{
         ? mappedAccentColor(formattedMessage.mapped.color, formattedMessage.kind)
         : null;
     const taskToolDetails = getTaskToolDetails(log);
+    const testToolDetails = getTestRunDetails(log);
 
     return (
         <div
@@ -809,15 +1218,33 @@ const LogItemBlurb: React.FC<{
                 {taskToolDetails ? (
                     <div className="min-w-0 space-y-0.5">
                         <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-amber-400'}`}>
-                            Task Invocation
+                            {taskToolDetails.toolName} Invocation
                         </div>
                         <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
-                            {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Task tool call'}
+                            {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Subagent tool call'}
                         </div>
                         <div className="flex items-center gap-1 text-[10px] text-slate-500">
                             {taskToolDetails.taskId && <span className="font-mono">{taskToolDetails.taskId}</span>}
                             {taskToolDetails.subagentType && <span>{taskToolDetails.subagentType}</span>}
                             {taskToolDetails.model && <span>{taskToolDetails.model}</span>}
+                            {typeof taskToolDetails.runInBackground === 'boolean' && (
+                                <span>{taskToolDetails.runInBackground ? 'background' : 'foreground'}</span>
+                            )}
+                        </div>
+                    </div>
+                ) : testToolDetails ? (
+                    <div className="min-w-0 space-y-0.5">
+                        <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-emerald-400'}`}>
+                            {testToolDetails.framework} Test Run
+                        </div>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                            {testToolDetails.description || testToolDetails.domain || testToolDetails.command || 'Test execution'}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                            {testToolDetails.status && <span>{testToolDetails.status}</span>}
+                            {typeof testToolDetails.total === 'number' && <span>{testToolDetails.total} tests</span>}
+                            {typeof testToolDetails.durationSeconds === 'number' && <span>{testToolDetails.durationSeconds.toFixed(2)}s</span>}
+                            {testToolDetails.domain && <span>{testToolDetails.domain}</span>}
                         </div>
                     </div>
                 ) : (mappedNonMessageLabel && formattedMessage?.mapped && mappedNonMessageAccent) ? (
@@ -898,9 +1325,14 @@ const DetailPane: React.FC<{
 
     const parsedMessage = formattedMessage || parseTranscriptMessage(getTranscriptSourceText(log));
     const taskToolDetails = getTaskToolDetails(log);
+    const testToolDetails = getTestRunDetails(log);
+    const readToolDetails = getReadToolDetails(log);
+    const grepToolDetails = getGrepToolDetails(log);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
+        if (log.type === 'tool' && taskToolDetails) return `${taskToolDetails.toolName} Invocation`;
+        if (log.type === 'tool' && testToolDetails) return `${testToolDetails.framework} Test Run`;
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
         if (log.type === 'message' && parsedMessage.kind === 'claude-command') return 'Command Message';
@@ -1070,7 +1502,7 @@ const DetailPane: React.FC<{
 
                             {taskToolDetails && (
                                 <div className="p-4 border-b border-slate-800 bg-amber-500/5">
-                                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">Task Details</div>
+                                    <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">{taskToolDetails.toolName} Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         {taskToolDetails.taskId && (
                                             <div>
@@ -1102,6 +1534,12 @@ const DetailPane: React.FC<{
                                                 <div className="text-slate-300">{taskToolDetails.model}</div>
                                             </div>
                                         )}
+                                        {typeof taskToolDetails.runInBackground === 'boolean' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Run In Background</div>
+                                                <div className="text-slate-300">{taskToolDetails.runInBackground ? 'true' : 'false'}</div>
+                                            </div>
+                                        )}
                                         {taskToolDetails.promptPreview && (
                                             <div className="sm:col-span-2">
                                                 <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Prompt (Preview)</div>
@@ -1122,6 +1560,234 @@ const DetailPane: React.FC<{
                                             {taskToolDetails.prompt}
                                         </pre>
                                     )}
+                                    {taskToolDetails.args && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Invocation Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(taskToolDetails.args, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {testToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-emerald-500/5">
+                                    <div className="text-[10px] text-emerald-300 uppercase tracking-widest font-bold mb-3">Test Run Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Framework</div>
+                                            <div className="font-mono text-emerald-200">{testToolDetails.framework}</div>
+                                        </div>
+                                        {testToolDetails.status && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Status</div>
+                                                <div className="text-slate-200">{testToolDetails.status}</div>
+                                            </div>
+                                        )}
+                                        {(testToolDetails.domain || testToolDetails.domains.length > 0) && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Domain</div>
+                                                <div className="text-slate-300">
+                                                    {testToolDetails.domain || testToolDetails.domains.join(', ')}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.timeoutMs === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Timeout</div>
+                                                <div className="text-slate-300">{testToolDetails.timeoutMs} ms</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.durationSeconds === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Duration</div>
+                                                <div className="text-slate-300">{testToolDetails.durationSeconds.toFixed(2)} s</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.total === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Total</div>
+                                                <div className="text-slate-300">{testToolDetails.total} tests</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.passRate === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pass Rate</div>
+                                                <div className="text-slate-300">{(testToolDetails.passRate * 100).toFixed(1)}%</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.collected === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Collected</div>
+                                                <div className="text-slate-300">{testToolDetails.collected}</div>
+                                            </div>
+                                        )}
+                                        {typeof testToolDetails.workers === 'number' && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Workers</div>
+                                                <div className="text-slate-300">{testToolDetails.workers}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.pytestVersion && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pytest</div>
+                                                <div className="text-slate-300">{testToolDetails.pytestVersion}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.pythonVersion && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Python</div>
+                                                <div className="text-slate-300">{testToolDetails.pythonVersion}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.rootdir && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Rootdir</div>
+                                                <div className="font-mono text-slate-300 break-all">{testToolDetails.rootdir}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.description && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-slate-200">{testToolDetails.description}</div>
+                                            </div>
+                                        )}
+                                        {Object.keys(testToolDetails.counts).length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Result Counts</div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {Object.entries(testToolDetails.counts).map(([key, value]) => (
+                                                        <span key={key} className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 font-mono">
+                                                            {key}: {value}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.targets.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Targets</div>
+                                                <div className="text-slate-300 font-mono break-all whitespace-pre-wrap">
+                                                    {testToolDetails.targets.slice(0, 12).join('\n')}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.flags.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Flags</div>
+                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.flags.join(' ')}</div>
+                                            </div>
+                                        )}
+                                        {testToolDetails.command && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Command</div>
+                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.command}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {readToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-sky-500/5">
+                                    <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">Read Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">File</div>
+                                            <div className="font-mono text-sky-200 break-all">{readToolDetails.filePath || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Offset</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {typeof readToolDetails.offset === 'number' ? readToolDetails.offset : 'n/a'}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Limit</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {typeof readToolDetails.limit === 'number' ? readToolDetails.limit : 'n/a'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {Object.keys(readToolDetails.otherParams).length > 0 && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(readToolDetails.otherParams, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {grepToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-cyan-500/5">
+                                    <div className="text-[10px] text-cyan-300 uppercase tracking-widest font-bold mb-3">Grep Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pattern</div>
+                                            <div className="font-mono text-cyan-200 break-all">{grepToolDetails.pattern || 'n/a'}</div>
+                                        </div>
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Path</div>
+                                            <div className="font-mono text-slate-300 break-all">{grepToolDetails.searchPath || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Output Mode</div>
+                                            <div className="text-slate-300 font-mono">{grepToolDetails.outputMode || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Line Numbers</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {grepToolDetails.lineNumbersEnabled === null
+                                                    ? 'n/a'
+                                                    : (grepToolDetails.lineNumbersEnabled ? 'enabled' : 'disabled')}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {Object.keys(grepToolDetails.otherParams).length > 0 && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(grepToolDetails.otherParams, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                    <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                        <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Matches By File</div>
+                                        {grepToolDetails.files.length === 0 ? (
+                                            <div className="text-xs text-slate-400">No parseable grep matches were found in tool output.</div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {grepToolDetails.files.map((file, index) => {
+                                                    const sectionId = `grep-file-${index}-${file.filePath}`;
+                                                    const isExpanded = expandedSections.has(sectionId);
+                                                    return (
+                                                        <div key={sectionId} className="border border-slate-800 rounded-md bg-slate-950/70 overflow-hidden">
+                                                            <button
+                                                                onClick={() => toggleSection(sectionId)}
+                                                                className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left hover:bg-slate-900/70 transition-colors"
+                                                            >
+                                                                <span className="font-mono text-xs text-cyan-200 break-all">{file.filePath}</span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <span className="text-[10px] text-slate-500">{file.matches.length} match{file.matches.length === 1 ? '' : 'es'}</span>
+                                                                    {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-500" />}
+                                                                </div>
+                                                            </button>
+                                                            {isExpanded && (
+                                                                <pre className="border-t border-slate-800 px-3 py-2 text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
+                                                                    {file.matches
+                                                                        .map(match => `${typeof match.lineNumber === 'number' ? match.lineNumber : '?'}: ${match.content}`)
+                                                                        .join('\n')}
+                                                                </pre>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
@@ -1293,7 +1959,11 @@ const TranscriptView: React.FC<{
     const formattedMessagesByLogId = useMemo(() => {
         const map = new Map<string, TranscriptFormattedMessage>();
         logs.forEach(log => {
-            if (log.type === 'message' || log.type === 'command' || log.type === 'tool' || log.type === 'skill') {
+            const isHookSystemEvent = (
+                log.type === 'system'
+                && String(asRecord(log.metadata).eventType || '').trim().toLowerCase() === 'hook_progress'
+            );
+            if (log.type === 'message' || log.type === 'command' || log.type === 'tool' || log.type === 'skill' || isHookSystemEvent) {
                 const sourceText = getTranscriptSourceText(log);
                 map.set(log.id, parseTranscriptMessage(sourceText, {
                     mappings: transcriptMappings,
@@ -1713,14 +2383,34 @@ const SessionFeaturesView: React.FC<{
     currentSessionId: string;
     linkedFeatures: SessionFeatureLink[];
     linkedFeatureDetailsById: Record<string, Feature>;
+    availableFeatures: Feature[];
     taskArtifacts: Array<{
         taskId: string;
         normalizedTaskId: string;
     }>;
     loadingFeatureDetails: boolean;
+    linkMutationInFlight: boolean;
+    linkMutationError: string | null;
+    onSetPrimaryFeature: (featureInput: string) => Promise<boolean>;
+    onAddRelatedFeature: (featureInput: string) => Promise<boolean>;
+    onRemoveLinkedFeature: (featureId: string) => Promise<void>;
     onOpenFeature: (featureId: string) => void;
     onOpenSession: (sessionId: string) => void;
-}> = ({ currentSessionId, linkedFeatures, linkedFeatureDetailsById, taskArtifacts, loadingFeatureDetails, onOpenFeature, onOpenSession }) => {
+}> = ({
+    currentSessionId,
+    linkedFeatures,
+    linkedFeatureDetailsById,
+    availableFeatures,
+    taskArtifacts,
+    loadingFeatureDetails,
+    linkMutationInFlight,
+    linkMutationError,
+    onSetPrimaryFeature,
+    onAddRelatedFeature,
+    onRemoveLinkedFeature,
+    onOpenFeature,
+    onOpenSession,
+}) => {
     const grouped = useMemo(() => {
         const primary = linkedFeatures.filter(feature => feature.isPrimaryLink);
         const related = linkedFeatures.filter(feature => !feature.isPrimaryLink);
@@ -1729,6 +2419,25 @@ const SessionFeaturesView: React.FC<{
     const [expandedMainThreadsByFeatureId, setExpandedMainThreadsByFeatureId] = useState<Set<string>>(new Set());
     const [mainThreadSessionsByFeatureId, setMainThreadSessionsByFeatureId] = useState<Record<string, FeatureExecutionSessionLink[]>>({});
     const [mainThreadSessionsLoadingByFeatureId, setMainThreadSessionsLoadingByFeatureId] = useState<Record<string, boolean>>({});
+    const [pendingFeatureInput, setPendingFeatureInput] = useState('');
+    const featureInputListId = useMemo(
+        () => `session-feature-options-${currentSessionId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        [currentSessionId]
+    );
+
+    const handleSetPrimary = useCallback(() => {
+        if (!pendingFeatureInput.trim()) return;
+        void onSetPrimaryFeature(pendingFeatureInput).then(success => {
+            if (success) setPendingFeatureInput('');
+        });
+    }, [onSetPrimaryFeature, pendingFeatureInput]);
+
+    const handleAddRelated = useCallback(() => {
+        if (!pendingFeatureInput.trim()) return;
+        void onAddRelatedFeature(pendingFeatureInput).then(success => {
+            if (success) setPendingFeatureInput('');
+        });
+    }, [onAddRelatedFeature, pendingFeatureInput]);
 
     const loadRelatedMainThreadSessions = useCallback(async (featureId: string) => {
         if (!featureId) return;
@@ -1866,7 +2575,7 @@ const SessionFeaturesView: React.FC<{
         const mainThreads = mainThreadSessionsByFeatureId[feature.featureId] || [];
         const isLoadingMainThreads = Boolean(mainThreadSessionsLoadingByFeatureId[feature.featureId]);
         return (
-            <div key={feature.featureId} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <div key={feature.featureId} className="group/feature-link bg-slate-900 border border-slate-800 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-100 truncate">
@@ -1879,9 +2588,21 @@ const SessionFeaturesView: React.FC<{
                             {feature.featureId}
                         </button>
                     </div>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-                        {Math.round(feature.confidence * 100)}% confidence
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                            {Math.round(feature.confidence * 100)}% confidence
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => void onRemoveLinkedFeature(feature.featureId)}
+                            disabled={linkMutationInFlight}
+                            className="opacity-0 group-hover/feature-link:opacity-100 disabled:opacity-40 text-slate-500 hover:text-rose-300 transition-colors p-1 rounded border border-slate-700 hover:border-rose-500/50 bg-slate-950/70"
+                            title="Remove linked feature"
+                            aria-label={`Remove linked feature ${feature.featureName || feature.featureId}`}
+                        >
+                            <X size={12} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="mt-3 flex items-center gap-2 text-[10px]">
@@ -1981,134 +2702,188 @@ const SessionFeaturesView: React.FC<{
         );
     };
 
-    if (linkedFeatures.length === 0 && taskArtifacts.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                <Box size={42} className="mb-3 opacity-30" />
-                <p className="text-sm">No linked features found for this session.</p>
-                <p className="text-xs mt-1 text-slate-600">No high-confidence feature evidence has been detected yet.</p>
-            </div>
-        );
-    }
-
     return (
         <div className="h-full overflow-y-auto pr-1 space-y-5">
-            {linkedFeatures.length > 0 && (
-                <>
-                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                        <div className="flex items-center justify-between">
-                            <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
-                            <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
-                        </div>
-                        <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Manage Feature Links</div>
+                        <p className="text-[11px] text-slate-400 mt-1">Set primary, add related, or remove links directly from this session.</p>
                     </div>
-
-                    {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
-                    {grouped.primary.length === 0 && (
-                        <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                            No primary links yet. Related feature matches are shown below.
-                        </div>
-                    )}
-
-                    {grouped.related.length > 0 && (
-                        <div className="space-y-3 pt-2">
-                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
-                            {grouped.related.map(renderFeatureCard)}
-                        </div>
-                    )}
-                </>
-            )}
-
-            <div className="space-y-3 pt-2">
-                <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Task Links (Feature &gt; Phase &gt; Tasks)</div>
-                        <div className="text-[11px] text-indigo-200/80">{taskArtifacts.length}</div>
-                    </div>
-                    <p className="text-[11px] text-indigo-200/70 mt-1">Task artifacts are mapped to their parent feature and phase using feature execution data.</p>
+                    <div className="text-[10px] text-slate-500 font-mono">{linkedFeatures.length} linked</div>
                 </div>
-
-                {taskArtifacts.length === 0 && (
-                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                        No task artifacts detected for this session.
-                    </div>
-                )}
-
-                {taskArtifacts.length > 0 && loadingFeatureDetails && (
-                    <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
-                        Loading feature phase/task details...
-                    </div>
-                )}
-
-                {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
-                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                        Task artifacts were found, but none mapped to linked feature phases yet.
-                    </div>
-                )}
-
-                {taskHierarchy.map(entry => (
-                    <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                                <div className="text-sm font-semibold text-slate-100 truncate">
-                                    {entry.featureLink.featureName || entry.featureLink.featureId}
-                                </div>
-                                <button
-                                    onClick={() => onOpenFeature(entry.featureLink.featureId)}
-                                    className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
-                                >
-                                    {entry.featureLink.featureId}
-                                </button>
-                            </div>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-                                {entry.phases.reduce((sum, phaseEntry) => sum + phaseEntry.tasks.length, 0)} tasks
-                            </span>
-                        </div>
-
-                        <div className="space-y-2">
-                            {entry.phases.map(phaseEntry => (
-                                <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="text-xs font-semibold text-slate-200">
-                                            Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
-                                        </div>
-                                        <div className="text-[10px] text-slate-400 font-mono">
-                                            {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
-                                        </div>
-                                    </div>
-                                    <div className="mt-2 space-y-1.5">
-                                        {phaseEntry.tasks.map(task => {
-                                            const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
-                                            return (
-                                                <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
-                                                    <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
-                                                    <span className="text-slate-300 truncate">{task.title}</span>
-                                                    <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
-                                                        {statusStyle.label}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                ))}
-
-                {unresolvedTaskIds.length > 0 && !loadingFeatureDetails && (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                        <div className="text-[11px] text-amber-300 font-semibold uppercase tracking-wider">Unmapped Task IDs</div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                            {unresolvedTaskIds.map(taskId => (
-                                <span key={`unmapped-${taskId}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200">
-                                    {taskId}
-                                </span>
-                            ))}
-                        </div>
+                <div className="flex flex-col md:flex-row gap-2">
+                    <input
+                        type="text"
+                        value={pendingFeatureInput}
+                        onChange={event => setPendingFeatureInput(event.target.value)}
+                        onKeyDown={event => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                handleAddRelated();
+                            }
+                        }}
+                        list={featureInputListId}
+                        placeholder="Feature ID or exact feature name"
+                        className="flex-1 text-xs rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                    />
+                    <datalist id={featureInputListId}>
+                        {availableFeatures.map(feature => (
+                            <option key={feature.id} value={feature.id}>
+                                {feature.name || feature.id}
+                            </option>
+                        ))}
+                    </datalist>
+                    <button
+                        type="button"
+                        onClick={handleSetPrimary}
+                        disabled={linkMutationInFlight || !pendingFeatureInput.trim()}
+                        className="text-xs font-semibold rounded-lg px-3 py-2 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Set Primary
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleAddRelated}
+                        disabled={linkMutationInFlight || !pendingFeatureInput.trim()}
+                        className="text-xs font-semibold rounded-lg px-3 py-2 border border-indigo-500/40 text-indigo-200 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Add Related
+                    </button>
+                </div>
+                {linkMutationError && (
+                    <div className="text-[11px] text-rose-300 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-2">
+                        {linkMutationError}
                     </div>
                 )}
             </div>
+
+            {linkedFeatures.length === 0 && taskArtifacts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-500 py-10">
+                    <Box size={42} className="mb-3 opacity-30" />
+                    <p className="text-sm">No linked features found for this session.</p>
+                    <p className="text-xs mt-1 text-slate-600">Use the controls above to set a primary feature or add related ones.</p>
+                </div>
+            ) : (
+                <>
+                    {linkedFeatures.length > 0 && (
+                        <>
+                            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
+                                    <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
+                                </div>
+                                <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+                            </div>
+
+                            {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
+                            {grouped.primary.length === 0 && (
+                                <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                    No primary links yet. Related feature matches are shown below.
+                                </div>
+                            )}
+
+                            {grouped.related.length > 0 && (
+                                <div className="space-y-3 pt-2">
+                                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
+                                    {grouped.related.map(renderFeatureCard)}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    <div className="space-y-3 pt-2">
+                        <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Task Links (Feature &gt; Phase &gt; Tasks)</div>
+                                <div className="text-[11px] text-indigo-200/80">{taskArtifacts.length}</div>
+                            </div>
+                            <p className="text-[11px] text-indigo-200/70 mt-1">Task artifacts are mapped to their parent feature and phase using feature execution data.</p>
+                        </div>
+
+                        {taskArtifacts.length === 0 && (
+                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                No task artifacts detected for this session.
+                            </div>
+                        )}
+
+                        {taskArtifacts.length > 0 && loadingFeatureDetails && (
+                            <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
+                                Loading feature phase/task details...
+                            </div>
+                        )}
+
+                        {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
+                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                Task artifacts were found, but none mapped to linked feature phases yet.
+                            </div>
+                        )}
+
+                        {taskHierarchy.map(entry => (
+                            <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-semibold text-slate-100 truncate">
+                                            {entry.featureLink.featureName || entry.featureLink.featureId}
+                                        </div>
+                                        <button
+                                            onClick={() => onOpenFeature(entry.featureLink.featureId)}
+                                            className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
+                                        >
+                                            {entry.featureLink.featureId}
+                                        </button>
+                                    </div>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                                        {entry.phases.reduce((sum, phaseEntry) => sum + phaseEntry.tasks.length, 0)} tasks
+                                    </span>
+                                </div>
+
+                                <div className="space-y-2">
+                                    {entry.phases.map(phaseEntry => (
+                                        <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="text-xs font-semibold text-slate-200">
+                                                    Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
+                                                </div>
+                                                <div className="text-[10px] text-slate-400 font-mono">
+                                                    {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 space-y-1.5">
+                                                {phaseEntry.tasks.map(task => {
+                                                    const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
+                                                    return (
+                                                        <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
+                                                            <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
+                                                            <span className="text-slate-300 truncate">{task.title}</span>
+                                                            <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
+                                                                {statusStyle.label}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+
+                        {unresolvedTaskIds.length > 0 && !loadingFeatureDetails && (
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                                <div className="text-[11px] text-amber-300 font-semibold uppercase tracking-wider">Unmapped Task IDs</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {unresolvedTaskIds.map(taskId => (
+                                        <span key={`unmapped-${taskId}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200">
+                                            {taskId}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 };
@@ -2753,7 +3528,7 @@ const ArtifactsView: React.FC<{
             }
             if (group.type === 'agent') {
                 for (const log of session.logs) {
-                    if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+                    if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
                         continue;
                     }
                     const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
@@ -2867,15 +3642,82 @@ const ArtifactsView: React.FC<{
         }),
         [groupedArtifacts]
     );
+    const toolGroupSections = useMemo(() => {
+        const groupedBySection: Record<ToolGroupCategory, ArtifactGroup[]> = {
+            hooks: [],
+            git: [],
+            tests: [],
+            other: [],
+        };
+        for (const group of toolGroups) {
+            groupedBySection[classifyToolGroup(group)].push(group);
+        }
+        return TOOL_GROUP_SECTION_DEFS.map(section => ({
+            ...section,
+            groups: groupedBySection[section.id],
+        }));
+    }, [toolGroups]);
 
     const visibleGroups = useMemo(() => {
         if (activeSubTab === 'skills') return skillGroups;
         if (activeSubTab === 'agents') return agentGroups;
-        if (activeSubTab === 'tools') return toolGroups;
         return [];
-    }, [activeSubTab, agentGroups, skillGroups, toolGroups]);
+    }, [activeSubTab, agentGroups, skillGroups]);
 
     const hasAnyData = commandEntries.length > 0 || skillGroups.length > 0 || agentGroups.length > 0 || toolGroups.length > 0;
+
+    const renderArtifactCard = (group: ArtifactGroup) => (
+        <button
+            key={group.key}
+            onClick={() => setSelectedGroup(group)}
+            className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group min-w-0 overflow-hidden ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+        >
+            <div className="flex justify-between items-start gap-3 mb-4 min-w-0">
+                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+                    group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+                        'bg-blue-500/10 text-blue-400'
+                    }`}>
+                    {group.type === 'memory' ? <HardDrive size={20} /> :
+                        group.type === 'request_log' ? <Scroll size={20} /> :
+                            <Database size={20} />}
+                </div>
+                <span
+                    className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider max-w-[9rem] truncate"
+                    title={group.source}
+                >
+                    {group.source}
+                </span>
+            </div>
+
+            <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors truncate" title={group.title}>
+                {group.title}
+            </h3>
+            <p className="text-sm text-slate-400 mb-4 line-clamp-3 break-all" title={group.description || ''}>
+                {group.description}
+            </p>
+
+            <div className="flex flex-wrap gap-2 mb-4">
+                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                    {group.artifacts.length} merged
+                </span>
+                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                    {group.relatedToolLogs.length} tool calls
+                </span>
+                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                    {group.linkedThreads.length} sub-threads
+                </span>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-2 min-w-0">
+                <span className="text-xs font-mono text-slate-500 truncate min-w-0 max-w-[65%]" title={group.artifactIds[0]}>
+                    {group.artifactIds[0]}
+                </span>
+                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300 shrink-0">
+                    View Details <ChevronRight size={12} />
+                </span>
+            </div>
+        </button>
+    );
 
     if (!hasAnyData) {
         return (
@@ -2965,56 +3807,36 @@ const ArtifactsView: React.FC<{
                 </div>
             )}
 
-            {activeSubTab !== 'commands' && (
+            {activeSubTab === 'tools' && (
+                <div className="space-y-6">
+                    {toolGroupSections.map(section => (
+                        <section key={section.id} className="space-y-3">
+                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold">{section.label}</h3>
+                                <span className="text-[11px] text-slate-500">{section.groups.length}</span>
+                            </div>
+                            {section.groups.length === 0 ? (
+                                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                                    {section.emptyLabel}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {section.groups.map(renderArtifactCard)}
+                                </div>
+                            )}
+                        </section>
+                    ))}
+                </div>
+            )}
+
+            {activeSubTab !== 'commands' && activeSubTab !== 'tools' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {visibleGroups.length === 0 && (
                         <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
                             No {activeSubTab} artifacts found.
                         </div>
                     )}
-                    {visibleGroups.map(group => (
-                        <button
-                            key={group.key}
-                            onClick={() => setSelectedGroup(group)}
-                            className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
-                        >
-                            <div className="flex justify-between items-start mb-4">
-                                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                                    group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                                        'bg-blue-500/10 text-blue-400'
-                                    }`}>
-                                    {group.type === 'memory' ? <HardDrive size={20} /> :
-                                        group.type === 'request_log' ? <Scroll size={20} /> :
-                                            <Database size={20} />}
-                                </div>
-                                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                                    {group.source}
-                                </span>
-                            </div>
-
-                            <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
-                            <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
-
-                            <div className="flex flex-wrap gap-2 mb-4">
-                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                    {group.artifacts.length} merged
-                                </span>
-                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                    {group.relatedToolLogs.length} tool calls
-                                </span>
-                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                                    {group.linkedThreads.length} sub-threads
-                                </span>
-                            </div>
-
-                            <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                                <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
-                                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
-                                    View Details <ChevronRight size={12} />
-                                </span>
-                            </div>
-                        </button>
-                    ))}
+                    {visibleGroups.map(renderArtifactCard)}
                 </div>
             )}
 
@@ -3087,143 +3909,362 @@ const AnalyticsDetailsModal: React.FC<{
     );
 };
 
-const TokenTimeline: React.FC<{ session: AgentSession }> = ({ session }) => {
-    const [timelineData, setTimelineData] = useState<Array<{
-        index: number;
-        time: string;
-        tokens: number;
-        stepTokens: number;
-        agent?: string;
-    }>>([]);
+const tokenDeltaForLog = (log: SessionLog): number => {
+    const metadata = (log.metadata || {}) as Record<string, any>;
+    const inputTokens = Number(metadata.inputTokens || 0);
+    const outputTokens = Number(metadata.outputTokens || 0);
+    const directDelta = Math.max(0, inputTokens + outputTokens);
+    if (directDelta > 0) return directDelta;
+    return Math.max(0, Number(metadata.totalTokens || 0));
+};
 
-    useEffect(() => {
-        let mounted = true;
-        const loadSeries = async () => {
-            try {
-                const res = await analyticsService.getSeries({
-                    metric: 'session_tokens',
-                    period: 'point',
-                    sessionId: session.id,
-                    limit: 2000,
-                });
-                if (!mounted) return;
-                const points = (res.items || []).map((point, index) => ({
-                    index,
-                    time: String(point.captured_at || ''),
-                    tokens: Math.round(Number(point.value || 0)),
-                    stepTokens: Math.round(Number(point.metadata?.stepTokens || 0)),
-                    agent: String(point.metadata?.agent || ''),
-                }));
-                setTimelineData(points);
-            } catch (err) {
-                console.error('Failed to fetch token timeline:', err);
-                let cumulative = 0;
-                const fallback = (session.logs || []).map((log, index) => {
-                    const step = Number(log.metadata?.totalTokens || 0);
-                    cumulative += step;
-                    return {
-                        index,
-                        time: log.timestamp,
-                        tokens: cumulative,
-                        stepTokens: step,
-                        agent: log.agentName || '',
-                    };
-                }).filter(item => item.stepTokens > 0);
-                setTimelineData(fallback);
+const formatTimelineTick = (rawTime: string): string => {
+    const timestampMs = toEpoch(rawTime);
+    if (timestampMs > 0) {
+        return new Date(timestampMs).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    }
+    return rawTime ? rawTime.slice(11, 16) : '';
+};
+
+const formatTimelineLabel = (rawTime: string): string => {
+    const timestampMs = toEpoch(rawTime);
+    if (timestampMs > 0) {
+        return new Date(timestampMs).toLocaleString();
+    }
+    return rawTime || 'Unknown';
+};
+
+const TokenTimeline: React.FC<{ sessions: AgentSession[] }> = ({ sessions }) => {
+    const timelineData = useMemo(() => {
+        type TimelineBucket = {
+            time: string;
+            timestampMs: number;
+            tokenDelta: number;
+            tokenCumulative: number;
+            toolExecutions: number;
+            failedTools: number;
+            fileEdits: number;
+            artifactLinks: number;
+            testRuns: number;
+        };
+
+        const buckets = new Map<string, TimelineBucket>();
+        const fallbackIndexByKey = new Map<string, number>();
+
+        const getBucket = (timestamp: string, fallbackKey: string): TimelineBucket => {
+            const cleanTime = String(timestamp || '').trim();
+            const timestampMs = toEpoch(cleanTime);
+            const key = timestampMs > 0
+                ? `ms:${timestampMs}`
+                : `raw:${cleanTime || fallbackKey}`;
+
+            let row = buckets.get(key);
+            if (!row) {
+                row = {
+                    time: cleanTime,
+                    timestampMs,
+                    tokenDelta: 0,
+                    tokenCumulative: 0,
+                    toolExecutions: 0,
+                    failedTools: 0,
+                    fileEdits: 0,
+                    artifactLinks: 0,
+                    testRuns: 0,
+                };
+                buckets.set(key, row);
+                fallbackIndexByKey.set(key, fallbackIndexByKey.size);
             }
+            return row;
         };
-        loadSeries();
-        return () => {
-            mounted = false;
-        };
-    }, [session.id, session.logs]);
+
+        sessions.forEach(scopeSession => {
+            const logs = scopeSession.logs || [];
+            const timestampByLogId = new Map(logs.map(log => [log.id, log.timestamp]));
+
+            logs.forEach((log, logIndex) => {
+                const bucket = getBucket(
+                    log.timestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:log:${log.id || logIndex}`,
+                );
+                bucket.tokenDelta += tokenDeltaForLog(log);
+                if (log.type === 'tool') {
+                    bucket.toolExecutions += 1;
+                    if (log.toolCall?.status === 'error' || log.toolCall?.isError) {
+                        bucket.failedTools += 1;
+                    }
+                    if (getTestRunDetails(log)) {
+                        bucket.testRuns += 1;
+                    }
+                }
+            });
+
+            (scopeSession.updatedFiles || []).forEach((file, fileIndex) => {
+                const action = normalizeFileAction(file.action, file.sourceToolName);
+                if (action === 'read' || action === 'other') return;
+                const sourceTimestamp = file.sourceLogId ? String(timestampByLogId.get(file.sourceLogId) || '') : '';
+                const bucket = getBucket(
+                    file.timestamp || sourceTimestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:file:${file.sourceLogId || fileIndex}`,
+                );
+                bucket.fileEdits += 1;
+            });
+
+            (scopeSession.linkedArtifacts || []).forEach((artifact, artifactIndex) => {
+                const sourceTimestamp = artifact.sourceLogId ? String(timestampByLogId.get(artifact.sourceLogId) || '') : '';
+                const bucket = getBucket(
+                    sourceTimestamp || scopeSession.startedAt,
+                    `${scopeSession.id}:artifact:${artifact.id || artifactIndex}`,
+                );
+                bucket.artifactLinks += 1;
+            });
+        });
+
+        let cumulative = 0;
+        const ordered = Array.from(buckets.entries())
+            .sort((a, b) => {
+                const rowA = a[1];
+                const rowB = b[1];
+                if (rowA.timestampMs > 0 && rowB.timestampMs > 0) return rowA.timestampMs - rowB.timestampMs;
+                if (rowA.timestampMs > 0) return -1;
+                if (rowB.timestampMs > 0) return 1;
+                return (fallbackIndexByKey.get(a[0]) || 0) - (fallbackIndexByKey.get(b[0]) || 0);
+            })
+            .map(([_, row], index) => {
+                cumulative += row.tokenDelta;
+                return {
+                    index,
+                    ...row,
+                    tokenCumulative: cumulative,
+                };
+            });
+
+        return ordered;
+    }, [sessions]);
+
+    const totals = useMemo(
+        () => timelineData.reduce(
+            (acc, row) => {
+                acc.toolExecutions += row.toolExecutions;
+                acc.failedTools += row.failedTools;
+                acc.fileEdits += row.fileEdits;
+                acc.artifactLinks += row.artifactLinks;
+                acc.testRuns += row.testRuns;
+                return acc;
+            },
+            { toolExecutions: 0, failedTools: 0, fileEdits: 0, artifactLinks: 0, testRuns: 0 }
+        ),
+        [timelineData]
+    );
 
     return (
-        <div className="h-80 w-full relative">
-            <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={timelineData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                    <defs>
-                        <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                        </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                    <XAxis dataKey="time" stroke="#475569" tick={{ fontSize: 10 }} interval={Math.floor(timelineData.length / 5)} />
-                    <YAxis stroke="#475569" tick={{ fontSize: 10 }} label={{ value: 'Tokens', angle: -90, position: 'insideLeft', fill: '#64748b' }} />
-                    <Tooltip
-                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
-                        itemStyle={{ color: '#e2e8f0' }}
-                        labelStyle={{ color: '#94a3b8' }}
-                    />
-
-                    {/* Token Area */}
-                    <Area type="monotone" dataKey="tokens" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTokens)" name="Cumulative Tokens" />
-                </ComposedChart>
-            </ResponsiveContainer>
+        <div className="space-y-4">
+            <div className="h-80 w-full relative">
+                <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={timelineData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                        <defs>
+                            <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                            </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                        <XAxis
+                            dataKey="index"
+                            stroke="#475569"
+                            tick={{ fontSize: 10 }}
+                            interval={Math.max(0, Math.floor(timelineData.length / 7))}
+                            tickFormatter={(value: number) => formatTimelineTick(String(timelineData[value]?.time || ''))}
+                        />
+                        <YAxis
+                            yAxisId="tokens"
+                            stroke="#475569"
+                            tick={{ fontSize: 10 }}
+                            label={{ value: 'Tokens', angle: -90, position: 'insideLeft', fill: '#64748b' }}
+                        />
+                        <YAxis
+                            yAxisId="events"
+                            orientation="right"
+                            stroke="#64748b"
+                            tick={{ fontSize: 10 }}
+                            allowDecimals={false}
+                            label={{ value: 'Events', angle: 90, position: 'insideRight', fill: '#64748b' }}
+                        />
+                        <Tooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                            itemStyle={{ color: '#e2e8f0' }}
+                            labelStyle={{ color: '#94a3b8' }}
+                            labelFormatter={(value: number) => formatTimelineLabel(String(timelineData[value]?.time || ''))}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Area
+                            yAxisId="tokens"
+                            type="monotone"
+                            dataKey="tokenCumulative"
+                            stroke="#3b82f6"
+                            fillOpacity={1}
+                            fill="url(#colorTokens)"
+                            name="Cumulative Tokens"
+                        />
+                        <Bar yAxisId="events" dataKey="toolExecutions" barSize={8} fill="#f59e0b" name="Tool Executions" />
+                        <Bar yAxisId="events" dataKey="fileEdits" barSize={8} fill="#22c55e" name="File Edits" />
+                        <Line yAxisId="events" type="monotone" dataKey="artifactLinks" stroke="#a855f7" dot={false} strokeWidth={2} name="Artifact Links" />
+                        <Line yAxisId="events" type="monotone" dataKey="testRuns" stroke="#06b6d4" dot={false} strokeWidth={2} name="Test Runs" />
+                    </ComposedChart>
+                </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Tool Executions</div>
+                    <div className="text-sm font-mono text-amber-300">{totals.toolExecutions.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Failed Tools</div>
+                    <div className="text-sm font-mono text-rose-300">{totals.failedTools.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">File Edits</div>
+                    <div className="text-sm font-mono text-emerald-300">{totals.fileEdits.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Artifact Links</div>
+                    <div className="text-sm font-mono text-violet-300">{totals.artifactLinks.toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Test Runs</div>
+                    <div className="text-sm font-mono text-cyan-300">{totals.testRuns.toLocaleString()}</div>
+                </div>
+            </div>
         </div>
     );
 };
 
-
 const AnalyticsView: React.FC<{
     session: AgentSession;
+    threadSessions: AgentSession[];
+    threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
-}> = ({ session, goToTranscript }) => {
+}> = ({ session, threadSessions, threadSessionDetails, goToTranscript }) => {
+    const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
+    const [scopeMode, setScopeMode] = useState<'thread_family' | 'main'>('thread_family');
 
     const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
 
-    // --- Data Aggregation ---
+    const sessionsInScope = useMemo(
+        () => (
+            scopeMode === 'main'
+                ? [session]
+                : collectThreadDetailSessions(session, threadSessions, threadSessionDetails)
+        ),
+        [scopeMode, session, threadSessions, threadSessionDetails]
+    );
 
-    // 1. Tool Data
-    const toolData = session.toolsUsed.map(t => ({
-        name: t.name,
-        value: t.count,
-        type: 'tool',
-        cost: session.totalCost * 0.1, // Mock portion
-        tokens: Math.round(session.tokensIn * 0.1) // Mock portion
-    }));
+    const scopeTotals = useMemo(
+        () => sessionsInScope.reduce(
+            (acc, scopeSession) => {
+                acc.tokensIn += Number(scopeSession.tokensIn || 0);
+                acc.tokensOut += Number(scopeSession.tokensOut || 0);
+                acc.totalCost += Number(scopeSession.totalCost || 0);
+                acc.logCount += (scopeSession.logs || []).length;
+                return acc;
+            },
+            { tokensIn: 0, tokensOut: 0, totalCost: 0, logCount: 0 }
+        ),
+        [sessionsInScope]
+    );
 
-    // 2. Agent Data
+    const toolData = useMemo(() => {
+        const byTool = new Map<string, { name: string; value: number; tokens: number; type: 'tool'; toolCount: number }>();
+        sessionsInScope.forEach(scopeSession => {
+            (scopeSession.logs || []).forEach(log => {
+                if (log.type !== 'tool') return;
+                const toolName = String(log.toolCall?.name || 'tool').trim() || 'tool';
+                const current = byTool.get(toolName) || { name: toolName, value: 0, tokens: 0, type: 'tool', toolCount: 0 };
+                current.value += 1;
+                current.toolCount += 1;
+                current.tokens += tokenDeltaForLog(log);
+                byTool.set(toolName, current);
+            });
+        });
+        const totalTokens = Math.max(1, scopeTotals.tokensIn + scopeTotals.tokensOut);
+        return Array.from(byTool.values())
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 10)
+            .map(row => ({
+                ...row,
+                cost: scopeTotals.totalCost * (row.tokens / totalTokens),
+            }));
+    }, [scopeTotals, sessionsInScope]);
+
     const agentStats = useMemo(() => {
         const stats: Record<string, { count: number, tokens: number, tools: number }> = {};
-        session.logs.forEach(log => {
-            if (log.speaker === 'agent') {
-                const name = log.agentName || 'Main';
+        sessionsInScope.forEach(scopeSession => {
+            (scopeSession.logs || []).forEach(log => {
+                if (log.speaker !== 'agent') return;
+                const name = String(log.agentName || (scopeSession.id === session.id ? MAIN_SESSION_AGENT : scopeSession.title || scopeSession.id)).trim() || MAIN_SESSION_AGENT;
                 if (!stats[name]) stats[name] = { count: 0, tokens: 0, tools: 0 };
                 stats[name].count += 1;
-                stats[name].tokens += log.content.length / 4; // Approx
+                stats[name].tokens += tokenDeltaForLog(log);
                 if (log.type === 'tool') stats[name].tools += 1;
-            }
+            });
         });
         return Object.entries(stats).map(([name, stat]) => ({
             name,
             value: stat.count,
             tokens: Math.round(stat.tokens),
             toolCount: stat.tools,
-            cost: (stat.tokens / 1000000) * 15, // Mock pricing
+            cost: (scopeTotals.tokensIn + scopeTotals.tokensOut) > 0
+                ? (scopeTotals.totalCost * stat.tokens) / (scopeTotals.tokensIn + scopeTotals.tokensOut)
+                : 0,
             type: 'agent'
         }));
-    }, [session]);
+    }, [scopeTotals, session.id, sessionsInScope]);
 
-    // 3. Model Data
     const modelData = useMemo(() => {
-        // Mocking: assuming Agents use different models or the session model is primary
-        // In a real app, logs would have `modelId`
-        return [{
-            name: session.model,
-            value: session.logs.length,
-            tokens: session.tokensIn + session.tokensOut,
-            toolCount: session.toolsUsed.reduce((acc, t) => acc + t.count, 0),
-            cost: session.totalCost,
-            type: 'model'
-        }];
-    }, [session]);
+        const byModel = new Map<string, { name: string; value: number; tokens: number; toolCount: number; cost: number; type: 'model' }>();
+        sessionsInScope.forEach(scopeSession => {
+            const modelName = String(scopeSession.model || 'unknown').trim() || 'unknown';
+            const current = byModel.get(modelName) || { name: modelName, value: 0, tokens: 0, toolCount: 0, cost: 0, type: 'model' };
+            const sessionTokens = Number(scopeSession.tokensIn || 0) + Number(scopeSession.tokensOut || 0);
+            current.value += (scopeSession.logs || []).length;
+            current.tokens += sessionTokens;
+            current.toolCount += (scopeSession.logs || []).filter(log => log.type === 'tool').length;
+            current.cost += Number(scopeSession.totalCost || 0);
+            byModel.set(modelName, current);
+        });
+        return Array.from(byModel.values()).sort((a, b) => b.value - a.value);
+    }, [sessionsInScope]);
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+                <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Correlation Scope</div>
+                    <div className="text-sm text-slate-200">
+                        {scopeMode === 'thread_family'
+                            ? `Main thread + ${Math.max(0, sessionsInScope.length - 1)} linked sub-thread${sessionsInScope.length === 2 ? '' : 's'}`
+                            : 'Main thread only'}
+                    </div>
+                </div>
+                <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                    <button
+                        onClick={() => setScopeMode('thread_family')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'thread_family' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Main + Linked
+                    </button>
+                    <button
+                        onClick={() => setScopeMode('main')}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'main' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Main Only
+                    </button>
+                </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
 
                 {/* 1. AGENTS CHART */}
@@ -3277,7 +4318,11 @@ const AnalyticsView: React.FC<{
                                 <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
                                 <YAxis dataKey="name" type="category" stroke="#94a3b8" tick={{ fontSize: 10 }} width={100} />
                                 <Tooltip cursor={{ fill: '#1e293b' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed" />
+                                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24} name="Steps Executed">
+                                    {modelData.map((entry, index) => (
+                                        <Cell key={`model-bar-${entry.name}-${index}`} fill={getColorForModel({ model: entry.name })} />
+                                    ))}
+                                </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
@@ -3307,8 +4352,8 @@ const AnalyticsView: React.FC<{
                         {tokenViewMode === 'summary' ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={[
-                                    { name: 'Input', tokens: session.tokensIn, fill: '#3b82f6' },
-                                    { name: 'Output', tokens: session.tokensOut, fill: '#10b981' }
+                                    { name: 'Input', tokens: scopeTotals.tokensIn, fill: '#3b82f6' },
+                                    { name: 'Output', tokens: scopeTotals.tokensOut, fill: '#10b981' }
                                 ]} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
                                     <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
@@ -3318,7 +4363,7 @@ const AnalyticsView: React.FC<{
                                 </BarChart>
                             </ResponsiveContainer>
                         ) : (
-                            <TokenTimeline session={session} />
+                            <TokenTimeline sessions={sessionsInScope} />
                         )}
                     </div>
                 </div>
@@ -3326,16 +4371,8 @@ const AnalyticsView: React.FC<{
                 {/* 5. MASTER TIMELINE VIEW (Full Width) */}
                 <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
                     <h3 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Layers size={16} /> Session Master Timeline</h3>
-                    <p className="text-xs text-slate-500 mb-6">Correlated view of token usage, tool executions, and file edits over the session lifecycle.</p>
-                    <TokenTimeline session={session} />
-                    <div className="mt-4 flex gap-4 justify-center">
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-3 h-3 bg-blue-500/50 border border-blue-500 rounded-sm"></div> Token Volume
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <div className="w-2 h-2 rounded-full bg-amber-500"></div> Tool Execution
-                        </div>
-                    </div>
+                    <p className="text-xs text-slate-500 mb-6">Correlated lifecycle view across tokens, tool executions, file edits, artifacts, and test runs.</p>
+                    <TokenTimeline sessions={sessionsInScope} />
                 </div>
 
             </div>
@@ -3346,15 +4383,15 @@ const AnalyticsView: React.FC<{
                 <div className="flex items-center gap-8">
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Total Cost</div>
-                        <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(session.totalCost, 4)}</div>
+                        <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(scopeTotals.totalCost, 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Cost / Step</div>
-                        <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd((Number(session.totalCost) || 0) / Math.max(session.logs.length, 1), 4)}</div>
+                        <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd(scopeTotals.totalCost / Math.max(scopeTotals.logCount, 1), 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
                         <div className="text-xs text-slate-500 mb-1">Tokens / Step</div>
-                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((session.tokensIn + session.tokensOut) / session.logs.length)}</div>
+                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((scopeTotals.tokensIn + scopeTotals.tokensOut) / Math.max(scopeTotals.logCount, 1))}</div>
                     </div>
                 </div>
             </div>
@@ -3453,88 +4490,495 @@ const AgentsView: React.FC<{
     );
 };
 
-const ImpactView: React.FC<{ session: AgentSession }> = ({ session }) => {
-    if (!session.impactHistory || session.impactHistory.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                <Activity size={48} className="mb-4 opacity-20" />
-                <p>No app impact metrics recorded for this session.</p>
-            </div>
-        );
-    }
+type ImpactSignal = 'positive' | 'risk' | 'neutral';
+type ImpactCategory = 'code' | 'tests' | 'artifacts' | 'workflow' | 'system';
+
+interface ImpactEventRow {
+    id: string;
+    timestamp: string;
+    timestampMs: number;
+    category: ImpactCategory;
+    signal: ImpactSignal;
+    summary: string;
+    detail?: string;
+}
+
+interface ImpactInsight {
+    id: string;
+    title: string;
+    description: string;
+    signal: ImpactSignal;
+}
+
+const signalBadge = (signal: ImpactSignal): string => (
+    signal === 'positive'
+        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+        : signal === 'risk'
+            ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+            : 'border-slate-700 bg-slate-800/80 text-slate-300'
+);
+
+const categoryBadge = (category: ImpactCategory): string => (
+    category === 'code'
+        ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+        : category === 'tests'
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+            : category === 'artifacts'
+                ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
+                : category === 'workflow'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                    : 'border-slate-700 bg-slate-800/80 text-slate-300'
+);
+
+const formatImpactEventTime = (timestamp: string, timestampMs: number): string => {
+    if (timestampMs > 0) return new Date(timestampMs).toLocaleString();
+    return timestamp || 'unknown';
+};
+
+const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionFeatureLink[] }> = ({ session, linkedFeatureLinks }) => {
+    const [eventFilter, setEventFilter] = useState<'all' | ImpactCategory>('all');
+
+    const impactModel = useMemo(() => {
+        const logs = session.logs || [];
+        const forensics = asRecord(session.sessionForensics);
+        const entryContext = asRecord(forensics.entryContext);
+        const queuePressure = asRecord(forensics.queuePressure);
+        const subagentTopology = asRecord(forensics.subagentTopology);
+        const testExecution = asRecord(forensics.testExecution);
+        const apiErrors = Array.isArray(entryContext.apiErrors) ? entryContext.apiErrors : [];
+
+        const actionCounts: Record<'read' | 'create' | 'update' | 'delete' | 'other', number> = {
+            read: 0,
+            create: 0,
+            update: 0,
+            delete: 0,
+            other: 0,
+        };
+
+        let additions = 0;
+        let deletions = 0;
+        const fileUpdates = session.updatedFiles || [];
+        const uniqueTouchedFiles = new Set<string>();
+        const uniqueWrittenFiles = new Set<string>();
+        const events: ImpactEventRow[] = [];
+
+        const pushEvent = (event: ImpactEventRow) => {
+            if (!event.summary.trim()) return;
+            events.push(event);
+        };
+
+        fileUpdates.forEach((file, index) => {
+            const action = normalizeFileAction(file.action, file.sourceToolName);
+            actionCounts[action] += 1;
+            const filePath = normalizePath(file.filePath || '');
+            if (filePath) uniqueTouchedFiles.add(filePath);
+            if (action !== 'read' && action !== 'other' && filePath) uniqueWrittenFiles.add(filePath);
+            additions += Math.max(0, Number(file.additions || 0));
+            deletions += Math.max(0, Number(file.deletions || 0));
+
+            const timestamp = String(file.timestamp || '');
+            const timestampMs = toEpoch(timestamp);
+            const fileName = fileNameFromPath(filePath || `file-${index}`);
+            pushEvent({
+                id: `file-${index}-${file.sourceLogId || fileName}`,
+                timestamp,
+                timestampMs,
+                category: 'code',
+                signal: action === 'delete' ? 'neutral' : 'positive',
+                summary: `${formatAction(action)} ${fileName}`,
+                detail: `+${Math.max(0, Number(file.additions || 0))} / -${Math.max(0, Number(file.deletions || 0))}`,
+            });
+        });
+
+        const parsedTestRuns = logs
+            .map(log => {
+                const details = getTestRunDetails(log);
+                if (!details) return null;
+                return { log, details };
+            })
+            .filter(Boolean) as Array<{ log: SessionLog; details: TestRunDetails }>;
+
+        let derivedTotalTests = 0;
+        let derivedPassedTests = 0;
+        let derivedFailingRuns = 0;
+
+        parsedTestRuns.forEach(({ log, details }, index) => {
+            const failedCount = asNumber(details.counts.failed, 0) + asNumber(details.counts.error, 0);
+            const status = String(details.status || '').toLowerCase();
+            const isFail = status.includes('fail') || status.includes('error') || failedCount > 0;
+            if (isFail) derivedFailingRuns += 1;
+            const total = asNumber(details.total, 0);
+            const passed = asNumber(details.counts.passed, 0);
+            derivedTotalTests += total;
+            derivedPassedTests += passed;
+
+            pushEvent({
+                id: `test-${log.id}-${index}`,
+                timestamp: log.timestamp,
+                timestampMs: toEpoch(log.timestamp),
+                category: 'tests',
+                signal: isFail ? 'risk' : 'positive',
+                summary: `${details.framework} run ${isFail ? 'failed' : 'passed'}`,
+                detail: total > 0 ? `${total} tests · ${failedCount} failing` : (details.description || details.command || '').slice(0, 120),
+            });
+        });
+
+        const resultCounts = asRecord(testExecution.resultCounts);
+        const statusCounts = asRecord(testExecution.statusCounts);
+        const totalTests = asNumber(testExecution.totalTests, derivedTotalTests);
+        const passedTests = asNumber(resultCounts.passed, derivedPassedTests);
+        const failedTests = asNumber(resultCounts.failed, 0) + asNumber(resultCounts.error, 0);
+        const runCount = asNumber(testExecution.runCount, parsedTestRuns.length);
+        const forensicsPassRate = Number(testExecution.passRate);
+        const passRate = Number.isFinite(forensicsPassRate)
+            ? forensicsPassRate
+            : (totalTests > 0 ? passedTests / totalTests : 0);
+        const failingRuns = asNumber(statusCounts.failed, 0) + asNumber(statusCounts.error, 0) || derivedFailingRuns;
+
+        const artifacts = session.linkedArtifacts || [];
+        const artifactTypes = new Map<string, number>();
+        const logTimestampById = new Map(logs.map(log => [log.id, log.timestamp]));
+        artifacts.forEach((artifact, index) => {
+            const normalizedType = String(artifact.type || 'other').trim().toLowerCase() || 'other';
+            artifactTypes.set(normalizedType, (artifactTypes.get(normalizedType) || 0) + 1);
+            const sourceTimestamp = artifact.sourceLogId ? String(logTimestampById.get(artifact.sourceLogId) || '') : '';
+            pushEvent({
+                id: `artifact-${artifact.id || index}`,
+                timestamp: sourceTimestamp || session.startedAt,
+                timestampMs: toEpoch(sourceTimestamp || session.startedAt),
+                category: 'artifacts',
+                signal: normalizedType === 'request_log' ? 'neutral' : 'positive',
+                summary: `Artifact: ${artifact.title || artifact.id}`,
+                detail: `${normalizedType} · ${artifact.source || 'unknown source'}`,
+            });
+        });
+
+        (session.impactHistory || []).forEach((point, index) => {
+            const row = asRecord(point);
+            const timestamp = String(row.timestamp || '');
+            const type = String(row.type || 'info').toLowerCase();
+            const label = String(row.label || '').trim();
+            const locAdded = asNumber(row.locAdded, 0);
+            const locDeleted = asNumber(row.locDeleted, 0);
+            const testsPass = asNumber(row.testPassCount, 0);
+            const testsFail = asNumber(row.testFailCount, 0);
+            const fileCount = asNumber(row.fileCount, 0);
+            const summary = label || (
+                (locAdded || locDeleted || testsPass || testsFail || fileCount)
+                    ? `Impact snapshot (+${locAdded}/-${locDeleted}, files ${fileCount}, tests ${testsPass}/${testsFail})`
+                    : ''
+            );
+            if (!summary) return;
+
+            pushEvent({
+                id: `impact-history-${index}`,
+                timestamp,
+                timestampMs: toEpoch(timestamp),
+                category: 'system',
+                signal: type === 'error' ? 'risk' : (type === 'success' ? 'positive' : 'neutral'),
+                summary,
+            });
+        });
+
+        const toolErrorCount = logs.filter(log => (
+            log.type === 'tool'
+            && (log.toolCall?.status === 'error' || log.toolCall?.isError)
+        )).length;
+        const queueOperationCount = asNumber(queuePressure.queueOperationCount, Array.isArray(entryContext.queueOperations) ? entryContext.queueOperations.length : 0);
+        const waitingForTaskCount = asNumber(queuePressure.waitingForTaskCount, 0);
+        const subagentStartCount = asNumber(subagentTopology.subagentStartCount, 0);
+
+        if (waitingForTaskCount > 0) {
+            pushEvent({
+                id: 'queue-pressure',
+                timestamp: session.endedAt || session.updatedAt || session.startedAt,
+                timestampMs: toEpoch(session.endedAt || session.updatedAt || session.startedAt),
+                category: 'workflow',
+                signal: 'risk',
+                summary: `Queue pressure detected (${waitingForTaskCount} waiting tasks)`,
+                detail: queueOperationCount > 0 ? `${queueOperationCount} queue operations` : undefined,
+            });
+        }
+        if (apiErrors.length > 0) {
+            pushEvent({
+                id: 'api-errors',
+                timestamp: session.endedAt || session.updatedAt || session.startedAt,
+                timestampMs: toEpoch(session.endedAt || session.updatedAt || session.startedAt),
+                category: 'workflow',
+                signal: 'risk',
+                summary: `API errors captured (${apiErrors.length})`,
+                detail: 'Review Session Forensics for raw error payloads.',
+            });
+        }
+
+        const insights: ImpactInsight[] = [];
+        if (uniqueWrittenFiles.size > 0 && failingRuns > 0) {
+            insights.push({
+                id: 'code-vs-failing-tests',
+                title: 'Regression pressure after code changes',
+                description: `${uniqueWrittenFiles.size} written files correlated with ${failingRuns} failing test run(s).`,
+                signal: 'risk',
+            });
+        }
+        if (uniqueWrittenFiles.size > 0 && runCount > 0 && passRate >= 0.9 && failingRuns === 0) {
+            insights.push({
+                id: 'healthy-delivery',
+                title: 'Code change validated by tests',
+                description: `${uniqueWrittenFiles.size} written files with ${(passRate * 100).toFixed(1)}% pass rate across ${runCount} run(s).`,
+                signal: 'positive',
+            });
+        }
+        if (artifacts.length > 0 && linkedFeatureLinks.length > 0) {
+            insights.push({
+                id: 'traceable-delivery',
+                title: 'Execution traceability is strong',
+                description: `${artifacts.length} linked artifact(s) tied to ${linkedFeatureLinks.length} linked feature(s).`,
+                signal: 'positive',
+            });
+        }
+        if (waitingForTaskCount > 0 || toolErrorCount > 0 || apiErrors.length > 0) {
+            insights.push({
+                id: 'workflow-friction',
+                title: 'Execution friction detected',
+                description: `${waitingForTaskCount} waiting tasks, ${toolErrorCount} tool errors, ${apiErrors.length} API errors.`,
+                signal: 'risk',
+            });
+        }
+        if (insights.length === 0) {
+            insights.push({
+                id: 'steady-session',
+                title: 'Session impact appears stable',
+                description: 'No high-signal risks were derived from current session capture.',
+                signal: 'neutral',
+            });
+        }
+
+        const coverage = [
+            {
+                id: 'files',
+                label: 'File change capture',
+                detail: fileUpdates.length > 0 ? `${fileUpdates.length} updates captured` : 'No file updates captured',
+                signal: fileUpdates.length > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'tests',
+                label: 'Test execution capture',
+                detail: runCount > 0 ? `${runCount} test runs captured` : 'No test runs captured',
+                signal: runCount > 0 ? 'positive' : 'risk' as ImpactSignal,
+            },
+            {
+                id: 'artifacts',
+                label: 'Artifact linkage',
+                detail: artifacts.length > 0 ? `${artifacts.length} linked artifacts` : 'No linked artifacts captured',
+                signal: artifacts.length > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'workflow',
+                label: 'Workflow telemetry',
+                detail: queueOperationCount > 0 || subagentStartCount > 0
+                    ? `${queueOperationCount} queue ops · ${subagentStartCount} subagent starts`
+                    : 'Minimal workflow telemetry in this session',
+                signal: queueOperationCount > 0 || subagentStartCount > 0 ? 'positive' : 'neutral' as ImpactSignal,
+            },
+            {
+                id: 'impact-events',
+                label: 'Impact event stream',
+                detail: events.length > 0 ? `${events.length} impact events derived` : 'No impact events derived',
+                signal: events.length > 0 ? 'positive' : 'risk' as ImpactSignal,
+            },
+        ];
+
+        const sortedEvents = events.sort((a, b) => b.timestampMs - a.timestampMs);
+        const topArtifactTypes = Array.from(artifactTypes.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+
+        return {
+            additions,
+            deletions,
+            netLoc: additions - deletions,
+            filesTouched: uniqueTouchedFiles.size,
+            filesWritten: uniqueWrittenFiles.size,
+            actionCounts,
+            runCount,
+            totalTests,
+            passRate,
+            failedTests,
+            failingRuns,
+            artifactsCount: artifacts.length,
+            topArtifactTypes,
+            linkedFeatureCount: linkedFeatureLinks.length,
+            toolErrorCount,
+            queueOperationCount,
+            waitingForTaskCount,
+            apiErrorCount: apiErrors.length,
+            insights,
+            coverage,
+            events: sortedEvents,
+        };
+    }, [linkedFeatureLinks, session]);
+
+    const filteredEvents = useMemo(
+        () => impactModel.events
+            .filter(event => eventFilter === 'all' || event.category === eventFilter)
+            .slice(0, 120),
+        [eventFilter, impactModel.events]
+    );
 
     return (
         <div className="space-y-6 h-full overflow-y-auto pb-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><TrendingUp size={16} /> Codebase Impact Over Time</h3>
-                <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={session.impactHistory}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                            <XAxis dataKey="timestamp" stroke="#475569" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#475569" tick={{ fontSize: 12 }} />
-                            <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                            <Legend />
-                            <Line type="monotone" dataKey="locAdded" stroke="#10b981" strokeWidth={2} name="LOC Added" dot={false} />
-                            <Line type="monotone" dataKey="locDeleted" stroke="#f43f5e" strokeWidth={2} name="LOC Removed" dot={false} />
-                            <Line type="monotone" dataKey="fileCount" stroke="#3b82f6" strokeWidth={2} name="Files Touched" dot={false} />
-                        </LineChart>
-                    </ResponsiveContainer>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2"><TrendingUp size={16} /> App Impact</h3>
+                <p className="text-xs text-slate-400 mt-2">
+                    Outcome layer for this session: code changes, validation movement, delivery artifacts, and workflow friction.
+                </p>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Diff From Analytics</div>
+                        <p className="text-xs text-slate-300 mt-1">
+                            Analytics explains resource consumption and execution behavior (tokens, tools, costs).
+                        </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">This Tab Adds</div>
+                        <p className="text-xs text-slate-300 mt-1">
+                            Correlations and conclusions about delivery outcomes, regressions, and execution risk.
+                        </p>
+                    </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><ShieldAlert size={16} /> Test Stability</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={session.impactHistory}>
-                                <defs>
-                                    <linearGradient id="colorPass" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                    </linearGradient>
-                                    <linearGradient id="colorFail" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} />
-                                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                <XAxis dataKey="timestamp" stroke="#475569" tick={{ fontSize: 12 }} />
-                                <YAxis stroke="#475569" tick={{ fontSize: 12 }} />
-                                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                                <Area type="monotone" dataKey="testPassCount" stackId="1" stroke="#10b981" fill="url(#colorPass)" name="Tests Passed" />
-                                <Area type="monotone" dataKey="testFailCount" stackId="1" stroke="#f43f5e" fill="url(#colorFail)" name="Tests Failed" />
-                            </AreaChart>
-                        </ResponsiveContainer>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Code Footprint</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.filesWritten}</div>
+                    <div className="text-xs text-slate-400 mt-1">files written ({impactModel.filesTouched} touched)</div>
+                    <div className={`text-xs font-mono mt-2 ${impactModel.netLoc >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                        {impactModel.netLoc >= 0 ? '+' : ''}{impactModel.netLoc} net lines
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Validation</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.runCount}</div>
+                    <div className="text-xs text-slate-400 mt-1">test run(s)</div>
+                    <div className={`text-xs font-mono mt-2 ${impactModel.failingRuns > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+                        {(impactModel.passRate * 100).toFixed(1)}% pass · {impactModel.failedTests} failed tests
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Delivery Traceability</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.artifactsCount}</div>
+                    <div className="text-xs text-slate-400 mt-1">linked artifacts</div>
+                    <div className="text-xs font-mono text-indigo-300 mt-2">{impactModel.linkedFeatureCount} linked features</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Risk Signals</div>
+                    <div className="text-2xl font-mono text-slate-100 mt-1">
+                        {impactModel.toolErrorCount + impactModel.apiErrorCount + impactModel.waitingForTaskCount}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">aggregate risk points</div>
+                    <div className="text-xs font-mono text-amber-300 mt-2">
+                        Tool errors {impactModel.toolErrorCount} · API errors {impactModel.apiErrorCount}
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div className="xl:col-span-2 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><LayoutGrid size={14} /> Impact Correlations</h4>
+                    <div className="space-y-2">
+                        {impactModel.insights.map(insight => (
+                            <div key={insight.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-sm text-slate-100">{insight.title}</div>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(insight.signal)}`}>
+                                        {insight.signal}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">{insight.description}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><RefreshCw size={14} /> Pipeline Coverage</h4>
+                    <div className="space-y-2">
+                        {impactModel.coverage.map(item => (
+                            <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs text-slate-200">{item.label}</span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(item.signal)}`}>
+                                        {item.signal}
+                                    </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-1">{item.detail}</p>
+                            </div>
+                        ))}
+                    </div>
+                    {impactModel.topArtifactTypes.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-slate-800">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Artifact Types</div>
+                            <div className="space-y-1">
+                                {impactModel.topArtifactTypes.map(([type, count]) => (
+                                    <div key={type} className="flex justify-between text-[11px]">
+                                        <span className="text-slate-400 font-mono">{type}</span>
+                                        <span className="text-slate-200 font-mono">{count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2"><Layers size={14} /> Impact Event Stream</h4>
+                    <div className="flex items-center gap-1 border border-slate-800 rounded-lg bg-slate-950 p-1">
+                        {([
+                            { id: 'all', label: 'All' },
+                            { id: 'code', label: 'Code' },
+                            { id: 'tests', label: 'Tests' },
+                            { id: 'artifacts', label: 'Artifacts' },
+                            { id: 'workflow', label: 'Workflow' },
+                            { id: 'system', label: 'System' },
+                        ] as Array<{ id: 'all' | ImpactCategory; label: string }>).map(filter => (
+                            <button
+                                key={filter.id}
+                                onClick={() => setEventFilter(filter.id)}
+                                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${eventFilter === filter.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                            >
+                                {filter.label}
+                            </button>
+                        ))}
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-center">
-                    <h3 className="text-sm font-bold text-slate-300 mb-4">Final Session Impact</h3>
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                            <div className="flex items-center gap-3">
-                                <FileDiff className="text-emerald-500" size={20} />
-                                <span className="text-sm text-slate-300">Net Code Growth</span>
-                            </div>
-                            <span className="font-mono font-bold text-emerald-400">+{session.impactHistory[session.impactHistory.length - 1].locAdded - session.impactHistory[session.impactHistory.length - 1].locDeleted} LOC</span>
+                <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+                    {filteredEvents.length === 0 && (
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">
+                            No events match this filter.
                         </div>
-                        <div className="flex items-center justify-between p-3 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                            <div className="flex items-center gap-3">
-                                <Check className="text-blue-500" size={20} />
-                                <span className="text-sm text-slate-300">Tests Passing</span>
+                    )}
+                    {filteredEvents.map(event => (
+                        <div key={event.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${categoryBadge(event.category)}`}>
+                                            {event.category}
+                                        </span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(event.signal)}`}>
+                                            {event.signal}
+                                        </span>
+                                    </div>
+                                    <div className="text-sm text-slate-200 mt-1 break-words">{event.summary}</div>
+                                    {event.detail && <div className="text-xs text-slate-500 mt-1 break-words">{event.detail}</div>}
+                                </div>
+                                <div className="text-[10px] text-slate-500 whitespace-nowrap">{formatImpactEventTime(event.timestamp, event.timestampMs)}</div>
                             </div>
-                            <span className="font-mono font-bold text-blue-400">{session.impactHistory[session.impactHistory.length - 1].testPassCount}</span>
                         </div>
-                        <div className="flex items-center justify-between p-3 bg-rose-500/10 rounded-lg border border-rose-500/20">
-                            <div className="flex items-center gap-3">
-                                <ShieldAlert className="text-rose-500" size={20} />
-                                <span className="text-sm text-slate-300">New Regressions</span>
-                            </div>
-                            <span className="font-mono font-bold text-rose-400">{session.impactHistory[session.impactHistory.length - 1].testFailCount}</span>
-                        </div>
-                    </div>
+                    ))}
                 </div>
             </div>
         </div>
@@ -3574,10 +5018,17 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     const resourceScopeCounts = asCountEntries(resourceFootprint.scopes, 12);
     const resourceTopTargets = Array.isArray(resourceFootprint.topTargets) ? resourceFootprint.topTargets : [];
     const subagentLinkedSessionIds = asStringArray(subagentTopology.linkedSessionIds);
+    const subagentTypes = useMemo(() => collectSessionSubagentTypes(session), [session]);
     const telemetryProject = asRecord(platformTelemetry.project);
     const telemetryMcpServerNames = asStringArray(telemetryProject.mcpServerNames);
     const codexPayloadTypeCounts = asCountEntries(codexPayloadSignals.payloadTypeCounts, 12);
     const codexToolNameCounts = asCountEntries(codexPayloadSignals.toolNameCounts, 12);
+    const testExecution = useMemo(() => asRecord(forensics.testExecution), [forensics]);
+    const testFrameworkCounts = asCountEntries(testExecution.frameworkCounts, 12);
+    const testDomainCounts = asCountEntries(testExecution.domainCounts, 12);
+    const testStatusCounts = asCountEntries(testExecution.statusCounts, 12);
+    const testResultCounts = asCountEntries(testExecution.resultCounts, 12);
+    const testRuns = Array.isArray(testExecution.runs) ? testExecution.runs : [];
 
     if (Object.keys(forensics).length === 0) {
         return (
@@ -3594,7 +5045,6 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
                     <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
                     <div className="space-y-2 text-xs">
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Platform</span><span className="text-slate-200 font-mono">{String(forensics.platform || 'claude_code')}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-slate-500">Schema Version</span><span className="text-slate-200 font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
                         <div className="flex justify-between gap-4"><span className="text-slate-500">Raw Session ID</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
                         <div className="text-slate-500">Session File</div>
@@ -3694,6 +5144,100 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><TestTube2 size={16} /> Test Execution</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Runs</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.runCount, 0)}</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Total Tests</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalTests, 0)}</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Pass Rate</div>
+                        <div className="text-slate-200 font-mono mt-1">{(asNumber(testExecution.passRate, 0) * 100).toFixed(1)}%</div>
+                    </div>
+                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Duration</div>
+                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalDurationSeconds, 0).toFixed(2)}s</div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Frameworks</div>
+                            <div className="space-y-1">
+                                {testFrameworkCounts.length === 0 && <div className="text-xs text-slate-500">No test runs parsed</div>}
+                                {testFrameworkCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Statuses</div>
+                            <div className="space-y-1">
+                                {testStatusCounts.length === 0 && <div className="text-xs text-slate-500">No status signals</div>}
+                                {testStatusCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Domains</div>
+                            <div className="space-y-1">
+                                {testDomainCounts.length === 0 && <div className="text-xs text-slate-500">No domain inference</div>}
+                                {testDomainCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Result Counts</div>
+                            <div className="space-y-1">
+                                {testResultCounts.length === 0 && <div className="text-xs text-slate-500">No result counts</div>}
+                                {testResultCounts.map(item => (
+                                    <div key={item.key} className="flex justify-between text-[10px]">
+                                        <span className="text-slate-400 font-mono">{item.key}</span>
+                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {testRuns.length > 0 && (
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Recent Runs</div>
+                        <div className="max-h-32 overflow-y-auto pr-1 space-y-1">
+                            {testRuns.slice(0, 20).map((row, idx) => {
+                                const run = asRecord(row);
+                                return (
+                                    <div key={`${idx}-${String(run.framework || '')}-${String(run.status || '')}`} className="rounded border border-slate-800 bg-slate-950/60 p-2 text-[10px]">
+                                        <div className="text-slate-300 font-mono">{String(run.framework || 'test')} · {String(run.status || 'unknown')}</div>
+                                        <div className="text-slate-500 mt-0.5">
+                                            {String(run.domain || 'n/a')} · {asNumber(run.total, 0)} tests · {asNumber(run.durationSeconds, 0).toFixed(2)}s
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -3887,6 +5431,19 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                         <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
                             <div className="text-[10px] uppercase tracking-wider text-slate-500">Is Subagent</div>
                             <div className="text-slate-200 font-mono mt-1">{String(Boolean(subagentTopology.isSubagentSession))}</div>
+                        </div>
+                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Agent Types</div>
+                            <div className="text-slate-200 font-mono mt-1">{subagentTypes.length}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Agent Types</div>
+                        <div className="max-h-24 overflow-y-auto pr-1 space-y-1">
+                            {subagentTypes.length === 0 && <div className="text-xs text-slate-500">No agent type metadata captured</div>}
+                            {subagentTypes.slice(0, 20).map(typeName => (
+                                <div key={typeName} className="text-[10px] text-slate-300 font-mono break-all">{typeName}</div>
+                            ))}
                         </div>
                     </div>
                     <div>
@@ -4782,7 +6339,7 @@ const SessionDetail: React.FC<{
     initialTab: SessionInspectorTab;
     onTabChange: (tab: SessionInspectorTab) => void;
 }> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
-    const { activeProject, getSessionById } = useData();
+    const { activeProject, getSessionById, features } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -4794,6 +6351,10 @@ const SessionDetail: React.FC<{
     const [linkedFeatureLinks, setLinkedFeatureLinks] = useState<SessionFeatureLink[]>([]);
     const [linkedFeatureDetailsById, setLinkedFeatureDetailsById] = useState<Record<string, Feature>>({});
     const [linkedFeatureDetailsLoading, setLinkedFeatureDetailsLoading] = useState(false);
+    const [featureLinkMutationInFlight, setFeatureLinkMutationInFlight] = useState(false);
+    const [featureLinkMutationError, setFeatureLinkMutationError] = useState<string | null>(null);
+    const [sessionContextPrimaryInput, setSessionContextPrimaryInput] = useState('');
+    const [sessionContextEditingPrimary, setSessionContextEditingPrimary] = useState(false);
 
     useEffect(() => {
         setActiveTab(initialTab);
@@ -4939,11 +6500,97 @@ const SessionDetail: React.FC<{
         };
     }, [linkedFeatureLinks]);
 
+    const availableFeatures = useMemo(
+        () => [...features].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+        [features]
+    );
+
+    const resolveFeatureIdFromInput = useCallback((rawInput: string): string => {
+        const value = rawInput.trim();
+        if (!value) return '';
+
+        const normalized = value.toLowerCase();
+        const byId = availableFeatures.find(feature => String(feature.id || '').trim().toLowerCase() === normalized);
+        if (byId) return byId.id;
+
+        const byName = availableFeatures.filter(
+            feature => String(feature.name || '').trim().toLowerCase() === normalized
+        );
+        if (byName.length === 1) return byName[0].id;
+
+        return value;
+    }, [availableFeatures]);
+
+    const upsertSessionFeatureLink = useCallback(async (featureInput: string, linkRole: 'primary' | 'related'): Promise<boolean> => {
+        const featureId = resolveFeatureIdFromInput(featureInput);
+        if (!featureId) {
+            setFeatureLinkMutationError('Select a feature ID or exact feature name first.');
+            return false;
+        }
+
+        setFeatureLinkMutationInFlight(true);
+        setFeatureLinkMutationError(null);
+        try {
+            const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    featureId,
+                    linkRole,
+                }),
+            });
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                const detail = typeof payload?.detail === 'string' ? payload.detail : `Failed to update feature link (${res.status})`;
+                throw new Error(detail);
+            }
+            setLinkedFeatureLinks(Array.isArray(payload) ? payload as SessionFeatureLink[] : []);
+            return true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to update feature link';
+            setFeatureLinkMutationError(message);
+            return false;
+        } finally {
+            setFeatureLinkMutationInFlight(false);
+        }
+    }, [resolveFeatureIdFromInput, session.id]);
+
+    const removeSessionFeatureLink = useCallback(async (featureId: string): Promise<void> => {
+        const normalizedFeatureId = String(featureId || '').trim();
+        if (!normalizedFeatureId) return;
+
+        setFeatureLinkMutationInFlight(true);
+        setFeatureLinkMutationError(null);
+        try {
+            const res = await fetch(
+                `/api/sessions/${encodeURIComponent(session.id)}/linked-features/${encodeURIComponent(normalizedFeatureId)}`,
+                { method: 'DELETE' }
+            );
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                const detail = typeof payload?.detail === 'string' ? payload.detail : `Failed to remove feature link (${res.status})`;
+                throw new Error(detail);
+            }
+            setLinkedFeatureLinks(Array.isArray(payload) ? payload as SessionFeatureLink[] : []);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to remove feature link';
+            setFeatureLinkMutationError(message);
+        } finally {
+            setFeatureLinkMutationInFlight(false);
+        }
+    }, [session.id]);
+
+    useEffect(() => {
+        setFeatureLinkMutationError(null);
+        setSessionContextPrimaryInput('');
+        setSessionContextEditingPrimary(false);
+    }, [session.id]);
+
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
 
         for (const log of session.logs) {
-            if (log.type !== 'tool' || log.toolCall?.name !== 'Task' || !log.linkedSessionId) {
+            if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name) || !log.linkedSessionId) {
                 continue;
             }
             const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
@@ -4963,7 +6610,15 @@ const SessionDetail: React.FC<{
         }
 
         for (const thread of threadSessions) {
-            if (!names.has(thread.id) && thread.agentId) {
+            if (names.has(thread.id)) {
+                continue;
+            }
+            const titled = (thread.title || '').trim();
+            if (titled && titled !== thread.id) {
+                names.set(thread.id, titled);
+                continue;
+            }
+            if (thread.agentId) {
                 names.set(thread.id, `agent-${thread.agentId}`);
             }
         }
@@ -4991,6 +6646,33 @@ const SessionDetail: React.FC<{
         () => linkedFeatureLinks.find(link => link.isPrimaryLink) || null,
         [linkedFeatureLinks]
     );
+    const relatedFeatureLinks = useMemo(
+        () => linkedFeatureLinks.filter(link => !link.isPrimaryLink),
+        [linkedFeatureLinks]
+    );
+    const relatedFeatureTooltipRows = useMemo(
+        () => relatedFeatureLinks.map(link => ({
+            featureId: link.featureId,
+            featureName: linkedFeatureDetailsById[link.featureId]?.name || link.featureName || link.featureId,
+            confidence: link.confidence,
+        })),
+        [linkedFeatureDetailsById, relatedFeatureLinks]
+    );
+    const sessionContextFeatureInputListId = useMemo(
+        () => `session-context-feature-options-${session.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        [session.id]
+    );
+
+    const handleSetPrimaryFromSessionContext = useCallback(() => {
+        if (!sessionContextPrimaryInput.trim()) return;
+        void upsertSessionFeatureLink(sessionContextPrimaryInput, 'primary').then(success => {
+            if (success) {
+                setSessionContextPrimaryInput('');
+                setSessionContextEditingPrimary(false);
+            }
+        });
+    }, [sessionContextPrimaryInput, upsertSessionFeatureLink]);
+
     const taskArtifacts = useMemo(() => {
         const byNormalizedTaskId = new Map<string, string>();
 
@@ -5027,6 +6709,28 @@ const SessionDetail: React.FC<{
         () => deriveSessionCardTitle(session.id, session.title, session.sessionMetadata || null),
         [session.id, session.title, session.sessionMetadata]
     );
+    const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const primaryFeatureDetail = useMemo(
+        () => (primaryFeatureLink ? (linkedFeatureDetailsById[primaryFeatureLink.featureId] || null) : null),
+        [linkedFeatureDetailsById, primaryFeatureLink]
+    );
+    const primaryFeatureStatus = (primaryFeatureDetail?.status || primaryFeatureLink?.featureStatus || '').trim();
+    const primaryFeatureStatusStyle = getFeatureStatusStyle(primaryFeatureStatus || 'backlog');
+    const platformValue = String(sessionForensics.platform || session.platformType || 'claude_code').trim() || 'claude_code';
+    const platformVersion = String(session.platformVersion || '').trim();
+    const platformDisplay = platformVersion ? `${platformValue} ${platformVersion}` : platformValue;
+    const sessionDetailTabs: Array<{ id: SessionInspectorTab; icon: React.ComponentType<{ size?: number }>; label: string }> = [
+        { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
+        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
+        { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
+        { id: 'test-status', icon: TestTube2, label: 'Test Status' },
+        { id: 'analytics', icon: BarChart2, label: 'Analytics' },
+        { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
+        { id: 'impact', icon: TrendingUp, label: 'App Impact' },
+        { id: 'agents', icon: Users, label: 'Agents' },
+        { id: 'files', icon: FileText, label: 'Files' },
+        { id: 'activity', icon: Activity, label: 'Activity' },
+    ];
 
     const handleOpenFeature = useCallback((featureId: string) => {
         if (!featureId) return;
@@ -5036,42 +6740,170 @@ const SessionDetail: React.FC<{
     return (
         <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 relative">
             {/* Header */}
-            <div className="flex justify-between items-center mb-4 px-2">
-                <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all group">
-                        <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
-                    </button>
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                            {sessionDisplayTitle}
-                        </h2>
-                        <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5">{session.id}</div>
-                        <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
-                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
-                                {session.status}
-                            </span>
+            <div className="mb-4 px-2 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 min-w-0 flex-1">
+                        <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all group">
+                            <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+                        </button>
+                        <div className="min-w-0">
+                            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 min-w-0">
+                                {sessionDisplayTitle}
+                            </h2>
+                            <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
+                            <div className="flex flex-wrap items-center gap-3 mt-0.5">
+                                <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
+                                    {session.status}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 min-w-[18rem] max-w-[28rem] shrink-0 space-y-2">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Context</div>
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-start gap-2">
+                                {primaryFeatureLink ? (
+                                    <button
+                                        onClick={() => handleOpenFeature(primaryFeatureLink.featureId)}
+                                        className="flex-1 inline-flex items-center gap-2 rounded-lg border border-indigo-500/35 bg-indigo-500/10 px-2.5 py-1.5 text-left hover:bg-indigo-500/20 transition-colors min-w-0"
+                                    >
+                                        <span className="text-[10px] uppercase tracking-wide text-indigo-200/90 whitespace-nowrap">Linked Feature</span>
+                                        <span className="text-xs text-indigo-100 font-medium truncate max-w-[16rem]">
+                                            {primaryFeatureDetail?.name || primaryFeatureLink.featureName || primaryFeatureLink.featureId}
+                                        </span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${primaryFeatureStatusStyle.badge}`}>
+                                            {primaryFeatureStatusStyle.label}
+                                        </span>
+                                        <span className="text-[10px] text-indigo-200/80 font-mono whitespace-nowrap">
+                                            {Math.round(primaryFeatureLink.confidence * 100)}%
+                                        </span>
+                                        <ExternalLink size={11} className="text-indigo-200/80 shrink-0" />
+                                    </button>
+                                ) : (
+                                    !linkedFeatureDetailsLoading && (
+                                        <span className="flex-1 text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                            No linked feature
+                                        </span>
+                                    )
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFeatureLinkMutationError(null);
+                                        setSessionContextEditingPrimary(prev => {
+                                            const next = !prev;
+                                            if (next) {
+                                                setSessionContextPrimaryInput(primaryFeatureLink?.featureId || '');
+                                            }
+                                            return next;
+                                        });
+                                    }}
+                                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${sessionContextEditingPrimary
+                                        ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
+                                        : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200'
+                                        }`}
+                                    title={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
+                                    aria-label={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
+                                >
+                                    <Edit3 size={12} />
+                                    <span>{sessionContextEditingPrimary ? 'Close' : 'Edit'}</span>
+                                </button>
+                            </div>
+                            {linkedFeatureDetailsLoading && (
+                                <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                    Resolving linked feature...
+                                </span>
+                            )}
+                            {primaryFeatureLink && relatedFeatureLinks.length > 0 && (
+                                <div className="relative group/related-feature-badge w-fit">
+                                    <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 w-fit">
+                                        +{relatedFeatureLinks.length} related
+                                    </span>
+                                    <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[220px] max-w-[320px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/related-feature-badge:opacity-100 group-hover/related-feature-badge:translate-y-0">
+                                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Related Features</div>
+                                        <div className="space-y-1.5">
+                                            {relatedFeatureTooltipRows.slice(0, 8).map(row => (
+                                                <div key={`session-context-related-${row.featureId}`} className="flex items-center justify-between gap-3">
+                                                    <span className="text-[11px] text-slate-200 truncate">{row.featureName}</span>
+                                                    <span className="text-[10px] text-slate-500 font-mono shrink-0">{Math.round(row.confidence * 100)}%</span>
+                                                </div>
+                                            ))}
+                                            {relatedFeatureTooltipRows.length > 8 && (
+                                                <div className="text-[10px] text-slate-500">+{relatedFeatureTooltipRows.length - 8} more</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            {sessionContextEditingPrimary && (
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 space-y-2">
+                                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Set Primary Feature</div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            value={sessionContextPrimaryInput}
+                                            onChange={event => setSessionContextPrimaryInput(event.target.value)}
+                                            onKeyDown={event => {
+                                                if (event.key === 'Enter') {
+                                                    event.preventDefault();
+                                                    handleSetPrimaryFromSessionContext();
+                                                }
+                                            }}
+                                            list={sessionContextFeatureInputListId}
+                                            placeholder="Feature ID or exact feature name"
+                                            className="flex-1 text-xs rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1.5 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                        />
+                                        <datalist id={sessionContextFeatureInputListId}>
+                                            {availableFeatures.map(feature => (
+                                                <option key={`session-context-option-${feature.id}`} value={feature.id}>
+                                                    {feature.name || feature.id}
+                                                </option>
+                                            ))}
+                                        </datalist>
+                                        <button
+                                            type="button"
+                                            onClick={handleSetPrimaryFromSessionContext}
+                                            disabled={featureLinkMutationInFlight || !sessionContextPrimaryInput.trim()}
+                                            className="text-[11px] font-semibold rounded-md px-2.5 py-1.5 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            Set
+                                        </button>
+                                    </div>
+                                    {featureLinkMutationError && (
+                                        <div className="text-[11px] text-rose-300">
+                                            {featureLinkMutationError}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5">
+                                <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+                                    <Cpu size={12} />
+                                    Platform
+                                </span>
+                                <span className="text-[11px] text-slate-200 font-mono truncate" title={platformDisplay}>
+                                    {platformDisplay}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-6 shrink-0">
+                        <div className="text-right">
+                            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
+                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
                         </div>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
-                    {[
-                        { id: 'transcript', icon: MessageSquare, label: 'Transcript' },
-                        { id: 'activity', icon: Activity, label: 'Activity' },
-                        { id: 'forensics', icon: ShieldAlert, label: 'Forensics' },
-                        { id: 'features', icon: Box, label: `Features (${linkedFeatureLinks.length})` },
-                        { id: 'test-status', icon: TestTube2, label: 'Test Status' },
-                        { id: 'files', icon: FileText, label: 'Files' },
-                        { id: 'artifacts', icon: LinkIcon, label: 'Artifacts' },
-                        { id: 'impact', icon: TrendingUp, label: 'App Impact' },
-                        { id: 'analytics', icon: BarChart2, label: 'Analytics' },
-                        { id: 'agents', icon: Users, label: 'Agents' },
-                    ].map(tab => (
+                <div className="w-full flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
+                    {sessionDetailTabs.map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTabWithSync(tab.id as SessionInspectorTab)}
+                            onClick={() => setActiveTabWithSync(tab.id)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                 ? 'bg-indigo-600 text-white shadow'
                                 : 'text-slate-400 hover:text-slate-200'
@@ -5081,13 +6913,6 @@ const SessionDetail: React.FC<{
                             {tab.label}
                         </button>
                     ))}
-                </div>
-
-                <div className="flex items-center gap-6">
-                    <div className="text-right">
-                        <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                        <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
-                    </div>
                 </div>
             </div>
 
@@ -5113,8 +6938,14 @@ const SessionDetail: React.FC<{
                         currentSessionId={session.id}
                         linkedFeatures={linkedFeatureLinks}
                         linkedFeatureDetailsById={linkedFeatureDetailsById}
+                        availableFeatures={availableFeatures}
                         taskArtifacts={taskArtifacts}
                         loadingFeatureDetails={linkedFeatureDetailsLoading}
+                        linkMutationInFlight={featureLinkMutationInFlight}
+                        linkMutationError={featureLinkMutationError}
+                        onSetPrimaryFeature={featureInput => upsertSessionFeatureLink(featureInput, 'primary')}
+                        onAddRelatedFeature={featureInput => upsertSessionFeatureLink(featureInput, 'related')}
+                        onRemoveLinkedFeature={removeSessionFeatureLink}
                         onOpenFeature={handleOpenFeature}
                         onOpenSession={onOpenSession}
                     />
@@ -5126,6 +6957,7 @@ const SessionDetail: React.FC<{
                             sessionId={session.id}
                             sessionStatus={session.status}
                             sessionFileUpdates={session.updatedFiles || []}
+                            sessionLogs={session.logs || []}
                             onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
                         />
                     ) : (
@@ -5165,7 +6997,14 @@ const SessionDetail: React.FC<{
                         highlightedSourceLogId={linkedSourceLogId}
                     />
                 )}
-                {activeTab === 'analytics' && <AnalyticsView session={session} goToTranscript={handleJumpToTranscript} />}
+                {activeTab === 'analytics' && (
+                    <AnalyticsView
+                        session={session}
+                        threadSessions={threadSessions}
+                        threadSessionDetails={threadSessionDetails}
+                        goToTranscript={handleJumpToTranscript}
+                    />
+                )}
                 {activeTab === 'agents' && (
                     <AgentsView
                         session={session}
@@ -5175,7 +7014,7 @@ const SessionDetail: React.FC<{
                         onOpenThread={onOpenSession}
                     />
                 )}
-                {activeTab === 'impact' && <ImpactView session={session} />}
+                {activeTab === 'impact' && <ImpactView session={session} linkedFeatureLinks={linkedFeatureLinks} />}
             </div>
 
             {viewingDoc && <DocumentModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}

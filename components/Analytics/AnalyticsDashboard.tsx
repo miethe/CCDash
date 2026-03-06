@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendChart } from './TrendChart';
 import { analyticsService } from '../../services/analytics';
+import { useModelColors } from '../../contexts/ModelColorsContext';
 import {
     AnalyticsArtifactsResponse,
     AnalyticsCorrelationItem,
@@ -45,6 +46,25 @@ const PIE_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5
 
 const formatNumber = (value: number): string => Number(value || 0).toLocaleString();
 const formatCurrency = (value: number): string => `$${Number(value || 0).toFixed(4)}`;
+const formatDurationSeconds = (seconds: number): string => {
+    const total = Math.max(0, Number(seconds || 0));
+    if (total >= 3600) return `${(total / 3600).toFixed(1)}h`;
+    if (total >= 60) return `${(total / 60).toFixed(1)}m`;
+    return `${Math.round(total)}s`;
+};
+
+const ModelBadge: React.FC<{ model: string; family?: string }> = ({ model, family }) => {
+    const { getBadgeStyleForModel } = useModelColors();
+    return (
+        <span
+            className="inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[11px]"
+            style={getBadgeStyleForModel({ model, family })}
+            title={model || 'unknown'}
+        >
+            {model || 'unknown'}
+        </span>
+    );
+};
 
 const MetricCard: React.FC<{ label: string; value: string; subtitle: string }> = ({ label, value, subtitle }) => (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
@@ -66,12 +86,14 @@ const EntityLinkButton: React.FC<{ label: string; onClick: () => void; mono?: bo
 
 export const AnalyticsDashboard: React.FC = () => {
     const navigate = useNavigate();
+    const { getColorForModel, getBadgeStyleForModel } = useModelColors();
     const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
     const [metrics, setMetrics] = useState<AnalyticsMetric[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
     const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
+    const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -139,6 +161,48 @@ export const AnalyticsDashboard: React.FC = () => {
         () => (artifacts?.byFeature || []).slice(0, 10).map(item => ({ name: item.featureName || item.featureId, count: item.artifactCount })),
         [artifacts]
     );
+    const filteredCorrelation = useMemo(
+        () => (
+            correlationLinkedOnly
+                ? correlation.filter(row => Boolean((row.featureId || '').trim()))
+                : correlation
+        ),
+        [correlation, correlationLinkedOnly]
+    );
+    const correlationSummary = useMemo(() => {
+        const uniqueSessions = new Set<string>();
+        const sessionsWithLinks = new Set<string>();
+        let linkedRows = 0;
+        let highConfidenceRows = 0;
+        let confidenceTotal = 0;
+        let confidenceCount = 0;
+        let subagentRows = 0;
+        let totalTokens = 0;
+
+        correlation.forEach(row => {
+            if (row.sessionId) uniqueSessions.add(row.sessionId);
+            if (row.isSubagent) subagentRows += 1;
+            totalTokens += Number(row.totalTokens || 0);
+            if (!(row.featureId || '').trim()) return;
+            linkedRows += 1;
+            sessionsWithLinks.add(row.sessionId);
+            const confidence = Number(row.confidence || 0);
+            confidenceTotal += confidence;
+            confidenceCount += 1;
+            if (confidence >= 0.75) highConfidenceRows += 1;
+        });
+
+        return {
+            totalRows: correlation.length,
+            uniqueSessions: uniqueSessions.size,
+            linkedRows,
+            linkedSessionPct: uniqueSessions.size > 0 ? (sessionsWithLinks.size / uniqueSessions.size) * 100 : 0,
+            avgConfidence: confidenceCount > 0 ? confidenceTotal / confidenceCount : 0,
+            highConfidenceRows,
+            subagentRows,
+            totalTokens,
+        };
+    }, [correlation]);
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -333,7 +397,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 <tbody>
                                     {(artifacts?.modelArtifact || []).slice(0, 24).map((row, idx) => (
                                         <tr key={`${row.model}-${row.artifactType}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                            <td className="py-2 pr-3 font-mono text-xs">{row.model}</td>
+                                            <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
@@ -367,7 +431,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                                 <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
                                             </td>
                                             <td className="py-2 pr-3">
-                                                <div className="font-mono text-xs">{row.model}</div>
+                                                <div><ModelBadge model={row.model} family={row.modelFamily} /></div>
                                                 {row.modelFamily && <div className="text-[11px] text-slate-500">{row.modelFamily}</div>}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
@@ -433,7 +497,16 @@ export const AnalyticsDashboard: React.FC = () => {
                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
                                         formatter={(value: number, name: string) => [name === 'cost' ? formatCurrency(value) : formatNumber(value), name]}
                                     />
-                                    <Bar dataKey="tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="tokens" radius={[4, 4, 0, 0]}>
+                                        {modelTokenChart.map((entry, idx) => (
+                                            <Cell
+                                                key={`model-token-${entry.name}-${idx}`}
+                                                fill={modelGrouping === 'family'
+                                                    ? getColorForModel({ family: entry.name })
+                                                    : getColorForModel({ model: entry.name })}
+                                            />
+                                        ))}
+                                    </Bar>
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -455,7 +528,14 @@ export const AnalyticsDashboard: React.FC = () => {
                                 <tbody>
                                     {(artifacts?.modelFamilies || []).slice(0, 12).map((row, idx) => (
                                         <tr key={`${row.modelFamily}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                            <td className="py-2 pr-3">{row.modelFamily}</td>
+                                            <td className="py-2 pr-3">
+                                                <span
+                                                    className="inline-flex items-center rounded border px-1.5 py-0.5 text-xs"
+                                                    style={getBadgeStyleForModel({ family: row.modelFamily })}
+                                                >
+                                                    {row.modelFamily}
+                                                </span>
+                                            </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.totalTokens)}</td>
@@ -483,10 +563,14 @@ export const AnalyticsDashboard: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(artifacts?.modelArtifactTool || []).slice(0, 30).map((row, idx) => (
-                                        <tr key={`${row.model}-${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                            <td className="py-2 pr-3 font-mono text-xs">{row.model}</td>
-                                            <td className="py-2 pr-3 text-xs">{row.modelFamily || '-'}</td>
+                                        {(artifacts?.modelArtifactTool || []).slice(0, 30).map((row, idx) => (
+                                            <tr key={`${row.model}-${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                            <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                            <td className="py-2 pr-3 text-xs">
+                                                {row.modelFamily
+                                                    ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                    : '-'}
+                                            </td>
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 font-mono text-xs">{row.toolName}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -517,8 +601,12 @@ export const AnalyticsDashboard: React.FC = () => {
                                         {(artifacts?.commandModel || []).slice(0, 24).map((row, idx) => (
                                             <tr key={`${row.command}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                                 <td className="py-2 pr-3 font-mono text-xs">{row.command}</td>
-                                                <td className="py-2 pr-3 font-mono text-xs">{row.model}</td>
-                                                <td className="py-2 pr-3 text-xs">{row.modelFamily || '-'}</td>
+                                                <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                                <td className="py-2 pr-3 text-xs">
+                                                    {row.modelFamily
+                                                        ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                        : '-'}
+                                                </td>
                                                 <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
                                                 <td className="py-2 text-right font-mono">{formatNumber(row.sessions)}</td>
                                             </tr>
@@ -545,8 +633,12 @@ export const AnalyticsDashboard: React.FC = () => {
                                         {(artifacts?.agentModel || []).slice(0, 24).map((row, idx) => (
                                             <tr key={`${row.agent}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                                 <td className="py-2 pr-3">{row.agent}</td>
-                                                <td className="py-2 pr-3 font-mono text-xs">{row.model}</td>
-                                                <td className="py-2 pr-3 text-xs">{row.modelFamily || '-'}</td>
+                                                <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                                <td className="py-2 pr-3 text-xs">
+                                                    {row.modelFamily
+                                                        ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                        : '-'}
+                                                </td>
                                                 <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
                                                 <td className="py-2 text-right font-mono">{formatNumber(row.sessions)}</td>
                                             </tr>
@@ -640,25 +732,63 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'correlation' && (
                 <div className="space-y-6">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        <MetricCard label="Rows" value={formatNumber(correlationSummary.totalRows)} subtitle="session-feature links" />
+                        <MetricCard label="Sessions" value={formatNumber(correlationSummary.uniqueSessions)} subtitle={`${correlationSummary.linkedSessionPct.toFixed(1)}% linked`} />
+                        <MetricCard label="Linked Rows" value={formatNumber(correlationSummary.linkedRows)} subtitle="feature-attached rows" />
+                        <MetricCard label="High Confidence" value={formatNumber(correlationSummary.highConfidenceRows)} subtitle="confidence >= 0.75" />
+                        <MetricCard label="Avg Confidence" value={correlationSummary.avgConfidence.toFixed(2)} subtitle="linked rows only" />
+                        <MetricCard label="Session Tokens" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
+                    </div>
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Session ↔ Feature Correlation</h3>
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <h3 className="text-slate-200 font-semibold">Session ↔ Feature Correlation</h3>
+                            <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                                <button
+                                    onClick={() => setCorrelationLinkedOnly(false)}
+                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${!correlationLinkedOnly ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                >
+                                    All Rows
+                                </button>
+                                <button
+                                    onClick={() => setCorrelationLinkedOnly(true)}
+                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${correlationLinkedOnly ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                >
+                                    Linked Only
+                                </button>
+                            </div>
+                        </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="text-slate-400 border-b border-slate-800">
                                         <th className="text-left py-2 pr-3">Session</th>
+                                        <th className="text-left py-2 pr-3">Thread</th>
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Confidence</th>
+                                        <th className="text-right py-2 pr-3">Linked Features</th>
+                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">Cost</th>
+                                        <th className="text-right py-2 pr-3">Duration</th>
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-left py-2 pr-3">Family</th>
                                         <th className="text-left py-2">Link Strategy</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {correlation.slice(0, 40).map((row, idx) => (
+                                    {filteredCorrelation.slice(0, 80).map((row, idx) => (
                                         <tr key={`${row.sessionId}-${row.featureId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                             <td className="py-2 pr-3">
                                                 <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                                                    row.isSubagent
+                                                        ? 'bg-amber-500/10 text-amber-300 border border-amber-500/25'
+                                                        : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/25'
+                                                }`}>
+                                                    {row.isSubagent ? 'sub-thread' : 'main'}
+                                                </span>
                                             </td>
                                             <td className="py-2 pr-3">
                                                 {row.featureId ? (
@@ -671,8 +801,16 @@ export const AnalyticsDashboard: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{Number(row.confidence || 0).toFixed(2)}</td>
-                                            <td className="py-2 pr-3 font-mono text-xs">{row.model || '-'}</td>
-                                            <td className="py-2 pr-3 text-xs">{row.modelFamily || '-'}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.linkedFeatureCount || 0))}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.totalTokens || 0))}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatCurrency(Number(row.totalCost || 0))}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">{formatDurationSeconds(Number(row.durationSeconds || 0))}</td>
+                                            <td className="py-2 pr-3">{row.model ? <ModelBadge model={row.model} family={row.modelFamily} /> : <span className="text-slate-500">-</span>}</td>
+                                            <td className="py-2 pr-3 text-xs">
+                                                {row.modelFamily
+                                                    ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                    : '-'}
+                                            </td>
                                             <td className="py-2 text-xs text-slate-400">{row.linkStrategy || '-'}</td>
                                         </tr>
                                     ))}

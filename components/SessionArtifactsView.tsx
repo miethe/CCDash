@@ -28,6 +28,8 @@ const parseToolArgs = (raw: string | undefined): Record<string, unknown> | null 
   }
 };
 
+const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent']);
+
 const takeString = (...values: unknown[]): string | null => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
@@ -36,6 +38,9 @@ const takeString = (...values: unknown[]): string | null => {
   }
   return null;
 };
+
+const isSubagentToolCallName = (name?: string | null): boolean =>
+  SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
 
 const asRecord = (value: unknown): Record<string, any> => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -50,6 +55,15 @@ const asStringArray = (value: unknown): string[] => (
       .filter(Boolean)
     : []
 );
+
+const asNumber = (value: unknown, fallback = 0): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
 
 const extractTaskSubagentName = (toolArgs: string | undefined): string | null => {
   const args = parseToolArgs(toolArgs);
@@ -73,8 +87,10 @@ const extractTaskSubagentName = (toolArgs: string | undefined): string | null =>
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+  const titled = (thread.title || '').trim();
   return (
     subagentNameBySessionId.get(thread.id) ||
+    (titled && titled !== thread.id ? titled : '') ||
     (thread.agentId ? `agent-${thread.agentId}` : '') ||
     thread.sessionType ||
     'thread'
@@ -100,9 +116,207 @@ interface ArtifactGroup {
   artifacts: SessionArtifact[];
   sourceLogIds: string[];
   sourceToolNames: string[];
+  relatedSourceLogs: SessionLog[];
   relatedToolLogs: SessionLog[];
   linkedThreads: AgentSession[];
 }
+
+type ToolGroupCategory = 'hooks' | 'git' | 'tests' | 'other';
+
+const HOOK_TOOL_CALL_PATTERNS = [
+  /\bhook(s)?\b/,
+  /\bpre-commit\b/,
+  /\bpost-commit\b/,
+  /\bpre-push\b/,
+  /\bpost-merge\b/,
+  /\bhusky\b/,
+  /\blint-staged\b/,
+];
+
+const GIT_TOOL_CALL_PATTERNS = [
+  /\bgit\b/,
+  /\bcommit\b/,
+  /\bcheckout\b/,
+  /\bbranch\b/,
+  /\brebase\b/,
+  /\bmerge\b/,
+  /\bcherry-pick\b/,
+  /\bstash\b/,
+  /\bdiff\b/,
+  /\breset\b/,
+  /\brestore\b/,
+  /\bpush\b/,
+  /\bpull\b/,
+];
+
+const TEST_TOOL_CALL_PATTERNS = [
+  /\btest(s|ing)?\b/,
+  /\bpytest\b/,
+  /\bjest\b/,
+  /\bvitest\b/,
+  /\bmocha\b/,
+  /\bcypress\b/,
+  /\bplaywright\b/,
+  /\bcoverage\b/,
+  /\bspec\b/,
+];
+
+const TOOL_GROUP_SECTION_DEFS: Array<{ id: ToolGroupCategory; label: string; emptyLabel: string }> = [
+  { id: 'hooks', label: 'Hooks', emptyLabel: 'No hook-related tool calls.' },
+  { id: 'git', label: 'Git Calls', emptyLabel: 'No git-related tool calls.' },
+  { id: 'tests', label: 'Tests', emptyLabel: 'No test-related tool calls.' },
+  { id: 'other', label: 'Other Tool Calls', emptyLabel: 'No other tool calls.' },
+];
+
+const anyPatternMatches = (value: string, patterns: RegExp[]): boolean =>
+  patterns.some(pattern => pattern.test(value));
+
+const classifyToolGroup = (group: ArtifactGroup): ToolGroupCategory => {
+  const toolSignals = [
+    group.type,
+    group.title,
+    group.description,
+    group.source,
+    ...group.sourceToolNames,
+    ...group.relatedToolLogs.map(log => log.toolCall?.name || ''),
+    ...group.relatedToolLogs.map(log => log.content || ''),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (anyPatternMatches(toolSignals, HOOK_TOOL_CALL_PATTERNS)) return 'hooks';
+  if (anyPatternMatches(toolSignals, GIT_TOOL_CALL_PATTERNS)) return 'git';
+  if (anyPatternMatches(toolSignals, TEST_TOOL_CALL_PATTERNS)) return 'tests';
+  return 'other';
+};
+
+interface ArtifactTestRunRow {
+  logId: string;
+  timestamp: string;
+  framework: string;
+  status: string;
+  command: string;
+  description: string;
+  domain: string;
+  domains: string[];
+  targets: string[];
+  flags: string[];
+  timeoutMs: number;
+  total: number;
+  durationSeconds: number;
+  passRate: number;
+  workers: number;
+  collected: number;
+  summary: string;
+  counts: Record<string, number>;
+}
+
+const TEST_RESULT_ORDER = ['passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'deselected', 'rerun'];
+
+const testRunCountEntries = (counts: Record<string, number>): Array<[string, number]> => {
+  const ordered: Array<[string, number]> = [];
+  const seen = new Set<string>();
+  for (const key of TEST_RESULT_ORDER) {
+    const value = asNumber(counts[key], 0);
+    if (value > 0) {
+      ordered.push([key, value]);
+      seen.add(key);
+    }
+  }
+  for (const [key, raw] of Object.entries(counts)) {
+    if (seen.has(key)) continue;
+    const value = asNumber(raw, 0);
+    if (value > 0) {
+      ordered.push([key, value]);
+    }
+  }
+  return ordered;
+};
+
+const collectTestRunsFromLogs = (logs: SessionLog[]): ArtifactTestRunRow[] => {
+  const rows: ArtifactTestRunRow[] = [];
+  const seenLogIds = new Set<string>();
+  for (const log of logs) {
+    if (!log || !log.id || seenLogIds.has(log.id)) continue;
+
+    const metadata = asRecord(log.metadata);
+    const testRun = asRecord(metadata.testRun);
+    const result = asRecord(testRun.result);
+    const toolArgs = parseToolArgs(log.toolCall?.args) || {};
+
+    const countsRecord = asRecord(result.counts || metadata.testCounts);
+    const counts: Record<string, number> = {};
+    for (const key of TEST_RESULT_ORDER) {
+      const count = asNumber(countsRecord[key], 0);
+      if (count > 0) {
+        counts[key] = count;
+      }
+    }
+
+    let total = asNumber(result.total || metadata.testTotal, 0);
+    if (total <= 0) {
+      total = Object.values(counts).reduce((sum, count) => sum + asNumber(count, 0), 0);
+    }
+
+    const framework = takeString(
+      testRun.framework,
+      metadata.testFramework,
+      metadata.toolCategory === 'test' ? 'test' : null,
+    );
+    const domains = asStringArray(testRun.domains || metadata.testDomains);
+    const targets = asStringArray(testRun.targets || metadata.testTargets);
+    const hasSignals = Boolean(
+      Object.keys(testRun).length ||
+      metadata.toolCategory === 'test' ||
+      framework ||
+      domains.length ||
+      targets.length ||
+      total > 0 ||
+      Object.keys(counts).length > 0,
+    );
+    if (!hasSignals) continue;
+
+    rows.push({
+      logId: log.id,
+      timestamp: String(log.timestamp || ''),
+      framework: framework || 'test',
+      status: takeString(
+        result.status,
+        metadata.testStatus,
+        log.toolCall?.status === 'error' ? 'failed' : 'unknown',
+      ) || 'unknown',
+      command: takeString(
+        testRun.commandSegment,
+        testRun.command,
+        asRecord(toolArgs).command,
+        metadata.bashCommand,
+        metadata.command,
+        log.content,
+      ) || '',
+      description: takeString(
+        testRun.description,
+        metadata.testDescription,
+        asRecord(toolArgs).description,
+      ) || '',
+      domain: takeString(testRun.primaryDomain, metadata.testDomain, domains[0]) || '',
+      domains,
+      targets,
+      flags: asStringArray(testRun.flags || metadata.testFlags),
+      timeoutMs: asNumber(testRun.timeoutMs || metadata.testTimeoutMs || asRecord(toolArgs).timeout, 0),
+      total,
+      durationSeconds: asNumber(result.durationSeconds || metadata.testDurationSeconds, 0),
+      passRate: asNumber(result.passRate || metadata.testPassRate, 0),
+      workers: asNumber(result.workers || metadata.testWorkers, 0),
+      collected: asNumber(result.collected || metadata.testCollected, 0),
+      summary: takeString(result.summary, metadata.testSummary) || '',
+      counts,
+    });
+    seenLogIds.add(log.id);
+  }
+
+  return rows.sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp));
+};
 
 const ArtifactDetailsModal: React.FC<{
   group: ArtifactGroup;
@@ -110,6 +324,11 @@ const ArtifactDetailsModal: React.FC<{
   onOpenThread: (sessionId: string) => void;
   subagentNameBySessionId: Map<string, string>;
 }> = ({ group, onClose, onOpenThread, subagentNameBySessionId }) => {
+  const hasToolLogs = group.relatedToolLogs.length > 0;
+  const relatedLogs = hasToolLogs ? group.relatedToolLogs : group.relatedSourceLogs;
+  const relatedLogsHeading = hasToolLogs ? 'Related Tool Calls' : 'Related Source Events';
+  const testRunRows = useMemo(() => collectTestRunsFromLogs(relatedLogs), [relatedLogs]);
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
       <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
@@ -156,18 +375,26 @@ const ArtifactDetailsModal: React.FC<{
           </div>
 
           <div>
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Related Tool Calls</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{relatedLogsHeading}</h4>
             <div className="space-y-2">
-              {group.relatedToolLogs.length === 0 && (
-                <div className="text-xs text-slate-500">No related tool calls found.</div>
+              {relatedLogs.length === 0 && (
+                <div className="text-xs text-slate-500">No related source events found.</div>
               )}
-              {group.relatedToolLogs.map(log => (
+              {relatedLogs.map(log => (
                 <div key={log.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-mono text-slate-200">{log.toolCall?.name || 'tool'}</div>
-                    <div className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${log.toolCall?.status === 'error' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      {log.toolCall?.status || 'success'}
+                    <div className="text-sm font-mono text-slate-200">
+                      {log.toolCall?.name || log.metadata?.hookName || log.type || 'event'}
                     </div>
+                    {log.toolCall?.status ? (
+                      <div className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${log.toolCall.status === 'error' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                        {log.toolCall.status}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] px-1.5 py-0.5 rounded uppercase font-bold bg-slate-800 text-slate-400">
+                        {log.type}
+                      </div>
+                    )}
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1">
                     {log.id} • {log.timestamp}
@@ -176,6 +403,61 @@ const ArtifactDetailsModal: React.FC<{
               ))}
             </div>
           </div>
+
+          {testRunRows.length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                Parsed Test Run Details
+              </h4>
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {testRunRows.map((run, index) => (
+                  <div key={`${run.logId}-${run.timestamp}-${index}`} className="rounded-lg border border-slate-800 bg-slate-950 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-mono text-slate-200 truncate">{run.command || `${run.framework} run`}</div>
+                        <div className="text-[10px] text-slate-500">{run.logId} • {new Date(run.timestamp).toLocaleString()}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{run.framework}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${
+                          run.status === 'passed'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                            : run.status === 'failed'
+                              ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700'
+                        }`}>
+                          {run.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                      {run.total > 0 && <span>{run.total} tests</span>}
+                      {run.durationSeconds > 0 && <span>{run.durationSeconds.toFixed(2)}s</span>}
+                      {run.passRate > 0 && <span>{(run.passRate * 100).toFixed(1)}% pass</span>}
+                      {run.domain && <span>domain: {run.domain}</span>}
+                      {run.collected > 0 && <span>collected: {run.collected}</span>}
+                      {run.workers > 0 && <span>workers: {run.workers}</span>}
+                      {run.timeoutMs > 0 && <span>timeout: {run.timeoutMs}ms</span>}
+                      {testRunCountEntries(run.counts).map(([key, value]) => (
+                        <span key={`${run.logId}-${key}`} className="font-mono">{key}:{value}</span>
+                      ))}
+                    </div>
+
+                    {(run.description || run.summary || run.targets.length > 0 || run.domains.length > 0 || run.flags.length > 0) && (
+                      <div className="space-y-1 text-[11px] text-slate-500">
+                        {run.description && <div className="truncate">description: {run.description}</div>}
+                        {run.summary && <div className="truncate">summary: {run.summary}</div>}
+                        {run.targets.length > 0 && <div className="truncate">targets: {run.targets.join(', ')}</div>}
+                        {run.domains.length > 0 && <div className="truncate">domains: {run.domains.join(', ')}</div>}
+                        {run.flags.length > 0 && <div className="truncate">flags: {run.flags.join(' ')}</div>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Linked Sub-agent Threads</h4>
@@ -242,6 +524,7 @@ export const SessionArtifactsView: React.FC<{
     type MutableArtifactGroup = ArtifactGroup & {
       sourceLogIdSet: Set<string>;
       sourceToolNameSet: Set<string>;
+      relatedSourceLogIds: Set<string>;
       relatedToolLogIds: Set<string>;
       linkedThreadIds: Set<string>;
     };
@@ -265,10 +548,12 @@ export const SessionArtifactsView: React.FC<{
         artifacts: [],
         sourceLogIds: [],
         sourceToolNames: [],
+        relatedSourceLogs: [],
         relatedToolLogs: [],
         linkedThreads: [],
         sourceLogIdSet: new Set<string>(),
         sourceToolNameSet: new Set<string>(),
+        relatedSourceLogIds: new Set<string>(),
         relatedToolLogIds: new Set<string>(),
         linkedThreadIds: new Set<string>(),
       };
@@ -280,6 +565,10 @@ export const SessionArtifactsView: React.FC<{
       if (!log) {
         return;
       }
+      if (!group.relatedSourceLogIds.has(log.id)) {
+        group.relatedSourceLogIds.add(log.id);
+        group.relatedSourceLogs.push(log);
+      }
       if (log.type === 'tool' && !group.relatedToolLogIds.has(log.id)) {
         group.relatedToolLogIds.add(log.id);
         group.relatedToolLogs.push(log);
@@ -288,6 +577,38 @@ export const SessionArtifactsView: React.FC<{
         group.linkedThreadIds.add(log.linkedSessionId);
         group.linkedThreads.push(threadsById.get(log.linkedSessionId)!);
       }
+    };
+
+    const addSyntheticAgentGroupFromLog = (log: SessionLog) => {
+      const subagentName = extractTaskSubagentName(log.toolCall?.args)
+        || (log.linkedSessionId ? subagentNameBySessionId.get(log.linkedSessionId) : null)
+        || (log.linkedSessionId || null)
+        || 'Agent subthread';
+
+      const syntheticArtifact: SessionArtifact = {
+        id: `synthetic-agent-${log.id}-${subagentName}`,
+        type: 'agent',
+        title: subagentName,
+        source: 'tool',
+        description: 'Agent invocation inferred from tool call',
+        sourceLogId: log.id,
+        sourceToolName: log.toolCall?.name || 'tool',
+      };
+      const group = ensureGroup(syntheticArtifact);
+      if (!group.artifactIds.includes(syntheticArtifact.id)) {
+        group.artifactIds.push(syntheticArtifact.id);
+      }
+      if (!group.artifacts.some(item => item.id === syntheticArtifact.id)) {
+        group.artifacts.push(syntheticArtifact);
+      }
+      if (!group.description) {
+        group.description = syntheticArtifact.description;
+      }
+      group.sourceLogIdSet.add(log.id);
+      if (log.toolCall?.name) {
+        group.sourceToolNameSet.add(log.toolCall.name);
+      }
+      attachFromLog(group, log);
     };
 
     for (const artifact of artifacts) {
@@ -314,6 +635,20 @@ export const SessionArtifactsView: React.FC<{
       }
     }
 
+    for (const log of session.logs) {
+      if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
+        continue;
+      }
+      const existingAgentGroup = Array.from(groups.values()).some(group => {
+        if ((group.type || '').trim().toLowerCase() !== 'agent') return false;
+        if (group.sourceLogIdSet.has(log.id)) return true;
+        return group.relatedToolLogIds.has(log.id);
+      });
+      if (!existingAgentGroup) {
+        addSyntheticAgentGroupFromLog(log);
+      }
+    }
+
     for (const group of groups.values()) {
       for (const sourceLogId of group.sourceLogIdSet) {
         const sourceLog = logsById.get(sourceLogId);
@@ -321,7 +656,7 @@ export const SessionArtifactsView: React.FC<{
       }
       if (group.type === 'agent') {
         for (const log of session.logs) {
-          if (log.type !== 'tool' || log.toolCall?.name !== 'Task') {
+          if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
             continue;
           }
           const taskSubagentName = extractTaskSubagentName(log.toolCall?.args);
@@ -362,6 +697,7 @@ export const SessionArtifactsView: React.FC<{
         artifacts: group.artifacts,
         sourceLogIds: Array.from(group.sourceLogIdSet),
         sourceToolNames: Array.from(group.sourceToolNameSet),
+        relatedSourceLogs: group.relatedSourceLogs,
         relatedToolLogs: group.relatedToolLogs,
         linkedThreads: group.linkedThreads,
       }))
@@ -439,15 +775,100 @@ export const SessionArtifactsView: React.FC<{
     }),
     [groupedArtifacts],
   );
+  const toolGroupSections = useMemo(() => {
+    const groupedBySection: Record<ToolGroupCategory, ArtifactGroup[]> = {
+      hooks: [],
+      git: [],
+      tests: [],
+      other: [],
+    };
+    for (const group of toolGroups) {
+      groupedBySection[classifyToolGroup(group)].push(group);
+    }
+    return TOOL_GROUP_SECTION_DEFS.map(section => ({
+      ...section,
+      groups: groupedBySection[section.id],
+    }));
+  }, [toolGroups]);
 
   const visibleGroups = useMemo(() => {
     if (activeSubTab === 'skills') return skillGroups;
     if (activeSubTab === 'agents') return agentGroups;
-    if (activeSubTab === 'tools') return toolGroups;
     return [];
-  }, [activeSubTab, agentGroups, skillGroups, toolGroups]);
+  }, [activeSubTab, agentGroups, skillGroups]);
 
   const hasAnyData = commandEntries.length > 0 || skillGroups.length > 0 || agentGroups.length > 0 || toolGroups.length > 0;
+
+  const getBadgeCounts = (group: ArtifactGroup) => {
+    const mergedCount = group.artifacts.length;
+    const toolCallCount = group.relatedToolLogs.length > 0
+      ? group.relatedToolLogs.length
+      : group.relatedSourceLogs.length > 0
+        ? group.relatedSourceLogs.length
+        : group.sourceLogIds.length > 0
+          ? group.sourceLogIds.length
+          : group.sourceToolNames.length > 0
+            ? Math.max(mergedCount, 1)
+            : 0;
+    const subThreadCount = group.linkedThreads.length;
+    return { mergedCount, toolCallCount, subThreadCount };
+  };
+
+  const renderArtifactCard = (group: ArtifactGroup) => {
+    const { mergedCount, toolCallCount, subThreadCount } = getBadgeCounts(group);
+    return (
+      <button
+        key={group.key}
+        onClick={() => setSelectedGroup(group)}
+        className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group min-w-0 overflow-hidden ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+      >
+        <div className="flex justify-between items-start gap-3 mb-4 min-w-0">
+          <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
+            group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
+              'bg-blue-500/10 text-blue-400'
+            }`}>
+            {group.type === 'memory' ? <HardDrive size={20} /> :
+              group.type === 'request_log' ? <Scroll size={20} /> :
+                <Database size={20} />}
+          </div>
+          <span
+            className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider max-w-[9rem] truncate"
+            title={group.source}
+          >
+            {group.source}
+          </span>
+        </div>
+
+        <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors truncate" title={group.title}>
+          {group.title}
+        </h3>
+        <p className="text-sm text-slate-400 mb-4 line-clamp-3 break-all" title={group.description || ''}>
+          {group.description}
+        </p>
+
+        <div className="flex flex-wrap gap-2 mb-4">
+          <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+            {mergedCount} merged
+          </span>
+          <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+            {toolCallCount} tool calls
+          </span>
+          <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+            {subThreadCount} sub-threads
+          </span>
+        </div>
+
+        <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-2 min-w-0">
+          <span className="text-xs font-mono text-slate-500 truncate min-w-0 max-w-[65%]" title={group.artifactIds[0]}>
+            {group.artifactIds[0]}
+          </span>
+          <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300 shrink-0">
+            View Details <ChevronRight size={12} />
+          </span>
+        </div>
+      </button>
+    );
+  };
 
   if (!hasAnyData) {
     return (
@@ -540,56 +961,36 @@ export const SessionArtifactsView: React.FC<{
         </div>
       )}
 
-      {activeSubTab !== 'commands' && (
+      {activeSubTab === 'tools' && (
+        <div className="space-y-6">
+          {toolGroupSections.map(section => (
+            <section key={section.id} className="space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold">{section.label}</h3>
+                <span className="text-[11px] text-slate-500">{section.groups.length}</span>
+              </div>
+              {section.groups.length === 0 ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                  {section.emptyLabel}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {section.groups.map(renderArtifactCard)}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+
+      {activeSubTab !== 'commands' && activeSubTab !== 'tools' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {visibleGroups.length === 0 && (
             <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
               No {activeSubTab} artifacts found.
             </div>
           )}
-          {visibleGroups.map(group => (
-            <button
-              key={group.key}
-              onClick={() => setSelectedGroup(group)}
-              className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
-                  group.type === 'request_log' ? 'bg-amber-500/10 text-amber-400' :
-                    'bg-blue-500/10 text-blue-400'
-                  }`}>
-                  {group.type === 'memory' ? <HardDrive size={20} /> :
-                    group.type === 'request_log' ? <Scroll size={20} /> :
-                      <Database size={20} />}
-                </div>
-                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider">
-                  {group.source}
-                </span>
-              </div>
-
-              <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors">{group.title}</h3>
-              <p className="text-sm text-slate-400 mb-4 line-clamp-3">{group.description}</p>
-
-              <div className="flex flex-wrap gap-2 mb-4">
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.artifacts.length} merged
-                </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.relatedToolLogs.length} tool calls
-                </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {group.linkedThreads.length} sub-threads
-                </span>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                <span className="text-xs font-mono text-slate-500">{group.artifactIds[0]}</span>
-                <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300">
-                  View Details <ChevronRight size={12} />
-                </span>
-              </div>
-            </button>
-          ))}
+          {visibleGroups.map(renderArtifactCard)}
         </div>
       )}
 

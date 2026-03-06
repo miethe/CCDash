@@ -1,5 +1,89 @@
 # Changelog
 
+## 2026-03-06
+
+### Added
+
+- Document schema-alignment migration compatibility:
+  - legacy root-level superseded schema docs now classify as `spec` for ingestion/backfill compatibility.
+  - legacy frontmatter aliases now normalize into canonical fields (for example `test_strategy`, `api_contracts`, `compatibility_notes`, `breaking_changes`, `effort_estimate`, `duration`, `release_target`).
+- Rollout coverage for document/feature schema alignment:
+  - parser coverage for all canonical document types (`prd`, `implementation_plan`, `phase_plan`, `progress`, `report`, `design_doc`, `spec`, `document`).
+  - feature aggregation precedence tests and typed linked-feature source derivation tests.
+  - document/feature surface snapshot normalization tests.
+  - schema reference hygiene test for superseded spec path references.
+
+### Changed
+
+- Implementation plan status and rollout log for document/feature schema alignment now reflects completed phase 6-7 execution and validation.
+- Document schema catalog now includes current rollout status notes for migration compatibility and test coverage.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/document-entity-user-guide.md`
+  - `docs/schemas/document_frontmatter/README.md`
+  - `docs/project_plans/implementation_plans/refactors/document-feature-schema-alignment-v1.md`
+
+## 2026-03-05
+
+### Added
+
+- Agent/subagent invocation capture improvements:
+  - `Task` and `Agent` tool calls now persist richer invocation metadata (`taskId`, description, prompt preview, `subagent_type`, mode/model, background execution flag).
+  - Agent invocations are captured as first-class `session_artifacts` (`type=agent`) and correlated to linked sub-thread sessions.
+  - Sub-thread naming now prefers captured `subagent_type` and is reflected across transcript links, Session `Artifacts > Agents`, and the top-level `Agents` tab.
+- Test run execution enrichment for session transcripts and forensics:
+  - command-level extraction for test framework, targets, domain inference, flags, timeout, and capture hints.
+  - output-level enrichment for parsed result metrics (`passed`/`failed`/`skipped`/`xfailed`/etc), duration, worker counts, and pass-rate rollups.
+  - parser now persists normalized `testRun` metadata and aggregates session-level `sessionForensics.testExecution`.
+- Hook invocation capture:
+  - Claude `hook_progress` events now persist structured metadata (`hookName`, `hookPath`, `hookEvent`, `hookCommand`) on session logs.
+  - Hook events now create first-class `session_artifacts` (`type=hook`) tied to source log IDs.
+  - Added `entryContext.hookInvocations` in session forensics for correlation and downstream analytics.
+- Default transcript mapping coverage:
+  - added built-in mapping `artifact-hook-invocation` for `.claude/hooks/*` paths as `artifact` transcript events.
+- App Impact re-architecture:
+  - rebuilt Session Inspector `App Impact` as an outcome/correlation layer using currently captured pipelines (`updatedFiles`, `sessionForensics.testExecution`, linked artifacts/features, queue/API/tool signals).
+  - added derived correlation insights, pipeline coverage health panel, and filterable impact event stream.
+  - explicitly scoped boundary with `Analytics`: Analytics for resource/behavior telemetry, App Impact for delivery outcomes and inferred conclusions.
+- Codex impact event pipeline:
+  - Codex parser now emits `impactHistory` events (instead of always empty) from system events, test outcomes, and unmatched tool-result warnings.
+  - `ImpactPoint` schema now supports event-first fields with optional legacy numeric impact fields.
+
+### Changed
+
+- Session transcript formatting now supports stronger mapped-event rendering for captured invocation artifacts, including hooks and enriched test runs.
+- Session artifact correlation in inspector flows now has stronger linkage between tool logs, mapped transcript cards, artifact groups, and linked sub-thread sessions.
+- Session Inspector `Test Status` tab now includes:
+  - scrollable `Modified Tests During This Session` list covering all test-file reads/creates/updates/deletes.
+  - `Tests Run During This Session` list with one entry per detected test run and parsed result telemetry (framework/status/targets/domains/flags/counts/duration).
+- Session `Artifacts` test cards now surface parsed test-run details from correlated source logs so each test artifact can be inspected with run-level metadata.
+- Session forensics test-run aggregation now retains full run row history (removed prior run-row truncation).
+- Session Inspector header and tab ergonomics:
+  - tabs moved to a dedicated full-width row below the title section.
+  - added middle Session Context header panel between title and session cost.
+  - promoted Linked Feature and Platform into the header context panel.
+  - tab ordering updated so `Analytics` follows `Test Status`, and final sequence ends with `Agents`, `Files`, `Activity`.
+- Forensics Session Capture:
+  - removed duplicate `Platform` field from the Session Capture card now that Platform is promoted to the Session header context panel.
+
+### Fixed
+
+- Fixed unintended `Test Run` labeling regression where non-test shell/tool commands could appear as tests.
+  - UI now requires explicit test signals (`testRun` metadata, explicit/inferred test framework, or `toolCategory=test`) before rendering test-run formatting.
+- Fixed pytest output parsing gaps for truncated outputs (for example `tail/head` pipelines) by accepting pytest signal patterns without requiring full session headers.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/testing-user-guide.md`
+  - `docs/session-data-discovery.md`
+  - `docs/codebase-explorer-developer-reference.md`
+
 ## 2026-03-03
 
 ### Added

@@ -96,6 +96,23 @@ class SqliteEntityLinkRepository:
         )
         await self.db.commit()
 
+    async def delete_link(
+        self,
+        source_type: str,
+        source_id: str,
+        target_type: str,
+        target_id: str,
+        link_type: str = "related",
+    ) -> None:
+        await self.db.execute(
+            """DELETE FROM entity_links
+               WHERE source_type = ? AND source_id = ?
+                 AND target_type = ? AND target_id = ?
+                 AND link_type = ?""",
+            (source_type, source_id, target_type, target_id, link_type),
+        )
+        await self.db.commit()
+
     async def delete_all_for(self, entity_type: str, entity_id: str) -> None:
         await self.db.execute(
             """DELETE FROM entity_links

@@ -128,6 +128,8 @@ def derive_session_badges(
             _add_unique(agents, agents_seen, str(metadata.get("agentId")))
         if isinstance(metadata.get("subagentAgentId"), str):
             _add_unique(agents, agents_seen, str(metadata.get("subagentAgentId")))
+        if isinstance(metadata.get("taskSubagentType"), str):
+            _add_unique(agents, agents_seen, str(metadata.get("taskSubagentType")))
 
         metadata_model = metadata.get("model")
         if isinstance(metadata_model, str) and metadata_model.strip():

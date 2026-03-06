@@ -78,11 +78,22 @@ Signals discovered via this workflow are now wired into session ingestion and Se
   - `queuePressure`
   - `subagentTopology`
   - `toolResultIntensity`
+  - `testExecution` (aggregated parsed test-run telemetry from tool commands/results)
+    - includes full per-run rows (not truncated), command/domain/target/flag metadata, and parsed outcome counts when available
+    - pytest output parsing handles both full session output and truncated captures (`tail/head`) when pytest signals are present
+  - `entryContext.hookInvocations` (normalized hook invocation records from `hook_progress`)
   - `platformTelemetry`
   - `sidecars.toolResults`
 - Codex:
   - `resourceFootprint`
   - `codexPayloadSignals`
+
+Transcript/artifact mapping coverage now also includes:
+
+- structured artifact capture for `agent` and `task` tool invocations
+- structured artifact capture for `hook_progress` (`type=hook`)
+- structured artifact capture for test execution (`test_run`, `test_domain`, `test_target`) with run-level correlation metadata
+- default transcript artifact mapping for `.claude/hooks/*` invocation lines
 
 Related implementation files:
 

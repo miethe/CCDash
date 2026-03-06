@@ -1,0 +1,44 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/design-doc"
+title: "CCDash Design Document Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - title
+    properties:
+      doc_type:
+        const: design_doc
+      doc_subtype:
+        type: string
+        enum: [design_spec, design_system, wireframe, interaction_spec, visual_direction]
+      surfaces:
+        type: array
+        items:
+          type: string
+      user_flows:
+        type: array
+        items:
+          type: string
+      ux_goals:
+        type: array
+        items:
+          type: string
+      components:
+        type: array
+        items:
+          type: string
+      accessibility_notes:
+        type: array
+        items:
+          type: string
+      motion_notes:
+        type: array
+        items:
+          type: string
+      asset_refs:
+        type: array
+        items:
+          type: string
+

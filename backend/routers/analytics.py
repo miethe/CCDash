@@ -385,16 +385,16 @@ async def _fetch_artifact_analytics_rows(
     agent_rows = await _query_rows(
         db,
         sqlite_query=f"""
-            SELECT session_id, model, agent, occurred_at, payload_json
+            SELECT session_id, model, agent, occurred_at, event_type, payload_json
             FROM telemetry_events
-            WHERE {" AND ".join(event_filters_sqlite)} AND TRIM(COALESCE(agent, '')) != ''
+            WHERE {" AND ".join(event_filters_sqlite)} AND event_type LIKE 'log.%'
             ORDER BY occurred_at DESC
         """,
         sqlite_params=tuple(event_params_sqlite),
         postgres_query=f"""
-            SELECT session_id, model, agent, occurred_at, payload_json
+            SELECT session_id, model, agent, occurred_at, event_type, payload_json
             FROM telemetry_events
-            WHERE {" AND ".join(event_filters_pg)} AND TRIM(COALESCE(agent, '')) != ''
+            WHERE {" AND ".join(event_filters_pg)} AND event_type LIKE 'log.%'
             ORDER BY occurred_at DESC
         """,
         postgres_params=tuple(event_params_pg),
@@ -510,48 +510,6 @@ def _build_artifact_analytics_payload(
                 "skill": skill,
             }
         )
-
-    if not records:
-        return {
-            "totals": {
-                "artifactCount": 0,
-                "artifactTypes": 0,
-                "sessions": 0,
-                "features": 0,
-                "models": 0,
-                "modelFamilies": 0,
-                "tools": 0,
-                "sources": 0,
-                "agents": 0,
-                "skills": 0,
-                "commands": 0,
-                "kindTotals": {
-                    "agents": 0,
-                    "skills": 0,
-                    "commands": 0,
-                    "manifests": 0,
-                    "requests": 0,
-                },
-            },
-            "byType": [],
-            "bySource": [],
-            "byTool": [],
-            "bySession": [],
-            "byFeature": [],
-            "modelArtifact": [],
-            "artifactTool": [],
-            "modelArtifactTool": [],
-            "modelFamilies": [],
-            "commandModel": [],
-            "agentModel": [],
-            "tokenUsage": {
-                "byArtifactType": [],
-                "byModel": [],
-                "byModelArtifact": [],
-                "byModelFamily": [],
-            },
-            "detailLimit": detail_limit,
-        }
 
     def session_metrics(session_id: str) -> dict[str, Any]:
         lifecycle = lifecycle_by_session.get(session_id, {})
@@ -1130,25 +1088,15 @@ def _build_artifact_analytics_payload(
 
     agent_model: dict[tuple[str, str], dict[str, Any]] = {}
     agent_model_session_pairs: set[tuple[str, str, str]] = set()
-    for row in agent_rows:
-        session_id = str(row.get("session_id") or "").strip()
-        if not session_id:
-            continue
-        feature_ids = set(session_feature_map.get(session_id, set()))
-        if feature_filter_norm and feature_filter_norm not in feature_ids:
-            continue
-        model_dims = _model_dimensions(str(row.get("model") or "").strip() or str(lifecycle_by_session.get(session_id, {}).get("model_raw") or "unknown"))
-        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
-            continue
-        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
-            continue
-        agent_name = str(row.get("agent") or "").strip()
-        if not agent_name:
-            continue
+
+    def add_agent_model_observation(session_id: str, model_dims: dict[str, str], agent_name: str) -> None:
+        normalized_agent = str(agent_name or "").strip()
+        if not session_id or not normalized_agent:
+            return
         entry = agent_model.setdefault(
-            (agent_name, model_dims["canonical"]),
+            (normalized_agent, model_dims["canonical"]),
             {
-                "agent": agent_name,
+                "agent": normalized_agent,
                 "model": model_dims["canonical"],
                 "modelRawSet": set(),
                 "modelFamily": model_dims["family"],
@@ -1162,7 +1110,86 @@ def _build_artifact_analytics_payload(
         entry["count"] += 1
         entry["modelRawSet"].add(model_dims["raw"])
         entry["sessionSet"].add(session_id)
-        agent_model_session_pairs.add((session_id, agent_name, model_dims["canonical"]))
+        agent_model_session_pairs.add((session_id, normalized_agent, model_dims["canonical"]))
+
+    def extract_agent_name(
+        *,
+        row_agent: Any,
+        event_type: Any,
+        payload: dict[str, Any],
+    ) -> str:
+        if row_agent:
+            return str(row_agent).strip()
+        metadata = payload.get("metadata") if isinstance(payload, dict) else {}
+        if isinstance(metadata, dict):
+            resolved = str(
+                metadata.get("agentName")
+                or metadata.get("agent_name")
+                or metadata.get("subagentName")
+                or metadata.get("taskSubagentType")
+                or metadata.get("subagentType")
+                or metadata.get("subagent_type")
+                or metadata.get("subagentAgentId")
+                or metadata.get("agentId")
+                or ""
+            ).strip()
+            if resolved:
+                return resolved
+        if isinstance(payload, dict):
+            resolved = str(
+                payload.get("agentName")
+                or payload.get("agent_name")
+                or payload.get("subagentName")
+                or payload.get("subagentType")
+                or payload.get("subagent_type")
+                or ""
+            ).strip()
+            if resolved:
+                return resolved
+        speaker = str((payload.get("speaker") if isinstance(payload, dict) else "") or "").strip().lower()
+        if speaker == "agent":
+            return "Main Session"
+        if str(event_type or "").strip().lower() == "log.subagent_start":
+            return "Subagent"
+        return ""
+
+    for row in agent_rows:
+        session_id = str(row.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        feature_ids = set(session_feature_map.get(session_id, set()))
+        if feature_filter_norm and feature_filter_norm not in feature_ids:
+            continue
+        model_dims = _model_dimensions(str(row.get("model") or "").strip() or str(lifecycle_by_session.get(session_id, {}).get("model_raw") or "unknown"))
+        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
+            continue
+        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
+            continue
+        payload = _safe_json(row.get("payload_json"))
+        agent_name = extract_agent_name(
+            row_agent=row.get("agent"),
+            event_type=row.get("event_type"),
+            payload=payload if isinstance(payload, dict) else {},
+        )
+        if not agent_name:
+            continue
+        add_agent_model_observation(session_id, model_dims, agent_name)
+
+    for record in records:
+        session_id = str(record.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        model_dims = _model_dimensions(str(record.get("model_raw") or record.get("model") or "unknown"))
+        if model_filter_norm and model_filter_norm != model_dims["canonical"].lower():
+            continue
+        if model_family_filter_norm and model_family_filter_norm != model_dims["family"].lower():
+            continue
+        agent_name = str(record.get("agent") or "").strip()
+        if not agent_name and str(record.get("artifact_type") or "") == "agent":
+            agent_name = str(record.get("title") or "").strip()
+        if not agent_name:
+            continue
+        add_agent_model_observation(session_id, model_dims, agent_name)
 
     for session_id, agent_name, model in agent_model_session_pairs:
         lifecycle = session_metrics(session_id)
@@ -1565,42 +1592,53 @@ async def get_correlation(
     items: list[dict[str, Any]] = []
     for row in sessions:
         session_id = str(row.get("id") or "")
+        if not session_id:
+            continue
         links = await link_repo.get_links_for("session", session_id, "related")
         feature_links = [link for link in links if link.get("source_type") == "feature"]
+        model_dims = _model_dimensions(row.get("model"))
+        session_type = str(row.get("session_type") or "")
+        token_input = int(row.get("tokens_in") or 0)
+        token_output = int(row.get("tokens_out") or 0)
+        base_payload = {
+            "sessionId": session_id,
+            "commitHash": row.get("git_commit_hash") or "",
+            "model": model_dims["canonical"],
+            "modelRaw": model_dims["raw"],
+            "modelFamily": model_dims["family"],
+            "status": row.get("status") or "",
+            "startedAt": row.get("started_at") or "",
+            "endedAt": row.get("ended_at") or "",
+            "rootSessionId": row.get("root_session_id") or "",
+            "parentSessionId": row.get("parent_session_id") or "",
+            "sessionType": session_type or "",
+            "durationSeconds": int(row.get("duration_seconds") or 0),
+            "tokenInput": token_input,
+            "tokenOutput": token_output,
+            "totalTokens": token_input + token_output,
+            "totalCost": float(row.get("total_cost") or 0.0),
+            "linkedFeatureCount": len(feature_links),
+            "isSubagent": session_type == "subagent",
+        }
         if not feature_links:
-            model_dims = _model_dimensions(row.get("model"))
             items.append({
-                "sessionId": session_id,
+                **base_payload,
                 "featureId": "",
                 "featureName": "",
                 "confidence": 0.0,
-                "commitHash": row.get("git_commit_hash") or "",
-                "model": model_dims["canonical"],
-                "modelRaw": model_dims["raw"],
-                "modelFamily": model_dims["family"],
-                "status": row.get("status") or "",
-                "startedAt": row.get("started_at") or "",
-                "endedAt": row.get("ended_at") or "",
+                "linkStrategy": "",
             })
             continue
         for link in feature_links:
             feature_id = str(link.get("source_id") or "")
             feature_row = await feature_repo.get_by_id(feature_id)
             metadata = _safe_json(link.get("metadata_json"))
-            model_dims = _model_dimensions(row.get("model"))
             items.append({
-                "sessionId": session_id,
+                **base_payload,
                 "featureId": feature_id,
                 "featureName": (feature_row or {}).get("name", ""),
                 "confidence": float(link.get("confidence") or 0.0),
                 "linkStrategy": metadata.get("linkStrategy") or "",
-                "commitHash": row.get("git_commit_hash") or "",
-                "model": model_dims["canonical"],
-                "modelRaw": model_dims["raw"],
-                "modelFamily": model_dims["family"],
-                "status": row.get("status") or "",
-                "startedAt": row.get("started_at") or "",
-                "endedAt": row.get("ended_at") or "",
             })
 
     total = len(items)

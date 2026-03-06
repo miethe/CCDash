@@ -239,6 +239,45 @@ class SessionParserTests(unittest.TestCase):
         task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
         self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a123")
 
+    def test_hook_progress_creates_hook_artifact_with_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "progress",
+                    "timestamp": "2026-03-05T11:00:00Z",
+                    "data": {
+                        "type": "hook_progress",
+                        "hookName": "notebooklm-sync-hook.sh",
+                        "hookEvent": "post-tool",
+                        "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notebooklm-sync-hook.sh --session abc",
+                    },
+                }
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        hook_logs = [
+            log
+            for log in session.logs
+            if log.type == "system" and log.metadata.get("eventType") == "hook_progress"
+        ]
+        self.assertEqual(len(hook_logs), 1)
+        self.assertEqual(hook_logs[0].metadata.get("hookName"), "notebooklm-sync-hook.sh")
+        self.assertEqual(hook_logs[0].metadata.get("hookEvent"), "post-tool")
+        self.assertIn(".claude/hooks/notebooklm-sync-hook.sh", str(hook_logs[0].metadata.get("hookPath") or ""))
+
+        hook_artifacts = [a for a in session.linkedArtifacts if a.type == "hook"]
+        self.assertEqual(len(hook_artifacts), 1)
+        self.assertEqual(hook_artifacts[0].title, "notebooklm-sync-hook.sh")
+        self.assertEqual(hook_artifacts[0].source, "hook_progress")
+
+        hook_forensics = session.sessionForensics.get("entryContext", {}).get("hookInvocations", [])
+        self.assertEqual(len(hook_forensics), 1)
+        self.assertEqual(hook_forensics[0].get("hookName"), "notebooklm-sync-hook.sh")
+
     def test_async_task_tool_result_creates_subagent_start_link(self) -> None:
         path = self._write_jsonl(
             [
@@ -340,6 +379,74 @@ class SessionParserTests(unittest.TestCase):
         task_artifacts = [a for a in session.linkedArtifacts if a.type == "task"]
         self.assertEqual(len(task_artifacts), 1)
         self.assertEqual(task_artifacts[0].title, "SSO-1.5")
+
+    def test_agent_tool_extracts_metadata_and_links_subthread(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_agent_1",
+                                "name": "Agent",
+                                "input": {
+                                    "description": "TASK-5.1: Replace direct session usage",
+                                    "prompt": "Migrate router to repository DI.",
+                                    "subagent_type": "python-backend-engineer",
+                                    "mode": "bypassPermissions",
+                                    "run_in_background": True,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T10:00:01Z",
+                    "toolUseResult": {
+                        "status": "async_launched",
+                        "isAsync": True,
+                        "agentId": "abc123",
+                    },
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_agent_1",
+                                "content": [{"type": "text", "text": "agentId: abc123"}],
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        agent_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Agent"]
+        self.assertEqual(len(agent_tools), 1)
+        metadata = agent_tools[0].metadata
+        self.assertEqual(metadata.get("taskId"), "TASK-5.1")
+        self.assertEqual(metadata.get("taskDescription"), "TASK-5.1: Replace direct session usage")
+        self.assertEqual(metadata.get("taskSubagentType"), "python-backend-engineer")
+        self.assertEqual(metadata.get("taskMode"), "bypassPermissions")
+        self.assertEqual(metadata.get("taskRunInBackground"), True)
+        self.assertEqual(agent_tools[0].linkedSessionId, "S-agent-abc123")
+
+        starts = [l for l in session.logs if l.type == "subagent_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0].linkedSessionId, "S-agent-abc123")
+
+        agent_titles = {a.title for a in session.linkedArtifacts if a.type == "agent"}
+        self.assertIn("python-backend-engineer", agent_titles)
 
     def test_thinking_becomes_thought_log_and_extracts_artifacts_and_files(self) -> None:
         path = self._write_jsonl(
@@ -830,6 +937,163 @@ class SessionParserTests(unittest.TestCase):
         self.assertTrue(tool_logs[0].metadata.get("bashProgressLinked"))
         self.assertEqual(tool_logs[0].metadata.get("bashElapsedSeconds"), 1.2)
         self.assertEqual(tool_logs[0].metadata.get("bashTotalLines"), 2)
+
+    def test_bash_pytest_tool_result_captures_test_run_metadata_and_forensics(self) -> None:
+        output_text = (
+            "============================= test session starts ==============================\n"
+            "platform darwin -- Python 3.12.0, pytest-8.4.2, pluggy-1.6.0\n"
+            "rootdir: /Users/miethe/dev/homelab/development/skillmeat\n"
+            "configfile: pytest.ini\n"
+            "plugins: benchmark-5.2.3, asyncio-1.2.0, anyio-4.11.0, xdist-3.8.0, timeout-2.4.0, cov-7.0.0\n"
+            "created: 12/12 workers\n"
+            "12 workers [132 items]\n"
+            "======================= 130 passed, 2 xfailed in 15.01s ========================\n"
+        )
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T12:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "python -m pytest tests/api/test_marketplace_router.py tests/api/test_marketplace_source_security.py -x -q --tb=short 2>&1 | tail -20",
+                                    "description": "Run marketplace tests to verify agent fixes",
+                                    "timeout": 120000,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T12:00:03Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_1",
+                                "content": output_text,
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.id == "toolu_pytest_1"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("toolCategory"), "test")
+        self.assertEqual(metadata.get("testFramework"), "pytest")
+        self.assertEqual(metadata.get("testDomain"), "api")
+        self.assertEqual(metadata.get("testDescription"), "Run marketplace tests to verify agent fixes")
+        self.assertEqual(metadata.get("testTimeoutMs"), 120000)
+        self.assertEqual(metadata.get("testStatus"), "passed")
+        self.assertEqual(metadata.get("testTotal"), 132)
+        self.assertEqual(metadata.get("testWorkers"), 12)
+        self.assertEqual(metadata.get("testCollected"), 132)
+        self.assertEqual(metadata.get("testPytestVersion"), "8.4.2")
+        self.assertEqual(metadata.get("testPythonVersion"), "3.12.0")
+        self.assertIn("tests/api/test_marketplace_router.py", metadata.get("testTargets", []))
+        self.assertIn("tests/api/test_marketplace_source_security.py", metadata.get("testTargets", []))
+        self.assertIn("-x", metadata.get("testFlags", []))
+        self.assertIn("-q", metadata.get("testFlags", []))
+        self.assertIn("--tb=short", metadata.get("testFlags", []))
+        counts = metadata.get("testCounts", {})
+        self.assertEqual(counts.get("passed"), 130)
+        self.assertEqual(counts.get("xfailed"), 2)
+
+        artifact_types = {a.type for a in session.linkedArtifacts}
+        self.assertIn("test_run", artifact_types)
+        self.assertIn("test_domain", artifact_types)
+        self.assertIn("test_target", artifact_types)
+
+        test_execution = session.sessionForensics.get("testExecution", {})
+        self.assertEqual(test_execution.get("runCount"), 1)
+        self.assertEqual(test_execution.get("domainCounts", {}).get("api"), 1)
+        self.assertEqual(test_execution.get("statusCounts", {}).get("passed"), 1)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("passed"), 130)
+        analysis_signals = session.sessionForensics.get("analysisSignals", {})
+        self.assertTrue(bool(analysis_signals.get("hasTestRunSignals")))
+
+    def test_bash_pytest_truncated_output_without_header_still_parses_results(self) -> None:
+        output_text = (
+            "FAILED tests/api/test_marketplace_router.py::test_requires_auth - assert 401 == 200\n"
+            "=========================== short test summary info ============================\n"
+            "FAILED tests/api/test_marketplace_router.py::test_requires_auth - assert 401 == 200\n"
+            "======================== 1 failed, 21 passed in 13.35s ========================\n"
+        )
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-05T13:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_truncated_1",
+                                "name": "Bash",
+                                "input": {
+                                    "command": "python -m pytest tests/api/test_marketplace_router.py -x -q --tb=short 2>&1 | tail -20",
+                                    "description": "Run API tests after agent changes",
+                                    "timeout": 120000,
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-05T13:00:03Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_truncated_1",
+                                "content": output_text,
+                                "is_error": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tool_logs = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.id == "toolu_pytest_truncated_1"]
+        self.assertEqual(len(tool_logs), 1)
+        metadata = tool_logs[0].metadata
+        self.assertEqual(metadata.get("toolCategory"), "test")
+        self.assertEqual(metadata.get("testFramework"), "pytest")
+        self.assertEqual(metadata.get("testStatus"), "failed")
+        self.assertEqual(metadata.get("testTotal"), 22)
+        counts = metadata.get("testCounts", {})
+        self.assertEqual(counts.get("passed"), 21)
+        self.assertEqual(counts.get("failed"), 1)
+
+        test_execution = session.sessionForensics.get("testExecution", {})
+        self.assertEqual(test_execution.get("runCount"), 1)
+        self.assertEqual(test_execution.get("statusCounts", {}).get("failed"), 1)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("passed"), 21)
+        self.assertEqual(test_execution.get("resultCounts", {}).get("failed"), 1)
 
     def test_recent_session_without_terminal_marker_is_active(self) -> None:
         path = self._write_jsonl(

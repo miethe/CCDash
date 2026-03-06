@@ -25,7 +25,7 @@ class SessionBadgesTests(unittest.TestCase):
             {
                 "type": "tool",
                 "tool_name": "Bash",
-                "metadata_json": '{"subagentAgentId":"worker-1"}',
+                "metadata_json": '{"subagentAgentId":"worker-1","taskSubagentType":"python-backend-engineer"}',
             },
             {
                 "type": "tool",
@@ -45,7 +45,7 @@ class SessionBadgesTests(unittest.TestCase):
             model_raws,
             ["claude-opus-4-5-20251101", "claude-3-7-sonnet-20260201", "gpt-5"],
         )
-        self.assertEqual(badges["agentsUsed"], ["root-agent", "Planner", "worker-1"])
+        self.assertEqual(badges["agentsUsed"], ["root-agent", "Planner", "worker-1", "python-backend-engineer"])
         self.assertEqual(badges["skillsUsed"], ["frontend-design"])
         self.assertEqual(badges["toolSummary"], ["Bash x2", "Skill x1"])
 

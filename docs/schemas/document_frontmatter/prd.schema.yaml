@@ -1,0 +1,115 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/prd"
+title: "CCDash PRD Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - feature_slug
+      - problem_statement
+    properties:
+      doc_type:
+        const: prd
+      doc_subtype:
+        type: string
+        enum: [product_requirements, roadmap, enhancement_prd, phase_prd, research_prd]
+      problem_statement:
+        type: string
+      context:
+        type: string
+      goals:
+        type: array
+        items:
+          type: object
+          required: [id, title]
+          properties:
+            id: { type: string }
+            title: { type: string }
+            description: { type: string }
+            metric: { type: string }
+            priority: { type: string }
+      non_goals:
+        type: array
+        items:
+          type: string
+      users:
+        type: array
+        items:
+          type: string
+      jobs_to_be_done:
+        type: array
+        items:
+          type: string
+      success_metrics:
+        type: array
+        items:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            baseline: {}
+            target: {}
+            unit: { type: string }
+            notes: { type: string }
+      functional_requirements:
+        type: array
+        items:
+          $ref: "#/$defs/requirement"
+      non_functional_requirements:
+        type: array
+        items:
+          $ref: "#/$defs/requirement"
+      acceptance_criteria:
+        type: array
+        items:
+          type: string
+      assumptions:
+        type: array
+        items:
+          type: string
+      dependencies:
+        type: array
+        items:
+          type: string
+      risks:
+        type: array
+        items:
+          $ref: "#/$defs/risk"
+      decisions:
+        type: array
+        items:
+          type: object
+          required: [title]
+          properties:
+            title: { type: string }
+            status: { type: string }
+            owner: { type: string }
+            notes: { type: string }
+      implementation_plan_ref:
+        anyOf:
+          - type: string
+          - $ref: "./base-envelope.schema.yaml#/$defs/refObject"
+$defs:
+  requirement:
+    type: object
+    required: [id, title]
+    properties:
+      id: { type: string }
+      title: { type: string }
+      description: { type: string }
+      priority: { type: string }
+      status: { type: string }
+      acceptance_criteria:
+        type: array
+        items: { type: string }
+  risk:
+    type: object
+    required: [description]
+    properties:
+      id: { type: string }
+      level: { type: string }
+      description: { type: string }
+      mitigation: { type: string }
+

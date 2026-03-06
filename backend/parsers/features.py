@@ -13,8 +13,12 @@ import yaml
 
 from backend.models import (
     EntityDates,
+    FeatureDocumentCoverage,
     Feature,
     FeaturePhase,
+    FeaturePrimaryDocuments,
+    FeatureQualitySignals,
+    LinkedFeatureRef,
     LinkedDocument,
     ProjectTask,
     TimelineEvent,
@@ -55,6 +59,41 @@ _DOC_COMPLETION_STATUSES = {"completed", "deferred", "inferred_complete"}
 _DOC_WRITE_THROUGH_TYPES = {"prd", "implementation_plan", "phase_plan"}
 _INFERRED_COMPLETE_STATUS = "inferred_complete"
 _DATE_CONFIDENCE_LEVELS = {"high", "medium", "low"}
+_FEATURE_PRIORITY_ORDER = {
+    "critical": 5,
+    "highest": 5,
+    "high": 4,
+    "p1": 4,
+    "medium": 3,
+    "normal": 3,
+    "p2": 3,
+    "low": 2,
+    "minor": 2,
+    "p3": 2,
+    "deferred": 1,
+}
+_FEATURE_RISK_ORDER = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "minimal": 1,
+}
+_TEST_IMPACT_ORDER = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "none": 1,
+}
+_READINESS_ORDER = {
+    "blocked": 1,
+    "at_risk": 2,
+    "planning": 3,
+    "in_progress": 4,
+    "review": 5,
+    "ready": 6,
+}
 
 
 _STATUS_MAP = {
@@ -172,6 +211,108 @@ def _normalize_feature_refs(values: list[str]) -> list[str]:
         seen.add(token)
         items.append(token)
     return items
+
+
+def _normalize_linked_feature_refs(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        feature = str(entry.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        relation_type = str(entry.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(entry.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        key = (feature, relation_type, source)
+        if key in seen:
+            continue
+        seen.add(key)
+        confidence: float | None = None
+        confidence_raw = entry.get("confidence")
+        if confidence_raw is not None:
+            try:
+                confidence = max(0.0, min(1.0, float(confidence_raw)))
+            except Exception:
+                confidence = None
+        refs.append(
+            {
+                "feature": feature,
+                "type": relation_type,
+                "source": source,
+                "confidence": confidence,
+                "notes": str(entry.get("notes") or ""),
+                "evidence": [
+                    str(v)
+                    for v in _to_string_list(entry.get("evidence"))
+                    if isinstance(v, str) and str(v).strip()
+                ],
+            }
+        )
+    return refs
+
+
+def _normalize_choice_token(raw: Any) -> str:
+    token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return re.sub(r"_+", "_", token).strip("_")
+
+
+def _pick_highest_ranked(values: list[str], ranking: dict[str, int]) -> str:
+    best_value = ""
+    best_rank = -1
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        rank = ranking.get(_normalize_choice_token(value), 0)
+        if rank > best_rank:
+            best_rank = rank
+            best_value = value
+    return best_value
+
+
+def _pick_latest_document(docs: list["LinkedDocument"]) -> Optional["LinkedDocument"]:
+    def _doc_sort_value(doc: "LinkedDocument") -> str:
+        updated = getattr(getattr(doc, "dates", None), "updatedAt", None)
+        if getattr(updated, "value", ""):
+            return str(updated.value)
+        created = getattr(getattr(doc, "dates", None), "createdAt", None)
+        if getattr(created, "value", ""):
+            return str(created.value)
+        return ""
+
+    if not docs:
+        return None
+    ordered = sorted(docs, key=_doc_sort_value, reverse=True)
+    return ordered[0] if ordered else None
+
+
+def _safe_list(raw: Any) -> list[Any]:
+    return raw if isinstance(raw, list) else []
+
+
+def _normalize_feature_finding_severity(raw: Any) -> str:
+    token = _normalize_choice_token(raw)
+    if not token:
+        return "unspecified"
+    if token in {"critical", "high", "medium", "low"}:
+        return token
+    return "unspecified"
+
+
+def _normalize_doc_type_token(raw: Any) -> str:
+    token = _normalize_choice_token(raw)
+    aliases = {
+        "implementationplan": "implementation_plan",
+        "phaseplan": "phase_plan",
+        "designspec": "design_doc",
+        "design_spec": "design_doc",
+        "design_doc": "design_doc",
+        "specification": "spec",
+    }
+    return aliases.get(token, token or "document")
 
 
 def _slug_from_path(path: Path) -> str:
@@ -325,6 +466,7 @@ def _extract_doc_metadata(
         "frontmatter_keys": sorted(str(key) for key in frontmatter.keys()),
         "related_refs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
         "feature_refs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
+        "linked_feature_refs": _normalize_linked_feature_refs(refs.get("typedFeatureRefs")),
         "prd_ref": str(refs.get("prd") or ""),
         "dates": dates,
         "timeline": timeline,
@@ -412,6 +554,7 @@ def _scan_impl_plans(
                     "lineage_parent": doc_meta.get("lineage_parent", ""),
                     "lineage_children": doc_meta.get("lineage_children", []),
                     "lineage_type": doc_meta.get("lineage_type", ""),
+                    "linked_feature_refs": doc_meta.get("linked_feature_refs", []),
                     "dates": doc_meta.get("dates", {}),
                     "timeline": doc_meta.get("timeline", []),
                 })
@@ -431,6 +574,7 @@ def _scan_impl_plans(
             "lineage_parent": doc_meta.get("lineage_parent", ""),
             "lineage_children": doc_meta.get("lineage_children", []),
             "lineage_type": doc_meta.get("lineage_type", ""),
+            "linked_feature_refs": doc_meta.get("linked_feature_refs", []),
             "phase_docs": [],
             "dates": doc_meta.get("dates", {}),
             "timeline": doc_meta.get("timeline", []),
@@ -492,6 +636,7 @@ def _scan_prds(
             "lineage_parent": doc_meta.get("lineage_parent", ""),
             "lineage_children": doc_meta.get("lineage_children", []),
             "lineage_type": doc_meta.get("lineage_type", ""),
+            "linked_feature_refs": doc_meta.get("linked_feature_refs", []),
             "dates": doc_meta.get("dates", {}),
             "timeline": doc_meta.get("timeline", []),
         }
@@ -624,6 +769,7 @@ def _scan_progress_dirs(
                 "lineage_parent": doc_meta.get("lineage_parent", ""),
                 "lineage_children": doc_meta.get("lineage_children", []),
                 "lineage_type": doc_meta.get("lineage_type", ""),
+                "linked_feature_refs": doc_meta.get("linked_feature_refs", []),
                 "dates": doc_meta.get("dates", {}),
                 "timeline": doc_meta.get("timeline", []),
             })
@@ -840,6 +986,7 @@ def _scan_auxiliary_docs(
                 "lineageParent": str(metadata.get("lineage_parent") or ""),
                 "lineageChildren": [str(v) for v in metadata.get("lineage_children", []) if isinstance(v, str)],
                 "lineageType": str(metadata.get("lineage_type") or ""),
+                "linkedFeatures": metadata.get("linked_feature_refs", []),
                 "dates": metadata.get("dates", {}),
                 "timeline": metadata.get("timeline", []),
             })
@@ -909,6 +1056,87 @@ def _doc_owned_by_feature(doc: LinkedDocument, feature_id: str) -> bool:
         return True
 
     return False
+
+
+def _aggregate_feature_linked_features(
+    feature: Feature,
+    related_ids: set[str],
+    derived_refs: list[LinkedFeatureRef] | None = None,
+) -> list[LinkedFeatureRef]:
+    merged: dict[tuple[str, str, str], LinkedFeatureRef] = {}
+    self_slug = str(feature.id or "").strip().lower()
+
+    for doc in feature.linkedDocs:
+        for raw_ref in doc.linkedFeatures or []:
+            if isinstance(raw_ref, LinkedFeatureRef):
+                feature_ref = str(raw_ref.feature or "").strip().lower()
+                relation_type = str(raw_ref.type or "").strip().lower().replace("-", "_").replace(" ", "_")
+                source = str(raw_ref.source or "").strip().lower().replace("-", "_").replace(" ", "_")
+                confidence = raw_ref.confidence
+                notes = raw_ref.notes
+                evidence = [str(v) for v in raw_ref.evidence if str(v).strip()]
+            elif isinstance(raw_ref, dict):
+                feature_ref = str(raw_ref.get("feature") or "").strip().lower()
+                relation_type = str(raw_ref.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
+                source = str(raw_ref.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_")
+                confidence_raw = raw_ref.get("confidence")
+                confidence = None
+                if confidence_raw is not None:
+                    try:
+                        confidence = max(0.0, min(1.0, float(confidence_raw)))
+                    except Exception:
+                        confidence = None
+                notes = str(raw_ref.get("notes") or "")
+                evidence = [str(v) for v in _to_string_list(raw_ref.get("evidence")) if str(v).strip()]
+            else:
+                continue
+            if not feature_ref or feature_ref == self_slug:
+                continue
+            source = source or "explicit_doc_field"
+            key = (feature_ref, relation_type, source)
+            merged[key] = LinkedFeatureRef(
+                feature=feature_ref,
+                type=relation_type,
+                source=source,
+                confidence=confidence,
+                notes=notes,
+                evidence=evidence,
+            )
+
+    for related_id in sorted(related_ids):
+        related_slug = str(related_id or "").strip().lower()
+        if not related_slug or related_slug == self_slug:
+            continue
+        key = (related_slug, "related", "correlated_ref")
+        if key not in merged:
+            merged[key] = LinkedFeatureRef(
+                feature=related_slug,
+                type="related",
+                source="correlated_ref",
+            )
+
+    for ref in derived_refs or []:
+        related_slug = str(ref.feature or "").strip().lower()
+        if not related_slug or related_slug == self_slug:
+            continue
+        relation_type = str(ref.type or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(ref.source or "").strip().lower().replace("-", "_").replace(" ", "_")
+        key = (related_slug, relation_type, source)
+        if key in merged:
+            continue
+        merged[key] = LinkedFeatureRef(
+            feature=related_slug,
+            type=relation_type,
+            source=source,
+            confidence=ref.confidence,
+            notes=ref.notes,
+            evidence=[str(v) for v in ref.evidence if str(v).strip()],
+        )
+
+    return sorted(
+        merged.values(),
+        key=lambda ref: (ref.feature, ref.type or "", ref.source or ""),
+    )
 
 
 def _phase_is_completion_equivalent(phase: FeaturePhase) -> bool:
@@ -1005,6 +1233,339 @@ def _normalize_timeline_payload(raw_timeline: list[Any]) -> list[dict[str, str]]
             }
         )
     return normalized
+
+
+def _load_doc_frontmatter(
+    project_root: Path,
+    doc: LinkedDocument,
+    cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    file_path = normalize_ref_path(str(doc.filePath or "")) or str(doc.filePath or "")
+    if not file_path:
+        return {}
+    cached = cache.get(file_path)
+    if cached is not None:
+        return cached
+
+    absolute = project_root / file_path
+    if not absolute.exists():
+        cache[file_path] = {}
+        return {}
+
+    try:
+        text = absolute.read_text(encoding="utf-8")
+        frontmatter = _extract_frontmatter(text)
+    except Exception:
+        frontmatter = {}
+
+    cache[file_path] = frontmatter if isinstance(frontmatter, dict) else {}
+    return cache[file_path]
+
+
+def _extract_doc_rollup_context(
+    project_root: Path,
+    doc: LinkedDocument,
+    cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    frontmatter = _load_doc_frontmatter(project_root, doc, cache)
+    doc_type = _normalize_doc_type_token(doc.docType)
+    status = normalize_doc_status(frontmatter.get("status"), default="")
+
+    owner_values = _to_string_list(frontmatter.get("owners"))
+    owner = str(frontmatter.get("owner") or "").strip()
+    if owner:
+        owner_values.append(owner)
+
+    commit_refs = _to_string_list(frontmatter.get("commit_refs") or frontmatter.get("commitRefs"))
+    commit_refs.extend(_to_string_list(frontmatter.get("commits")))
+    pr_refs = _to_string_list(frontmatter.get("pr_refs") or frontmatter.get("prRefs"))
+    pr_refs.extend(_to_string_list(frontmatter.get("prs")))
+    request_log_ids = _to_string_list(frontmatter.get("request_log_ids") or frontmatter.get("requestLogIds"))
+    integrity_signal_refs = _to_string_list(
+        frontmatter.get("integrity_signal_refs") or frontmatter.get("integritySignalRefs")
+    )
+
+    blockers = _to_string_list(frontmatter.get("blockers"))
+    tasks_raw = _safe_list(frontmatter.get("tasks"))
+    at_risk_statuses = {"blocked", "at_risk", "at-risk", "risk", "atrisk", "high_risk"}
+    at_risk_task_count = 0
+    task_commit_refs: list[str] = []
+    for task in tasks_raw:
+        if not isinstance(task, dict):
+            continue
+        status_token = _normalize_choice_token(task.get("status"))
+        if status_token in at_risk_statuses:
+            at_risk_task_count += 1
+        task_commit_refs.extend(
+            _to_string_list(task.get("git_commit") or task.get("commitHash") or task.get("commit_hash"))
+        )
+
+    report_findings_by_severity: dict[str, int] = {}
+    for finding in _safe_list(frontmatter.get("findings")):
+        if not isinstance(finding, dict):
+            continue
+        severity = _normalize_feature_finding_severity(finding.get("severity"))
+        report_findings_by_severity[severity] = report_findings_by_severity.get(severity, 0) + 1
+
+    return {
+        "doc": doc,
+        "docType": doc_type,
+        "status": status,
+        "description": str(frontmatter.get("description") or "").strip(),
+        "summary": str(frontmatter.get("summary") or "").strip(),
+        "priority": str(frontmatter.get("priority") or "").strip(),
+        "riskLevel": str(frontmatter.get("risk_level") or "").strip(),
+        "complexity": str(frontmatter.get("complexity") or "").strip(),
+        "track": str(frontmatter.get("track") or "").strip(),
+        "timelineEstimate": str(frontmatter.get("timeline_estimate") or "").strip(),
+        "targetRelease": str(frontmatter.get("target_release") or "").strip(),
+        "milestone": str(frontmatter.get("milestone") or "").strip(),
+        "executionReadiness": str(frontmatter.get("execution_readiness") or "").strip(),
+        "testImpact": str(frontmatter.get("test_impact") or "").strip(),
+        "owners": [str(v).strip() for v in owner_values if str(v).strip()],
+        "contributors": [str(v).strip() for v in _to_string_list(frontmatter.get("contributors")) if str(v).strip()],
+        "requestLogIds": [str(v).strip() for v in request_log_ids if str(v).strip()],
+        "commitRefs": [str(v).strip() for v in commit_refs if str(v).strip()],
+        "taskCommitRefs": [str(v).strip() for v in task_commit_refs if str(v).strip()],
+        "prRefs": [str(v).strip() for v in pr_refs if str(v).strip()],
+        "integritySignalRefs": [str(v).strip() for v in integrity_signal_refs if str(v).strip()],
+        "blockerCount": len([v for v in blockers if str(v).strip()]),
+        "atRiskTaskCount": at_risk_task_count,
+        "reportFindingsBySeverity": report_findings_by_severity,
+    }
+
+
+def _derive_execution_readiness(
+    explicit_values: list[str],
+    *,
+    has_prd: bool,
+    has_plan: bool,
+    has_progress: bool,
+    blocker_count: int,
+    at_risk_task_count: int,
+    test_impact: str,
+) -> str:
+    normalized_explicit = [_normalize_choice_token(value) for value in explicit_values if str(value).strip()]
+    if blocker_count > 0 or at_risk_task_count > 0:
+        return "blocked"
+    if not has_prd or not has_plan:
+        return "planning"
+    if any(value == "blocked" for value in normalized_explicit):
+        return "blocked"
+    if any(value == "review" for value in normalized_explicit):
+        return "review"
+    impact_token = _normalize_choice_token(test_impact)
+    if impact_token in {"critical", "high"}:
+        return "review"
+    if any(value == "ready" for value in normalized_explicit):
+        return "ready"
+    if has_progress or any(value in {"in_progress", "active"} for value in normalized_explicit):
+        return "in_progress"
+    if normalized_explicit:
+        return max(normalized_explicit, key=lambda value: _READINESS_ORDER.get(value, 0))
+    return "planning"
+
+
+def _derive_feature_rollups(
+    feature: Feature,
+    project_root: Path,
+) -> dict[str, Any]:
+    cache: dict[str, dict[str, Any]] = {}
+    contexts = [
+        _extract_doc_rollup_context(project_root, doc, cache)
+        for doc in feature.linkedDocs
+    ]
+
+    def _contexts_for_type(doc_type: str) -> list[dict[str, Any]]:
+        return [ctx for ctx in contexts if ctx.get("docType") == doc_type]
+
+    prd_contexts = _contexts_for_type("prd")
+    plan_contexts = _contexts_for_type("implementation_plan")
+    progress_contexts = _contexts_for_type("progress")
+    phase_contexts = _contexts_for_type("phase_plan")
+    report_contexts = _contexts_for_type("report")
+    design_contexts = _contexts_for_type("design_doc")
+    spec_contexts = _contexts_for_type("spec")
+
+    def _latest_doc(context_rows: list[dict[str, Any]]) -> Optional[LinkedDocument]:
+        docs = [row.get("doc") for row in context_rows if isinstance(row.get("doc"), LinkedDocument)]
+        return _pick_latest_document(docs) if docs else None
+
+    def _first_non_empty(rows: list[dict[str, Any]], key: str) -> str:
+        for row in rows:
+            value = str(row.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    description = _first_non_empty(prd_contexts, "description") or _first_non_empty(plan_contexts, "description")
+    summary = _first_non_empty(prd_contexts, "summary") or _first_non_empty(plan_contexts, "summary")
+
+    all_priorities = [str(ctx.get("priority") or "").strip() for ctx in contexts if str(ctx.get("priority") or "").strip()]
+    priority = (
+        _first_non_empty(prd_contexts, "priority")
+        or _first_non_empty(plan_contexts, "priority")
+        or _pick_highest_ranked(all_priorities, _FEATURE_PRIORITY_ORDER)
+    )
+
+    all_risk_levels = [str(ctx.get("riskLevel") or "").strip() for ctx in contexts if str(ctx.get("riskLevel") or "").strip()]
+    risk_level = (
+        _first_non_empty(prd_contexts, "riskLevel")
+        or _first_non_empty(plan_contexts, "riskLevel")
+        or _pick_highest_ranked(all_risk_levels, _FEATURE_RISK_ORDER)
+    )
+
+    complexity = _first_non_empty(plan_contexts, "complexity") or _first_non_empty(prd_contexts, "complexity")
+    track = _first_non_empty(plan_contexts, "track") or _first_non_empty(prd_contexts, "track")
+    timeline_estimate = _first_non_empty(plan_contexts, "timelineEstimate") or _first_non_empty(prd_contexts, "timelineEstimate")
+    target_release = _first_non_empty(prd_contexts, "targetRelease") or _first_non_empty(plan_contexts, "targetRelease")
+    milestone = _first_non_empty(prd_contexts, "milestone") or _first_non_empty(plan_contexts, "milestone")
+
+    owner_values: set[str] = set()
+    contributor_values: set[str] = set()
+    request_log_values: set[str] = set()
+    commit_ref_values: set[str] = set()
+    pr_ref_values: set[str] = set()
+    integrity_signal_values: set[str] = set()
+    explicit_readiness_values: list[str] = []
+    explicit_test_impact_values: list[str] = []
+    blocker_count = 0
+    at_risk_task_count = 0
+    report_findings_by_severity: dict[str, int] = {}
+
+    for ctx in contexts:
+        for owner in ctx.get("owners", []):
+            if owner:
+                owner_values.add(owner)
+        for contributor in ctx.get("contributors", []):
+            if contributor:
+                contributor_values.add(contributor)
+        for request_id in ctx.get("requestLogIds", []):
+            if request_id:
+                request_log_values.add(request_id)
+        for commit_ref in [*ctx.get("commitRefs", []), *ctx.get("taskCommitRefs", [])]:
+            if commit_ref:
+                commit_ref_values.add(commit_ref)
+        for pr_ref in ctx.get("prRefs", []):
+            if pr_ref:
+                pr_ref_values.add(pr_ref)
+        for signal_ref in ctx.get("integritySignalRefs", []):
+            if signal_ref:
+                integrity_signal_values.add(signal_ref)
+        readiness = str(ctx.get("executionReadiness") or "").strip()
+        if readiness:
+            explicit_readiness_values.append(readiness)
+        test_impact = str(ctx.get("testImpact") or "").strip()
+        if test_impact:
+            explicit_test_impact_values.append(test_impact)
+        blocker_count += int(ctx.get("blockerCount") or 0)
+        at_risk_task_count += int(ctx.get("atRiskTaskCount") or 0)
+        for severity, count in (ctx.get("reportFindingsBySeverity") or {}).items():
+            if not severity:
+                continue
+            report_findings_by_severity[severity] = report_findings_by_severity.get(severity, 0) + int(count or 0)
+
+    active_progress_contexts = [
+        ctx for ctx in progress_contexts
+        if str(ctx.get("status") or "") in {"in_progress", "review", "pending"}
+    ]
+    for ctx in [*prd_contexts, *plan_contexts, *active_progress_contexts]:
+        for owner in ctx.get("owners", []):
+            if owner:
+                owner_values.add(owner)
+
+    test_impact = _pick_highest_ranked(explicit_test_impact_values, _TEST_IMPACT_ORDER)
+    execution_readiness = _derive_execution_readiness(
+        explicit_readiness_values,
+        has_prd=bool(prd_contexts),
+        has_plan=bool(plan_contexts),
+        has_progress=bool(progress_contexts),
+        blocker_count=blocker_count,
+        at_risk_task_count=at_risk_task_count,
+        test_impact=test_impact,
+    )
+
+    required_doc_types = ["prd", "implementation_plan", "progress", "report", "design_doc", "spec"]
+    counts_by_type: dict[str, int] = {}
+    for doc in feature.linkedDocs:
+        doc_type = _normalize_doc_type_token(doc.docType)
+        counts_by_type[doc_type] = counts_by_type.get(doc_type, 0) + 1
+    present_doc_types = [doc_type for doc_type in required_doc_types if counts_by_type.get(doc_type, 0) > 0]
+    missing_doc_types = [doc_type for doc_type in required_doc_types if counts_by_type.get(doc_type, 0) == 0]
+    coverage_score = round(len(present_doc_types) / len(required_doc_types), 3) if required_doc_types else 0.0
+
+    def _doc_updated_sort_key(doc: LinkedDocument) -> str:
+        updated = getattr(getattr(doc, "dates", None), "updatedAt", None)
+        if getattr(updated, "value", ""):
+            return str(updated.value)
+        created = getattr(getattr(doc, "dates", None), "createdAt", None)
+        if getattr(created, "value", ""):
+            return str(created.value)
+        return ""
+
+    supporting_contexts = [*report_contexts, *design_contexts, *spec_contexts]
+    supporting_docs = [
+        ctx.get("doc")
+        for ctx in supporting_contexts
+        if isinstance(ctx.get("doc"), LinkedDocument)
+    ]
+    supporting_docs = sorted(supporting_docs, key=_doc_updated_sort_key, reverse=True)
+
+    high_impact_findings = (
+        report_findings_by_severity.get("critical", 0)
+        + report_findings_by_severity.get("high", 0)
+    )
+    has_blocking_signals = blocker_count > 0 or at_risk_task_count > 0 or high_impact_findings > 0
+
+    return {
+        "description": description,
+        "summary": summary,
+        "priority": priority,
+        "riskLevel": risk_level,
+        "complexity": complexity,
+        "track": track,
+        "timelineEstimate": timeline_estimate,
+        "targetRelease": target_release,
+        "milestone": milestone,
+        "owners": sorted(owner_values),
+        "contributors": sorted(contributor_values),
+        "requestLogIds": sorted(request_log_values),
+        "commitRefs": sorted(commit_ref_values),
+        "prRefs": sorted(pr_ref_values),
+        "executionReadiness": execution_readiness,
+        "testImpact": test_impact,
+        "primaryDocuments": FeaturePrimaryDocuments(
+            prd=_latest_doc(prd_contexts),
+            implementationPlan=_latest_doc(plan_contexts),
+            phasePlans=[
+                ctx["doc"] for ctx in phase_contexts
+                if isinstance(ctx.get("doc"), LinkedDocument)
+            ],
+            progressDocs=sorted(
+                [
+                    ctx["doc"] for ctx in progress_contexts
+                    if isinstance(ctx.get("doc"), LinkedDocument)
+                ],
+                key=_doc_updated_sort_key,
+                reverse=True,
+            )[:3],
+            supportingDocs=supporting_docs[:6],
+        ),
+        "documentCoverage": FeatureDocumentCoverage(
+            present=present_doc_types,
+            missing=missing_doc_types,
+            countsByType=counts_by_type,
+            coverageScore=coverage_score,
+        ),
+        "qualitySignals": FeatureQualitySignals(
+            blockerCount=blocker_count,
+            atRiskTaskCount=at_risk_task_count,
+            integritySignalRefs=sorted(integrity_signal_values),
+            reportFindingsBySeverity=report_findings_by_severity,
+            testImpact=test_impact,
+            hasBlockingSignals=has_blocking_signals,
+        ),
+    }
 
 
 def _derive_feature_dates(feature: Feature) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -1233,6 +1794,7 @@ def scan_features(
                     lineageParent=str(plan.get("lineage_parent", "")),
                     lineageChildren=[str(v) for v in plan.get("lineage_children", []) if isinstance(v, str)],
                     lineageType=str(plan.get("lineage_type", "")),
+                    linkedFeatures=_normalize_linked_feature_refs(plan.get("linked_feature_refs")),
                     dates=plan.get("dates", {}),
                     timeline=plan.get("timeline", []),
                 )
@@ -1255,6 +1817,7 @@ def scan_features(
                 lineageParent=str(pd.get("lineage_parent", "")),
                 lineageChildren=[str(v) for v in pd.get("lineage_children", []) if isinstance(v, str)],
                 lineageType=str(pd.get("lineage_type", "")),
+                linkedFeatures=_normalize_linked_feature_refs(pd.get("linked_feature_refs")),
                 dates=pd.get("dates", {}),
                 timeline=pd.get("timeline", []),
             ))
@@ -1312,6 +1875,7 @@ def scan_features(
                 lineageParent=str(prd.get("lineage_parent", "")),
                 lineageChildren=[str(v) for v in prd.get("lineage_children", []) if isinstance(v, str)],
                 lineageType=str(prd.get("lineage_type", "")),
+                linkedFeatures=_normalize_linked_feature_refs(prd.get("linked_feature_refs")),
                 dates=prd.get("dates", {}),
                 timeline=prd.get("timeline", []),
             ))
@@ -1342,6 +1906,7 @@ def scan_features(
                     lineageParent=str(prd.get("lineage_parent", "")),
                     lineageChildren=[str(v) for v in prd.get("lineage_children", []) if isinstance(v, str)],
                     lineageType=str(prd.get("lineage_type", "")),
+                    linkedFeatures=_normalize_linked_feature_refs(prd.get("linked_feature_refs")),
                     dates=prd.get("dates", {}),
                     timeline=prd.get("timeline", []),
                 )],
@@ -1411,6 +1976,7 @@ def scan_features(
                     lineageParent=str(progress_doc.get("lineage_parent") or ""),
                     lineageChildren=[str(v) for v in progress_doc.get("lineage_children", []) if isinstance(v, str)],
                     lineageType=str(progress_doc.get("lineage_type") or ""),
+                    linkedFeatures=_normalize_linked_feature_refs(progress_doc.get("linked_feature_refs")),
                     dates=progress_doc.get("dates", {}),
                     timeline=progress_doc.get("timeline", []),
                 ))
@@ -1441,6 +2007,7 @@ def scan_features(
                     lineageParent=str(progress_doc.get("lineage_parent") or ""),
                     lineageChildren=[str(v) for v in progress_doc.get("lineage_children", []) if isinstance(v, str)],
                     lineageType=str(progress_doc.get("lineage_type") or ""),
+                    linkedFeatures=_normalize_linked_feature_refs(progress_doc.get("linked_feature_refs")),
                     dates=progress_doc.get("dates", {}),
                     timeline=progress_doc.get("timeline", []),
                 ))
@@ -1481,6 +2048,7 @@ def scan_features(
                 lineageParent=str(doc.get("lineageParent") or ""),
                 lineageChildren=[str(v) for v in doc.get("lineageChildren", []) if isinstance(v, str)],
                 lineageType=str(doc.get("lineageType") or ""),
+                linkedFeatures=_normalize_linked_feature_refs(doc.get("linkedFeatures")),
                 dates=doc.get("dates", {}),
                 timeline=doc.get("timeline", []),
             ))
@@ -1503,10 +2071,63 @@ def scan_features(
         if derived_updated:
             feat.updatedAt = derived_updated
 
+        rollups = _derive_feature_rollups(feat, project_root)
+        feat.description = str(rollups.get("description") or feat.description or "")
+        feat.summary = str(rollups.get("summary") or feat.summary or "")
+        feat.priority = str(rollups.get("priority") or feat.priority or "")
+        feat.riskLevel = str(rollups.get("riskLevel") or feat.riskLevel or "")
+        feat.complexity = str(rollups.get("complexity") or feat.complexity or "")
+        feat.track = str(rollups.get("track") or feat.track or "")
+        feat.timelineEstimate = str(rollups.get("timelineEstimate") or feat.timelineEstimate or "")
+        feat.targetRelease = str(rollups.get("targetRelease") or feat.targetRelease or "")
+        feat.milestone = str(rollups.get("milestone") or feat.milestone or "")
+        feat.owners = [str(v) for v in rollups.get("owners") or feat.owners]
+        feat.contributors = [str(v) for v in rollups.get("contributors") or feat.contributors]
+        feat.requestLogIds = [str(v) for v in rollups.get("requestLogIds") or feat.requestLogIds]
+        feat.commitRefs = [str(v) for v in rollups.get("commitRefs") or feat.commitRefs]
+        feat.prRefs = [str(v) for v in rollups.get("prRefs") or feat.prRefs]
+        feat.executionReadiness = str(rollups.get("executionReadiness") or feat.executionReadiness or "")
+        feat.testImpact = str(rollups.get("testImpact") or feat.testImpact or "")
+        primary_docs = rollups.get("primaryDocuments")
+        if isinstance(primary_docs, FeaturePrimaryDocuments):
+            feat.primaryDocuments = primary_docs
+        document_coverage = rollups.get("documentCoverage")
+        if isinstance(document_coverage, FeatureDocumentCoverage):
+            feat.documentCoverage = document_coverage
+        quality_signals = rollups.get("qualitySignals")
+        if isinstance(quality_signals, FeatureQualitySignals):
+            feat.qualitySignals = quality_signals
+
     # Step 6: Link related features (same base slug, different versions)
     feature_list = list(features.values())
     feature_ids = sorted(features.keys())
     related_by_id: dict[str, set[str]] = {feat_id: set() for feat_id in feature_ids}
+    relation_refs_by_id: dict[str, list[LinkedFeatureRef]] = {feat_id: [] for feat_id in feature_ids}
+
+    def _add_relation_ref(
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        source: str,
+        confidence: float | None,
+        *,
+        notes: str = "",
+        evidence: list[str] | None = None,
+    ) -> None:
+        if source_id == target_id or source_id not in related_by_id or target_id not in related_by_id:
+            return
+        related_by_id[source_id].add(target_id)
+        relation_refs_by_id[source_id].append(
+            LinkedFeatureRef(
+                feature=target_id,
+                type=relation_type,
+                source=source,
+                confidence=confidence,
+                notes=notes,
+                evidence=[str(v) for v in (evidence or []) if str(v).strip()],
+            )
+        )
+
     base_groups: dict[str, list[str]] = {}
     for feat in feature_list:
         base = _base_slug(feat.id)
@@ -1517,7 +2138,13 @@ def scan_features(
             for feat_id in group:
                 for other_id in group:
                     if other_id != feat_id:
-                        related_by_id[feat_id].add(other_id)
+                        _add_relation_ref(
+                            feat_id,
+                            other_id,
+                            "version_peer",
+                            "derived_lineage",
+                            1.0,
+                        )
 
     def _resolve_lineage_target_ids(raw_ref: str, current_id: str) -> list[str]:
         token = _normalize_feature_ref(raw_ref)
@@ -1531,9 +2158,42 @@ def scan_features(
     for feat in feature_list:
         for doc in feat.linkedDocs:
             for raw_ref in [str(doc.lineageParent or ""), *[str(v) for v in doc.lineageChildren or []]]:
+                is_parent_ref = bool(str(doc.lineageParent or "").strip()) and raw_ref == str(doc.lineageParent or "")
                 for target_id in _resolve_lineage_target_ids(raw_ref, feat.id):
-                    related_by_id[feat.id].add(target_id)
-                    related_by_id[target_id].add(feat.id)
+                    if is_parent_ref:
+                        _add_relation_ref(
+                            feat.id,
+                            target_id,
+                            "lineage_parent",
+                            "derived_lineage",
+                            1.0,
+                            evidence=[doc.filePath],
+                        )
+                        _add_relation_ref(
+                            target_id,
+                            feat.id,
+                            "lineage_child",
+                            "derived_lineage",
+                            1.0,
+                            evidence=[doc.filePath],
+                        )
+                    else:
+                        _add_relation_ref(
+                            feat.id,
+                            target_id,
+                            "lineage_child",
+                            "derived_lineage",
+                            1.0,
+                            evidence=[doc.filePath],
+                        )
+                        _add_relation_ref(
+                            target_id,
+                            feat.id,
+                            "lineage_parent",
+                            "derived_lineage",
+                            1.0,
+                            evidence=[doc.filePath],
+                        )
             lineage_family = canonical_slug(str(doc.lineageFamily or "").strip().lower())
             if not lineage_family:
                 continue
@@ -1541,10 +2201,66 @@ def scan_features(
                 if target_id == feat.id:
                     continue
                 if _base_slug(target_id) == lineage_family:
-                    related_by_id[feat.id].add(target_id)
+                    _add_relation_ref(
+                        feat.id,
+                        target_id,
+                        "lineage_family",
+                        "derived_lineage",
+                        0.9,
+                        evidence=[doc.filePath],
+                    )
+                    _add_relation_ref(
+                        target_id,
+                        feat.id,
+                        "lineage_family",
+                        "derived_lineage",
+                        0.9,
+                        evidence=[doc.filePath],
+                    )
+
+    shared_doc_refs: dict[str, set[str]] = {}
+    for feat in feature_list:
+        for doc in feat.linkedDocs:
+            for raw_ref in [*[str(v) for v in doc.relatedRefs or []], str(doc.prdRef or "")]:
+                ref_value = str(raw_ref or "").strip()
+                if not ref_value:
+                    continue
+                normalized_path = normalize_ref_path(ref_value)
+                ref_token = normalized_path if normalized_path else canonical_slug(ref_value)
+                if not ref_token:
+                    continue
+                shared_doc_refs.setdefault(ref_token, set()).add(feat.id)
+
+    for ref_token, feature_group in shared_doc_refs.items():
+        if len(feature_group) < 2:
+            continue
+        members = sorted(feature_group)
+        for idx, source_id in enumerate(members):
+            for target_id in members[idx + 1 :]:
+                _add_relation_ref(
+                    source_id,
+                    target_id,
+                    "shared_document_context",
+                    "inferred",
+                    0.65,
+                    evidence=[ref_token],
+                )
+                _add_relation_ref(
+                    target_id,
+                    source_id,
+                    "shared_document_context",
+                    "inferred",
+                    0.65,
+                    evidence=[ref_token],
+                )
 
     for feat_id in feature_ids:
         features[feat_id].relatedFeatures = sorted(related_by_id[feat_id])
+        features[feat_id].linkedFeatures = _aggregate_feature_linked_features(
+            features[feat_id],
+            related_by_id[feat_id],
+            relation_refs_by_id.get(feat_id, []),
+        )
 
     inferred_updates = _reconcile_completion_equivalence(feature_list, project_root)
 

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ from backend.document_linking import (
 from backend.date_utils import make_date_value
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
+_SUBAGENT_TOOL_NAMES = {"task", "agent"}
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -64,6 +66,44 @@ def _safe_json_list(raw: str | list | None) -> list:
         return []
 
 
+def _string_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(v) for v in raw if isinstance(v, str) and str(v).strip()]
+    if isinstance(raw, str) and raw.strip():
+        return [raw.strip()]
+    return []
+
+
+def _linked_feature_ref_list(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        feature = str(item.get("feature") or "").strip().lower()
+        if not feature:
+            continue
+        confidence: float | None = None
+        confidence_raw = item.get("confidence")
+        if confidence_raw is not None:
+            try:
+                confidence = max(0.0, min(1.0, float(confidence_raw)))
+            except Exception:
+                confidence = None
+        refs.append(
+            {
+                "feature": feature,
+                "type": str(item.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_"),
+                "source": str(item.get("source") or "").strip().lower().replace("-", "_").replace(" ", "_"),
+                "confidence": confidence,
+                "notes": str(item.get("notes") or ""),
+                "evidence": _string_list(item.get("evidence")),
+            }
+        )
+    return refs
+
+
 def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
     raw = metadata.get("bashCommand")
     if isinstance(raw, str) and raw.strip():
@@ -83,12 +123,80 @@ def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
     return ""
 
 
+def _is_subagent_tool_name(name: Any) -> bool:
+    return str(name or "").strip().lower() in _SUBAGENT_TOOL_NAMES
+
+
+def _parse_tool_args(raw_tool_args: Any) -> dict[str, Any]:
+    if isinstance(raw_tool_args, dict):
+        return raw_tool_args
+    if not isinstance(raw_tool_args, str) or not raw_tool_args.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_tool_args)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_subagent_type(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    lowered = candidate.lower()
+    if lowered in {"subagent", "agent"}:
+        return ""
+    if re.fullmatch(r"agent[-_][a-z0-9._:-]+", lowered):
+        return ""
+    return candidate
+
+
+def _subagent_type_from_logs(
+    logs: list[dict[str, Any]],
+    target_linked_session_id: str = "",
+) -> str:
+    linked_target = str(target_linked_session_id or "").strip()
+    for row in logs:
+        row_type = str(row.get("type") or "").strip().lower()
+        metadata = _safe_json(row.get("metadata_json") or row.get("metadata"))
+        if row_type == "subagent_start":
+            if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+                continue
+            for key in ("subagentType", "subagentName", "taskSubagentType"):
+                candidate = _normalize_subagent_type(metadata.get(key))
+                if candidate:
+                    return candidate
+        if row_type != "tool":
+            continue
+        if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+            continue
+        tool_name = row.get("tool_name")
+        if not _is_subagent_tool_name(tool_name):
+            continue
+        for key in ("taskSubagentType", "subagentType", "subagentName"):
+            candidate = _normalize_subagent_type(metadata.get(key))
+            if candidate:
+                return candidate
+        args = _parse_tool_args(row.get("tool_args"))
+        for key in ("subagent_type", "subagentType", "agent_name", "agentName"):
+            candidate = _normalize_subagent_type(args.get(key))
+            if candidate:
+                return candidate
+    return ""
+
+
 def _is_primary_session_link(
     strategy: str,
     confidence: float,
     signal_types: set[str],
     commands: list[str],
+    link_role: str = "",
 ) -> bool:
+    normalized_link_role = str(link_role or "").strip().lower()
+    if normalized_link_role == "primary":
+        return True
+    if normalized_link_role == "related":
+        return False
     if strategy == "task_frontmatter":
         return True
     if confidence >= 0.9:
@@ -164,7 +272,18 @@ def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
     return dates
 
 
-def _derive_session_title(session_metadata: dict | None, summary: str, session_id: str) -> str:
+def _derive_session_title(
+    session_metadata: dict | None,
+    summary: str,
+    session_id: str,
+    session_type: str = "",
+    subagent_type: str = "",
+) -> str:
+    normalized_session_type = str(session_type or "").strip().lower()
+    normalized_subagent_type = _normalize_subagent_type(subagent_type)
+    if normalized_session_type == "subagent" and normalized_subagent_type:
+        return normalized_subagent_type
+
     summary_text = (summary or "").strip()
     if summary_text:
         return summary_text
@@ -199,6 +318,11 @@ class SessionFeatureLink(BaseModel):
     commands: list[str] = Field(default_factory=list)
     commitHashes: list[str] = Field(default_factory=list)
     ambiguityShare: float = 0.0
+
+
+class SessionFeatureLinkMutationRequest(BaseModel):
+    featureId: str
+    linkRole: Literal["primary", "related"] = "related"
 
 
 class SessionModelFacet(BaseModel):
@@ -284,10 +408,13 @@ async def list_sessions(
     )
     total_count = await repo.count(project.id, filters)
     
+    parent_logs_cache: dict[str, list[dict[str, Any]]] = {}
     # Hydrate items (minimal for list view)
     results = []
     for s in sessions_data:
         platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
+        session_type_value = str(s.get("session_type") or "").strip().lower()
+        session_id = str(s.get("id") or "").strip()
         logs = await repo.get_logs(s["id"])
         badge_data = derive_session_badges(
             logs,
@@ -314,7 +441,22 @@ async def list_sessions(
             platform_type=platform_type_value,
         )
         model_identity = derive_model_identity(s.get("model"))
-        session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+        subagent_type = _subagent_type_from_logs(logs)
+        if not subagent_type and session_type_value == "subagent":
+            parent_session_id = str(s.get("parent_session_id") or "").strip()
+            if parent_session_id:
+                parent_logs = parent_logs_cache.get(parent_session_id)
+                if parent_logs is None:
+                    parent_logs = await repo.get_logs(parent_session_id)
+                    parent_logs_cache[parent_session_id] = parent_logs
+                subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+        session_title = _derive_session_title(
+            session_metadata,
+            latest_summary,
+            s["id"],
+            session_type=s.get("session_type") or "",
+            subagent_type=subagent_type,
+        )
         platform_version_value = str(s.get("platform_version") or "").strip()
         raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
         platform_versions: list[str] = []
@@ -527,7 +669,20 @@ async def get_session(session_id: str):
         platform_type=platform_type_value,
     )
     model_identity = derive_model_identity(s.get("model"))
-    session_title = _derive_session_title(session_metadata, latest_summary, s["id"])
+    session_type_value = str(s.get("session_type") or "").strip().lower()
+    subagent_type = _subagent_type_from_logs(logs)
+    if not subagent_type and session_type_value == "subagent":
+        parent_session_id = str(s.get("parent_session_id") or "").strip()
+        if parent_session_id:
+            parent_logs = await repo.get_logs(parent_session_id)
+            subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=str(s.get("id") or ""))
+    session_title = _derive_session_title(
+        session_metadata,
+        latest_summary,
+        s["id"],
+        session_type=s.get("session_type") or "",
+        subagent_type=subagent_type,
+    )
     platform_version_value = str(s.get("platform_version") or "").strip()
     raw_platform_versions = _safe_json_list(s.get("platform_versions_json"))
     platform_versions: list[str] = []
@@ -692,6 +847,7 @@ async def get_session_linked_features(session_id: str):
             continue
 
         metadata = _safe_json(link.get("metadata_json"))
+        link_role = str(metadata.get("linkRole") or "").strip().lower()
         strategy = str(metadata.get("linkStrategy") or "").strip()
         reasons: list[str] = []
         if strategy:
@@ -721,7 +877,13 @@ async def get_session_linked_features(session_id: str):
         if not isinstance(commit_hashes, list):
             commit_hashes = []
         confidence = float(link.get("confidence") or 0.0)
-        is_primary = _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
+        is_primary = _is_primary_session_link(
+            strategy,
+            confidence,
+            signal_types,
+            normalized_commands,
+            link_role=link_role,
+        )
 
         ambiguity_share = metadata.get("ambiguityShare", 0.0)
         try:
@@ -753,6 +915,121 @@ async def get_session_linked_features(session_id: str):
     return items
 
 
+@sessions_router.post("/{session_id}/linked-features", response_model=list[SessionFeatureLink])
+async def upsert_session_linked_feature(session_id: str, request: SessionFeatureLinkMutationRequest):
+    """Create/update a manual session↔feature link as primary or related."""
+    db = await connection.get_connection()
+    session_repo = get_session_repository(db)
+    session_row = await session_repo.get_by_id(session_id)
+    if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    feature_id = str(request.featureId or "").strip()
+    if not feature_id:
+        raise HTTPException(status_code=400, detail="featureId is required")
+
+    feature_repo = get_feature_repository(db)
+    feature_row = await feature_repo.get_by_id(feature_id)
+    if not feature_row:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+
+    link_repo = get_entity_link_repository(db)
+    existing_links = await link_repo.get_links_for("session", session_id, "related")
+
+    existing_link_for_target: dict[str, Any] | None = None
+    for link in existing_links:
+        if link.get("source_type") != "feature":
+            continue
+        if link.get("target_type") != "session" or str(link.get("target_id") or "") != session_id:
+            continue
+        current_feature_id = str(link.get("source_id") or "").strip()
+        if not current_feature_id:
+            continue
+        if current_feature_id == feature_id:
+            existing_link_for_target = link
+
+    if request.linkRole == "primary":
+        for link in existing_links:
+            if link.get("source_type") != "feature":
+                continue
+            if link.get("target_type") != "session" or str(link.get("target_id") or "") != session_id:
+                continue
+
+            current_feature_id = str(link.get("source_id") or "").strip()
+            if not current_feature_id or current_feature_id == feature_id:
+                continue
+
+            metadata = _safe_json(link.get("metadata_json"))
+            metadata["linkRole"] = "related"
+            confidence = float(link.get("confidence") or 0.0)
+
+            await link_repo.upsert(
+                {
+                    "source_type": "feature",
+                    "source_id": current_feature_id,
+                    "target_type": "session",
+                    "target_id": session_id,
+                    "link_type": "related",
+                    "origin": str(link.get("origin") or "auto"),
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "depth": int(link.get("depth") or 0),
+                    "sort_order": int(link.get("sort_order") or 0),
+                    "metadata_json": json.dumps(metadata),
+                }
+            )
+
+    if request.linkRole == "related" and existing_link_for_target:
+        existing_metadata = _safe_json(existing_link_for_target.get("metadata_json"))
+        existing_role = str(existing_metadata.get("linkRole") or "").strip().lower()
+        if existing_role == "primary":
+            return await get_session_linked_features(session_id)
+
+    next_metadata = _safe_json(existing_link_for_target.get("metadata_json") if existing_link_for_target else None)
+    next_metadata["linkStrategy"] = "manual_set"
+    next_metadata["linkRole"] = request.linkRole
+    next_metadata["manualSet"] = True
+
+    await link_repo.upsert(
+        {
+            "source_type": "feature",
+            "source_id": feature_id,
+            "target_type": "session",
+            "target_id": session_id,
+            "link_type": "related",
+            "origin": "manual",
+            "confidence": 1.0,
+            "depth": 0,
+            "sort_order": 0,
+            "metadata_json": json.dumps(next_metadata),
+        }
+    )
+    return await get_session_linked_features(session_id)
+
+
+@sessions_router.delete("/{session_id}/linked-features/{feature_id}", response_model=list[SessionFeatureLink])
+async def delete_session_linked_feature(session_id: str, feature_id: str):
+    """Remove a session↔feature link."""
+    db = await connection.get_connection()
+    session_repo = get_session_repository(db)
+    session_row = await session_repo.get_by_id(session_id)
+    if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    normalized_feature_id = str(feature_id or "").strip()
+    if not normalized_feature_id:
+        raise HTTPException(status_code=400, detail="feature_id is required")
+
+    link_repo = get_entity_link_repository(db)
+    await link_repo.delete_link(
+        "feature",
+        normalized_feature_id,
+        "session",
+        session_id,
+        "related",
+    )
+    return await get_session_linked_features(session_id)
+
+
 # ── Documents router ────────────────────────────────────────────────
 
 documents_router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -771,11 +1048,13 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
     normalized_canonical = normalize_ref_path(canonical_path) or canonical_path
     path_segments = [segment for segment in normalized_canonical.split("/") if segment]
 
-    linked_features = fm.get("linkedFeatures")
-    if not isinstance(linked_features, list):
-        linked_features = []
+    linked_features = _string_list(fm.get("linkedFeatures"))
+    linked_feature_refs = _linked_feature_ref_list(fm.get("linkedFeatureRefs"))
+    if not linked_feature_refs:
+        linked_feature_refs = _linked_feature_ref_list(metadata.get("linkedFeatureRefs"))
     feature_candidates = sorted({
-        *[str(v) for v in linked_features if isinstance(v, str)],
+        *linked_features,
+        *[str(v.get("feature") or "") for v in linked_feature_refs if isinstance(v, dict)],
         str(row.get("feature_slug_hint") or ""),
         str(row.get("feature_slug_canonical") or ""),
     })
@@ -800,22 +1079,32 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         timeline = []
 
     frontmatter_obj = {
-        "tags": fm.get("tags") if isinstance(fm.get("tags"), list) else [],
-        "linkedFeatures": fm.get("linkedFeatures") if isinstance(fm.get("linkedFeatures"), list) else [],
-        "linkedSessions": fm.get("linkedSessions") if isinstance(fm.get("linkedSessions"), list) else [],
+        "tags": _string_list(fm.get("tags")),
+        "linkedFeatures": linked_features,
+        "linkedFeatureRefs": linked_feature_refs,
+        "linkedSessions": _string_list(fm.get("linkedSessions")),
+        "linkedTasks": _string_list(fm.get("linkedTasks")),
         "lineageFamily": str(fm.get("lineageFamily") or ""),
         "lineageParent": str(fm.get("lineageParent") or ""),
-        "lineageChildren": fm.get("lineageChildren") if isinstance(fm.get("lineageChildren"), list) else [],
+        "lineageChildren": _string_list(fm.get("lineageChildren")),
         "lineageType": str(fm.get("lineageType") or ""),
         "version": fm.get("version"),
-        "commits": fm.get("commits") if isinstance(fm.get("commits"), list) else [],
-        "prs": fm.get("prs") if isinstance(fm.get("prs"), list) else [],
-        "relatedRefs": fm.get("relatedRefs") if isinstance(fm.get("relatedRefs"), list) else [],
-        "pathRefs": fm.get("pathRefs") if isinstance(fm.get("pathRefs"), list) else [],
-        "slugRefs": fm.get("slugRefs") if isinstance(fm.get("slugRefs"), list) else [],
+        "commits": _string_list(fm.get("commits")),
+        "prs": _string_list(fm.get("prs")),
+        "requestLogIds": _string_list(fm.get("requestLogIds")),
+        "commitRefs": _string_list(fm.get("commitRefs")),
+        "prRefs": _string_list(fm.get("prRefs")),
+        "relatedRefs": _string_list(fm.get("relatedRefs")),
+        "pathRefs": _string_list(fm.get("pathRefs")),
+        "slugRefs": _string_list(fm.get("slugRefs")),
         "prd": str(fm.get("prd") or ""),
-        "prdRefs": fm.get("prdRefs") if isinstance(fm.get("prdRefs"), list) else [],
-        "fieldKeys": fm.get("fieldKeys") if isinstance(fm.get("fieldKeys"), list) else [],
+        "prdRefs": _string_list(fm.get("prdRefs")),
+        "sourceDocuments": _string_list(fm.get("sourceDocuments")),
+        "filesAffected": _string_list(fm.get("filesAffected")),
+        "filesModified": _string_list(fm.get("filesModified")),
+        "contextFiles": _string_list(fm.get("contextFiles")),
+        "integritySignalRefs": _string_list(fm.get("integritySignalRefs")),
+        "fieldKeys": _string_list(fm.get("fieldKeys")),
         "raw": fm.get("raw") if isinstance(fm.get("raw"), dict) else fm,
     }
 
@@ -858,6 +1147,25 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
         phaseToken=str(row.get("phase_token") or ""),
         phaseNumber=row.get("phase_number"),
         overallProgress=row.get("overall_progress"),
+        completionEstimate=str(metadata.get("completionEstimate") or ""),
+        description=str(metadata.get("description") or ""),
+        summary=str(metadata.get("summary") or ""),
+        priority=str(metadata.get("priority") or ""),
+        riskLevel=str(metadata.get("riskLevel") or ""),
+        complexity=str(metadata.get("complexity") or ""),
+        track=str(metadata.get("track") or ""),
+        timelineEstimate=str(metadata.get("timelineEstimate") or ""),
+        targetRelease=str(metadata.get("targetRelease") or ""),
+        milestone=str(metadata.get("milestone") or ""),
+        decisionStatus=str(metadata.get("decisionStatus") or ""),
+        executionReadiness=str(metadata.get("executionReadiness") or ""),
+        testImpact=str(metadata.get("testImpact") or ""),
+        primaryDocRole=str(metadata.get("primaryDocRole") or ""),
+        featureSlug=str(metadata.get("featureSlug") or ""),
+        featureFamily=str(metadata.get("featureFamily") or ""),
+        featureVersion=str(metadata.get("featureVersion") or ""),
+        planRef=str(metadata.get("planRef") or ""),
+        implementationPlanRef=str(metadata.get("implementationPlanRef") or ""),
         totalTasks=int(row.get("total_tasks") or 0),
         completedTasks=int(row.get("completed_tasks") or 0),
         inProgressTasks=int(row.get("in_progress_tasks") or 0),
@@ -869,16 +1177,53 @@ def _map_document_row_to_model(row: dict, include_content: bool = False, link_co
             "phase": str(metadata.get("phase") or row.get("phase_token") or ""),
             "phaseNumber": metadata.get("phaseNumber", row.get("phase_number")),
             "overallProgress": metadata.get("overallProgress", row.get("overall_progress")),
+            "completionEstimate": str(metadata.get("completionEstimate") or ""),
+            "description": str(metadata.get("description") or ""),
+            "summary": str(metadata.get("summary") or ""),
+            "priority": str(metadata.get("priority") or ""),
+            "riskLevel": str(metadata.get("riskLevel") or ""),
+            "complexity": str(metadata.get("complexity") or ""),
+            "track": str(metadata.get("track") or ""),
+            "timelineEstimate": str(metadata.get("timelineEstimate") or ""),
+            "targetRelease": str(metadata.get("targetRelease") or ""),
+            "milestone": str(metadata.get("milestone") or ""),
+            "decisionStatus": str(metadata.get("decisionStatus") or ""),
+            "executionReadiness": str(metadata.get("executionReadiness") or ""),
+            "testImpact": str(metadata.get("testImpact") or ""),
+            "primaryDocRole": str(metadata.get("primaryDocRole") or ""),
+            "featureSlug": str(metadata.get("featureSlug") or ""),
+            "featureFamily": str(metadata.get("featureFamily") or ""),
+            "featureVersion": str(metadata.get("featureVersion") or ""),
+            "planRef": str(metadata.get("planRef") or ""),
+            "implementationPlanRef": str(metadata.get("implementationPlanRef") or ""),
             "taskCounts": {
                 "total": int(metadata_task_counts.get("total", row.get("total_tasks") or 0)),
                 "completed": int(metadata_task_counts.get("completed", row.get("completed_tasks") or 0)),
                 "inProgress": int(metadata_task_counts.get("inProgress", row.get("in_progress_tasks") or 0)),
                 "blocked": int(metadata_task_counts.get("blocked", row.get("blocked_tasks") or 0)),
             },
-            "owners": metadata.get("owners", []),
-            "contributors": metadata.get("contributors", []),
-            "requestLogIds": metadata.get("requestLogIds", []),
-            "commitRefs": metadata.get("commitRefs", []),
+            "owners": _string_list(metadata.get("owners")),
+            "contributors": _string_list(metadata.get("contributors")),
+            "reviewers": _string_list(metadata.get("reviewers")),
+            "approvers": _string_list(metadata.get("approvers")),
+            "audience": _string_list(metadata.get("audience")),
+            "labels": _string_list(metadata.get("labels")),
+            "linkedTasks": _string_list(metadata.get("linkedTasks")),
+            "requestLogIds": _string_list(metadata.get("requestLogIds")),
+            "commitRefs": _string_list(metadata.get("commitRefs")),
+            "prRefs": _string_list(metadata.get("prRefs")),
+            "sourceDocuments": _string_list(metadata.get("sourceDocuments")),
+            "filesAffected": _string_list(metadata.get("filesAffected")),
+            "filesModified": _string_list(metadata.get("filesModified")),
+            "contextFiles": _string_list(metadata.get("contextFiles")),
+            "integritySignalRefs": _string_list(metadata.get("integritySignalRefs")),
+            "executionEntrypoints": [
+                entry
+                for entry in metadata.get("executionEntrypoints", [])
+                if isinstance(entry, dict)
+            ] if isinstance(metadata.get("executionEntrypoints"), list) else [],
+            "linkedFeatureRefs": linked_feature_refs,
+            "docTypeFields": metadata.get("docTypeFields", {}) if isinstance(metadata.get("docTypeFields"), dict) else {},
             "featureSlugHint": metadata.get("featureSlugHint", row.get("feature_slug_hint") or ""),
             "canonicalPath": metadata.get("canonicalPath", normalized_canonical),
         },

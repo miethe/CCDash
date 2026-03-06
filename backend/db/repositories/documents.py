@@ -40,9 +40,18 @@ class SqliteDocumentRepository:
         for value in frontmatter.get("linkedFeatures", []) or []:
             if isinstance(value, str):
                 add("feature", value, "linkedFeatures")
+        for item in frontmatter.get("linkedFeatureRefs", []) or []:
+            if not isinstance(item, dict):
+                continue
+            feature_value = item.get("feature")
+            if isinstance(feature_value, str):
+                add("feature", feature_value, "linkedFeatureRefs")
         for value in frontmatter.get("linkedSessions", []) or []:
             if isinstance(value, str):
                 add("session", value, "linkedSessions")
+        for value in frontmatter.get("linkedTasks", []) or []:
+            if isinstance(value, str):
+                add("task", value, "linkedTasks")
         lineage_parent = frontmatter.get("lineageParent")
         if isinstance(lineage_parent, str):
             add("lineage_parent", lineage_parent, "lineageParent")
@@ -72,6 +81,25 @@ class SqliteDocumentRepository:
         for value in frontmatter.get("commits", []) or []:
             if isinstance(value, str):
                 add("commit", value, "commits")
+        for value in frontmatter.get("commitRefs", []) or []:
+            if isinstance(value, str):
+                add("commit", value, "commitRefs")
+        for value in frontmatter.get("prs", []) or []:
+            if isinstance(value, str):
+                add("pr", value, "prs")
+        for value in frontmatter.get("prRefs", []) or []:
+            if isinstance(value, str):
+                add("pr", value, "prRefs")
+        for value in frontmatter.get("requestLogIds", []) or []:
+            if isinstance(value, str):
+                add("request_log", value, "requestLogIds")
+        for value in frontmatter.get("sourceDocuments", []) or []:
+            if isinstance(value, str):
+                add("source_document", value, "sourceDocuments")
+                add("related", value, "sourceDocuments")
+        for value in frontmatter.get("integritySignalRefs", []) or []:
+            if isinstance(value, str):
+                add("integrity_signal", value, "integritySignalRefs")
         for value in metadata.get("requestLogIds", []) or []:
             if isinstance(value, str):
                 add("request_log", value, "requestLogIds")
@@ -84,6 +112,18 @@ class SqliteDocumentRepository:
         for value in metadata.get("commitRefs", []) or []:
             if isinstance(value, str):
                 add("commit", value, "commitRefs")
+        for value in metadata.get("prRefs", []) or []:
+            if isinstance(value, str):
+                add("pr", value, "prRefs")
+        for value in metadata.get("linkedTasks", []) or []:
+            if isinstance(value, str):
+                add("task", value, "linkedTasks")
+        for item in metadata.get("linkedFeatureRefs", []) or []:
+            if not isinstance(item, dict):
+                continue
+            feature_value = item.get("feature")
+            if isinstance(feature_value, str):
+                add("feature", feature_value, "linkedFeatureRefs")
 
         unique: dict[tuple[str, str, str], tuple[str, str, str, str]] = {}
         for kind, raw, norm, source_field in refs:

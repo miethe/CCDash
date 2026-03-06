@@ -63,7 +63,7 @@ const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
 
 type WorkbenchTab = 'overview' | 'runs' | 'phases' | 'documents' | 'sessions' | 'artifacts' | 'history' | 'analytics' | 'test-status';
-type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'sessions' | 'history';
+type FeatureModalTab = 'overview' | 'phases' | 'docs' | 'relations' | 'sessions' | 'history';
 type CoreSessionGroupId = 'plan' | 'execution' | 'other';
 
 interface CoreSessionGroupDefinition {
@@ -237,6 +237,21 @@ const toEpoch = (value?: string): number => {
 const formatStatus = (value: string): string => {
   const normalized = (value || 'unknown').replace(/-/g, ' ');
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const getFeatureCoverageSummary = (feature: Feature): string => {
+  const coverage = feature.documentCoverage;
+  if (!coverage) return 'Docs n/a';
+  const present = coverage.present?.length || 0;
+  const total = present + (coverage.missing?.length || 0);
+  if (total <= 0) return 'Docs n/a';
+  return `${present}/${total}`;
+};
+
+const getFeatureLinkedFeatureCount = (feature: Feature): number => {
+  const typedCount = feature.linkedFeatures?.length || 0;
+  if (typedCount > 0) return typedCount;
+  return feature.relatedFeatures?.length || 0;
 };
 
 const executionVerdictClass = (value?: string): string => {
@@ -1918,6 +1933,57 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       <p className="text-xs text-slate-500 mt-1">Rule confidence {Math.round(context.recommendations.confidence * 100)}%</p>
                     </div>
                   </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Feature Metadata</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="text-slate-400">Priority <span className="text-slate-200 ml-1">{featureDetail.priority || '-'}</span></div>
+                        <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{featureDetail.riskLevel || '-'}</span></div>
+                        <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{featureDetail.complexity || '-'}</span></div>
+                        <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{featureDetail.track || '-'}</span></div>
+                        <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{featureDetail.executionReadiness || '-'}</span></div>
+                        <div className="text-slate-400">Coverage <span className="text-slate-200 ml-1">{getFeatureCoverageSummary(featureDetail)}</span></div>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Relation Signals</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="text-slate-400">Typed links <span className="text-slate-200 ml-1">{getFeatureLinkedFeatureCount(featureDetail)}</span></div>
+                        <div className="text-slate-400">Related IDs <span className="text-slate-200 ml-1">{featureDetail.relatedFeatures.length}</span></div>
+                        <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.blockerCount ?? 0}</span></div>
+                        <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                      </div>
+                      {(featureDetail.qualitySignals?.integritySignalRefs || []).length > 0 && (
+                        <p className="text-[11px] text-slate-500 mt-2">
+                          Integrity refs: {(featureDetail.qualitySignals?.integritySignalRefs || []).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {(featureDetail.linkedFeatures || []).length > 0 && (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Typed Related Features</p>
+                      <div className="space-y-2">
+                        {(featureDetail.linkedFeatures || []).map((relation, index) => (
+                          <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
+                            <button
+                              onClick={() => openBoardFeature(relation.feature, 'overview')}
+                              className="font-mono text-indigo-300 hover:text-indigo-200"
+                            >
+                              {relation.feature}
+                            </button>
+                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
+                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
+                            {typeof relation.confidence === 'number' && (
+                              <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {featureDetail.relatedFeatures.length > 0 && (
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">

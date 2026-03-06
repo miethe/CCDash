@@ -1,6 +1,6 @@
 # Document Entity User Guide
 
-Last updated: 2026-02-19
+Last updated: 2026-03-06
 
 This guide explains what changed in the Documents experience (`/plans`), what data is available, and how to use the new filters and views.
 
@@ -9,10 +9,11 @@ This guide explains what changed in the Documents experience (`/plans`), what da
 The Documents system now:
 
 - Indexes both plan docs and progress docs as first-class `Document` records.
-- Normalizes key metadata into typed fields (status, subtype, phase, progress, task counts, feature hints, PRD refs).
+- Normalizes canonical schema fields into typed metadata (description/summary, priority/risk/complexity/track, timeline/release/milestone, readiness/test impact, typed linked-feature refs, and doc-type-specific blocks).
 - Uses canonical project-relative paths for stable identity.
 - Supports richer cross-entity linking (`document <-> feature/task/session/document`).
 - Provides faceted filtering and broader search coverage in `/plans`.
+- Preserves migration compatibility for legacy frontmatter aliases and superseded root-level schema docs.
 
 ## Document Sources
 
@@ -72,14 +73,23 @@ Search now matches across:
 
 ## Document Modal
 
-The modal now shows:
+The modal now uses canonical tabs:
+
+1. `Summary`
+2. `Delivery`
+3. `Relationships`
+4. `Content`
+5. `Timeline`
+6. `Raw`
+
+Across these tabs it shows:
 
 - Core typed metadata (`docType`, `docSubtype`, `rootKind`, normalized status)
-- Canonical path
+- Canonical path and ownership/audience metadata
+- Delivery/execution metadata (`execution_readiness`, `timeline_estimate`, `test_impact`, file/context/source refs)
 - Progress-aware metrics (phase, overall progress, task counters)
-- Ownership and contributors
-- Request IDs and commit refs
-- Link counts and linked entities
+- Typed feature relationships (`linked_features[]` with type/source/confidence)
+- Request IDs, commit refs, PR refs, and linked entities
 
 Linked entities are sourced from normalized entity links, not from ad-hoc assumptions on frontmatter fields.
 
@@ -109,7 +119,7 @@ When completion is inferred this way, CCDash writes through to linked PRD/Plan d
 ## Known Operational Notes
 
 - Very large projects can include hundreds of documents. The UI now pages `/api/documents` behind the scenes and aggregates results.
-- If `/plans` appears stale, run a full resync/backfill to refresh typed metadata and links.
+- If `/plans` appears stale, run a full resync/backfill (`POST /api/cache/sync` with `force=true`) to refresh typed metadata and links.
 
 ## Quick Troubleshooting
 
@@ -119,6 +129,7 @@ When completion is inferred this way, CCDash writes through to linked PRD/Plan d
 
 ## Related Docs
 
-- `docs/document-entity-spec.md`
+- `docs/schemas/document_frontmatter/README.md`
+- `docs/schemas/document_frontmatter/document-and-feature-mapping.md`
 - `docs/document-entity-developer-reference.md`
 - `docs/entity-linking-user-guide.md`

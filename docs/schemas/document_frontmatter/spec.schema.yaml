@@ -1,0 +1,42 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "ccdash://schemas/document-frontmatter/spec"
+title: "CCDash Technical Spec Frontmatter"
+allOf:
+  - $ref: "./base-envelope.schema.yaml"
+  - type: object
+    required:
+      - doc_type
+      - title
+    properties:
+      doc_type:
+        const: spec
+      doc_subtype:
+        type: string
+        enum: [technical_spec, api_spec, entity_spec, schema_spec, integration_spec]
+      spec_kind:
+        type: string
+      interfaces:
+        type: array
+        items:
+          type: string
+      entities:
+        type: array
+        items:
+          type: string
+      data_contracts:
+        type: array
+        items:
+          type: string
+      validation_rules:
+        type: array
+        items:
+          type: string
+      migration_notes:
+        type: array
+        items:
+          type: string
+      open_questions:
+        type: array
+        items:
+          type: string
+

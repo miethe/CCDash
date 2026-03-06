@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download } from 'lucide-react';
+import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { useModelColors } from '../contexts/ModelColorsContext';
 import { AlertConfig, Project, ProjectTestPlatformConfig, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
@@ -43,48 +44,245 @@ const TabButton: React.FC<{
 
 // ── General Tab ────────────────────────────────────────────────────
 
-const GeneralTab: React.FC = () => (
-  <div className="space-y-6">
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="bg-indigo-500/10 p-2 rounded-lg text-indigo-400">
-          <Monitor size={20} />
+const GeneralTab: React.FC = () => {
+  const {
+    registry,
+    modelFacetsLoading,
+    familyColorOverrides,
+    modelColorOverrides,
+    getFamilyOverrideColor,
+    getModelOverrideColor,
+    getColorForModel,
+    setFamilyColorOverride,
+    clearFamilyColorOverride,
+    setModelColorOverride,
+    clearModelColorOverride,
+  } = useModelColors();
+  const [selectedFamily, setSelectedFamily] = useState('');
+  const [familyColor, setFamilyColor] = useState('#6366f1');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [modelColor, setModelColor] = useState('#6366f1');
+
+  useEffect(() => {
+    if (selectedFamily) return;
+    const firstFamily = registry.families[0]?.label || '';
+    setSelectedFamily(firstFamily);
+  }, [registry.families, selectedFamily]);
+
+  useEffect(() => {
+    if (selectedModel) return;
+    const firstModel = registry.models[0]?.raw || '';
+    setSelectedModel(firstModel);
+  }, [registry.models, selectedModel]);
+
+  useEffect(() => {
+    if (!selectedFamily) return;
+    const override = getFamilyOverrideColor(selectedFamily);
+    setFamilyColor(override || getColorForModel({ family: selectedFamily }));
+  }, [selectedFamily, getFamilyOverrideColor, getColorForModel]);
+
+  useEffect(() => {
+    if (!selectedModel) return;
+    const override = getModelOverrideColor(selectedModel);
+    const modelFamily = registry.modelByKey[selectedModel.trim().toLowerCase()]?.family || '';
+    setModelColor(override || getColorForModel({ model: selectedModel, family: modelFamily }));
+  }, [selectedModel, getModelOverrideColor, getColorForModel, registry.modelByKey]);
+
+  const familyOverrideRows = Object.entries(familyColorOverrides).sort((a, b) => a[0].localeCompare(b[0]));
+  const modelOverrideRows = Object.entries(modelColorOverrides).sort((a, b) => a[0].localeCompare(b[0]));
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="bg-indigo-500/10 p-2 rounded-lg text-indigo-400">
+            <Monitor size={20} />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-100">General Preferences</h3>
+            <p className="text-sm text-slate-400">Application-wide settings and appearance.</p>
+          </div>
         </div>
-        <div>
-          <h3 className="font-semibold text-slate-100">General Preferences</h3>
-          <p className="text-sm text-slate-400">Application-wide settings and appearance.</p>
+
+        <div className="grid grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Theme</label>
+            <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+              <option>Dark (Default)</option>
+              <option>Light</option>
+              <option>System</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Polling Interval</label>
+            <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+              <option>30 seconds (Default)</option>
+              <option>15 seconds</option>
+              <option>60 seconds</option>
+              <option>5 minutes</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        <div>
-          <label className="block text-sm font-medium text-slate-400 mb-2">Theme</label>
-          <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
-            <option>Dark (Default)</option>
-            <option>Light</option>
-            <option>System</option>
-          </select>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="bg-cyan-500/10 p-2 rounded-lg text-cyan-300">
+            <Palette size={20} />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-100">Model Color Mapping</h3>
+            <p className="text-sm text-slate-400">
+              Configure color coding by model family or exact model. Model-level overrides take precedence.
+            </p>
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-400 mb-2">Polling Interval</label>
-          <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
-            <option>30 seconds (Default)</option>
-            <option>15 seconds</option>
-            <option>60 seconds</option>
-            <option>5 minutes</option>
-          </select>
-        </div>
-      </div>
 
-      <div className="mt-6 p-4 bg-slate-800/40 rounded-lg border border-slate-700/50">
-        <p className="text-xs text-slate-500">
-          Additional preferences will be available in future updates, including notification sound settings,
-          default views, and data retention policies.
-        </p>
+        {modelFacetsLoading && (
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-400">
+            Loading model options from ingested session data...
+          </div>
+        )}
+
+        {!modelFacetsLoading && registry.models.length === 0 && (
+          <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-sm text-amber-200">
+            No model facets are available yet. Run a session sync to populate model families and models.
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+            <h4 className="text-sm font-semibold text-slate-200">Family Override</h4>
+            <div>
+              <label className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Model Family</label>
+              <select
+                value={selectedFamily}
+                onChange={(event) => setSelectedFamily(event.target.value)}
+                disabled={registry.families.length === 0}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+              >
+                {registry.families.map(family => (
+                  <option key={family.label} value={family.label}>
+                    {family.label} ({family.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-xs uppercase tracking-wide text-slate-500">Color</label>
+              <input
+                type="color"
+                value={familyColor}
+                onChange={(event) => setFamilyColor(event.target.value)}
+                className="h-9 w-14 rounded border border-slate-700 bg-slate-950"
+              />
+              <button
+                onClick={() => selectedFamily && setFamilyColorOverride(selectedFamily, familyColor)}
+                disabled={!selectedFamily}
+                className="px-3 py-1.5 rounded-md text-xs font-medium border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 disabled:opacity-40"
+              >
+                Save Family Color
+              </button>
+              <button
+                onClick={() => selectedFamily && clearFamilyColorOverride(selectedFamily)}
+                disabled={!selectedFamily || !getFamilyOverrideColor(selectedFamily)}
+                className="px-3 py-1.5 rounded-md text-xs font-medium border border-slate-700 bg-slate-900 text-slate-300 disabled:opacity-40"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+            <h4 className="text-sm font-semibold text-slate-200">Model Override</h4>
+            <div>
+              <label className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Model</label>
+              <select
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                disabled={registry.models.length === 0}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+              >
+                {registry.models.map(model => (
+                  <option key={model.raw} value={model.raw}>
+                    {model.label} ({model.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-xs uppercase tracking-wide text-slate-500">Color</label>
+              <input
+                type="color"
+                value={modelColor}
+                onChange={(event) => setModelColor(event.target.value)}
+                className="h-9 w-14 rounded border border-slate-700 bg-slate-950"
+              />
+              <button
+                onClick={() => selectedModel && setModelColorOverride(selectedModel, modelColor)}
+                disabled={!selectedModel}
+                className="px-3 py-1.5 rounded-md text-xs font-medium border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 disabled:opacity-40"
+              >
+                Save Model Color
+              </button>
+              <button
+                onClick={() => selectedModel && clearModelColorOverride(selectedModel)}
+                disabled={!selectedModel || !getModelOverrideColor(selectedModel)}
+                className="px-3 py-1.5 rounded-md text-xs font-medium border border-slate-700 bg-slate-900 text-slate-300 disabled:opacity-40"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+            <h4 className="text-xs uppercase tracking-wide text-slate-500 mb-3">Family Overrides</h4>
+            <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+              {familyOverrideRows.length === 0 && <div className="text-sm text-slate-500">None configured.</div>}
+              {familyOverrideRows.map(([key, color]) => {
+                const label = registry.familyLabelByKey[key] || key;
+                return (
+                  <div key={key} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-slate-300">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="h-5 w-5 rounded border border-slate-700" style={{ backgroundColor: color }} />
+                      <span className="font-mono text-xs text-slate-400">{color}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+            <h4 className="text-xs uppercase tracking-wide text-slate-500 mb-3">Model Overrides</h4>
+            <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+              {modelOverrideRows.length === 0 && <div className="text-sm text-slate-500">None configured.</div>}
+              {modelOverrideRows.map(([key, color]) => {
+                const label = registry.modelByKey[key]?.label || key;
+                return (
+                  <div key={key} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-slate-300 truncate" title={label}>{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="h-5 w-5 rounded border border-slate-700" style={{ backgroundColor: color }} />
+                      <span className="font-mono text-xs text-slate-400">{color}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3 bg-slate-800/40 rounded-lg border border-slate-700/50 text-xs text-slate-500">
+          Colors are sourced from session model facets and applied across Analytics, Session cards, and other model badges.
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Projects Tab ───────────────────────────────────────────────────
 

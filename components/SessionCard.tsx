@@ -1,5 +1,6 @@
 import React from 'react';
 import { Calendar, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
+import { useModelColors } from '../contexts/ModelColorsContext';
 
 export interface SessionCardMetadata {
   sessionTypeLabel?: string;
@@ -140,22 +141,6 @@ const providerGlyph = (provider: string) => {
   return <span className="inline-block h-2 w-2 rounded-full bg-current" aria-hidden="true" />;
 };
 
-const modelBadgeTone = (model: SessionCardModel, provider: string): string => {
-  const raw = (model.raw || '').toLowerCase();
-  if (raw.includes('claude') && raw.includes('opus')) return 'border-rose-500/45 bg-rose-500/12 text-rose-200';
-  if (raw.includes('claude') && raw.includes('sonnet')) return 'border-amber-500/45 bg-amber-500/12 text-amber-200';
-  if (raw.includes('claude') && raw.includes('haiku')) return 'border-teal-500/45 bg-teal-500/12 text-teal-200';
-  if (raw.includes('gpt-5')) return 'border-emerald-500/45 bg-emerald-500/12 text-emerald-200';
-  if (raw.includes('gpt-4o')) return 'border-cyan-500/45 bg-cyan-500/12 text-cyan-200';
-  if (raw.includes('gpt-4')) return 'border-sky-500/45 bg-sky-500/12 text-sky-200';
-  if (raw.includes('gemini') && raw.includes('flash')) return 'border-blue-500/45 bg-blue-500/12 text-blue-200';
-  if (raw.includes('gemini')) return 'border-indigo-500/45 bg-indigo-500/12 text-indigo-200';
-  if ((provider || '').toLowerCase().includes('claude')) return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
-  if ((provider || '').toLowerCase().includes('openai')) return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
-  if ((provider || '').toLowerCase().includes('gemini')) return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
-  return 'border-slate-600/80 bg-slate-800/70 text-slate-300';
-};
-
 export const formatPhaseIndicator = (phase: string): string => {
   const normalized = (phase || '').trim();
   if (!normalized) return '';
@@ -264,6 +249,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onClick,
   children,
 }) => {
+  const { getBadgeStyleForModel } = useModelColors();
   const [openDetailsId, setOpenDetailsId] = React.useState<string | null>(null);
   const detailsContainerRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -376,14 +362,14 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {modelBadges.length > 0 ? modelBadges.map((entry) => {
                   const identity = extractModelIdentity(entry);
-                  const tone = modelBadgeTone(entry, identity.provider);
                   const versionText = identity.version && identity.version.toLowerCase().startsWith(identity.family.toLowerCase())
                     ? identity.version.slice(identity.family.length).trim()
                     : identity.version;
                   return (
                     <span
                       key={`${sessionId}-model-${entry.raw}`}
-                      className={`inline-flex items-center gap-1.5 text-[10px] px-1.5 py-0.5 rounded border font-semibold ${tone}`}
+                      className="inline-flex items-center gap-1.5 text-[10px] px-1.5 py-0.5 rounded border font-semibold"
+                      style={getBadgeStyleForModel({ model: entry.raw || identity.displayName, family: identity.family })}
                       title={entry.raw || identity.displayName}
                     >
                       <span

@@ -111,6 +111,19 @@ class SessionMappingsTests(unittest.TestCase):
         self.assertEqual(match.get("transcriptKind"), "artifact")
         self.assertEqual(match.get("command"), "/mc")
 
+    def test_classify_transcript_message_matches_hook_artifact_mapping(self) -> None:
+        mappings = default_session_mappings()
+        match = classify_transcript_message(
+            "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notebooklm-sync-hook.sh",
+            mappings,
+            platform_type="Claude Code",
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.get("mappingId"), "artifact-hook-invocation")
+        self.assertEqual(match.get("transcriptKind"), "artifact")
+        self.assertEqual(match.get("matchText"), ".claude/hooks/notebooklm-sync-hook.sh")
+
     def test_normalize_transcript_fields_sanitizes_color_and_icon(self) -> None:
         mappings = normalize_session_mappings([
             {
