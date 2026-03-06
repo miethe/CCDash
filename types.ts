@@ -215,6 +215,30 @@ export interface AgentSession {
   timeline?: TimelineEvent[];
 }
 
+export type MotionPresetKey = 'listInsertTop' | 'messageFlyIn' | 'typingPulse';
+
+export interface LiveAgentActivity {
+  agentName: string;
+  sessionId?: string;
+  threadSessionId?: string;
+  lastSeenAt: string;
+  status: 'active' | 'idle';
+}
+
+export interface LiveInsertMeta {
+  insertedIds: string[];
+  removedIds: string[];
+  movedIds: string[];
+  isHydrated: boolean;
+}
+
+export interface LiveTranscriptState {
+  isLive: boolean;
+  pendingMessageCount: number;
+  autoStickToLatest: boolean;
+  activeAgents: LiveAgentActivity[];
+}
+
 export interface SessionActivityItem {
   id: string;
   kind: 'log' | 'file' | 'artifact' | string;

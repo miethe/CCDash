@@ -24,6 +24,10 @@ export interface SessionFilters {
     max_duration?: number;
 }
 
+export interface SessionFetchOptions {
+    force?: boolean;
+}
+
 // ── Types ──────────────────────────────────────────────────────────
 
 interface DataContextValue {
@@ -65,7 +69,7 @@ interface DataContextValue {
     updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
     updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
     updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string, previousStatus?: string) => Promise<void>;
-    getSessionById: (sessionId: string) => Promise<AgentSession | null>;
+    getSessionById: (sessionId: string, options?: SessionFetchOptions) => Promise<AgentSession | null>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -245,13 +249,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [sessions.length, sessionTotal, refreshSessions]);
 
-    const getSessionById = useCallback(async (sessionId: string): Promise<AgentSession | null> => {
+    const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
+        const forceFetch = Boolean(options?.force);
         // First check if we already have it in state
         const existing = sessions.find(s => s.id === sessionId);
 
         // Only return cached if it has logs (meaning it's a full detail object, not a list item)
         // List items have empty logs arrays usually.
-        if (existing && existing.logs && existing.logs.length > 0) {
+        if (!forceFetch && existing && existing.logs && existing.logs.length > 0) {
             return existing;
         }
 

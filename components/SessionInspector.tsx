@@ -17,6 +17,7 @@ import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccen
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
 const LIVE_IN_FLIGHT_WINDOW_MS = 10 * 60 * 1000;
+const ACTIVE_SESSION_DETAIL_POLL_MS = 5_000;
 type SessionInspectorTab = 'transcript' | 'activity' | 'forensics' | 'analytics' | 'agents' | 'impact' | 'files' | 'artifacts' | 'features' | 'test-status';
 
 const isSessionInspectorTab = (value: string | null): value is SessionInspectorTab => (
@@ -7107,6 +7108,39 @@ export const SessionInspector: React.FC = () => {
         setSessionOpenLoading(false);
         setSessionOpenError(`Unable to load session ${normalizedSessionId}.`);
     }, [activeSessionTab, getSessionById, selectedSession, updateSessionSearchParams]);
+
+    useEffect(() => {
+        if (!selectedSession || selectedSession.status !== 'active') {
+            return undefined;
+        }
+
+        let cancelled = false;
+        const pollSessionDetail = async () => {
+            const refreshed = await getSessionById(selectedSession.id, { force: true });
+            if (!refreshed || cancelled) return;
+            setSelectedSession(current => {
+                if (!current || current.id !== refreshed.id) return current;
+                if (
+                    current.status === refreshed.status
+                    && current.updatedAt === refreshed.updatedAt
+                    && current.logs.length === refreshed.logs.length
+                ) {
+                    return current;
+                }
+                return refreshed;
+            });
+        };
+
+        void pollSessionDetail();
+        const interval = window.setInterval(() => {
+            void pollSessionDetail();
+        }, ACTIVE_SESSION_DETAIL_POLL_MS);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [getSessionById, selectedSession?.id, selectedSession?.status]);
 
     const handleBackFromSession = useCallback(() => {
         if (sessionBackStack.length === 0) {
