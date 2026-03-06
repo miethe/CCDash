@@ -3,5 +3,4 @@ export { getMotionPreset, MOTION_PRESET_KEYS, motionPresets, reducedMotionPreset
 export { motionTokens } from './motionTokens';
 export { useAnimatedListDiff, computeListDiff, reconcileAnimatedList } from './useAnimatedListDiff';
 export { useReducedMotionPreference } from './useReducedMotionPreference';
-export { useSmartScrollAnchor, distanceFromBottom } from './useSmartScrollAnchor';
-
+export { useSmartScrollAnchor, distanceFromBottom, isWithinScrollThreshold } from './useSmartScrollAnchor';

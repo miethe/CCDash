@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
-import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink } from '../types';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink, LiveAgentActivity, LiveTranscriptState } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
@@ -13,6 +14,7 @@ import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
+import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -121,6 +123,18 @@ const isSessionLiveInFlight = (session: AgentSession, nowMs: number): boolean =>
     if (activityEpoch <= 0) return false;
     const ageMs = Math.max(0, nowMs - activityEpoch);
     return ageMs <= LIVE_IN_FLIGHT_WINDOW_MS;
+};
+
+const getLiveAgentLabel = (
+    session: AgentSession,
+    subagentNameBySessionId: Map<string, string>,
+): string => {
+    const mappedName = subagentNameBySessionId.get(session.id);
+    if (mappedName) return mappedName;
+    const titled = (session.title || '').trim();
+    if (titled && titled !== session.id) return titled;
+    if (session.agentId) return `agent-${session.agentId}`;
+    return 'Active Agent';
 };
 
 const parseLogIndex = (logId?: string): number => {
@@ -1922,6 +1936,12 @@ const TranscriptView: React.FC<{
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
         : session.logs;
     const [transcriptMappings, setTranscriptMappings] = useState<TranscriptFormattingMappingRule[]>([]);
+    const prefersReducedMotion = useReducedMotionPreference();
+    const messagePreset = getMotionPreset('messageFlyIn', prefersReducedMotion);
+    const smartScroll = useSmartScrollAnchor<HTMLDivElement>({
+        thresholdPx: 120,
+        stickBehavior: prefersReducedMotion ? 'auto' : 'smooth',
+    });
 
     useEffect(() => {
         let cancelled = false;
@@ -1945,8 +1965,31 @@ const TranscriptView: React.FC<{
         };
     }, []);
 
-    const selectedLog = logs.find(l => l.id === selectedLogId);
+    const animatedLogs = useAnimatedListDiff(logs, {
+        getId: log => log.id,
+    });
+    const selectedLog = animatedLogs.items.find(l => l.id === selectedLogId);
     const threadLinks = threadSessions.filter(t => t.id !== session.id);
+    const liveNowMs = Date.now();
+    const activeLiveAgents = useMemo<LiveAgentActivity[]>(() => {
+        return threadLinks
+            .filter(thread => isSessionLiveInFlight(thread, liveNowMs))
+            .map(thread => ({
+                agentName: getLiveAgentLabel(thread, subagentNameBySessionId),
+                sessionId: thread.id,
+                threadSessionId: thread.id,
+                lastSeenAt: thread.updatedAt || thread.startedAt,
+                status: 'active' as const,
+            }))
+            .sort((a, b) => toEpoch(b.lastSeenAt) - toEpoch(a.lastSeenAt));
+    }, [liveNowMs, subagentNameBySessionId, threadLinks]);
+    const liveTranscriptState = useMemo<LiveTranscriptState>(() => ({
+        isLive: session.status === 'active',
+        pendingMessageCount: smartScroll.pendingInserts,
+        autoStickToLatest: smartScroll.isNearBottom,
+        activeAgents: activeLiveAgents,
+    }), [activeLiveAgents, session.status, smartScroll.isNearBottom, smartScroll.pendingInserts]);
+    const { clearPendingInserts, onItemsInserted, scrollToLatest } = smartScroll;
 
     const filesByLogId = useMemo(() => {
         const map = new Map<string, number>();
@@ -2063,51 +2106,141 @@ const TranscriptView: React.FC<{
     const telemetryMcpServerCount = asNumber(telemetryProject.mcpServerCount, 0);
     const hasDetailedForensics = Object.keys(sessionForensics).length > 0;
 
+    useEffect(() => {
+        if (!liveTranscriptState.isLive) {
+            clearPendingInserts();
+            return;
+        }
+        if (!animatedLogs.isHydrated || animatedLogs.insertedIds.size === 0) return;
+        onItemsInserted(animatedLogs.insertedIds.size);
+    }, [
+        animatedLogs.insertedIds,
+        animatedLogs.isHydrated,
+        clearPendingInserts,
+        liveTranscriptState.isLive,
+        onItemsInserted,
+    ]);
+
+    useEffect(() => {
+        clearPendingInserts();
+        if (liveTranscriptState.isLive) {
+            scrollToLatest('auto');
+        }
+    }, [clearPendingInserts, filterAgent, liveTranscriptState.isLive, scrollToLatest, session.id]);
+
     return (
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
             {/* Pane 1: Chat Transcript (Left) */}
             <div
-                className={`flex flex-col bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden transition-all duration-500 ease-out ${selectedLogId ? 'basis-[30%] min-w-[320px] max-w-[520px]' : 'flex-1 min-w-[420px]'
+                className={`relative flex flex-col bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden transition-all duration-500 ease-out ${selectedLogId ? 'basis-[30%] min-w-[320px] max-w-[520px]' : 'flex-1 min-w-[420px]'
                     }`}
             >
                 <div className="p-4 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                         <MessageSquare size={14} className="text-indigo-400" /> {filterAgent ? `Transcript: ${filterAgent}` : 'Full Transcript'}
                     </h3>
-                    <div className="text-[10px] text-slate-600 font-mono">{logs.length} Steps</div>
+                    <div className="text-[10px] text-slate-600 font-mono">{animatedLogs.items.length} Steps</div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    {logs.map(log => (
-                        <LogItemBlurb
-                            key={log.id}
-                            log={log}
-                            formattedMessage={formattedMessagesByLogId.get(log.id)}
-                            isSelected={selectedLogId === log.id}
-                            onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
-                            fileCount={filesByLogId.get(log.id) || 0}
-                            artifactCount={(artifactsByLogId.get(log.id) || []).length}
-                            onShowFiles={() => onShowLinked('activity', log.id)}
-                            onShowArtifacts={() => onShowLinked('artifacts', log.id)}
-                            onOpenThread={onOpenThread}
-                        />
-                    ))}
-                    {logs.length === 0 && <div className="p-8 text-center text-slate-500 italic">No logs found for this view.</div>}
+                <div ref={smartScroll.containerRef} className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+                    <AnimatePresence initial={false}>
+                        {animatedLogs.items.map(log => {
+                            const shouldAnimateIn = liveTranscriptState.isLive && animatedLogs.insertedIds.has(log.id);
+                            return (
+                                <motion.div
+                                    key={log.id}
+                                    layout="position"
+                                    initial={shouldAnimateIn ? messagePreset.initial : false}
+                                    animate={shouldAnimateIn ? messagePreset.animate : undefined}
+                                    exit={messagePreset.exit}
+                                    transition={messagePreset.transition}
+                                >
+                                    <LogItemBlurb
+                                        log={log}
+                                        formattedMessage={formattedMessagesByLogId.get(log.id)}
+                                        isSelected={selectedLogId === log.id}
+                                        onClick={() => setSelectedLogId(log.id === selectedLogId ? null : log.id)}
+                                        fileCount={filesByLogId.get(log.id) || 0}
+                                        artifactCount={(artifactsByLogId.get(log.id) || []).length}
+                                        onShowFiles={() => onShowLinked('activity', log.id)}
+                                        onShowArtifacts={() => onShowLinked('artifacts', log.id)}
+                                        onOpenThread={onOpenThread}
+                                    />
+                                </motion.div>
+                            );
+                        })}
+                    </AnimatePresence>
+                    {animatedLogs.items.length === 0 && <div className="p-8 text-center text-slate-500 italic">No logs found for this view.</div>}
                 </div>
+                {liveTranscriptState.isLive && (
+                    <div className="border-t border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(74,222,128,0.6)]" />
+                                    Live
+                                </span>
+                                <TypingIndicator label="Live transcript activity" />
+                                <span className="text-[11px] text-emerald-100/80">
+                                    {liveTranscriptState.autoStickToLatest ? 'Auto-following latest updates' : 'New updates are waiting below your scroll position'}
+                                </span>
+                            </div>
+                            {!liveTranscriptState.autoStickToLatest && liveTranscriptState.pendingMessageCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => scrollToLatest()}
+                                    className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-400/20 transition-colors"
+                                >
+                                    {liveTranscriptState.pendingMessageCount} new message{liveTranscriptState.pendingMessageCount === 1 ? '' : 's'}
+                                </button>
+                            )}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {liveTranscriptState.activeAgents.length > 0 ? (
+                                liveTranscriptState.activeAgents.slice(0, 6).map(agent => (
+                                    <button
+                                        key={agent.threadSessionId || agent.sessionId || agent.agentName}
+                                        type="button"
+                                        onClick={() => {
+                                            if (agent.sessionId) onOpenThread(agent.sessionId);
+                                        }}
+                                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-slate-950/40 px-2.5 py-1 text-[11px] text-emerald-100 hover:border-emerald-300/40 hover:bg-emerald-400/10 transition-colors"
+                                    >
+                                        <Activity size={11} />
+                                        {agent.agentName}
+                                    </button>
+                                ))
+                            ) : (
+                                <span className="text-[11px] text-emerald-100/65">
+                                    Monitoring the main thread for new transcript entries.
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Pane 2: Expanded Details (Middle) - Dynamic visibility */}
-            {selectedLogId && (
-                <div className="flex-1 min-w-[420px] flex flex-col bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in slide-in-from-right-4 duration-300">
-                    {selectedLog && (
-                        <DetailPane
-                            log={selectedLog}
-                            formattedMessage={formattedMessagesByLogId.get(selectedLog.id)}
-                            commandArtifacts={selectedCommandArtifacts}
-                            onOpenArtifacts={() => onShowLinked('artifacts', selectedLog.id)}
-                        />
-                    )}
-                </div>
-            )}
+            <AnimatePresence initial={false}>
+                {selectedLogId && (
+                    <motion.div
+                        layout
+                        initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
+                        animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                        exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
+                        transition={messagePreset.transition}
+                        className="flex-1 min-w-[420px] flex flex-col bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl"
+                    >
+                        {selectedLog && (
+                            <DetailPane
+                                log={selectedLog}
+                                formattedMessage={formattedMessagesByLogId.get(selectedLog.id)}
+                                commandArtifacts={selectedCommandArtifacts}
+                                onOpenArtifacts={() => onShowLinked('artifacts', selectedLog.id)}
+                            />
+                        )}
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Pane 3: Metadata Details (Far Right) - Smaller fixed-ish width */}
             <div className="w-[260px] min-w-[220px] max-w-[300px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
@@ -6390,10 +6523,19 @@ const SessionDetail: React.FC<{
             }
         };
         void load();
+        let intervalId: number | null = null;
+        if (session.status === 'active') {
+            intervalId = window.setInterval(() => {
+                void load();
+            }, ACTIVE_SESSION_DETAIL_POLL_MS);
+        }
         return () => {
             cancelled = true;
+            if (intervalId !== null) {
+                window.clearInterval(intervalId);
+            }
         };
-    }, [session.id, session.rootSessionId]);
+    }, [session.id, session.rootSessionId, session.status]);
 
     useEffect(() => {
         setThreadSessionDetails(prev => ({ ...prev, [session.id]: session }));

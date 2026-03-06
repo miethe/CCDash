@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { Feature, FeaturePhase, FeatureTestHealth, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
@@ -16,6 +17,7 @@ import {
   Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
+import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -202,6 +204,12 @@ const normalizeCommitHash = (value: string): string => {
   if (!COMMIT_HASH_PATTERN.test(raw)) return '';
   return raw;
 };
+const getPullRequestStableKey = (pr: PullRequestRef): string => (
+  String(pr.prUrl || '').trim()
+  || `pr:${String(pr.prRepository || '').trim()}:${String(pr.prNumber || '').trim()}`
+  || `pr:${String(pr.prNumber || '').trim()}`
+  || `repo:${String(pr.prRepository || '').trim()}`
+);
 const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
   {
     id: 'plan',
@@ -1398,6 +1406,11 @@ const FeatureModal = ({
       return bTime - aTime;
     });
   }, [linkedSessionLinks]);
+  const prefersReducedMotion = useReducedMotionPreference();
+  const listInsertPreset = getMotionPreset('listInsertTop', prefersReducedMotion);
+  const animatedLinkedSessions = useAnimatedListDiff(linkedSessions, {
+    getId: session => session.sessionId,
+  });
 
   const phaseSessionLinks = useMemo(() => {
     const byPhase = new Map<string, FeatureSessionLink[]>();
@@ -1793,6 +1806,12 @@ const FeatureModal = ({
     if (!normalized) return gitHistoryData.commits;
     return gitHistoryData.commits.filter(commit => commit.commitHash === normalized);
   }, [gitHistoryCommitFilter, gitHistoryData.commits]);
+  const animatedPullRequests = useAnimatedListDiff(gitHistoryData.pullRequests, {
+    getId: pr => getPullRequestStableKey(pr),
+  });
+  const animatedGitCommits = useAnimatedListDiff(filteredGitCommits, {
+    getId: commit => commit.commitHash,
+  });
 
   const phaseCommitLinks = useMemo(() => {
     const byPhase = new Map<string, GitCommitAggregate[]>();
@@ -2193,26 +2212,46 @@ const FeatureModal = ({
   const renderSessionTreeNode = (node: FeatureSessionTreeNode, depth = 0): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expandedSubthreadsBySessionId.has(node.session.sessionId);
+    const shouldAnimateIn = animatedLinkedSessions.insertedIds.has(node.session.sessionId);
 
     return (
-      <div key={node.session.sessionId} className="space-y-2">
+      <motion.div
+        key={node.session.sessionId}
+        layout="position"
+        initial={shouldAnimateIn ? listInsertPreset.initial : false}
+        animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
+        exit={listInsertPreset.exit}
+        transition={listInsertPreset.transition}
+        className="space-y-2"
+      >
         {renderSessionCard(node.session, hasChildren ? {
           expanded: isExpanded,
           childCount: countThreadNodes(node.children),
           onToggle: () => toggleSubthreads(node.session.sessionId),
           label: 'Sub-Threads',
         } : undefined)}
-        {hasChildren && isExpanded && (
-          <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
-            {node.children.map(child => (
-              <div key={child.session.sessionId} className="relative pl-3">
-                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
-                {renderSessionTreeNode(child, depth + 1)}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        <AnimatePresence initial={false}>
+          {hasChildren && isExpanded && (
+            <motion.div
+              layout
+              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+              animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+              transition={listInsertPreset.transition}
+              className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3 overflow-hidden`}
+            >
+              <AnimatePresence initial={false}>
+                {node.children.map(child => (
+                  <motion.div key={child.session.sessionId} layout="position" className="relative pl-3">
+                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                    {renderSessionTreeNode(child, depth + 1)}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     );
   };
 
@@ -2846,7 +2885,9 @@ const FeatureModal = ({
                               No sessions currently in this group.
                             </div>
                           )}
-                          {group.roots.map(node => renderSessionTreeNode(node))}
+                          <AnimatePresence initial={false}>
+                            {group.roots.map(node => renderSessionTreeNode(node))}
+                          </AnimatePresence>
                         </div>
                       )}
                     </div>
@@ -2871,7 +2912,9 @@ const FeatureModal = ({
                             No secondary linked sessions.
                           </div>
                         )}
-                        {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
+                        <AnimatePresence initial={false}>
+                          {secondarySessionRoots.map(node => renderSessionTreeNode(node))}
+                        </AnimatePresence>
                       </div>
                     )}
                   </div>
@@ -2941,11 +2984,22 @@ const FeatureModal = ({
                 <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Pull Requests</div>
                   <div className="space-y-2">
-                    {gitHistoryData.pullRequests.map((pr, index) => {
+                    <AnimatePresence initial={false}>
+                      {animatedPullRequests.items.map((pr, index) => {
                       const label = pr.prNumber ? `#${pr.prNumber}` : (pr.prUrl || pr.prRepository || `PR ${index + 1}`);
                       const href = pr.prUrl || '';
+                      const prKey = getPullRequestStableKey(pr) || `pr-row-${label}`;
+                      const shouldAnimateIn = animatedPullRequests.insertedIds.has(prKey);
                       return (
-                        <div key={`pr-${pr.prUrl || pr.prNumber || index}`} className="flex items-center justify-between gap-3 text-xs">
+                        <motion.div
+                          key={prKey}
+                          layout="position"
+                          initial={shouldAnimateIn ? listInsertPreset.initial : false}
+                          animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
+                          exit={listInsertPreset.exit}
+                          transition={listInsertPreset.transition}
+                          className="flex items-center justify-between gap-3 text-xs"
+                        >
                           <div className="text-slate-300 flex items-center gap-2">
                             <span className="font-mono text-blue-300">{label}</span>
                             {pr.prRepository && <span className="text-slate-500">{pr.prRepository}</span>}
@@ -2962,9 +3016,10 @@ const FeatureModal = ({
                           ) : (
                             <span className="text-slate-600">No URL</span>
                           )}
-                        </div>
+                        </motion.div>
                       );
                     })}
+                    </AnimatePresence>
                   </div>
                 </div>
               )}
@@ -2979,8 +3034,19 @@ const FeatureModal = ({
 
               {filteredGitCommits.length > 0 && (
                 <div className="space-y-2">
-                  {filteredGitCommits.map(commit => (
-                    <div key={commit.commitHash} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                  <AnimatePresence initial={false}>
+                    {animatedGitCommits.items.map(commit => {
+                      const shouldAnimateIn = animatedGitCommits.insertedIds.has(commit.commitHash);
+                      return (
+                    <motion.div
+                      key={commit.commitHash}
+                      layout="position"
+                      initial={shouldAnimateIn ? listInsertPreset.initial : false}
+                      animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
+                      exit={listInsertPreset.exit}
+                      transition={listInsertPreset.transition}
+                      className="bg-slate-900 border border-slate-800 rounded-lg p-3"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <button
                           onClick={() => setGitHistoryCommitFilter(commit.commitHash === gitHistoryCommitFilter ? '' : commit.commitHash)}
@@ -3007,7 +3073,7 @@ const FeatureModal = ({
                           </span>
                         ))}
                         {commit.pullRequests.map((pr, idx) => (
-                          <span key={`${commit.commitHash}-pr-${pr.prUrl || pr.prNumber || idx}`} className="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 font-mono">
+                          <span key={`${commit.commitHash}-pr-${getPullRequestStableKey(pr) || idx}`} className="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-200 font-mono">
                             {pr.prNumber ? `PR #${pr.prNumber}` : 'PR'}
                           </span>
                         ))}
@@ -3034,8 +3100,9 @@ const FeatureModal = ({
                         <div className="text-slate-400">Events: <span className="text-slate-200">{commit.eventCount}</span></div>
                         <div className="text-slate-400">Cost: <span className="text-slate-200">${commit.costUsd.toFixed(2)}</span></div>
                       </div>
-                    </div>
-                  ))}
+                    </motion.div>
+                  )})}
+                  </AnimatePresence>
                 </div>
               )}
             </div>

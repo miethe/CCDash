@@ -5,8 +5,8 @@ export interface SmartScrollAnchorOptions {
     stickBehavior?: ScrollBehavior;
 }
 
-export interface SmartScrollAnchorResult {
-    containerRef: RefObject<HTMLElement | null>;
+export interface SmartScrollAnchorResult<T extends HTMLElement> {
+    containerRef: RefObject<T | null>;
     isNearBottom: boolean;
     pendingInserts: number;
     onItemsInserted: (insertedCount: number) => void;
@@ -14,22 +14,26 @@ export interface SmartScrollAnchorResult {
     clearPendingInserts: () => void;
 }
 
+export const isWithinScrollThreshold = (distance: number, thresholdPx: number): boolean => (
+    distance <= thresholdPx
+);
+
 export const distanceFromBottom = (
     element: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>,
 ): number => Math.max(0, element.scrollHeight - (element.scrollTop + element.clientHeight));
 
-export const useSmartScrollAnchor = (
+export const useSmartScrollAnchor = <T extends HTMLElement = HTMLElement>(
     options: SmartScrollAnchorOptions = {},
-): SmartScrollAnchorResult => {
+): SmartScrollAnchorResult<T> => {
     const { thresholdPx = 120, stickBehavior = 'smooth' } = options;
-    const containerRef = useRef<HTMLElement | null>(null);
+    const containerRef = useRef<T | null>(null);
     const [isNearBottom, setIsNearBottom] = useState(true);
     const [pendingInserts, setPendingInserts] = useState(0);
 
     const refreshAnchorState = useCallback(() => {
         const element = containerRef.current;
         if (!element) return;
-        setIsNearBottom(distanceFromBottom(element) <= thresholdPx);
+        setIsNearBottom(isWithinScrollThreshold(distanceFromBottom(element), thresholdPx));
     }, [thresholdPx]);
 
     const scrollToLatest = useCallback((behavior?: ScrollBehavior) => {
