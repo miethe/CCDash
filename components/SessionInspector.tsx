@@ -309,6 +309,36 @@ interface TestRunDetails {
     counts: Record<string, number>;
 }
 
+interface ReadToolDetails {
+    filePath: string | null;
+    offset: number | null;
+    limit: number | null;
+    otherParams: Record<string, unknown>;
+}
+
+interface GrepToolMatch {
+    lineNumber: number | null;
+    content: string;
+}
+
+interface GrepToolFileMatch {
+    filePath: string;
+    matches: GrepToolMatch[];
+}
+
+interface GrepToolDetails {
+    pattern: string | null;
+    searchPath: string | null;
+    outputMode: string | null;
+    lineNumbersEnabled: boolean | null;
+    otherParams: Record<string, unknown>;
+    files: GrepToolFileMatch[];
+}
+
+const READ_TOOL_NAMES = new Set(['read', 'readfile']);
+const GREP_TOOL_NAMES = new Set(['grep']);
+const GREP_OUTPUT_LINE_PATTERN = /^(.*?):(\d+):(.*)$/;
+
 const isSubagentToolCallName = (name?: string | null): boolean =>
     SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
 
@@ -453,6 +483,114 @@ const getTestRunDetails = (log: SessionLog): TestRunDetails | null => {
         pythonVersion: takeString(result.pythonVersion, metadata.testPythonVersion),
         pytestVersion: takeString(result.pytestVersion, metadata.testPytestVersion),
         counts,
+    };
+};
+
+const toOptionalNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+};
+
+const toOptionalBoolean = (value: unknown): boolean | null => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+        if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+    }
+    return null;
+};
+
+const collectOtherToolArgs = (
+    args: Record<string, unknown> | null,
+    excludedKeys: string[],
+): Record<string, unknown> => {
+    if (!args) return {};
+    const excluded = new Set(excludedKeys.map(key => key.toLowerCase()));
+    const other: Record<string, unknown> = {};
+    Object.entries(args).forEach(([key, value]) => {
+        if (!excluded.has(key.toLowerCase())) {
+            other[key] = value;
+        }
+    });
+    return other;
+};
+
+const parseGrepOutputByFile = (output: string | undefined): GrepToolFileMatch[] => {
+    const grouped = new Map<string, GrepToolFileMatch>();
+    const text = String(output || '').replace(/\r/g, '');
+    if (!text.trim()) return [];
+
+    text.split('\n').forEach(line => {
+        const normalized = line.replace(/\s+$/, '');
+        if (!normalized.trim()) return;
+        const match = GREP_OUTPUT_LINE_PATTERN.exec(normalized);
+        if (!match) return;
+        const filePath = String(match[1] || '').trim();
+        if (!filePath) return;
+        const lineNumber = Number.parseInt(String(match[2] || ''), 10);
+        const content = String(match[3] || '');
+        const existing = grouped.get(filePath) || { filePath, matches: [] };
+        existing.matches.push({
+            lineNumber: Number.isFinite(lineNumber) ? lineNumber : null,
+            content,
+        });
+        grouped.set(filePath, existing);
+    });
+
+    return Array.from(grouped.values());
+};
+
+const getReadToolDetails = (log: SessionLog): ReadToolDetails | null => {
+    if (log.type !== 'tool') return null;
+    const toolName = String(log.toolCall?.name || '').trim().toLowerCase();
+    if (!READ_TOOL_NAMES.has(toolName)) return null;
+
+    const args = parseToolArgs(log.toolCall?.args);
+    const filePath = takeString(
+        args?.file_path,
+        args?.filePath,
+        args?.path,
+        args?.filename,
+        args?.file,
+    );
+    const offset = toOptionalNumber(args?.offset);
+    const limit = toOptionalNumber(args?.limit);
+    const otherParams = collectOtherToolArgs(args, ['file_path', 'filePath', 'path', 'filename', 'file', 'offset', 'limit']);
+
+    return {
+        filePath,
+        offset,
+        limit,
+        otherParams,
+    };
+};
+
+const getGrepToolDetails = (log: SessionLog): GrepToolDetails | null => {
+    if (log.type !== 'tool') return null;
+    const toolName = String(log.toolCall?.name || '').trim().toLowerCase();
+    if (!GREP_TOOL_NAMES.has(toolName)) return null;
+
+    const args = parseToolArgs(log.toolCall?.args);
+    const pattern = takeString(args?.pattern, args?.query, args?.regex);
+    const searchPath = takeString(args?.path, args?.cwd, args?.directory, args?.root);
+    const outputMode = takeString(args?.output_mode, args?.outputMode, args?.mode);
+    const lineNumbersEnabled = toOptionalBoolean(args?.['-n'] ?? args?.n);
+    const otherParams = collectOtherToolArgs(args, ['pattern', 'query', 'regex', 'path', 'cwd', 'directory', 'root', 'output_mode', 'outputMode', 'mode', '-n', 'n']);
+    const files = parseGrepOutputByFile(log.toolCall?.output);
+
+    return {
+        pattern,
+        searchPath,
+        outputMode,
+        lineNumbersEnabled,
+        otherParams,
+        files,
     };
 };
 
@@ -1188,6 +1326,8 @@ const DetailPane: React.FC<{
     const parsedMessage = formattedMessage || parseTranscriptMessage(getTranscriptSourceText(log));
     const taskToolDetails = getTaskToolDetails(log);
     const testToolDetails = getTestRunDetails(log);
+    const readToolDetails = getReadToolDetails(log);
+    const grepToolDetails = getGrepToolDetails(log);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
@@ -1543,6 +1683,108 @@ const DetailPane: React.FC<{
                                             <div className="sm:col-span-2">
                                                 <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Command</div>
                                                 <div className="text-slate-300 font-mono break-all">{testToolDetails.command}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {readToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-sky-500/5">
+                                    <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">Read Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">File</div>
+                                            <div className="font-mono text-sky-200 break-all">{readToolDetails.filePath || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Offset</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {typeof readToolDetails.offset === 'number' ? readToolDetails.offset : 'n/a'}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Limit</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {typeof readToolDetails.limit === 'number' ? readToolDetails.limit : 'n/a'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {Object.keys(readToolDetails.otherParams).length > 0 && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(readToolDetails.otherParams, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {grepToolDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-cyan-500/5">
+                                    <div className="text-[10px] text-cyan-300 uppercase tracking-widest font-bold mb-3">Grep Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pattern</div>
+                                            <div className="font-mono text-cyan-200 break-all">{grepToolDetails.pattern || 'n/a'}</div>
+                                        </div>
+                                        <div className="sm:col-span-2">
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Path</div>
+                                            <div className="font-mono text-slate-300 break-all">{grepToolDetails.searchPath || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Output Mode</div>
+                                            <div className="text-slate-300 font-mono">{grepToolDetails.outputMode || 'n/a'}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Line Numbers</div>
+                                            <div className="text-slate-300 font-mono">
+                                                {grepToolDetails.lineNumbersEnabled === null
+                                                    ? 'n/a'
+                                                    : (grepToolDetails.lineNumbersEnabled ? 'enabled' : 'disabled')}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {Object.keys(grepToolDetails.otherParams).length > 0 && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(grepToolDetails.otherParams, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                    <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                        <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Matches By File</div>
+                                        {grepToolDetails.files.length === 0 ? (
+                                            <div className="text-xs text-slate-400">No parseable grep matches were found in tool output.</div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {grepToolDetails.files.map((file, index) => {
+                                                    const sectionId = `grep-file-${index}-${file.filePath}`;
+                                                    const isExpanded = expandedSections.has(sectionId);
+                                                    return (
+                                                        <div key={sectionId} className="border border-slate-800 rounded-md bg-slate-950/70 overflow-hidden">
+                                                            <button
+                                                                onClick={() => toggleSection(sectionId)}
+                                                                className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left hover:bg-slate-900/70 transition-colors"
+                                                            >
+                                                                <span className="font-mono text-xs text-cyan-200 break-all">{file.filePath}</span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <span className="text-[10px] text-slate-500">{file.matches.length} match{file.matches.length === 1 ? '' : 'es'}</span>
+                                                                    {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-500" />}
+                                                                </div>
+                                                            </button>
+                                                            {isExpanded && (
+                                                                <pre className="border-t border-slate-800 px-3 py-2 text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
+                                                                    {file.matches
+                                                                        .map(match => `${typeof match.lineNumber === 'number' ? match.lineNumber : '?'}: ${match.content}`)
+                                                                        .join('\n')}
+                                                                </pre>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
@@ -6112,6 +6354,7 @@ const SessionDetail: React.FC<{
     const [featureLinkMutationInFlight, setFeatureLinkMutationInFlight] = useState(false);
     const [featureLinkMutationError, setFeatureLinkMutationError] = useState<string | null>(null);
     const [sessionContextPrimaryInput, setSessionContextPrimaryInput] = useState('');
+    const [sessionContextEditingPrimary, setSessionContextEditingPrimary] = useState(false);
 
     useEffect(() => {
         setActiveTab(initialTab);
@@ -6340,6 +6583,7 @@ const SessionDetail: React.FC<{
     useEffect(() => {
         setFeatureLinkMutationError(null);
         setSessionContextPrimaryInput('');
+        setSessionContextEditingPrimary(false);
     }, [session.id]);
 
     const subagentNameBySessionId = useMemo(() => {
@@ -6422,7 +6666,10 @@ const SessionDetail: React.FC<{
     const handleSetPrimaryFromSessionContext = useCallback(() => {
         if (!sessionContextPrimaryInput.trim()) return;
         void upsertSessionFeatureLink(sessionContextPrimaryInput, 'primary').then(success => {
-            if (success) setSessionContextPrimaryInput('');
+            if (success) {
+                setSessionContextPrimaryInput('');
+                setSessionContextEditingPrimary(false);
+            }
         });
     }, [sessionContextPrimaryInput, upsertSessionFeatureLink]);
 
@@ -6516,30 +6763,54 @@ const SessionDetail: React.FC<{
                     <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 min-w-[18rem] max-w-[28rem] shrink-0 space-y-2">
                         <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Context</div>
                         <div className="flex flex-col gap-2">
-                            {primaryFeatureLink ? (
+                            <div className="flex items-start gap-2">
+                                {primaryFeatureLink ? (
+                                    <button
+                                        onClick={() => handleOpenFeature(primaryFeatureLink.featureId)}
+                                        className="flex-1 inline-flex items-center gap-2 rounded-lg border border-indigo-500/35 bg-indigo-500/10 px-2.5 py-1.5 text-left hover:bg-indigo-500/20 transition-colors min-w-0"
+                                    >
+                                        <span className="text-[10px] uppercase tracking-wide text-indigo-200/90 whitespace-nowrap">Linked Feature</span>
+                                        <span className="text-xs text-indigo-100 font-medium truncate max-w-[16rem]">
+                                            {primaryFeatureDetail?.name || primaryFeatureLink.featureName || primaryFeatureLink.featureId}
+                                        </span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${primaryFeatureStatusStyle.badge}`}>
+                                            {primaryFeatureStatusStyle.label}
+                                        </span>
+                                        <span className="text-[10px] text-indigo-200/80 font-mono whitespace-nowrap">
+                                            {Math.round(primaryFeatureLink.confidence * 100)}%
+                                        </span>
+                                        <ExternalLink size={11} className="text-indigo-200/80 shrink-0" />
+                                    </button>
+                                ) : (
+                                    !linkedFeatureDetailsLoading && (
+                                        <span className="flex-1 text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                            No linked feature
+                                        </span>
+                                    )
+                                )}
                                 <button
-                                    onClick={() => handleOpenFeature(primaryFeatureLink.featureId)}
-                                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/35 bg-indigo-500/10 px-2.5 py-1.5 text-left hover:bg-indigo-500/20 transition-colors min-w-0"
+                                    type="button"
+                                    onClick={() => {
+                                        setFeatureLinkMutationError(null);
+                                        setSessionContextEditingPrimary(prev => {
+                                            const next = !prev;
+                                            if (next) {
+                                                setSessionContextPrimaryInput(primaryFeatureLink?.featureId || '');
+                                            }
+                                            return next;
+                                        });
+                                    }}
+                                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${sessionContextEditingPrimary
+                                        ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
+                                        : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200'
+                                        }`}
+                                    title={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
+                                    aria-label={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
                                 >
-                                    <span className="text-[10px] uppercase tracking-wide text-indigo-200/90 whitespace-nowrap">Linked Feature</span>
-                                    <span className="text-xs text-indigo-100 font-medium truncate max-w-[16rem]">
-                                        {primaryFeatureDetail?.name || primaryFeatureLink.featureName || primaryFeatureLink.featureId}
-                                    </span>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${primaryFeatureStatusStyle.badge}`}>
-                                        {primaryFeatureStatusStyle.label}
-                                    </span>
-                                    <span className="text-[10px] text-indigo-200/80 font-mono whitespace-nowrap">
-                                        {Math.round(primaryFeatureLink.confidence * 100)}%
-                                    </span>
-                                    <ExternalLink size={11} className="text-indigo-200/80 shrink-0" />
+                                    <Edit3 size={12} />
+                                    <span>{sessionContextEditingPrimary ? 'Close' : 'Edit'}</span>
                                 </button>
-                            ) : (
-                                !linkedFeatureDetailsLoading && (
-                                    <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
-                                        No linked feature
-                                    </span>
-                                )
-                            )}
+                            </div>
                             {linkedFeatureDetailsLoading && (
                                 <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
                                     Resolving linked feature...
@@ -6566,45 +6837,47 @@ const SessionDetail: React.FC<{
                                     </div>
                                 </div>
                             )}
-                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 space-y-2">
-                                <div className="text-[10px] uppercase tracking-wide text-slate-500">Set Primary Feature</div>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="text"
-                                        value={sessionContextPrimaryInput}
-                                        onChange={event => setSessionContextPrimaryInput(event.target.value)}
-                                        onKeyDown={event => {
-                                            if (event.key === 'Enter') {
-                                                event.preventDefault();
-                                                handleSetPrimaryFromSessionContext();
-                                            }
-                                        }}
-                                        list={sessionContextFeatureInputListId}
-                                        placeholder="Feature ID or exact feature name"
-                                        className="flex-1 text-xs rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1.5 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                                    />
-                                    <datalist id={sessionContextFeatureInputListId}>
-                                        {availableFeatures.map(feature => (
-                                            <option key={`session-context-option-${feature.id}`} value={feature.id}>
-                                                {feature.name || feature.id}
-                                            </option>
-                                        ))}
-                                    </datalist>
-                                    <button
-                                        type="button"
-                                        onClick={handleSetPrimaryFromSessionContext}
-                                        disabled={featureLinkMutationInFlight || !sessionContextPrimaryInput.trim()}
-                                        className="text-[11px] font-semibold rounded-md px-2.5 py-1.5 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                    >
-                                        Set
-                                    </button>
-                                </div>
-                                {featureLinkMutationError && (
-                                    <div className="text-[11px] text-rose-300">
-                                        {featureLinkMutationError}
+                            {sessionContextEditingPrimary && (
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 space-y-2">
+                                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Set Primary Feature</div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            value={sessionContextPrimaryInput}
+                                            onChange={event => setSessionContextPrimaryInput(event.target.value)}
+                                            onKeyDown={event => {
+                                                if (event.key === 'Enter') {
+                                                    event.preventDefault();
+                                                    handleSetPrimaryFromSessionContext();
+                                                }
+                                            }}
+                                            list={sessionContextFeatureInputListId}
+                                            placeholder="Feature ID or exact feature name"
+                                            className="flex-1 text-xs rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1.5 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                        />
+                                        <datalist id={sessionContextFeatureInputListId}>
+                                            {availableFeatures.map(feature => (
+                                                <option key={`session-context-option-${feature.id}`} value={feature.id}>
+                                                    {feature.name || feature.id}
+                                                </option>
+                                            ))}
+                                        </datalist>
+                                        <button
+                                            type="button"
+                                            onClick={handleSetPrimaryFromSessionContext}
+                                            disabled={featureLinkMutationInFlight || !sessionContextPrimaryInput.trim()}
+                                            className="text-[11px] font-semibold rounded-md px-2.5 py-1.5 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            Set
+                                        </button>
                                     </div>
-                                )}
-                            </div>
+                                    {featureLinkMutationError && (
+                                        <div className="text-[11px] text-rose-300">
+                                            {featureLinkMutationError}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5">
                                 <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
                                     <Cpu size={12} />
