@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -190,7 +190,13 @@ def _is_primary_session_link(
     confidence: float,
     signal_types: set[str],
     commands: list[str],
+    link_role: str = "",
 ) -> bool:
+    normalized_link_role = str(link_role or "").strip().lower()
+    if normalized_link_role == "primary":
+        return True
+    if normalized_link_role == "related":
+        return False
     if strategy == "task_frontmatter":
         return True
     if confidence >= 0.9:
@@ -312,6 +318,11 @@ class SessionFeatureLink(BaseModel):
     commands: list[str] = Field(default_factory=list)
     commitHashes: list[str] = Field(default_factory=list)
     ambiguityShare: float = 0.0
+
+
+class SessionFeatureLinkMutationRequest(BaseModel):
+    featureId: str
+    linkRole: Literal["primary", "related"] = "related"
 
 
 class SessionModelFacet(BaseModel):
@@ -836,6 +847,7 @@ async def get_session_linked_features(session_id: str):
             continue
 
         metadata = _safe_json(link.get("metadata_json"))
+        link_role = str(metadata.get("linkRole") or "").strip().lower()
         strategy = str(metadata.get("linkStrategy") or "").strip()
         reasons: list[str] = []
         if strategy:
@@ -865,7 +877,13 @@ async def get_session_linked_features(session_id: str):
         if not isinstance(commit_hashes, list):
             commit_hashes = []
         confidence = float(link.get("confidence") or 0.0)
-        is_primary = _is_primary_session_link(strategy, confidence, signal_types, normalized_commands)
+        is_primary = _is_primary_session_link(
+            strategy,
+            confidence,
+            signal_types,
+            normalized_commands,
+            link_role=link_role,
+        )
 
         ambiguity_share = metadata.get("ambiguityShare", 0.0)
         try:
@@ -895,6 +913,121 @@ async def get_session_linked_features(session_id: str):
 
     items.sort(key=lambda item: (item.isPrimaryLink, item.confidence, item.featureUpdatedAt), reverse=True)
     return items
+
+
+@sessions_router.post("/{session_id}/linked-features", response_model=list[SessionFeatureLink])
+async def upsert_session_linked_feature(session_id: str, request: SessionFeatureLinkMutationRequest):
+    """Create/update a manual session↔feature link as primary or related."""
+    db = await connection.get_connection()
+    session_repo = get_session_repository(db)
+    session_row = await session_repo.get_by_id(session_id)
+    if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    feature_id = str(request.featureId or "").strip()
+    if not feature_id:
+        raise HTTPException(status_code=400, detail="featureId is required")
+
+    feature_repo = get_feature_repository(db)
+    feature_row = await feature_repo.get_by_id(feature_id)
+    if not feature_row:
+        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
+
+    link_repo = get_entity_link_repository(db)
+    existing_links = await link_repo.get_links_for("session", session_id, "related")
+
+    existing_link_for_target: dict[str, Any] | None = None
+    for link in existing_links:
+        if link.get("source_type") != "feature":
+            continue
+        if link.get("target_type") != "session" or str(link.get("target_id") or "") != session_id:
+            continue
+        current_feature_id = str(link.get("source_id") or "").strip()
+        if not current_feature_id:
+            continue
+        if current_feature_id == feature_id:
+            existing_link_for_target = link
+
+    if request.linkRole == "primary":
+        for link in existing_links:
+            if link.get("source_type") != "feature":
+                continue
+            if link.get("target_type") != "session" or str(link.get("target_id") or "") != session_id:
+                continue
+
+            current_feature_id = str(link.get("source_id") or "").strip()
+            if not current_feature_id or current_feature_id == feature_id:
+                continue
+
+            metadata = _safe_json(link.get("metadata_json"))
+            metadata["linkRole"] = "related"
+            confidence = float(link.get("confidence") or 0.0)
+
+            await link_repo.upsert(
+                {
+                    "source_type": "feature",
+                    "source_id": current_feature_id,
+                    "target_type": "session",
+                    "target_id": session_id,
+                    "link_type": "related",
+                    "origin": str(link.get("origin") or "auto"),
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "depth": int(link.get("depth") or 0),
+                    "sort_order": int(link.get("sort_order") or 0),
+                    "metadata_json": json.dumps(metadata),
+                }
+            )
+
+    if request.linkRole == "related" and existing_link_for_target:
+        existing_metadata = _safe_json(existing_link_for_target.get("metadata_json"))
+        existing_role = str(existing_metadata.get("linkRole") or "").strip().lower()
+        if existing_role == "primary":
+            return await get_session_linked_features(session_id)
+
+    next_metadata = _safe_json(existing_link_for_target.get("metadata_json") if existing_link_for_target else None)
+    next_metadata["linkStrategy"] = "manual_set"
+    next_metadata["linkRole"] = request.linkRole
+    next_metadata["manualSet"] = True
+
+    await link_repo.upsert(
+        {
+            "source_type": "feature",
+            "source_id": feature_id,
+            "target_type": "session",
+            "target_id": session_id,
+            "link_type": "related",
+            "origin": "manual",
+            "confidence": 1.0,
+            "depth": 0,
+            "sort_order": 0,
+            "metadata_json": json.dumps(next_metadata),
+        }
+    )
+    return await get_session_linked_features(session_id)
+
+
+@sessions_router.delete("/{session_id}/linked-features/{feature_id}", response_model=list[SessionFeatureLink])
+async def delete_session_linked_feature(session_id: str, feature_id: str):
+    """Remove a session↔feature link."""
+    db = await connection.get_connection()
+    session_repo = get_session_repository(db)
+    session_row = await session_repo.get_by_id(session_id)
+    if not session_row:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    normalized_feature_id = str(feature_id or "").strip()
+    if not normalized_feature_id:
+        raise HTTPException(status_code=400, detail="feature_id is required")
+
+    link_repo = get_entity_link_repository(db)
+    await link_repo.delete_link(
+        "feature",
+        normalized_feature_id,
+        "session",
+        session_id,
+        "related",
+    )
+    return await get_session_linked_features(session_id)
 
 
 # ── Documents router ────────────────────────────────────────────────

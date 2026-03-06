@@ -103,19 +103,74 @@ class _FakeLinkRepo:
         ]
 
 
+class _MutableFakeLinkRepo:
+    def __init__(self, links=None):
+        self.links = list(links or [])
+
+    async def get_links_for(self, entity_type, entity_id, link_type=None):
+        return list(self.links)
+
+    async def upsert(self, link_data):
+        key = (
+            str(link_data.get("source_type") or ""),
+            str(link_data.get("source_id") or ""),
+            str(link_data.get("target_type") or ""),
+            str(link_data.get("target_id") or ""),
+            str(link_data.get("link_type") or "related"),
+        )
+        for index, existing in enumerate(self.links):
+            existing_key = (
+                str(existing.get("source_type") or ""),
+                str(existing.get("source_id") or ""),
+                str(existing.get("target_type") or ""),
+                str(existing.get("target_id") or ""),
+                str(existing.get("link_type") or "related"),
+            )
+            if existing_key == key:
+                merged = dict(existing)
+                merged.update(link_data)
+                self.links[index] = merged
+                return
+        self.links.append(dict(link_data))
+
+    async def delete_link(self, source_type, source_id, target_type, target_id, link_type="related"):
+        kept = []
+        for row in self.links:
+            if (
+                str(row.get("source_type") or "") == source_type
+                and str(row.get("source_id") or "") == source_id
+                and str(row.get("target_type") or "") == target_type
+                and str(row.get("target_id") or "") == target_id
+                and str(row.get("link_type") or "related") == link_type
+            ):
+                continue
+            kept.append(row)
+        self.links = kept
+
+
 class _FakeFeatureRepo:
     async def get_by_id(self, feature_id):
-        if feature_id != "feat-alpha":
-            return None
-        return {
-            "id": "feat-alpha",
-            "name": "Feature Alpha",
-            "status": "in-progress",
-            "category": "enhancement",
-            "updated_at": "2026-02-16T12:00:00Z",
-            "total_tasks": 10,
-            "completed_tasks": 4,
+        feature_map = {
+            "feat-alpha": {
+                "id": "feat-alpha",
+                "name": "Feature Alpha",
+                "status": "in-progress",
+                "category": "enhancement",
+                "updated_at": "2026-02-16T12:00:00Z",
+                "total_tasks": 10,
+                "completed_tasks": 4,
+            },
+            "feat-beta": {
+                "id": "feat-beta",
+                "name": "Feature Beta",
+                "status": "backlog",
+                "category": "feature",
+                "updated_at": "2026-02-16T11:00:00Z",
+                "total_tasks": 5,
+                "completed_tasks": 1,
+            },
         }
+        return feature_map.get(feature_id)
 
 
 class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -259,6 +314,106 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
                 await api_router.get_session_linked_features("S-missing")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_get_session_linked_features_respects_manual_related_role(self) -> None:
+        session_repo = _FakeSessionDetailRepo()
+        link_repo = _MutableFakeLinkRepo(
+            links=[
+                {
+                    "source_type": "feature",
+                    "source_id": "feat-alpha",
+                    "target_type": "session",
+                    "target_id": "S-main",
+                    "confidence": 1.0,
+                    "metadata_json": json.dumps(
+                        {
+                            "linkStrategy": "manual_set",
+                            "linkRole": "related",
+                        }
+                    ),
+                }
+            ]
+        )
+        feature_repo = _FakeFeatureRepo()
+
+        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo):
+            response = await api_router.get_session_linked_features("S-main")
+
+        self.assertEqual(len(response), 1)
+        self.assertFalse(response[0].isPrimaryLink)
+        self.assertEqual(response[0].confidence, 1.0)
+
+    async def test_upsert_session_linked_feature_primary_replaces_existing_primary(self) -> None:
+        session_repo = _FakeSessionDetailRepo()
+        link_repo = _MutableFakeLinkRepo(
+            links=[
+                {
+                    "source_type": "feature",
+                    "source_id": "feat-alpha",
+                    "target_type": "session",
+                    "target_id": "S-main",
+                    "link_type": "related",
+                    "origin": "auto",
+                    "confidence": 0.95,
+                    "metadata_json": json.dumps(
+                        {
+                            "linkStrategy": "session_evidence",
+                        }
+                    ),
+                }
+            ]
+        )
+        feature_repo = _FakeFeatureRepo()
+
+        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.upsert_session_linked_feature(
+                "S-main",
+                api_router.SessionFeatureLinkMutationRequest(featureId="feat-beta", linkRole="primary"),
+            )
+
+        by_feature_id = {item.featureId: item for item in response}
+        self.assertTrue(by_feature_id["feat-beta"].isPrimaryLink)
+        self.assertEqual(by_feature_id["feat-beta"].confidence, 1.0)
+        self.assertFalse(by_feature_id["feat-alpha"].isPrimaryLink)
+
+    async def test_upsert_session_linked_feature_related_sets_full_confidence(self) -> None:
+        session_repo = _FakeSessionDetailRepo()
+        link_repo = _MutableFakeLinkRepo()
+        feature_repo = _FakeFeatureRepo()
+
+        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.upsert_session_linked_feature(
+                "S-main",
+                api_router.SessionFeatureLinkMutationRequest(featureId="feat-beta", linkRole="related"),
+            )
+
+        self.assertEqual(len(response), 1)
+        self.assertEqual(response[0].featureId, "feat-beta")
+        self.assertEqual(response[0].confidence, 1.0)
+        self.assertFalse(response[0].isPrimaryLink)
+
+    async def test_delete_session_linked_feature_removes_link(self) -> None:
+        session_repo = _FakeSessionDetailRepo()
+        link_repo = _MutableFakeLinkRepo(
+            links=[
+                {
+                    "source_type": "feature",
+                    "source_id": "feat-alpha",
+                    "target_type": "session",
+                    "target_id": "S-main",
+                    "link_type": "related",
+                    "origin": "manual",
+                    "confidence": 1.0,
+                    "metadata_json": json.dumps({"linkStrategy": "manual_set", "linkRole": "primary"}),
+                }
+            ]
+        )
+        feature_repo = _FakeFeatureRepo()
+
+        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.delete_session_linked_feature("S-main", "feat-alpha")
+
+        self.assertEqual(response, [])
 
 
 if __name__ == "__main__":

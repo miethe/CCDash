@@ -714,6 +714,7 @@ interface SessionFeatureLink {
 const formatSessionReason = (reason: string): string => {
     const normalized = (reason || '').trim();
     if (!normalized) return 'related';
+    if (normalized === 'manual_set') return 'manually set';
     if (normalized === 'task_frontmatter') return 'task linkage';
     if (normalized === 'session_evidence') return 'session evidence';
     if (normalized === 'command_args_path') return 'command path';
@@ -2140,14 +2141,34 @@ const SessionFeaturesView: React.FC<{
     currentSessionId: string;
     linkedFeatures: SessionFeatureLink[];
     linkedFeatureDetailsById: Record<string, Feature>;
+    availableFeatures: Feature[];
     taskArtifacts: Array<{
         taskId: string;
         normalizedTaskId: string;
     }>;
     loadingFeatureDetails: boolean;
+    linkMutationInFlight: boolean;
+    linkMutationError: string | null;
+    onSetPrimaryFeature: (featureInput: string) => Promise<boolean>;
+    onAddRelatedFeature: (featureInput: string) => Promise<boolean>;
+    onRemoveLinkedFeature: (featureId: string) => Promise<void>;
     onOpenFeature: (featureId: string) => void;
     onOpenSession: (sessionId: string) => void;
-}> = ({ currentSessionId, linkedFeatures, linkedFeatureDetailsById, taskArtifacts, loadingFeatureDetails, onOpenFeature, onOpenSession }) => {
+}> = ({
+    currentSessionId,
+    linkedFeatures,
+    linkedFeatureDetailsById,
+    availableFeatures,
+    taskArtifacts,
+    loadingFeatureDetails,
+    linkMutationInFlight,
+    linkMutationError,
+    onSetPrimaryFeature,
+    onAddRelatedFeature,
+    onRemoveLinkedFeature,
+    onOpenFeature,
+    onOpenSession,
+}) => {
     const grouped = useMemo(() => {
         const primary = linkedFeatures.filter(feature => feature.isPrimaryLink);
         const related = linkedFeatures.filter(feature => !feature.isPrimaryLink);
@@ -2156,6 +2177,25 @@ const SessionFeaturesView: React.FC<{
     const [expandedMainThreadsByFeatureId, setExpandedMainThreadsByFeatureId] = useState<Set<string>>(new Set());
     const [mainThreadSessionsByFeatureId, setMainThreadSessionsByFeatureId] = useState<Record<string, FeatureExecutionSessionLink[]>>({});
     const [mainThreadSessionsLoadingByFeatureId, setMainThreadSessionsLoadingByFeatureId] = useState<Record<string, boolean>>({});
+    const [pendingFeatureInput, setPendingFeatureInput] = useState('');
+    const featureInputListId = useMemo(
+        () => `session-feature-options-${currentSessionId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        [currentSessionId]
+    );
+
+    const handleSetPrimary = useCallback(() => {
+        if (!pendingFeatureInput.trim()) return;
+        void onSetPrimaryFeature(pendingFeatureInput).then(success => {
+            if (success) setPendingFeatureInput('');
+        });
+    }, [onSetPrimaryFeature, pendingFeatureInput]);
+
+    const handleAddRelated = useCallback(() => {
+        if (!pendingFeatureInput.trim()) return;
+        void onAddRelatedFeature(pendingFeatureInput).then(success => {
+            if (success) setPendingFeatureInput('');
+        });
+    }, [onAddRelatedFeature, pendingFeatureInput]);
 
     const loadRelatedMainThreadSessions = useCallback(async (featureId: string) => {
         if (!featureId) return;
@@ -2293,7 +2333,7 @@ const SessionFeaturesView: React.FC<{
         const mainThreads = mainThreadSessionsByFeatureId[feature.featureId] || [];
         const isLoadingMainThreads = Boolean(mainThreadSessionsLoadingByFeatureId[feature.featureId]);
         return (
-            <div key={feature.featureId} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <div key={feature.featureId} className="group/feature-link bg-slate-900 border border-slate-800 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-100 truncate">
@@ -2306,9 +2346,21 @@ const SessionFeaturesView: React.FC<{
                             {feature.featureId}
                         </button>
                     </div>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-                        {Math.round(feature.confidence * 100)}% confidence
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                            {Math.round(feature.confidence * 100)}% confidence
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => void onRemoveLinkedFeature(feature.featureId)}
+                            disabled={linkMutationInFlight}
+                            className="opacity-0 group-hover/feature-link:opacity-100 disabled:opacity-40 text-slate-500 hover:text-rose-300 transition-colors p-1 rounded border border-slate-700 hover:border-rose-500/50 bg-slate-950/70"
+                            title="Remove linked feature"
+                            aria-label={`Remove linked feature ${feature.featureName || feature.featureId}`}
+                        >
+                            <X size={12} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="mt-3 flex items-center gap-2 text-[10px]">
@@ -2408,134 +2460,188 @@ const SessionFeaturesView: React.FC<{
         );
     };
 
-    if (linkedFeatures.length === 0 && taskArtifacts.length === 0) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                <Box size={42} className="mb-3 opacity-30" />
-                <p className="text-sm">No linked features found for this session.</p>
-                <p className="text-xs mt-1 text-slate-600">No high-confidence feature evidence has been detected yet.</p>
-            </div>
-        );
-    }
-
     return (
         <div className="h-full overflow-y-auto pr-1 space-y-5">
-            {linkedFeatures.length > 0 && (
-                <>
-                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                        <div className="flex items-center justify-between">
-                            <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
-                            <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
-                        </div>
-                        <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Manage Feature Links</div>
+                        <p className="text-[11px] text-slate-400 mt-1">Set primary, add related, or remove links directly from this session.</p>
                     </div>
-
-                    {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
-                    {grouped.primary.length === 0 && (
-                        <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                            No primary links yet. Related feature matches are shown below.
-                        </div>
-                    )}
-
-                    {grouped.related.length > 0 && (
-                        <div className="space-y-3 pt-2">
-                            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
-                            {grouped.related.map(renderFeatureCard)}
-                        </div>
-                    )}
-                </>
-            )}
-
-            <div className="space-y-3 pt-2">
-                <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Task Links (Feature &gt; Phase &gt; Tasks)</div>
-                        <div className="text-[11px] text-indigo-200/80">{taskArtifacts.length}</div>
-                    </div>
-                    <p className="text-[11px] text-indigo-200/70 mt-1">Task artifacts are mapped to their parent feature and phase using feature execution data.</p>
+                    <div className="text-[10px] text-slate-500 font-mono">{linkedFeatures.length} linked</div>
                 </div>
-
-                {taskArtifacts.length === 0 && (
-                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                        No task artifacts detected for this session.
-                    </div>
-                )}
-
-                {taskArtifacts.length > 0 && loadingFeatureDetails && (
-                    <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
-                        Loading feature phase/task details...
-                    </div>
-                )}
-
-                {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
-                    <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                        Task artifacts were found, but none mapped to linked feature phases yet.
-                    </div>
-                )}
-
-                {taskHierarchy.map(entry => (
-                    <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                                <div className="text-sm font-semibold text-slate-100 truncate">
-                                    {entry.featureLink.featureName || entry.featureLink.featureId}
-                                </div>
-                                <button
-                                    onClick={() => onOpenFeature(entry.featureLink.featureId)}
-                                    className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
-                                >
-                                    {entry.featureLink.featureId}
-                                </button>
-                            </div>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-                                {entry.phases.reduce((sum, phaseEntry) => sum + phaseEntry.tasks.length, 0)} tasks
-                            </span>
-                        </div>
-
-                        <div className="space-y-2">
-                            {entry.phases.map(phaseEntry => (
-                                <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="text-xs font-semibold text-slate-200">
-                                            Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
-                                        </div>
-                                        <div className="text-[10px] text-slate-400 font-mono">
-                                            {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
-                                        </div>
-                                    </div>
-                                    <div className="mt-2 space-y-1.5">
-                                        {phaseEntry.tasks.map(task => {
-                                            const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
-                                            return (
-                                                <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
-                                                    <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
-                                                    <span className="text-slate-300 truncate">{task.title}</span>
-                                                    <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
-                                                        {statusStyle.label}
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                ))}
-
-                {unresolvedTaskIds.length > 0 && !loadingFeatureDetails && (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                        <div className="text-[11px] text-amber-300 font-semibold uppercase tracking-wider">Unmapped Task IDs</div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                            {unresolvedTaskIds.map(taskId => (
-                                <span key={`unmapped-${taskId}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200">
-                                    {taskId}
-                                </span>
-                            ))}
-                        </div>
+                <div className="flex flex-col md:flex-row gap-2">
+                    <input
+                        type="text"
+                        value={pendingFeatureInput}
+                        onChange={event => setPendingFeatureInput(event.target.value)}
+                        onKeyDown={event => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                handleAddRelated();
+                            }
+                        }}
+                        list={featureInputListId}
+                        placeholder="Feature ID or exact feature name"
+                        className="flex-1 text-xs rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                    />
+                    <datalist id={featureInputListId}>
+                        {availableFeatures.map(feature => (
+                            <option key={feature.id} value={feature.id}>
+                                {feature.name || feature.id}
+                            </option>
+                        ))}
+                    </datalist>
+                    <button
+                        type="button"
+                        onClick={handleSetPrimary}
+                        disabled={linkMutationInFlight || !pendingFeatureInput.trim()}
+                        className="text-xs font-semibold rounded-lg px-3 py-2 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Set Primary
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleAddRelated}
+                        disabled={linkMutationInFlight || !pendingFeatureInput.trim()}
+                        className="text-xs font-semibold rounded-lg px-3 py-2 border border-indigo-500/40 text-indigo-200 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Add Related
+                    </button>
+                </div>
+                {linkMutationError && (
+                    <div className="text-[11px] text-rose-300 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-2">
+                        {linkMutationError}
                     </div>
                 )}
             </div>
+
+            {linkedFeatures.length === 0 && taskArtifacts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-500 py-10">
+                    <Box size={42} className="mb-3 opacity-30" />
+                    <p className="text-sm">No linked features found for this session.</p>
+                    <p className="text-xs mt-1 text-slate-600">Use the controls above to set a primary feature or add related ones.</p>
+                </div>
+            ) : (
+                <>
+                    {linkedFeatures.length > 0 && (
+                        <>
+                            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">Primary Feature Links</div>
+                                    <div className="text-[11px] text-emerald-200/80">{grouped.primary.length}</div>
+                                </div>
+                                <p className="text-[11px] text-emerald-200/70 mt-1">Likely primary features this session directly worked on.</p>
+                            </div>
+
+                            {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
+                            {grouped.primary.length === 0 && (
+                                <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                    No primary links yet. Related feature matches are shown below.
+                                </div>
+                            )}
+
+                            {grouped.related.length > 0 && (
+                                <div className="space-y-3 pt-2">
+                                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
+                                    {grouped.related.map(renderFeatureCard)}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    <div className="space-y-3 pt-2">
+                        <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-3">
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Task Links (Feature &gt; Phase &gt; Tasks)</div>
+                                <div className="text-[11px] text-indigo-200/80">{taskArtifacts.length}</div>
+                            </div>
+                            <p className="text-[11px] text-indigo-200/70 mt-1">Task artifacts are mapped to their parent feature and phase using feature execution data.</p>
+                        </div>
+
+                        {taskArtifacts.length === 0 && (
+                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                No task artifacts detected for this session.
+                            </div>
+                        )}
+
+                        {taskArtifacts.length > 0 && loadingFeatureDetails && (
+                            <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
+                                Loading feature phase/task details...
+                            </div>
+                        )}
+
+                        {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
+                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                Task artifacts were found, but none mapped to linked feature phases yet.
+                            </div>
+                        )}
+
+                        {taskHierarchy.map(entry => (
+                            <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-semibold text-slate-100 truncate">
+                                            {entry.featureLink.featureName || entry.featureLink.featureId}
+                                        </div>
+                                        <button
+                                            onClick={() => onOpenFeature(entry.featureLink.featureId)}
+                                            className="text-[11px] font-mono text-indigo-300 hover:text-indigo-200 transition-colors"
+                                        >
+                                            {entry.featureLink.featureId}
+                                        </button>
+                                    </div>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+                                        {entry.phases.reduce((sum, phaseEntry) => sum + phaseEntry.tasks.length, 0)} tasks
+                                    </span>
+                                </div>
+
+                                <div className="space-y-2">
+                                    {entry.phases.map(phaseEntry => (
+                                        <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="text-xs font-semibold text-slate-200">
+                                                    Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
+                                                </div>
+                                                <div className="text-[10px] text-slate-400 font-mono">
+                                                    {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 space-y-1.5">
+                                                {phaseEntry.tasks.map(task => {
+                                                    const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
+                                                    return (
+                                                        <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
+                                                            <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
+                                                            <span className="text-slate-300 truncate">{task.title}</span>
+                                                            <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
+                                                                {statusStyle.label}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+
+                        {unresolvedTaskIds.length > 0 && !loadingFeatureDetails && (
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                                <div className="text-[11px] text-amber-300 font-semibold uppercase tracking-wider">Unmapped Task IDs</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {unresolvedTaskIds.map(taskId => (
+                                        <span key={`unmapped-${taskId}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200">
+                                            {taskId}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 };
@@ -5991,7 +6097,7 @@ const SessionDetail: React.FC<{
     initialTab: SessionInspectorTab;
     onTabChange: (tab: SessionInspectorTab) => void;
 }> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
-    const { activeProject, getSessionById } = useData();
+    const { activeProject, getSessionById, features } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -6003,6 +6109,9 @@ const SessionDetail: React.FC<{
     const [linkedFeatureLinks, setLinkedFeatureLinks] = useState<SessionFeatureLink[]>([]);
     const [linkedFeatureDetailsById, setLinkedFeatureDetailsById] = useState<Record<string, Feature>>({});
     const [linkedFeatureDetailsLoading, setLinkedFeatureDetailsLoading] = useState(false);
+    const [featureLinkMutationInFlight, setFeatureLinkMutationInFlight] = useState(false);
+    const [featureLinkMutationError, setFeatureLinkMutationError] = useState<string | null>(null);
+    const [sessionContextPrimaryInput, setSessionContextPrimaryInput] = useState('');
 
     useEffect(() => {
         setActiveTab(initialTab);
@@ -6148,6 +6257,91 @@ const SessionDetail: React.FC<{
         };
     }, [linkedFeatureLinks]);
 
+    const availableFeatures = useMemo(
+        () => [...features].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+        [features]
+    );
+
+    const resolveFeatureIdFromInput = useCallback((rawInput: string): string => {
+        const value = rawInput.trim();
+        if (!value) return '';
+
+        const normalized = value.toLowerCase();
+        const byId = availableFeatures.find(feature => String(feature.id || '').trim().toLowerCase() === normalized);
+        if (byId) return byId.id;
+
+        const byName = availableFeatures.filter(
+            feature => String(feature.name || '').trim().toLowerCase() === normalized
+        );
+        if (byName.length === 1) return byName[0].id;
+
+        return value;
+    }, [availableFeatures]);
+
+    const upsertSessionFeatureLink = useCallback(async (featureInput: string, linkRole: 'primary' | 'related'): Promise<boolean> => {
+        const featureId = resolveFeatureIdFromInput(featureInput);
+        if (!featureId) {
+            setFeatureLinkMutationError('Select a feature ID or exact feature name first.');
+            return false;
+        }
+
+        setFeatureLinkMutationInFlight(true);
+        setFeatureLinkMutationError(null);
+        try {
+            const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/linked-features`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    featureId,
+                    linkRole,
+                }),
+            });
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                const detail = typeof payload?.detail === 'string' ? payload.detail : `Failed to update feature link (${res.status})`;
+                throw new Error(detail);
+            }
+            setLinkedFeatureLinks(Array.isArray(payload) ? payload as SessionFeatureLink[] : []);
+            return true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to update feature link';
+            setFeatureLinkMutationError(message);
+            return false;
+        } finally {
+            setFeatureLinkMutationInFlight(false);
+        }
+    }, [resolveFeatureIdFromInput, session.id]);
+
+    const removeSessionFeatureLink = useCallback(async (featureId: string): Promise<void> => {
+        const normalizedFeatureId = String(featureId || '').trim();
+        if (!normalizedFeatureId) return;
+
+        setFeatureLinkMutationInFlight(true);
+        setFeatureLinkMutationError(null);
+        try {
+            const res = await fetch(
+                `/api/sessions/${encodeURIComponent(session.id)}/linked-features/${encodeURIComponent(normalizedFeatureId)}`,
+                { method: 'DELETE' }
+            );
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                const detail = typeof payload?.detail === 'string' ? payload.detail : `Failed to remove feature link (${res.status})`;
+                throw new Error(detail);
+            }
+            setLinkedFeatureLinks(Array.isArray(payload) ? payload as SessionFeatureLink[] : []);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to remove feature link';
+            setFeatureLinkMutationError(message);
+        } finally {
+            setFeatureLinkMutationInFlight(false);
+        }
+    }, [session.id]);
+
+    useEffect(() => {
+        setFeatureLinkMutationError(null);
+        setSessionContextPrimaryInput('');
+    }, [session.id]);
+
     const subagentNameBySessionId = useMemo(() => {
         const names = new Map<string, string>();
 
@@ -6208,6 +6402,30 @@ const SessionDetail: React.FC<{
         () => linkedFeatureLinks.find(link => link.isPrimaryLink) || null,
         [linkedFeatureLinks]
     );
+    const relatedFeatureLinks = useMemo(
+        () => linkedFeatureLinks.filter(link => !link.isPrimaryLink),
+        [linkedFeatureLinks]
+    );
+    const relatedFeatureTooltipRows = useMemo(
+        () => relatedFeatureLinks.map(link => ({
+            featureId: link.featureId,
+            featureName: linkedFeatureDetailsById[link.featureId]?.name || link.featureName || link.featureId,
+            confidence: link.confidence,
+        })),
+        [linkedFeatureDetailsById, relatedFeatureLinks]
+    );
+    const sessionContextFeatureInputListId = useMemo(
+        () => `session-context-feature-options-${session.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+        [session.id]
+    );
+
+    const handleSetPrimaryFromSessionContext = useCallback(() => {
+        if (!sessionContextPrimaryInput.trim()) return;
+        void upsertSessionFeatureLink(sessionContextPrimaryInput, 'primary').then(success => {
+            if (success) setSessionContextPrimaryInput('');
+        });
+    }, [sessionContextPrimaryInput, upsertSessionFeatureLink]);
+
     const taskArtifacts = useMemo(() => {
         const byNormalizedTaskId = new Map<string, string>();
 
@@ -6327,11 +6545,66 @@ const SessionDetail: React.FC<{
                                     Resolving linked feature...
                                 </span>
                             )}
-                            {linkedFeatureLinks.length > 1 && (
-                                <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 w-fit">
-                                    +{linkedFeatureLinks.length - 1} related
-                                </span>
+                            {primaryFeatureLink && relatedFeatureLinks.length > 0 && (
+                                <div className="relative group/related-feature-badge w-fit">
+                                    <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 w-fit">
+                                        +{relatedFeatureLinks.length} related
+                                    </span>
+                                    <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[220px] max-w-[320px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/related-feature-badge:opacity-100 group-hover/related-feature-badge:translate-y-0">
+                                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Related Features</div>
+                                        <div className="space-y-1.5">
+                                            {relatedFeatureTooltipRows.slice(0, 8).map(row => (
+                                                <div key={`session-context-related-${row.featureId}`} className="flex items-center justify-between gap-3">
+                                                    <span className="text-[11px] text-slate-200 truncate">{row.featureName}</span>
+                                                    <span className="text-[10px] text-slate-500 font-mono shrink-0">{Math.round(row.confidence * 100)}%</span>
+                                                </div>
+                                            ))}
+                                            {relatedFeatureTooltipRows.length > 8 && (
+                                                <div className="text-[10px] text-slate-500">+{relatedFeatureTooltipRows.length - 8} more</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
                             )}
+                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 space-y-2">
+                                <div className="text-[10px] uppercase tracking-wide text-slate-500">Set Primary Feature</div>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="text"
+                                        value={sessionContextPrimaryInput}
+                                        onChange={event => setSessionContextPrimaryInput(event.target.value)}
+                                        onKeyDown={event => {
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                handleSetPrimaryFromSessionContext();
+                                            }
+                                        }}
+                                        list={sessionContextFeatureInputListId}
+                                        placeholder="Feature ID or exact feature name"
+                                        className="flex-1 text-xs rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1.5 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                    />
+                                    <datalist id={sessionContextFeatureInputListId}>
+                                        {availableFeatures.map(feature => (
+                                            <option key={`session-context-option-${feature.id}`} value={feature.id}>
+                                                {feature.name || feature.id}
+                                            </option>
+                                        ))}
+                                    </datalist>
+                                    <button
+                                        type="button"
+                                        onClick={handleSetPrimaryFromSessionContext}
+                                        disabled={featureLinkMutationInFlight || !sessionContextPrimaryInput.trim()}
+                                        className="text-[11px] font-semibold rounded-md px-2.5 py-1.5 border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                        Set
+                                    </button>
+                                </div>
+                                {featureLinkMutationError && (
+                                    <div className="text-[11px] text-rose-300">
+                                        {featureLinkMutationError}
+                                    </div>
+                                )}
+                            </div>
                             <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5">
                                 <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
                                     <Cpu size={12} />
@@ -6392,8 +6665,14 @@ const SessionDetail: React.FC<{
                         currentSessionId={session.id}
                         linkedFeatures={linkedFeatureLinks}
                         linkedFeatureDetailsById={linkedFeatureDetailsById}
+                        availableFeatures={availableFeatures}
                         taskArtifacts={taskArtifacts}
                         loadingFeatureDetails={linkedFeatureDetailsLoading}
+                        linkMutationInFlight={featureLinkMutationInFlight}
+                        linkMutationError={featureLinkMutationError}
+                        onSetPrimaryFeature={featureInput => upsertSessionFeatureLink(featureInput, 'primary')}
+                        onAddRelatedFeature={featureInput => upsertSessionFeatureLink(featureInput, 'related')}
+                        onRemoveLinkedFeature={removeSessionFeatureLink}
                         onOpenFeature={handleOpenFeature}
                         onOpenSession={onOpenSession}
                     />
