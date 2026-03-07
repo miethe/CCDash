@@ -41,6 +41,10 @@ related:
 - services/analytics.ts
 - services/execution.ts
 - components/FeatureExecutionWorkbench.tsx
+- docs/project_plans/implementation_plans/enhancements/wireframes/agentic-sdlc-intelligence/ASI-17-recommended-stack-card.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/agentic-sdlc-intelligence/ASI-18-workflow-effectiveness-view.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/agentic-sdlc-intelligence/ASI-19-similar-work-drilldown.png
+- docs/project_plans/implementation_plans/enhancements/wireframes/agentic-sdlc-intelligence/ASI-20-definition-link-handling.png
 plan_ref: agentic-sdlc-intelligence-foundation-v1
 linked_sessions: []
 request_log_id: ''
@@ -321,12 +325,25 @@ Objective:
 
 Expose the intelligence layer in the places users already make execution decisions.
 
-| Task ID | Task Name | Description | Acceptance Criteria | Estimate (pts) | Assigned Subagent(s) |
-| --- | --- | --- | --- | --- | --- |
-| ASI-17 | Workbench recommended stack UI | Add recommended stack card, alternative stacks, evidence, and deep links in the execution workbench. | Users can see resolved SkillMeat refs, stack rationale, and command alignment from one surface. | 3 | frontend-developer, ui-engineer-enhanced |
-| ASI-18 | Workflow effectiveness view | Add analytics UI for workflow/agent/skill/context effectiveness and failure patterns. | Users can filter and compare effectiveness across scopes without leaving CCDash. | 4 | frontend-developer, ui-engineer-enhanced |
-| ASI-19 | Similar-work drill-down | Add linked prior-work panel or modal from recommendations. | Users can inspect why a previous session/stack is being suggested. | 2 | frontend-developer |
-| ASI-20 | Definition link handling | Add safe deep-link/open behaviors for artifacts, workflows, and context modules. | Resolved references open the correct SkillMeat destination or show cached metadata when direct deep link is unavailable. | 2 | frontend-developer |
+### Wireframes
+
+Reference wireframes were scaffolded via Gemini (nano-banana) and live under `docs/project_plans/implementation_plans/enhancements/wireframes/agentic-sdlc-intelligence/`. Implementing agents MUST use these as the primary visual reference for layout, component structure, and interaction states.
+
+| Task ID | Wireframe | Description |
+| --- | --- | --- |
+| ASI-17 | [`ASI-17-recommended-stack-card.png`](wireframes/agentic-sdlc-intelligence/ASI-17-recommended-stack-card.png) | Recommended stack card with confidence badge, primary stack components as pill chips, collapsible alternatives with effectiveness scores, and evidence links to past sessions. |
+| ASI-18 | [`ASI-18-workflow-effectiveness-view.png`](wireframes/agentic-sdlc-intelligence/ASI-18-workflow-effectiveness-view.png) | Full-page analytics view with scope/period filters, summary stat cards, scored data table with progress bars, and failure patterns sidebar. |
+| ASI-19 | [`ASI-19-similar-work-drilldown.png`](wireframes/agentic-sdlc-intelligence/ASI-19-similar-work-drilldown.png) | Modal overlay listing similar past sessions with similarity scores, matched component chips, outcome indicators, key metrics, and session deep links. |
+| ASI-20 | [`ASI-20-definition-link-handling.png`](wireframes/agentic-sdlc-intelligence/ASI-20-definition-link-handling.png) | Three definition link states (resolved/unresolved/cached) with status dots, tooltips, hover popovers for cached metadata, and inline workbench reference panel. |
+
+### Tasks
+
+| Task ID | Task Name | Description | Acceptance Criteria | Estimate (pts) | Assigned Subagent(s) | Wireframe Ref |
+| --- | --- | --- | --- | --- | --- | --- |
+| ASI-17 | Workbench recommended stack UI | Add recommended stack card, alternative stacks, evidence, and deep links in the execution workbench. | Users can see resolved SkillMeat refs, stack rationale, and command alignment from one surface. Layout matches wireframe. | 3 | frontend-developer, ui-engineer-enhanced | `ASI-17-recommended-stack-card.png` |
+| ASI-18 | Workflow effectiveness view | Add analytics UI for workflow/agent/skill/context effectiveness and failure patterns. | Users can filter and compare effectiveness across scopes without leaving CCDash. Layout matches wireframe. | 4 | frontend-developer, ui-engineer-enhanced | `ASI-18-workflow-effectiveness-view.png` |
+| ASI-19 | Similar-work drill-down | Add linked prior-work panel or modal from recommendations. | Users can inspect why a previous session/stack is being suggested. Modal layout matches wireframe. | 2 | frontend-developer | `ASI-19-similar-work-drilldown.png` |
+| ASI-20 | Definition link handling | Add safe deep-link/open behaviors for artifacts, workflows, and context modules. | Resolved references open the correct SkillMeat destination or show cached metadata when direct deep link is unavailable. Chip states match wireframe. | 2 | frontend-developer | `ASI-20-definition-link-handling.png` |
 
 Quality gates:
 
