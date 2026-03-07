@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundat
 plan_ref: /docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v1.md
 phase: 4
 title: "Recommended stack service and execution-context integration"
-status: "in_progress"
+status: "completed"
 started: "2026-03-07"
-completed: ""
-commit_refs: []
+completed: "2026-03-07"
+commit_refs: ["099743e"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "in_progress"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 4
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 4
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "ASI-13"
     description: "Extend backend/frontend types with recommended stack, alternatives, evidence, and warnings."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["python-backend-engineer", "frontend-developer"]
     dependencies: []
     estimated_effort: "2pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "ASI-14"
     description: "Implement deterministic recommender that merges feature rules with historical effectiveness and definition resolution."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["ASI-13"]
     estimated_effort: "4pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "ASI-15"
     description: "Add similar-work retrieval for recommendation evidence with bounded relevance and similarity reasons."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["ASI-14"]
     estimated_effort: "3pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "ASI-16"
     description: "Wire recommended stack into the feature execution context endpoint and keep command recommendations intact."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["ASI-13", "ASI-14", "ASI-15"]
     estimated_effort: "2pt"
@@ -75,5 +75,12 @@ success_criteria:
   - "Similar-work examples are bounded, relevant, and include deterministic similarity reasons."
   - "Existing command recommendations remain unchanged while stack recommendations are exposed alongside them."
 
-files_modified: []
+files_modified:
+  - "backend/models.py"
+  - "backend/routers/features.py"
+  - "backend/services/feature_execution.py"
+  - "backend/services/stack_recommendations.py"
+  - "backend/tests/test_features_execution_context_router.py"
+  - "backend/tests/test_stack_recommendations.py"
+  - "types.ts"
 ---
