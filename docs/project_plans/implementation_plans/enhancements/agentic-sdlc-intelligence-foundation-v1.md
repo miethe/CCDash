@@ -1,49 +1,61 @@
 ---
 doc_type: implementation_plan
-status: draft
+status: in-progress
 category: enhancements
-
-title: "Implementation Plan: Agentic SDLC Intelligence Foundation V1"
-description: "Implement the CCDash-side integration, normalization, scoring, and recommendation layers that connect live project telemetry to SkillMeat definitions."
+title: 'Implementation Plan: Agentic SDLC Intelligence Foundation V1'
+description: Implement the CCDash-side integration, normalization, scoring, and recommendation
+  layers that connect live project telemetry to SkillMeat definitions.
 author: codex
-audience: [ai-agents, developers, engineering-leads, platform-engineering]
+audience:
+- ai-agents
+- developers
+- engineering-leads
+- platform-engineering
 created: 2026-03-07
-updated: 2026-03-07
-
-tags: [implementation, analytics, workflow, recommendations, skillmeat, telemetry]
+updated: '2026-03-07'
+tags:
+- implementation
+- analytics
+- workflow
+- recommendations
+- skillmeat
+- telemetry
 feature_slug: agentic-sdlc-intelligence-foundation-v1
 feature_family: agentic-sdlc-intelligence
 lineage_family: agentic-sdlc-intelligence
-lineage_parent: ""
+lineage_parent: ''
 lineage_children: []
 lineage_type: iteration
-linked_features: [agentic-sdlc-intelligence-foundation-v1]
+linked_features:
+- agentic-sdlc-intelligence-foundation-v1
 prd: docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
 related:
-  - backend/db/sync_engine.py
-  - backend/db/sqlite_migrations.py
-  - backend/db/postgres_migrations.py
-  - backend/routers/analytics.py
-  - backend/routers/features.py
-  - backend/services/feature_execution.py
-  - backend/models.py
-  - services/analytics.ts
-  - services/execution.ts
-  - components/FeatureExecutionWorkbench.tsx
+- backend/db/sync_engine.py
+- backend/db/sqlite_migrations.py
+- backend/db/postgres_migrations.py
+- backend/routers/analytics.py
+- backend/routers/features.py
+- backend/services/feature_execution.py
+- backend/models.py
+- services/analytics.ts
+- services/execution.ts
+- components/FeatureExecutionWorkbench.tsx
 plan_ref: agentic-sdlc-intelligence-foundation-v1
 linked_sessions: []
-
-request_log_id: ""
-commits: []
+request_log_id: ''
+commits: [1d75483]
 prs: []
 owner: platform-engineering
-owners: [platform-engineering, ai-integrations, fullstack-engineering]
-contributors: [ai-agents]
-
+owners:
+- platform-engineering
+- ai-integrations
+- fullstack-engineering
+contributors:
+- ai-agents
 complexity: High
 track: Foundation
-timeline_estimate: "4-6 weeks across 6 phases"
+timeline_estimate: 4-6 weeks across 6 phases
 ---
 
 # Implementation Plan: Agentic SDLC Intelligence Foundation V1
