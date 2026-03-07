@@ -636,6 +636,12 @@ class Feature(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
+SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module"]
+StackComponentType = Literal["workflow", "agent", "skill", "context_module", "command", "model_policy", "artifact"]
+StackComponentStatus = Literal["explicit", "inferred", "resolved", "unresolved"]
+DefinitionReferenceStatus = Literal["resolved", "cached", "unresolved"]
+
+
 class ExecutionRecommendationEvidence(BaseModel):
     id: str
     label: str = ""
@@ -678,6 +684,73 @@ class FeatureExecutionAnalyticsSummary(BaseModel):
     modelCount: int = 0
 
 
+class RecommendedStackDefinitionRef(BaseModel):
+    definitionType: str = ""
+    externalId: str = ""
+    displayName: str = ""
+    version: str = ""
+    sourceUrl: str = ""
+    status: DefinitionReferenceStatus = "unresolved"
+
+
+class RecommendedStackComponent(BaseModel):
+    componentType: StackComponentType
+    componentKey: str = ""
+    label: str = ""
+    status: StackComponentStatus = "explicit"
+    confidence: float = 0.0
+    sourceAttribution: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    definition: Optional[RecommendedStackDefinitionRef] = None
+
+
+class SimilarWorkExample(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    title: str = ""
+    workflowRef: str = ""
+    similarityScore: float = 0.0
+    reasons: list[str] = Field(default_factory=list)
+    matchedComponents: list[str] = Field(default_factory=list)
+    startedAt: str = ""
+    endedAt: str = ""
+    totalCost: float = 0.0
+    durationSeconds: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+
+
+class StackRecommendationEvidence(BaseModel):
+    id: str
+    label: str = ""
+    summary: str = ""
+    sourceType: str = ""
+    sourceId: str = ""
+    sourcePath: str = ""
+    confidence: float = 0.0
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    similarWork: list[SimilarWorkExample] = Field(default_factory=list)
+
+
+class RecommendedStack(BaseModel):
+    id: str
+    label: str = ""
+    workflowRef: str = ""
+    commandAlignment: str = ""
+    confidence: float = 0.0
+    sampleSize: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+    sourceSessionId: str = ""
+    sourceFeatureId: str = ""
+    explanation: str = ""
+    components: list[RecommendedStackComponent] = Field(default_factory=list)
+
+
 class FeatureExecutionContext(BaseModel):
     feature: Feature
     documents: list[LinkedDocument] = Field(default_factory=list)
@@ -685,13 +758,11 @@ class FeatureExecutionContext(BaseModel):
     analytics: FeatureExecutionAnalyticsSummary = Field(default_factory=FeatureExecutionAnalyticsSummary)
     recommendations: ExecutionRecommendation
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    recommendedStack: Optional[RecommendedStack] = None
+    stackAlternatives: list[RecommendedStack] = Field(default_factory=list)
+    stackEvidence: list[StackRecommendationEvidence] = Field(default_factory=list)
+    definitionResolutionWarnings: list[FeatureExecutionWarning] = Field(default_factory=list)
     generatedAt: str = ""
-
-
-SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module"]
-StackComponentType = Literal["workflow", "agent", "skill", "context_module", "command", "model_policy", "artifact"]
-StackComponentStatus = Literal["explicit", "inferred", "resolved", "unresolved"]
-
 
 class SkillMeatDefinitionSource(BaseModel):
     id: Optional[int] = None

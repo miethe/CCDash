@@ -1,0 +1,747 @@
+"""Recommended stack ranking for the feature execution workbench."""
+from __future__ import annotations
+
+from typing import Any
+
+from backend.db.factory import get_agentic_intelligence_repository, get_session_repository
+from backend.models import (
+    ExecutionRecommendation,
+    Feature,
+    FeatureExecutionWarning,
+    RecommendedStack,
+    RecommendedStackComponent,
+    RecommendedStackDefinitionRef,
+    SimilarWorkExample,
+    StackRecommendationEvidence,
+)
+from backend.services.workflow_effectiveness import get_workflow_effectiveness
+
+_MAX_STACK_ITEMS = 250
+_MAX_OBSERVATIONS = 400
+_MAX_ALTERNATIVES = 2
+_MAX_SIMILAR_WORK = 3
+_RESOLVABLE_COMPONENT_TYPES = {"workflow", "skill", "context_module", "artifact"}
+
+_RULE_WORKFLOW_HINTS = {
+    "R1_PLAN_FROM_PRD_OR_REPORT": "planning",
+    "R2_START_PHASE_1": "phase-execution",
+    "R3_ADVANCE_TO_NEXT_PHASE": "phase-execution",
+    "R4_RESUME_ACTIVE_PHASE": "phase-execution",
+    "R5_COMPLETE_STORY": "story-execution",
+    "R6_FALLBACK_QUICK_FEATURE": "quick-execution",
+}
+
+_COMMAND_WORKFLOW_HINTS = {
+    "/plan:plan-feature": "planning",
+    "/dev:execute-phase": "phase-execution",
+    "/dev:complete-user-story": "story-execution",
+    "/dev:quick-feature": "quick-execution",
+}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    return max(lower, min(upper, value))
+
+
+def _normalize_token(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _command_token(command: str) -> str:
+    normalized = _normalize_token(command)
+    if not normalized:
+        return ""
+    return normalized.split()[0]
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    items: list[str] = []
+    for value in values:
+        normalized = _normalize_token(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        items.append(value)
+    return items
+
+
+def _overlap_ratio(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    overlap = len(left & right)
+    baseline = max(len(left), len(right), 1)
+    return overlap / baseline
+
+
+def _parse_stack_scope_id(scope_id: str) -> dict[str, Any]:
+    parts = [part.strip() for part in (scope_id or "").split("|") if part.strip()]
+    workflow_ref = parts[0] if parts else ""
+    agents: list[str] = []
+    skills: list[str] = []
+    contexts: list[str] = []
+    for part in parts[1:]:
+        if ":" not in part:
+            continue
+        key, raw_values = part.split(":", 1)
+        values = [value for value in raw_values.split(",") if value and value != "none"]
+        if key == "agents":
+            agents = values
+        elif key == "skills":
+            skills = values
+        elif key == "contexts":
+            contexts = values
+    return {
+        "workflowRef": workflow_ref,
+        "agents": agents,
+        "skills": skills,
+        "contexts": contexts,
+    }
+
+
+def _stack_scope_id(observation: dict[str, Any]) -> str:
+    workflow_ref = str(observation.get("workflow_ref") or observation.get("workflowRef") or "unassigned").strip() or "unassigned"
+    components = _safe_list(observation.get("components"))
+    agents = sorted({
+        str(component.get("component_key") or component.get("componentKey") or "").strip()
+        for component in components
+        if str(component.get("component_type") or component.get("componentType") or "") == "agent"
+        and str(component.get("component_key") or component.get("componentKey") or "").strip()
+    })
+    skills = sorted({
+        str(component.get("component_key") or component.get("componentKey") or "").strip()
+        for component in components
+        if str(component.get("component_type") or component.get("componentType") or "") == "skill"
+        and str(component.get("component_key") or component.get("componentKey") or "").strip()
+    })
+    contexts = sorted({
+        str(component.get("component_key") or component.get("componentKey") or "").strip()
+        for component in components
+        if (
+            str(component.get("component_type") or component.get("componentType") or "") == "context_module"
+            or str(component.get("external_definition_type") or component.get("externalDefinitionType") or "") == "context_module"
+        )
+        and str(component.get("component_key") or component.get("componentKey") or "").strip()
+    })
+    return "|".join(
+        [
+            workflow_ref,
+            f"agents:{','.join(agents[:3]) or 'none'}",
+            f"skills:{','.join(skills[:3]) or 'none'}",
+            f"contexts:{','.join(contexts[:3]) or 'none'}",
+        ]
+    )
+
+
+def _component_label(component: dict[str, Any], definition: dict[str, Any] | None) -> str:
+    if definition and str(definition.get("display_name") or "").strip():
+        return str(definition.get("display_name") or "")
+    payload = _safe_dict(component.get("payload") or component.get("component_payload_json"))
+    for key in ("displayName", "name", "title", "workflowRef", "skill", "command", "externalId"):
+        if str(payload.get(key) or "").strip():
+            return str(payload.get(key) or "")
+    return str(component.get("component_key") or component.get("componentKey") or "")
+
+
+def _stack_label(workflow_ref: str, components: list[RecommendedStackComponent]) -> str:
+    readable_workflow = workflow_ref.replace("-", " ").strip().title() or "Local stack"
+    agents = [component.label for component in components if component.componentType == "agent"][:2]
+    skills = [component.label for component in components if component.componentType == "skill"][:2]
+    suffix_parts: list[str] = []
+    if agents:
+        suffix_parts.append(", ".join(agents))
+    if skills:
+        suffix_parts.append(", ".join(skills))
+    if not suffix_parts:
+        return readable_workflow
+    return f"{readable_workflow} ({' + '.join(suffix_parts)})"
+
+
+def _definition_map(definitions: list[dict[str, Any]]) -> tuple[dict[int, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
+    by_id: dict[int, dict[str, Any]] = {}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for definition in definitions:
+        definition_id = _safe_int(definition.get("id"), 0)
+        if definition_id:
+            by_id[definition_id] = definition
+        definition_type = str(definition.get("definition_type") or "").strip()
+        external_id = str(definition.get("external_id") or "").strip()
+        if definition_type and external_id:
+            by_key[(definition_type, external_id)] = definition
+    return by_id, by_key
+
+
+def _definition_for_component(
+    component: dict[str, Any],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str]:
+    definition_id = _safe_int(component.get("external_definition_id") or component.get("externalDefinitionId"), 0)
+    if definition_id and definition_id in definition_by_id:
+        return definition_by_id[definition_id], "resolved"
+    definition_type = str(component.get("external_definition_type") or component.get("externalDefinitionType") or "").strip()
+    external_id = str(component.get("external_definition_external_id") or component.get("externalDefinitionExternalId") or "").strip()
+    if definition_type and external_id:
+        return definition_by_key.get((definition_type, external_id)), "cached"
+    return None, "unresolved"
+
+
+def _build_stack_components(
+    observation: dict[str, Any],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> list[RecommendedStackComponent]:
+    items: list[RecommendedStackComponent] = []
+    for component in _safe_list(observation.get("components")):
+        definition_row, fallback_status = _definition_for_component(component, definition_by_id, definition_by_key)
+        definition_ref = None
+        if definition_row:
+            definition_ref = RecommendedStackDefinitionRef(
+                definitionType=str(definition_row.get("definition_type") or ""),
+                externalId=str(definition_row.get("external_id") or ""),
+                displayName=str(definition_row.get("display_name") or ""),
+                version=str(definition_row.get("version") or ""),
+                sourceUrl=str(definition_row.get("source_url") or ""),
+                status="resolved" if str(component.get("status") or "") == "resolved" else fallback_status,
+            )
+        items.append(
+            RecommendedStackComponent(
+                componentType=str(component.get("component_type") or component.get("componentType") or "artifact"),
+                componentKey=str(component.get("component_key") or component.get("componentKey") or ""),
+                label=_component_label(component, definition_row),
+                status=str(component.get("status") or fallback_status),
+                confidence=round(_safe_float(component.get("confidence"), 0.0), 4),
+                sourceAttribution=str(component.get("source_attribution") or component.get("sourceAttribution") or ""),
+                payload=_safe_dict(component.get("payload") or component.get("component_payload_json")),
+                definition=definition_ref,
+            )
+        )
+    items.sort(key=lambda component: (component.componentType, component.label.lower(), component.componentKey.lower()))
+    return items
+
+
+def _workflow_candidates(
+    recommendation: ExecutionRecommendation,
+    sessions: list[Any],
+) -> list[str]:
+    items: list[str] = []
+    rule_hint = _RULE_WORKFLOW_HINTS.get(str(recommendation.ruleId or ""))
+    if rule_hint:
+        items.append(rule_hint)
+
+    command_hint = _COMMAND_WORKFLOW_HINTS.get(_command_token(recommendation.primary.command))
+    if command_hint:
+        items.append(command_hint)
+
+    workflow_counts: dict[str, int] = {}
+    for session in sessions:
+        workflow_type = str(getattr(session, "workflowType", "") or _safe_dict(session).get("workflowType") or "").strip()
+        if workflow_type:
+            workflow_counts[workflow_type] = workflow_counts.get(workflow_type, 0) + 1
+    items.extend(
+        workflow
+        for workflow, _ in sorted(workflow_counts.items(), key=lambda item: (-item[1], item[0]))
+    )
+    return _dedupe_strings(items)
+
+
+def _current_context(
+    feature: Feature,
+    sessions: list[Any],
+    recommendation: ExecutionRecommendation,
+) -> dict[str, Any]:
+    agent_counts: dict[str, int] = {}
+    skill_counts: dict[str, int] = {}
+    current_session_ids: set[str] = set()
+
+    for raw_session in sessions:
+        session = raw_session if isinstance(raw_session, dict) else raw_session.model_dump() if hasattr(raw_session, "model_dump") else {}
+        session_id = str(session.get("sessionId") or session.get("id") or "")
+        if session_id:
+            current_session_ids.add(session_id)
+        for agent in _safe_list(session.get("agentsUsed")):
+            token = str(agent).strip()
+            if token:
+                agent_counts[token] = agent_counts.get(token, 0) + 1
+        for skill in _safe_list(session.get("skillsUsed")):
+            token = str(skill).strip()
+            if token:
+                skill_counts[token] = skill_counts.get(token, 0) + 1
+
+    top_agents = [
+        key
+        for key, _ in sorted(agent_counts.items(), key=lambda item: (-item[1], item[0]))
+    ][:5]
+    top_skills = [
+        key
+        for key, _ in sorted(skill_counts.items(), key=lambda item: (-item[1], item[0]))
+    ][:5]
+
+    return {
+        "featureId": feature.id,
+        "workflowCandidates": _workflow_candidates(recommendation, sessions),
+        "agents": set(top_agents),
+        "skills": set(top_skills),
+        "contexts": set(),
+        "sessionIds": current_session_ids,
+    }
+
+
+def _stack_rank(item: dict[str, Any], context: dict[str, Any]) -> float:
+    scope = _parse_stack_scope_id(str(item.get("scopeId") or ""))
+    workflow_ref = str(scope.get("workflowRef") or "")
+    workflow_candidates = set(context.get("workflowCandidates") or [])
+    workflow_match = 1.0 if workflow_ref and workflow_ref in workflow_candidates else (0.5 if not workflow_candidates else 0.0)
+    agent_overlap = _overlap_ratio(set(scope.get("agents") or []), set(context.get("agents") or []))
+    skill_overlap = _overlap_ratio(set(scope.get("skills") or []), set(context.get("skills") or []))
+    context_overlap = _overlap_ratio(set(scope.get("contexts") or []), set(context.get("contexts") or []))
+    sample_bonus = min(_safe_int(item.get("sampleSize"), 0), 6) / 6.0
+    return (
+        0.32 * _safe_float(item.get("successScore"), 0.0)
+        + 0.18 * _safe_float(item.get("efficiencyScore"), 0.0)
+        + 0.18 * _safe_float(item.get("qualityScore"), 0.0)
+        + 0.14 * (1.0 - _safe_float(item.get("riskScore"), 0.0))
+        + 0.10 * workflow_match
+        + 0.04 * agent_overlap
+        + 0.03 * skill_overlap
+        + 0.01 * context_overlap
+        + 0.04 * sample_bonus
+    )
+
+
+def _stack_confidence(rank_score: float, stack: dict[str, Any], components: list[RecommendedStackComponent]) -> float:
+    resolvable = [component for component in components if component.componentType in _RESOLVABLE_COMPONENT_TYPES]
+    resolved = [
+        component
+        for component in resolvable
+        if component.status == "resolved" or (component.definition and component.definition.status == "resolved")
+    ]
+    resolution_ratio = len(resolved) / len(resolvable) if resolvable else 0.8
+    sample_bonus = min(_safe_int(stack.get("sampleSize"), 0), 5) / 5.0
+    return round(_clamp(0.3 + 0.35 * rank_score + 0.2 * resolution_ratio + 0.15 * sample_bonus), 4)
+
+
+def _definition_warnings(
+    stack: RecommendedStack | None,
+    definitions_available: bool,
+) -> list[FeatureExecutionWarning]:
+    if stack is None:
+        if definitions_available:
+            return []
+        return [
+            FeatureExecutionWarning(
+                section="stack",
+                message="No cached SkillMeat definitions are available yet, so stack recommendations cannot be resolved beyond local evidence.",
+            )
+        ]
+
+    unresolved = [
+        component.label or component.componentKey
+        for component in stack.components
+        if component.componentType in _RESOLVABLE_COMPONENT_TYPES
+        and component.status != "resolved"
+    ]
+    if not unresolved and definitions_available:
+        return []
+
+    if not definitions_available:
+        return [
+            FeatureExecutionWarning(
+                section="stack",
+                message="Stack recommendations are based on local CCDash observations because no SkillMeat definition cache is available for this project.",
+            )
+        ]
+
+    preview = ", ".join(unresolved[:3])
+    suffix = "" if len(unresolved) <= 3 else f", and {len(unresolved) - 3} more"
+    return [
+        FeatureExecutionWarning(
+            section="stack",
+            message=f"Some stack components could not be resolved to SkillMeat definitions: {preview}{suffix}.",
+        )
+    ]
+
+
+def _matched_component_sets(observation: dict[str, Any]) -> dict[str, set[str]]:
+    groups: dict[str, set[str]] = {"agent": set(), "skill": set(), "context_module": set()}
+    for component in _safe_list(observation.get("components")):
+        component_type = str(component.get("component_type") or component.get("componentType") or "")
+        component_key = str(component.get("component_key") or component.get("componentKey") or "").strip()
+        if component_type in groups and component_key:
+            groups[component_type].add(component_key)
+    return groups
+
+
+def _score_similar_work(
+    *,
+    observation: dict[str, Any],
+    target_stack: RecommendedStack,
+    context: dict[str, Any],
+) -> tuple[float, list[str], list[str]]:
+    reasons: list[str] = []
+    matched_components: list[str] = []
+    workflow_ref = str(observation.get("workflow_ref") or observation.get("workflowRef") or "").strip()
+    score = 0.0
+
+    if target_stack.workflowRef and workflow_ref == target_stack.workflowRef:
+        score += 0.45
+        reasons.append(f"Shares workflow `{workflow_ref}`.")
+
+    observation_components = _matched_component_sets(observation)
+    target_agents = {component.componentKey for component in target_stack.components if component.componentType == "agent" and component.componentKey}
+    target_skills = {component.componentKey for component in target_stack.components if component.componentType == "skill" and component.componentKey}
+    target_contexts = {component.componentKey for component in target_stack.components if component.componentType == "context_module" and component.componentKey}
+
+    shared_agents = sorted(target_agents & observation_components["agent"])
+    if shared_agents:
+        score += min(0.18, len(shared_agents) * 0.09)
+        matched_components.extend(shared_agents[:2])
+        reasons.append(f"Reuses agent stack: {', '.join(shared_agents[:2])}.")
+
+    shared_skills = sorted(target_skills & observation_components["skill"])
+    if shared_skills:
+        score += min(0.15, len(shared_skills) * 0.075)
+        matched_components.extend(shared_skills[:2])
+        reasons.append(f"Reuses skills: {', '.join(shared_skills[:2])}.")
+
+    shared_contexts = sorted(target_contexts & observation_components["context_module"])
+    if shared_contexts:
+        score += min(0.1, len(shared_contexts) * 0.05)
+        matched_components.extend(shared_contexts[:2])
+        reasons.append(f"Shares context modules: {', '.join(shared_contexts[:2])}.")
+
+    observation_feature_id = str(observation.get("feature_id") or observation.get("featureId") or "").strip()
+    if observation_feature_id and observation_feature_id == str(context.get("featureId") or ""):
+        score += 0.12
+        reasons.append("Comes from the same feature lineage.")
+
+    return _clamp(score), reasons[:3], _dedupe_strings(matched_components)[:6]
+
+
+async def _load_observations(repo: Any, project_id: str) -> list[dict[str, Any]]:
+    rows = await repo.list_stack_observations(project_id, limit=_MAX_OBSERVATIONS, offset=0)
+    hydrated: list[dict[str, Any]] = []
+    for row in rows:
+        session_id = str(row.get("session_id") or row.get("sessionId") or "").strip()
+        if not session_id:
+            continue
+        observation = await repo.get_stack_observation(project_id, session_id)
+        if observation:
+            hydrated.append(observation)
+    return hydrated
+
+
+def _build_stack_record(
+    *,
+    stack_item: dict[str, Any],
+    observation: dict[str, Any] | None,
+    recommendation: ExecutionRecommendation,
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    rank_score: float,
+) -> RecommendedStack:
+    components = _build_stack_components(observation or {}, definition_by_id, definition_by_key) if observation else []
+    workflow_ref = str(stack_item.get("scopeId") or "")
+    parsed_scope = _parse_stack_scope_id(workflow_ref)
+    workflow_ref = str(parsed_scope.get("workflowRef") or workflow_ref)
+    if not components and parsed_scope.get("workflowRef"):
+        components = [
+            RecommendedStackComponent(
+                componentType="workflow",
+                componentKey=str(parsed_scope.get("workflowRef") or ""),
+                label=str(parsed_scope.get("workflowRef") or ""),
+                status="inferred",
+                confidence=0.7,
+                sourceAttribution="rollup_scope",
+            )
+        ]
+
+    return RecommendedStack(
+        id=str(stack_item.get("scopeId") or workflow_ref or "local-stack"),
+        label=_stack_label(workflow_ref, components),
+        workflowRef=workflow_ref,
+        commandAlignment=f"Aligned with {recommendation.ruleId} and `{recommendation.primary.command}`.",
+        confidence=_stack_confidence(rank_score, stack_item, components),
+        sampleSize=_safe_int(stack_item.get("sampleSize"), 0),
+        successScore=round(_safe_float(stack_item.get("successScore"), 0.0), 4),
+        efficiencyScore=round(_safe_float(stack_item.get("efficiencyScore"), 0.0), 4),
+        qualityScore=round(_safe_float(stack_item.get("qualityScore"), 0.0), 4),
+        riskScore=round(_safe_float(stack_item.get("riskScore"), 0.0), 4),
+        sourceSessionId=str(observation.get("session_id") or observation.get("sessionId") or "") if observation else "",
+        sourceFeatureId=str(observation.get("feature_id") or observation.get("featureId") or "") if observation else "",
+        explanation=(
+            f"Ranked from {max(1, _safe_int(stack_item.get('sampleSize'), 0))} observed runs with historical "
+            f"success {round(_safe_float(stack_item.get('successScore'), 0.0) * 100)}% and risk "
+            f"{round(_safe_float(stack_item.get('riskScore'), 0.0) * 100)}%."
+        ),
+        components=components,
+    )
+
+
+async def build_stack_recommendations(
+    db: Any,
+    project: Any,
+    *,
+    feature: Feature,
+    sessions: list[Any],
+    recommendation: ExecutionRecommendation,
+) -> dict[str, Any]:
+    project_id = str(getattr(project, "id", "") or "")
+    intelligence_repo = get_agentic_intelligence_repository(db)
+    session_repo = get_session_repository(db)
+
+    definitions = await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0)
+    definition_by_id, definition_by_key = _definition_map(definitions)
+    observations = await _load_observations(intelligence_repo, project_id)
+    stack_payload = await get_workflow_effectiveness(
+        db,
+        project,
+        period="all",
+        scope_type="stack",
+        limit=_MAX_STACK_ITEMS,
+        offset=0,
+        recompute=False,
+    )
+    stack_items = _safe_list(stack_payload.get("items"))
+    if not stack_items and observations:
+        stack_payload = await get_workflow_effectiveness(
+            db,
+            project,
+            period="all",
+            scope_type="stack",
+            limit=_MAX_STACK_ITEMS,
+            offset=0,
+            recompute=True,
+        )
+        stack_items = _safe_list(stack_payload.get("items"))
+
+    if not stack_items:
+        return {
+            "recommendedStack": None,
+            "stackAlternatives": [],
+            "stackEvidence": [],
+            "definitionResolutionWarnings": _definition_warnings(None, bool(definitions)),
+        }
+
+    context = _current_context(feature, sessions, recommendation)
+    stack_by_scope = {str(item.get("scopeId") or ""): item for item in stack_items if str(item.get("scopeId") or "").strip()}
+    observations_by_scope: dict[str, list[dict[str, Any]]] = {}
+    observation_by_session_id: dict[str, dict[str, Any]] = {}
+    for observation in observations:
+        scope_id = _stack_scope_id(observation)
+        observations_by_scope.setdefault(scope_id, []).append(observation)
+        session_id = str(observation.get("session_id") or observation.get("sessionId") or "")
+        if session_id:
+            observation_by_session_id[session_id] = observation
+
+    ranked = sorted(
+        (
+            (_stack_rank(item, context), item)
+            for item in stack_items
+        ),
+        key=lambda pair: (
+            -pair[0],
+            -_safe_int(pair[1].get("sampleSize"), 0),
+            -_safe_float(pair[1].get("successScore"), 0.0),
+            str(pair[1].get("scopeId") or ""),
+        ),
+    )
+
+    selected_records: list[RecommendedStack] = []
+    for rank_score, item in ranked[: 1 + _MAX_ALTERNATIVES]:
+        scope_id = str(item.get("scopeId") or "")
+        evidence_summary = _safe_dict(item.get("evidenceSummary"))
+        representative_session_ids = [str(value) for value in _safe_list(evidence_summary.get("representativeSessionIds")) if str(value).strip()]
+        representative_observation = None
+        for session_id in representative_session_ids:
+            representative_observation = observation_by_session_id.get(session_id)
+            if representative_observation:
+                break
+        if representative_observation is None:
+            scoped_observations = observations_by_scope.get(scope_id, [])
+            if scoped_observations:
+                representative_observation = scoped_observations[0]
+
+        selected_records.append(
+            _build_stack_record(
+                stack_item=item,
+                observation=representative_observation,
+                recommendation=recommendation,
+                definition_by_id=definition_by_id,
+                definition_by_key=definition_by_key,
+                rank_score=rank_score,
+            )
+        )
+
+    primary = selected_records[0] if selected_records else None
+    alternatives = selected_records[1 : 1 + _MAX_ALTERNATIVES]
+
+    session_cache: dict[str, dict[str, Any] | None] = {}
+
+    async def load_session(session_id: str) -> dict[str, Any] | None:
+        if session_id not in session_cache:
+            session_cache[session_id] = await session_repo.get_by_id(session_id)
+        return session_cache[session_id]
+
+    similar_work: list[SimilarWorkExample] = []
+    if primary is not None:
+        candidates: list[SimilarWorkExample] = []
+        for observation in observations:
+            session_id = str(observation.get("session_id") or observation.get("sessionId") or "").strip()
+            if not session_id or session_id == primary.sourceSessionId:
+                continue
+            similarity_score, reasons, matched_components = _score_similar_work(
+                observation=observation,
+                target_stack=primary,
+                context=context,
+            )
+            if similarity_score < 0.35:
+                continue
+
+            session_row = await load_session(session_id)
+            stack_scope = _stack_scope_id(observation)
+            metrics = stack_by_scope.get(stack_scope) or {}
+            candidates.append(
+                SimilarWorkExample(
+                    sessionId=session_id,
+                    featureId=str(observation.get("feature_id") or observation.get("featureId") or ""),
+                    title=str(session_id),
+                    workflowRef=str(observation.get("workflow_ref") or observation.get("workflowRef") or ""),
+                    similarityScore=round(similarity_score, 4),
+                    reasons=reasons,
+                    matchedComponents=matched_components,
+                    startedAt=str((session_row or {}).get("started_at") or ""),
+                    endedAt=str((session_row or {}).get("ended_at") or ""),
+                    totalCost=round(_safe_float((session_row or {}).get("total_cost"), 0.0), 4),
+                    durationSeconds=_safe_int((session_row or {}).get("duration_seconds"), 0),
+                    successScore=round(_safe_float(metrics.get("successScore"), 0.0), 4),
+                    efficiencyScore=round(_safe_float(metrics.get("efficiencyScore"), 0.0), 4),
+                    qualityScore=round(_safe_float(metrics.get("qualityScore"), 0.0), 4),
+                    riskScore=round(_safe_float(metrics.get("riskScore"), 0.0), 4),
+                )
+            )
+
+        candidates.sort(
+            key=lambda item: (
+                -item.similarityScore,
+                -item.successScore,
+                item.sessionId,
+            )
+        )
+        similar_work = candidates[:_MAX_SIMILAR_WORK]
+
+    source_path = next(
+        (
+            ref
+            for ref in recommendation.evidenceRefs
+            if isinstance(ref, str) and ref.endswith(".md")
+        ),
+        "",
+    )
+    stack_evidence: list[StackRecommendationEvidence] = []
+    if primary is not None:
+        stack_evidence.append(
+            StackRecommendationEvidence(
+                id="STK-EV-1",
+                label="Execution rule alignment",
+                summary=primary.commandAlignment,
+                sourceType="command_rule",
+                sourceId=recommendation.ruleId,
+                sourcePath=source_path,
+                confidence=round(recommendation.confidence, 4),
+                metrics={
+                    "ruleConfidence": round(recommendation.confidence, 4),
+                    "ruleId": recommendation.ruleId,
+                },
+            )
+        )
+        stack_evidence.append(
+            StackRecommendationEvidence(
+                id="STK-EV-2",
+                label="Historical effectiveness",
+                summary=(
+                    f"{primary.sampleSize} matching runs with success {round(primary.successScore * 100)}%, "
+                    f"quality {round(primary.qualityScore * 100)}%, and risk {round(primary.riskScore * 100)}%."
+                ),
+                sourceType="stack_rollup",
+                sourceId=primary.id,
+                confidence=primary.confidence,
+                metrics={
+                    "sampleSize": primary.sampleSize,
+                    "successScore": primary.successScore,
+                    "efficiencyScore": primary.efficiencyScore,
+                    "qualityScore": primary.qualityScore,
+                    "riskScore": primary.riskScore,
+                },
+            )
+        )
+        if similar_work:
+            stack_evidence.append(
+                StackRecommendationEvidence(
+                    id="STK-EV-3",
+                    label="Similar work",
+                    summary=f"Found {len(similar_work)} similar historical sessions that share the same workflow or stack components.",
+                    sourceType="similar_work",
+                    sourceId=primary.id,
+                    confidence=round(
+                        sum(item.similarityScore for item in similar_work) / max(1, len(similar_work)),
+                        4,
+                    ),
+                    metrics={"count": len(similar_work)},
+                    similarWork=similar_work,
+                )
+            )
+
+        resolvable_count = sum(1 for component in primary.components if component.componentType in _RESOLVABLE_COMPONENT_TYPES)
+        resolved_count = sum(1 for component in primary.components if component.componentType in _RESOLVABLE_COMPONENT_TYPES and component.status == "resolved")
+        stack_evidence.append(
+            StackRecommendationEvidence(
+                id="STK-EV-4",
+                label="Definition coverage",
+                summary=(
+                    f"{resolved_count} of {resolvable_count} stack components resolved to cached SkillMeat definitions."
+                    if resolvable_count
+                    else "This stack is driven by local CCDash evidence only."
+                ),
+                sourceType="definition_resolution",
+                sourceId=primary.id,
+                confidence=round(resolved_count / resolvable_count, 4) if resolvable_count else 0.0,
+                metrics={
+                    "resolvedComponents": resolved_count,
+                    "resolvableComponents": resolvable_count,
+                },
+            )
+        )
+
+    return {
+        "recommendedStack": primary,
+        "stackAlternatives": alternatives,
+        "stackEvidence": stack_evidence,
+        "definitionResolutionWarnings": _definition_warnings(primary, bool(definitions)),
+    }

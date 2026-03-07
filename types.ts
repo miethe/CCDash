@@ -1053,6 +1053,75 @@ export interface FeatureExecutionAnalyticsSummary {
   modelCount: number;
 }
 
+export type DefinitionReferenceStatus = 'resolved' | 'cached' | 'unresolved';
+
+export interface RecommendedStackDefinitionRef {
+  definitionType: string;
+  externalId: string;
+  displayName: string;
+  version: string;
+  sourceUrl: string;
+  status: DefinitionReferenceStatus;
+}
+
+export interface RecommendedStackComponent {
+  componentType: 'workflow' | 'agent' | 'skill' | 'context_module' | 'command' | 'model_policy' | 'artifact';
+  componentKey: string;
+  label: string;
+  status: 'explicit' | 'inferred' | 'resolved' | 'unresolved';
+  confidence: number;
+  sourceAttribution: string;
+  payload: Record<string, unknown>;
+  definition?: RecommendedStackDefinitionRef | null;
+}
+
+export interface SimilarWorkExample {
+  sessionId: string;
+  featureId: string;
+  title: string;
+  workflowRef: string;
+  similarityScore: number;
+  reasons: string[];
+  matchedComponents: string[];
+  startedAt: string;
+  endedAt: string;
+  totalCost: number;
+  durationSeconds: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+}
+
+export interface StackRecommendationEvidence {
+  id: string;
+  label: string;
+  summary: string;
+  sourceType: string;
+  sourceId: string;
+  sourcePath: string;
+  confidence: number;
+  metrics: Record<string, unknown>;
+  similarWork: SimilarWorkExample[];
+}
+
+export interface RecommendedStack {
+  id: string;
+  label: string;
+  workflowRef: string;
+  commandAlignment: string;
+  confidence: number;
+  sampleSize: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+  sourceSessionId: string;
+  sourceFeatureId: string;
+  explanation: string;
+  components: RecommendedStackComponent[];
+}
+
 export interface FeatureExecutionSessionLink {
   sessionId: string;
   title?: string;
@@ -1150,6 +1219,10 @@ export interface FeatureExecutionContext {
   analytics: FeatureExecutionAnalyticsSummary;
   recommendations: ExecutionRecommendation;
   warnings: FeatureExecutionWarning[];
+  recommendedStack?: RecommendedStack | null;
+  stackAlternatives: RecommendedStack[];
+  stackEvidence: StackRecommendationEvidence[];
+  definitionResolutionWarnings: FeatureExecutionWarning[];
   generatedAt: string;
 }
 

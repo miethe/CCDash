@@ -22,6 +22,14 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
             relatedFeatures=[],
         )
 
+    def _stack_payload(self) -> dict:
+        return {
+            "recommendedStack": None,
+            "stackAlternatives": [],
+            "stackEvidence": [],
+            "definitionResolutionWarnings": [],
+        }
+
     async def test_happy_path_returns_execution_context(self) -> None:
         feature = self._feature(
             phases=[
@@ -59,6 +67,7 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
                 "load_execution_analytics",
                 return_value=FeatureExecutionAnalyticsSummary(sessionCount=0),
             ),
+            patch.object(features_router, "build_stack_recommendations", return_value=self._stack_payload()),
         ):
             payload = await features_router.get_feature_execution_context("feat-1")
 
@@ -89,6 +98,7 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
                 "load_execution_analytics",
                 return_value=FeatureExecutionAnalyticsSummary(sessionCount=0),
             ),
+            patch.object(features_router, "build_stack_recommendations", return_value=self._stack_payload()),
         ):
             payload = await features_router.get_feature_execution_context("feat-1")
 
@@ -124,6 +134,7 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
                 "load_execution_analytics",
                 return_value=FeatureExecutionAnalyticsSummary(sessionCount=0),
             ),
+            patch.object(features_router, "build_stack_recommendations", return_value=self._stack_payload()),
         ):
             payload = await features_router.get_feature_execution_context("feat-1")
 
@@ -145,6 +156,7 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
                 "load_execution_analytics",
                 side_effect=RuntimeError("analytics unavailable"),
             ),
+            patch.object(features_router, "build_stack_recommendations", return_value=self._stack_payload()),
         ):
             payload = await features_router.get_feature_execution_context("feat-1")
 

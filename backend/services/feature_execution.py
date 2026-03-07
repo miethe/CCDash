@@ -16,6 +16,8 @@ from backend.models import (
     FeatureExecutionContext,
     FeatureExecutionWarning,
     LinkedDocument,
+    RecommendedStack,
+    StackRecommendationEvidence,
 )
 
 _TERMINAL_PHASE_STATUSES = {"done", "deferred", "completed"}
@@ -388,6 +390,10 @@ def build_execution_context(
     sessions: list[Any],
     analytics: FeatureExecutionAnalyticsSummary,
     warnings: list[FeatureExecutionWarning] | None = None,
+    recommended_stack: RecommendedStack | None = None,
+    stack_alternatives: list[RecommendedStack] | None = None,
+    stack_evidence: list[StackRecommendationEvidence] | None = None,
+    definition_resolution_warnings: list[FeatureExecutionWarning] | None = None,
 ) -> FeatureExecutionContext:
     recommendation = build_execution_recommendation(feature, documents)
     return FeatureExecutionContext(
@@ -397,5 +403,9 @@ def build_execution_context(
         analytics=analytics,
         recommendations=recommendation,
         warnings=warnings or [],
+        recommendedStack=recommended_stack,
+        stackAlternatives=stack_alternatives or [],
+        stackEvidence=stack_evidence or [],
+        definitionResolutionWarnings=definition_resolution_warnings or [],
         generatedAt=datetime.now(timezone.utc).isoformat(),
     )
