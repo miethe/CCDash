@@ -3017,6 +3017,17 @@ class SyncEngine:
 
         return stats
 
+    async def _session_source_needs_lineage_backfill(self, file_path: str) -> bool:
+        rows = await self.session_repo.list_by_source(file_path)
+        if not rows:
+            return False
+        for row in rows:
+            thread_kind = str(row.get("thread_kind") or "").strip().lower()
+            conversation_family_id = str(row.get("conversation_family_id") or "").strip()
+            if not thread_kind or not conversation_family_id:
+                return True
+        return False
+
     async def _sync_single_session(self, project_id: str, path: Path, force: bool = False) -> bool:
         """Parse and upsert a single session file. Returns True if actually synced."""
         file_path = str(path)
@@ -3025,7 +3036,10 @@ class SyncEngine:
         if not force:
             cached = await self.sync_repo.get_sync_state(file_path)
             if cached and cached["file_mtime"] == mtime:
-                return False  # unchanged
+                needs_lineage_backfill = await self._session_source_needs_lineage_backfill(file_path)
+                if not needs_lineage_backfill:
+                    return False  # unchanged
+                logger.info("Session lineage backfill triggered for unchanged file: %s", file_path)
 
         overall_t0 = time.monotonic()
         try:

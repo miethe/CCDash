@@ -121,6 +121,14 @@ class SqliteSessionRepository:
                 return None
             return self._row_to_dict(row)
 
+    async def list_by_source(self, source_file: str) -> list[dict]:
+        async with self.db.execute(
+            "SELECT * FROM sessions WHERE source_file = ?",
+            (source_file,),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [self._row_to_dict(row) for row in rows]
+
     async def list_paginated(
         self,
         offset: int,

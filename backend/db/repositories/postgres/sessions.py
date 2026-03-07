@@ -118,6 +118,13 @@ class PostgresSessionRepository:
             return None
         return dict(row)
 
+    async def list_by_source(self, source_file: str) -> list[dict]:
+        rows = await self.db.fetch(
+            "SELECT * FROM sessions WHERE source_file = $1",
+            source_file,
+        )
+        return [dict(row) for row in rows]
+
     async def list_paginated(
         self, offset: int, limit: int, project_id: str | None = None,
         sort_by: str = "started_at", sort_order: str = "desc",

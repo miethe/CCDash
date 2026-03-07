@@ -1,4 +1,8 @@
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
 
 from backend.db.sync_engine import (
     SyncEngine,
@@ -93,6 +97,55 @@ class SyncEngineLinkingTests(unittest.TestCase):
 
         self.assertFalse(should_rebuild)
         self.assertEqual(reason, "up_to_date")
+
+
+class SyncEngineSessionBackfillTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_single_session_reparses_unchanged_file_when_lineage_missing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "session.jsonl"
+            path.write_text("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n", encoding="utf-8")
+            mtime = path.stat().st_mtime
+
+            engine = SyncEngine.__new__(SyncEngine)
+            engine.sync_repo = type("SyncRepoStub", (), {})()
+            engine.sync_repo.get_sync_state = AsyncMock(return_value={"file_mtime": mtime})
+            engine.sync_repo.upsert_sync_state = AsyncMock()
+            engine.session_repo = type("SessionRepoStub", (), {})()
+            engine.session_repo.list_by_source = AsyncMock(return_value=[{"id": "S-1", "thread_kind": "", "conversation_family_id": ""}])
+            engine.session_repo.delete_by_source = AsyncMock()
+            engine.session_repo.delete_relationships_for_source = AsyncMock()
+
+            with patch("backend.db.sync_engine.parse_session_file", return_value=None) as parse_mock, patch("backend.db.sync_engine.observability.start_span", return_value=nullcontext()), patch("backend.db.sync_engine.observability.record_ingestion"):
+                synced = await SyncEngine._sync_single_session(engine, "project-1", path, force=False)
+
+            self.assertTrue(synced)
+            parse_mock.assert_called_once_with(path)
+            engine.session_repo.delete_by_source.assert_awaited_once()
+            engine.session_repo.delete_relationships_for_source.assert_awaited_once_with("project-1", str(path))
+            engine.sync_repo.upsert_sync_state.assert_awaited_once()
+
+    async def test_sync_single_session_skips_unchanged_file_when_lineage_present(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "session.jsonl"
+            path.write_text("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n", encoding="utf-8")
+            mtime = path.stat().st_mtime
+
+            engine = SyncEngine.__new__(SyncEngine)
+            engine.sync_repo = type("SyncRepoStub", (), {})()
+            engine.sync_repo.get_sync_state = AsyncMock(return_value={"file_mtime": mtime})
+            engine.sync_repo.upsert_sync_state = AsyncMock()
+            engine.session_repo = type("SessionRepoStub", (), {})()
+            engine.session_repo.list_by_source = AsyncMock(return_value=[{"id": "S-1", "thread_kind": "root", "conversation_family_id": "S-1"}])
+            engine.session_repo.delete_by_source = AsyncMock()
+            engine.session_repo.delete_relationships_for_source = AsyncMock()
+
+            with patch("backend.db.sync_engine.parse_session_file") as parse_mock:
+                synced = await SyncEngine._sync_single_session(engine, "project-1", path, force=False)
+
+            self.assertFalse(synced)
+            parse_mock.assert_not_called()
+            engine.session_repo.delete_by_source.assert_not_awaited()
+            engine.sync_repo.upsert_sync_state.assert_not_awaited()
 
 
 if __name__ == "__main__":
