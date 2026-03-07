@@ -48,7 +48,7 @@ related:
 plan_ref: agentic-sdlc-intelligence-foundation-v1
 linked_sessions: []
 request_log_id: ''
-commits: [1d75483]
+commits: [1d75483, b10d3e9]
 prs: []
 owner: platform-engineering
 owners:
