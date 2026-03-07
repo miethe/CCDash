@@ -11,7 +11,13 @@ import aiosqlite
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
-from backend.models import AnalyticsMetric, AlertConfig, Notification
+from backend.models import (
+    AlertConfig,
+    AnalyticsMetric,
+    FailurePatternResponse,
+    Notification,
+    WorkflowEffectivenessResponse,
+)
 from backend.model_identity import canonical_model_name, model_family_name
 from backend.project_manager import project_manager
 from backend.db import connection
@@ -23,6 +29,7 @@ from backend.db.factory import (
     get_session_repository,
     get_task_repository,
 )
+from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -1699,6 +1706,81 @@ async def get_artifacts(
     payload["generatedAt"] = datetime.now(timezone.utc).isoformat()
     payload["range"] = {"start": start or "", "end": end or ""}
     return payload
+
+
+@analytics_router.get("/workflow-effectiveness", response_model=WorkflowEffectivenessResponse)
+async def workflow_effectiveness(
+    period: str = Query("all", pattern="^(all|daily|weekly)$"),
+    scope_type: str | None = Query(None, alias="scopeType", pattern="^(workflow|agent|skill|context_module|stack)$"),
+    scope_id: str | None = Query(None, alias="scopeId"),
+    feature_id: str | None = Query(None, alias="featureId"),
+    start: str | None = None,
+    end: str | None = None,
+    recompute: bool = False,
+    offset: int = 0,
+    limit: int = 100,
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return WorkflowEffectivenessResponse(
+            projectId="",
+            period=period,
+            total=0,
+            offset=offset,
+            limit=limit,
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+
+    db = await connection.get_connection()
+    payload = await get_workflow_effectiveness(
+        db,
+        project,
+        period=period,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        feature_id=feature_id,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+        recompute=recompute,
+    )
+    return WorkflowEffectivenessResponse(**payload)
+
+
+@analytics_router.get("/failure-patterns", response_model=FailurePatternResponse)
+async def failure_patterns(
+    scope_type: str | None = Query(None, alias="scopeType", pattern="^(workflow|agent|skill|context_module|stack)$"),
+    scope_id: str | None = Query(None, alias="scopeId"),
+    feature_id: str | None = Query(None, alias="featureId"),
+    start: str | None = None,
+    end: str | None = None,
+    offset: int = 0,
+    limit: int = 100,
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return FailurePatternResponse(
+            projectId="",
+            total=0,
+            offset=offset,
+            limit=limit,
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+
+    db = await connection.get_connection()
+    payload = await detect_failure_patterns(
+        db,
+        project,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        feature_id=feature_id,
+        start=start,
+        end=end,
+        offset=offset,
+        limit=limit,
+    )
+    return FailurePatternResponse(**payload)
 
 
 @analytics_router.get("/alerts", response_model=list[AlertConfig])

@@ -320,6 +320,111 @@ class PostgresAgenticIntelligenceRepository:
         )
         return [self._component_row_to_dict(row) for row in rows]
 
+    async def upsert_effectiveness_rollup(
+        self,
+        rollup_data: dict,
+        project_id: str | None = None,
+    ) -> dict:
+        now = _now_iso()
+        resolved_project_id = str(project_id or rollup_data.get("project_id") or rollup_data.get("projectId") or "")
+        scope_type = str(rollup_data.get("scope_type") or rollup_data.get("scopeType") or "")
+        scope_id = str(rollup_data.get("scope_id") or rollup_data.get("scopeId") or "")
+        period = str(rollup_data.get("period") or "all")
+        row = await self.db.fetchrow(
+            """
+            INSERT INTO effectiveness_rollups (
+                project_id, scope_type, scope_id, period, metrics_json, evidence_summary_json, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+            ON CONFLICT(project_id, scope_type, scope_id, period) DO UPDATE SET
+                metrics_json=EXCLUDED.metrics_json,
+                evidence_summary_json=EXCLUDED.evidence_summary_json,
+                updated_at=EXCLUDED.updated_at
+            RETURNING *
+            """,
+            resolved_project_id,
+            scope_type,
+            scope_id,
+            period,
+            json.dumps(_parse_json_dict(rollup_data.get("metrics", rollup_data.get("metrics_json", {})))),
+            json.dumps(
+                _parse_json_dict(
+                    rollup_data.get("evidence_summary", rollup_data.get("evidenceSummary", rollup_data.get("evidence_summary_json", {})))
+                )
+            ),
+            str(rollup_data.get("created_at") or rollup_data.get("createdAt") or now),
+            str(rollup_data.get("updated_at") or rollup_data.get("updatedAt") or now),
+        )
+        return self._rollup_row_to_dict(row) if row else {}
+
+    async def list_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        period: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        where_clauses = ["project_id = $1"]
+        params: list[object] = [project_id]
+        bind_index = 2
+        if scope_type:
+            where_clauses.append(f"scope_type = ${bind_index}")
+            params.append(scope_type)
+            bind_index += 1
+        if scope_id:
+            where_clauses.append(f"scope_id = ${bind_index}")
+            params.append(scope_id)
+            bind_index += 1
+        if period:
+            if period == "all":
+                where_clauses.append(f"period = ${bind_index}")
+                params.append("all")
+            else:
+                where_clauses.append(f"period LIKE ${bind_index}")
+                params.append(f"{period}:%")
+            bind_index += 1
+
+        rows = await self.db.fetch(
+            (
+                "SELECT * "
+                "FROM effectiveness_rollups "
+                f"WHERE {' AND '.join(where_clauses)} "
+                "ORDER BY updated_at DESC, scope_type ASC, scope_id ASC "
+                f"LIMIT ${bind_index} OFFSET ${bind_index + 1}"
+            ),
+            *params,
+            limit,
+            offset,
+        )
+        return [self._rollup_row_to_dict(row) for row in rows]
+
+    async def purge_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        period: str | None = None,
+    ) -> None:
+        if period:
+            if period == "all":
+                await self.db.execute(
+                    "DELETE FROM effectiveness_rollups WHERE project_id = $1 AND period = $2",
+                    project_id,
+                    "all",
+                )
+            else:
+                await self.db.execute(
+                    "DELETE FROM effectiveness_rollups WHERE project_id = $1 AND period LIKE $2",
+                    project_id,
+                    f"{period}:%",
+                )
+            return
+        await self.db.execute(
+            "DELETE FROM effectiveness_rollups WHERE project_id = $1",
+            project_id,
+        )
+
     def _source_row_to_dict(self, row: Any) -> dict[str, Any]:
         data = dict(row)
         data["project_mapping_json"] = _parse_json_dict(data.get("project_mapping_json"))
@@ -340,4 +445,10 @@ class PostgresAgenticIntelligenceRepository:
     def _component_row_to_dict(self, row: Any) -> dict[str, Any]:
         data = dict(row)
         data["component_payload_json"] = _parse_json_dict(data.get("component_payload_json"))
+        return data
+
+    def _rollup_row_to_dict(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["metrics_json"] = _parse_json_dict(data.get("metrics_json"))
+        data["evidence_summary_json"] = _parse_json_dict(data.get("evidence_summary_json"))
         return data

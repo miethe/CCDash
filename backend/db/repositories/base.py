@@ -189,6 +189,27 @@ class AgenticIntelligenceRepository(Protocol):
         feature_id: str | None = None,
     ) -> list[dict]: ...
     async def list_stack_components(self, observation_id: int) -> list[dict]: ...
+    async def upsert_effectiveness_rollup(
+        self,
+        rollup_data: dict,
+        project_id: str | None = None,
+    ) -> dict: ...
+    async def list_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        period: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]: ...
+    async def purge_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        period: str | None = None,
+    ) -> None: ...
 
 
 # ── Test Visualizer Repositories ───────────────────────────────────

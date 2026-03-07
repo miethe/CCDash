@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -564,6 +564,23 @@ CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation
 CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution
     ON session_stack_components(project_id, status, component_type);
 
+CREATE TABLE IF NOT EXISTS effectiveness_rollups (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id            TEXT NOT NULL,
+    scope_type            TEXT NOT NULL,
+    scope_id              TEXT NOT NULL,
+    period                TEXT NOT NULL,
+    metrics_json          TEXT NOT NULL DEFAULT '{}',
+    evidence_summary_json TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope
+    ON effectiveness_rollups(project_id, scope_type, scope_id, period);
+CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period
+    ON effectiveness_rollups(project_id, period, updated_at DESC);
+
 -- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
     id                    TEXT PRIMARY KEY,
@@ -1096,6 +1113,30 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution ON session_stack_components(project_id, status, component_type)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS effectiveness_rollups (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id            TEXT NOT NULL,
+            scope_type            TEXT NOT NULL,
+            scope_id              TEXT NOT NULL,
+            period                TEXT NOT NULL,
+            metrics_json          TEXT NOT NULL DEFAULT '{}',
+            evidence_summary_json TEXT NOT NULL DEFAULT '{}',
+            created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope ON effectiveness_rollups(project_id, scope_type, scope_id, period)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period ON effectiveness_rollups(project_id, period, updated_at DESC)",
     )
 
     # Seed metric types

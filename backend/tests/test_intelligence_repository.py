@@ -104,6 +104,40 @@ class IntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(updated["components"]), 1)
         self.assertEqual(updated["components"][0]["component_type"], "workflow")
 
+    async def test_effectiveness_rollup_round_trip(self) -> None:
+        stored = await self.repo.upsert_effectiveness_rollup(
+            {
+                "project_id": "project-1",
+                "scope_type": "workflow",
+                "scope_id": "phase-execution",
+                "period": "all",
+                "metrics": {
+                    "scopeLabel": "phase-execution",
+                    "sampleSize": 2,
+                    "successScore": 0.75,
+                    "efficiencyScore": 0.61,
+                    "qualityScore": 0.8,
+                    "riskScore": 0.22,
+                    "generatedAt": "2026-03-07T00:00:00+00:00",
+                },
+                "evidence_summary": {
+                    "featureIds": ["feature-1"],
+                    "representativeSessionIds": ["session-1"],
+                },
+            }
+        )
+
+        rows = await self.repo.list_effectiveness_rollups(
+            "project-1",
+            scope_type="workflow",
+            period="all",
+        )
+
+        self.assertEqual(stored["scope_id"], "phase-execution")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["metrics_json"]["sampleSize"], 2)
+        self.assertEqual(rows[0]["evidence_summary_json"]["featureIds"], ["feature-1"])
+
 
 if __name__ == "__main__":
     unittest.main()

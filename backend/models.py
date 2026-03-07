@@ -791,6 +791,70 @@ class SkillMeatObservationBackfillResponse(BaseModel):
     warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
 
 
+EffectivenessScopeType = Literal["workflow", "agent", "skill", "context_module", "stack"]
+
+
+class EffectivenessMetricDefinition(BaseModel):
+    id: Literal["successScore", "efficiencyScore", "qualityScore", "riskScore"]
+    label: str = ""
+    description: str = ""
+    formula: str = ""
+    inputs: list[str] = Field(default_factory=list)
+
+
+class WorkflowEffectivenessRollup(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    scopeType: EffectivenessScopeType
+    scopeId: str
+    scopeLabel: str = ""
+    period: str = "all"
+    sampleSize: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+    evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+    generatedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class WorkflowEffectivenessResponse(BaseModel):
+    projectId: str
+    period: str = "all"
+    metricDefinitions: list[EffectivenessMetricDefinition] = Field(default_factory=list)
+    items: list[WorkflowEffectivenessRollup] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    generatedAt: str = ""
+
+
+class FailurePatternRecord(BaseModel):
+    id: str
+    patternType: str
+    title: str
+    scopeType: str = ""
+    scopeId: str = ""
+    severity: Literal["low", "medium", "high"] = "medium"
+    confidence: float = 0.0
+    occurrenceCount: int = 0
+    averageSuccessScore: float = 0.0
+    averageRiskScore: float = 0.0
+    evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+    sessionIds: list[str] = Field(default_factory=list)
+
+
+class FailurePatternResponse(BaseModel):
+    projectId: str
+    items: list[FailurePatternRecord] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    generatedAt: str = ""
+
+
 ExecutionPolicyVerdict = Literal["allow", "requires_approval", "deny"]
 ExecutionRunStatus = Literal["queued", "running", "succeeded", "failed", "canceled", "blocked"]
 ExecutionRiskLevel = Literal["low", "medium", "high"]

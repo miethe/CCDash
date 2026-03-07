@@ -149,6 +149,82 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["range"]["end"], "2026-02-22")
         self.assertIn("generatedAt", response)
 
+    async def test_workflow_effectiveness_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "period": "all",
+            "metricDefinitions": [
+                {
+                    "id": "successScore",
+                    "label": "Success",
+                    "description": "desc",
+                    "formula": "formula",
+                    "inputs": ["session.status"],
+                }
+            ],
+            "items": [
+                {
+                    "projectId": "project-1",
+                    "scopeType": "workflow",
+                    "scopeId": "phase-execution",
+                    "scopeLabel": "phase-execution",
+                    "period": "all",
+                    "sampleSize": 2,
+                    "successScore": 0.8,
+                    "efficiencyScore": 0.7,
+                    "qualityScore": 0.9,
+                    "riskScore": 0.2,
+                    "evidenceSummary": {"featureIds": ["feature-1"]},
+                    "generatedAt": "2026-03-07T00:00:00+00:00",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 20,
+            "generatedAt": "2026-03-07T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_workflow_effectiveness", return_value=payload):
+            response = await analytics_router.workflow_effectiveness(limit=20, offset=0)
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.items[0].scopeType, "workflow")
+        self.assertEqual(response.items[0].successScore, 0.8)
+
+    async def test_failure_patterns_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "items": [
+                {
+                    "id": "queue_waste:workflow:debug-loop",
+                    "patternType": "queue_waste",
+                    "title": "Queue waste",
+                    "scopeType": "workflow",
+                    "scopeId": "debug-loop",
+                    "severity": "high",
+                    "confidence": 0.9,
+                    "occurrenceCount": 2,
+                    "averageSuccessScore": 0.4,
+                    "averageRiskScore": 0.8,
+                    "evidenceSummary": {"representativeSessionIds": ["session-2"]},
+                    "sessionIds": ["session-2"],
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 20,
+            "generatedAt": "2026-03-07T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "detect_failure_patterns", return_value=payload):
+            response = await analytics_router.failure_patterns(limit=20, offset=0)
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.items[0].patternType, "queue_waste")
+        self.assertEqual(response.items[0].scopeId, "debug-loop")
+
     async def test_prometheus_export_includes_artifact_metrics(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         artifact_payload = {

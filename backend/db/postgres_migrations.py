@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -565,6 +565,23 @@ CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution
     ON session_stack_components(project_id, status, component_type);
 CREATE INDEX IF NOT EXISTS idx_session_stack_components_payload
     ON session_stack_components USING GIN (component_payload_json);
+
+CREATE TABLE IF NOT EXISTS effectiveness_rollups (
+    id                    BIGSERIAL PRIMARY KEY,
+    project_id            TEXT NOT NULL,
+    scope_type            TEXT NOT NULL,
+    scope_id              TEXT NOT NULL,
+    period                TEXT NOT NULL,
+    metrics_json          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    evidence_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope
+    ON effectiveness_rollups(project_id, scope_type, scope_id, period);
+CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period
+    ON effectiveness_rollups(project_id, period, updated_at DESC);
 
 -- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
@@ -1138,6 +1155,27 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_session_stack_components_payload ON session_stack_components USING GIN (component_payload_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS effectiveness_rollups (
+            id                    BIGSERIAL PRIMARY KEY,
+            project_id            TEXT NOT NULL,
+            scope_type            TEXT NOT NULL,
+            scope_id              TEXT NOT NULL,
+            period                TEXT NOT NULL,
+            metrics_json          JSONB NOT NULL DEFAULT '{}'::jsonb,
+            evidence_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+        )
+        """
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope ON effectiveness_rollups(project_id, scope_type, scope_id, period)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period ON effectiveness_rollups(project_id, period, updated_at DESC)"
     )
 
     # Seed metric types

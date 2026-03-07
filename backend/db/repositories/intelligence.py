@@ -345,6 +345,109 @@ class SqliteAgenticIntelligenceRepository:
             rows = await cur.fetchall()
         return [self._component_row_to_dict(row) for row in rows]
 
+    async def upsert_effectiveness_rollup(
+        self,
+        rollup_data: dict,
+        project_id: str | None = None,
+    ) -> dict:
+        now = _now_iso()
+        resolved_project_id = str(project_id or rollup_data.get("project_id") or rollup_data.get("projectId") or "")
+        scope_type = str(rollup_data.get("scope_type") or rollup_data.get("scopeType") or "")
+        scope_id = str(rollup_data.get("scope_id") or rollup_data.get("scopeId") or "")
+        period = str(rollup_data.get("period") or "all")
+        await self.db.execute(
+            """
+            INSERT INTO effectiveness_rollups (
+                project_id, scope_type, scope_id, period, metrics_json, evidence_summary_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, scope_type, scope_id, period) DO UPDATE SET
+                metrics_json=excluded.metrics_json,
+                evidence_summary_json=excluded.evidence_summary_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                resolved_project_id,
+                scope_type,
+                scope_id,
+                period,
+                json.dumps(_parse_json_dict(rollup_data.get("metrics", rollup_data.get("metrics_json", {})))),
+                json.dumps(
+                    _parse_json_dict(
+                        rollup_data.get("evidence_summary", rollup_data.get("evidenceSummary", rollup_data.get("evidence_summary_json", {})))
+                    )
+                ),
+                str(rollup_data.get("created_at") or rollup_data.get("createdAt") or now),
+                str(rollup_data.get("updated_at") or rollup_data.get("updatedAt") or now),
+            ),
+        )
+        await self.db.commit()
+        rows = await self.list_effectiveness_rollups(
+            resolved_project_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            period=period,
+            limit=1,
+            offset=0,
+        )
+        return rows[0] if rows else {}
+
+    async def list_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        period: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        where_clauses = ["project_id = ?"]
+        params: list[object] = [project_id]
+        if scope_type:
+            where_clauses.append("scope_type = ?")
+            params.append(scope_type)
+        if scope_id:
+            where_clauses.append("scope_id = ?")
+            params.append(scope_id)
+        if period:
+            if period == "all":
+                where_clauses.append("period = ?")
+                params.append("all")
+            else:
+                where_clauses.append("period LIKE ?")
+                params.append(f"{period}:%")
+
+        query = (
+            "SELECT * "
+            "FROM effectiveness_rollups "
+            f"WHERE {' AND '.join(where_clauses)} "
+            "ORDER BY updated_at DESC, scope_type ASC, scope_id ASC "
+            "LIMIT ? OFFSET ?"
+        )
+        params.extend([limit, offset])
+        async with self.db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+        return [self._rollup_row_to_dict(row) for row in rows]
+
+    async def purge_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        period: str | None = None,
+    ) -> None:
+        if period:
+            if period == "all":
+                query = "DELETE FROM effectiveness_rollups WHERE project_id = ? AND period = ?"
+                params: tuple[object, ...] = (project_id, "all")
+            else:
+                query = "DELETE FROM effectiveness_rollups WHERE project_id = ? AND period LIKE ?"
+                params = (project_id, f"{period}:%")
+        else:
+            query = "DELETE FROM effectiveness_rollups WHERE project_id = ?"
+            params = (project_id,)
+        await self.db.execute(query, params)
+        await self.db.commit()
+
     def _source_row_to_dict(self, row: Any) -> dict[str, Any]:
         data = dict(row)
         data["enabled"] = bool(data.get("enabled"))
@@ -366,4 +469,10 @@ class SqliteAgenticIntelligenceRepository:
     def _component_row_to_dict(self, row: Any) -> dict[str, Any]:
         data = dict(row)
         data["component_payload_json"] = _parse_json_dict(data.get("component_payload_json"))
+        return data
+
+    def _rollup_row_to_dict(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["metrics_json"] = _parse_json_dict(data.get("metrics_json"))
+        data["evidence_summary_json"] = _parse_json_dict(data.get("evidence_summary_json"))
         return data
