@@ -505,6 +505,14 @@ class ProjectTestConfig(BaseModel):
     instructionNotes: str = ""
 
 
+class SkillMeatProjectConfig(BaseModel):
+    enabled: bool = False
+    baseUrl: str = ""
+    projectId: str = ""
+    workspaceId: str = ""
+    requestTimeoutSeconds: float = 5.0
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):
@@ -518,6 +526,7 @@ class Project(BaseModel):
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
     progressPath: str = "progress"  # relative to project root
     testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
+    skillMeat: SkillMeatProjectConfig = Field(default_factory=SkillMeatProjectConfig)
 
 
 # ── Feature models ─────────────────────────────────────────────────
@@ -677,6 +686,109 @@ class FeatureExecutionContext(BaseModel):
     recommendations: ExecutionRecommendation
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
     generatedAt: str = ""
+
+
+SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module"]
+StackComponentType = Literal["workflow", "agent", "skill", "context_module", "command", "model_policy", "artifact"]
+StackComponentStatus = Literal["explicit", "inferred", "resolved", "unresolved"]
+
+
+class SkillMeatDefinitionSource(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sourceKind: str = "skillmeat"
+    enabled: bool = False
+    baseUrl: str = ""
+    projectMapping: dict[str, Any] = Field(default_factory=dict)
+    featureFlags: dict[str, Any] = Field(default_factory=dict)
+    lastSyncedAt: str = ""
+    lastSyncStatus: str = "never"
+    lastSyncError: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatDefinition(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sourceId: Optional[int] = None
+    definitionType: SkillMeatDefinitionType
+    externalId: str
+    displayName: str = ""
+    version: str = ""
+    sourceUrl: str = ""
+    resolutionMetadata: dict[str, Any] = Field(default_factory=dict)
+    rawSnapshot: dict[str, Any] = Field(default_factory=dict)
+    fetchedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatSyncWarning(BaseModel):
+    section: str
+    message: str
+    recoverable: bool = True
+
+
+class SkillMeatSyncRequest(BaseModel):
+    projectId: str = ""
+
+
+class SkillMeatDefinitionSyncResponse(BaseModel):
+    projectId: str
+    source: SkillMeatDefinitionSource
+    totalDefinitions: int = 0
+    countsByType: dict[str, int] = Field(default_factory=dict)
+    fetchedAt: str = ""
+    warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
+
+
+class SessionStackComponent(BaseModel):
+    id: Optional[int] = None
+    observationId: Optional[int] = None
+    projectId: str
+    componentType: StackComponentType
+    componentKey: str = ""
+    status: StackComponentStatus = "explicit"
+    confidence: float = 0.0
+    externalDefinitionId: Optional[int] = None
+    externalDefinitionType: str = ""
+    externalDefinitionExternalId: str = ""
+    sourceAttribution: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SessionStackObservation(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sessionId: str
+    featureId: str = ""
+    workflowRef: str = ""
+    confidence: float = 0.0
+    source: str = "backfill"
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    components: list[SessionStackComponent] = Field(default_factory=list)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatObservationBackfillRequest(BaseModel):
+    projectId: str = ""
+    limit: int = Field(default=200, ge=1, le=5000)
+    forceRecompute: bool = False
+
+
+class SkillMeatObservationBackfillResponse(BaseModel):
+    projectId: str
+    sessionsProcessed: int = 0
+    observationsStored: int = 0
+    skippedSessions: int = 0
+    resolvedComponents: int = 0
+    unresolvedComponents: int = 0
+    generatedAt: str = ""
+    warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
 
 
 ExecutionPolicyVerdict = Literal["allow", "requires_approval", "deny"]

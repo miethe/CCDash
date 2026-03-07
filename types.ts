@@ -893,6 +893,14 @@ export interface ProjectTestConfig {
   instructionNotes: string;
 }
 
+export interface SkillMeatProjectConfig {
+  enabled: boolean;
+  baseUrl: string;
+  projectId: string;
+  workspaceId: string;
+  requestTimeoutSeconds: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -904,6 +912,7 @@ export interface Project {
   sessionsPath: string;
   progressPath: string;
   testConfig: ProjectTestConfig;
+  skillMeat: SkillMeatProjectConfig;
 }
 
 export interface LinkedDocument {

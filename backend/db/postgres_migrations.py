@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -473,7 +473,100 @@ CREATE TABLE IF NOT EXISTS alert_configs (
     scope      TEXT DEFAULT 'session'
 );
 
--- ── 12. Execution Workbench Runs ──────────────────────────────────
+-- ── 12. SkillMeat Definition Cache + Stack Observations ───────────
+CREATE TABLE IF NOT EXISTS external_definition_sources (
+    id                  SERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    source_kind         TEXT NOT NULL DEFAULT 'skillmeat',
+    enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+    base_url            TEXT DEFAULT '',
+    project_mapping_json JSONB DEFAULT '{}'::jsonb,
+    feature_flags_json  JSONB DEFAULT '{}'::jsonb,
+    last_synced_at      TEXT DEFAULT '',
+    last_sync_status    TEXT DEFAULT 'never',
+    last_sync_error     TEXT DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, source_kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project
+    ON external_definition_sources(project_id, source_kind);
+CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project_mapping
+    ON external_definition_sources USING GIN (project_mapping_json);
+
+CREATE TABLE IF NOT EXISTS external_definitions (
+    id                  SERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    source_id           INTEGER NOT NULL REFERENCES external_definition_sources(id) ON DELETE CASCADE,
+    definition_type     TEXT NOT NULL,
+    external_id         TEXT NOT NULL,
+    display_name        TEXT DEFAULT '',
+    version             TEXT DEFAULT '',
+    source_url          TEXT DEFAULT '',
+    resolution_metadata_json JSONB DEFAULT '{}'::jsonb,
+    raw_snapshot_json   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fetched_at          TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, definition_type, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_definitions_lookup
+    ON external_definitions(project_id, definition_type, external_id);
+CREATE INDEX IF NOT EXISTS idx_external_definitions_source
+    ON external_definitions(source_id, definition_type);
+CREATE INDEX IF NOT EXISTS idx_external_definitions_name
+    ON external_definitions(project_id, display_name);
+CREATE INDEX IF NOT EXISTS idx_external_definitions_raw_snapshot
+    ON external_definitions USING GIN (raw_snapshot_json);
+
+CREATE TABLE IF NOT EXISTS session_stack_observations (
+    id                  SERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id          TEXT DEFAULT '',
+    workflow_ref        TEXT DEFAULT '',
+    confidence          DOUBLE PRECISION DEFAULT 0.0,
+    observation_source  TEXT DEFAULT 'backfill',
+    evidence_json       JSONB DEFAULT '{}'::jsonb,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session
+    ON session_stack_observations(project_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_session_stack_observations_feature
+    ON session_stack_observations(project_id, feature_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_stack_observations_evidence
+    ON session_stack_observations USING GIN (evidence_json);
+
+CREATE TABLE IF NOT EXISTS session_stack_components (
+    id                  BIGSERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    observation_id      INTEGER NOT NULL REFERENCES session_stack_observations(id) ON DELETE CASCADE,
+    component_type      TEXT NOT NULL,
+    component_key       TEXT DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'explicit',
+    confidence          DOUBLE PRECISION DEFAULT 0.0,
+    external_definition_id INTEGER REFERENCES external_definitions(id) ON DELETE SET NULL,
+    external_definition_type TEXT DEFAULT '',
+    external_definition_external_id TEXT DEFAULT '',
+    source_attribution  TEXT DEFAULT '',
+    component_payload_json JSONB DEFAULT '{}'::jsonb,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation
+    ON session_stack_components(observation_id, component_type);
+CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution
+    ON session_stack_components(project_id, status, component_type);
+CREATE INDEX IF NOT EXISTS idx_session_stack_components_payload
+    ON session_stack_components USING GIN (component_payload_json);
+
+-- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
     id                    TEXT PRIMARY KEY,
     project_id            TEXT NOT NULL,
@@ -540,7 +633,7 @@ CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
 """
 
 _TEST_VISUALIZER_TABLES = """
--- ── 12. Test Visualizer ───────────────────────────────────────────
+-- ── 14. Test Visualizer ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS test_runs (
     run_id              TEXT PRIMARY KEY,
     project_id          TEXT NOT NULL,
@@ -933,6 +1026,118 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_document_refs_query ON document_refs(project_id, ref_kind, ref_value_norm)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS external_definition_sources (
+            id                  SERIAL PRIMARY KEY,
+            project_id          TEXT NOT NULL,
+            source_kind         TEXT NOT NULL DEFAULT 'skillmeat',
+            enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+            base_url            TEXT DEFAULT '',
+            project_mapping_json JSONB DEFAULT '{}'::jsonb,
+            feature_flags_json  JSONB DEFAULT '{}'::jsonb,
+            last_synced_at      TEXT DEFAULT '',
+            last_sync_status    TEXT DEFAULT 'never',
+            last_sync_error     TEXT DEFAULT '',
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, source_kind)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project ON external_definition_sources(project_id, source_kind)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project_mapping ON external_definition_sources USING GIN (project_mapping_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS external_definitions (
+            id                  SERIAL PRIMARY KEY,
+            project_id          TEXT NOT NULL,
+            source_id           INTEGER NOT NULL REFERENCES external_definition_sources(id) ON DELETE CASCADE,
+            definition_type     TEXT NOT NULL,
+            external_id         TEXT NOT NULL,
+            display_name        TEXT DEFAULT '',
+            version             TEXT DEFAULT '',
+            source_url          TEXT DEFAULT '',
+            resolution_metadata_json JSONB DEFAULT '{}'::jsonb,
+            raw_snapshot_json   JSONB NOT NULL DEFAULT '{}'::jsonb,
+            fetched_at          TEXT NOT NULL,
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, definition_type, external_id)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_lookup ON external_definitions(project_id, definition_type, external_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_source ON external_definitions(source_id, definition_type)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_name ON external_definitions(project_id, display_name)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_raw_snapshot ON external_definitions USING GIN (raw_snapshot_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_stack_observations (
+            id                  SERIAL PRIMARY KEY,
+            project_id          TEXT NOT NULL,
+            session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            feature_id          TEXT DEFAULT '',
+            workflow_ref        TEXT DEFAULT '',
+            confidence          DOUBLE PRECISION DEFAULT 0.0,
+            observation_source  TEXT DEFAULT 'backfill',
+            evidence_json       JSONB DEFAULT '{}'::jsonb,
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, session_id)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session ON session_stack_observations(project_id, session_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_observations_feature ON session_stack_observations(project_id, feature_id, updated_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_observations_evidence ON session_stack_observations USING GIN (evidence_json)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_stack_components (
+            id                  BIGSERIAL PRIMARY KEY,
+            project_id          TEXT NOT NULL,
+            observation_id      INTEGER NOT NULL REFERENCES session_stack_observations(id) ON DELETE CASCADE,
+            component_type      TEXT NOT NULL,
+            component_key       TEXT DEFAULT '',
+            status              TEXT NOT NULL DEFAULT 'explicit',
+            confidence          DOUBLE PRECISION DEFAULT 0.0,
+            external_definition_id INTEGER REFERENCES external_definitions(id) ON DELETE SET NULL,
+            external_definition_type TEXT DEFAULT '',
+            external_definition_external_id TEXT DEFAULT '',
+            source_attribution  TEXT DEFAULT '',
+            component_payload_json JSONB DEFAULT '{}'::jsonb,
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation ON session_stack_components(observation_id, component_type)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution ON session_stack_components(project_id, status, component_type)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_components_payload ON session_stack_components USING GIN (component_payload_json)"
     )
 
     # Seed metric types

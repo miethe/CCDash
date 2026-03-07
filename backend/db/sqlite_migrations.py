@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -479,7 +479,92 @@ CREATE TABLE IF NOT EXISTS alert_configs (
     scope      TEXT DEFAULT 'session'
 );
 
--- ── 12. Execution Workbench Runs ──────────────────────────────────
+-- ── 12. SkillMeat Definition Cache + Stack Observations ───────────
+CREATE TABLE IF NOT EXISTS external_definition_sources (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         TEXT NOT NULL,
+    source_kind        TEXT NOT NULL DEFAULT 'skillmeat',
+    enabled            INTEGER NOT NULL DEFAULT 0,
+    base_url           TEXT DEFAULT '',
+    project_mapping_json TEXT DEFAULT '{}',
+    feature_flags_json TEXT DEFAULT '{}',
+    last_synced_at     TEXT DEFAULT '',
+    last_sync_status   TEXT DEFAULT 'never',
+    last_sync_error    TEXT DEFAULT '',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, source_kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project
+    ON external_definition_sources(project_id, source_kind);
+
+CREATE TABLE IF NOT EXISTS external_definitions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         TEXT NOT NULL,
+    source_id          INTEGER NOT NULL REFERENCES external_definition_sources(id) ON DELETE CASCADE,
+    definition_type    TEXT NOT NULL,
+    external_id        TEXT NOT NULL,
+    display_name       TEXT DEFAULT '',
+    version            TEXT DEFAULT '',
+    source_url         TEXT DEFAULT '',
+    resolution_metadata_json TEXT DEFAULT '{}',
+    raw_snapshot_json  TEXT NOT NULL DEFAULT '{}',
+    fetched_at         TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, definition_type, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_definitions_lookup
+    ON external_definitions(project_id, definition_type, external_id);
+CREATE INDEX IF NOT EXISTS idx_external_definitions_source
+    ON external_definitions(source_id, definition_type);
+CREATE INDEX IF NOT EXISTS idx_external_definitions_name
+    ON external_definitions(project_id, display_name);
+
+CREATE TABLE IF NOT EXISTS session_stack_observations (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         TEXT NOT NULL,
+    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id         TEXT DEFAULT '',
+    workflow_ref       TEXT DEFAULT '',
+    confidence         REAL DEFAULT 0.0,
+    observation_source TEXT DEFAULT 'backfill',
+    evidence_json      TEXT DEFAULT '{}',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session
+    ON session_stack_observations(project_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_session_stack_observations_feature
+    ON session_stack_observations(project_id, feature_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_stack_components (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         TEXT NOT NULL,
+    observation_id     INTEGER NOT NULL REFERENCES session_stack_observations(id) ON DELETE CASCADE,
+    component_type     TEXT NOT NULL,
+    component_key      TEXT DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'explicit',
+    confidence         REAL DEFAULT 0.0,
+    external_definition_id INTEGER REFERENCES external_definitions(id) ON DELETE SET NULL,
+    external_definition_type TEXT DEFAULT '',
+    external_definition_external_id TEXT DEFAULT '',
+    source_attribution TEXT DEFAULT '',
+    component_payload_json TEXT DEFAULT '{}',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation
+    ON session_stack_components(observation_id, component_type);
+CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution
+    ON session_stack_components(project_id, status, component_type);
+
+-- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
     id                    TEXT PRIMARY KEY,
     project_id            TEXT NOT NULL,
@@ -542,7 +627,7 @@ CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
 """
 
 _TEST_VISUALIZER_TABLES = """
--- ── 12. Test Visualizer ───────────────────────────────────────────
+-- ── 14. Test Visualizer ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS test_runs (
     run_id              TEXT PRIMARY KEY,
     project_id          TEXT NOT NULL,
@@ -898,6 +983,119 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_document_refs_query ON document_refs(project_id, ref_kind, ref_value_norm)",
+    )
+
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS external_definition_sources (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id         TEXT NOT NULL,
+            source_kind        TEXT NOT NULL DEFAULT 'skillmeat',
+            enabled            INTEGER NOT NULL DEFAULT 0,
+            base_url           TEXT DEFAULT '',
+            project_mapping_json TEXT DEFAULT '{}',
+            feature_flags_json TEXT DEFAULT '{}',
+            last_synced_at     TEXT DEFAULT '',
+            last_sync_status   TEXT DEFAULT 'never',
+            last_sync_error    TEXT DEFAULT '',
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, source_kind)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_external_definition_sources_project ON external_definition_sources(project_id, source_kind)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS external_definitions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id         TEXT NOT NULL,
+            source_id          INTEGER NOT NULL REFERENCES external_definition_sources(id) ON DELETE CASCADE,
+            definition_type    TEXT NOT NULL,
+            external_id        TEXT NOT NULL,
+            display_name       TEXT DEFAULT '',
+            version            TEXT DEFAULT '',
+            source_url         TEXT DEFAULT '',
+            resolution_metadata_json TEXT DEFAULT '{}',
+            raw_snapshot_json  TEXT NOT NULL DEFAULT '{}',
+            fetched_at         TEXT NOT NULL,
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, definition_type, external_id)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_lookup ON external_definitions(project_id, definition_type, external_id)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_source ON external_definitions(source_id, definition_type)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_external_definitions_name ON external_definitions(project_id, display_name)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS session_stack_observations (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id         TEXT NOT NULL,
+            session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            feature_id         TEXT DEFAULT '',
+            workflow_ref       TEXT DEFAULT '',
+            confidence         REAL DEFAULT 0.0,
+            observation_source TEXT DEFAULT 'backfill',
+            evidence_json      TEXT DEFAULT '{}',
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, session_id)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_observations_session ON session_stack_observations(project_id, session_id)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_observations_feature ON session_stack_observations(project_id, feature_id, updated_at DESC)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS session_stack_components (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id         TEXT NOT NULL,
+            observation_id     INTEGER NOT NULL REFERENCES session_stack_observations(id) ON DELETE CASCADE,
+            component_type     TEXT NOT NULL,
+            component_key      TEXT DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'explicit',
+            confidence         REAL DEFAULT 0.0,
+            external_definition_id INTEGER REFERENCES external_definitions(id) ON DELETE SET NULL,
+            external_definition_type TEXT DEFAULT '',
+            external_definition_external_id TEXT DEFAULT '',
+            source_attribution TEXT DEFAULT '',
+            component_payload_json TEXT DEFAULT '{}',
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation ON session_stack_components(observation_id, component_type)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution ON session_stack_components(project_id, status, component_type)",
     )
 
     # Seed metric types

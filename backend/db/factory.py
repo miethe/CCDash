@@ -20,6 +20,7 @@ from backend.db.repositories.test_domains import SqliteTestDomainRepository
 from backend.db.repositories.test_mappings import SqliteTestMappingRepository
 from backend.db.repositories.test_integrity import SqliteTestIntegrityRepository
 from backend.db.repositories.execution import SqliteExecutionRepository
+from backend.db.repositories.intelligence import SqliteAgenticIntelligenceRepository
 from backend.db.repositories.links import (
     SqliteEntityLinkRepository,
     SqliteTagRepository,
@@ -131,3 +132,10 @@ def get_execution_repository(db: Any):
         return SqliteExecutionRepository(db)
     from backend.db.repositories.postgres.execution import PostgresExecutionRepository
     return PostgresExecutionRepository(db)
+
+
+def get_agentic_intelligence_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteAgenticIntelligenceRepository(db)
+    from backend.db.repositories.postgres.intelligence import PostgresAgenticIntelligenceRepository
+    return PostgresAgenticIntelligenceRepository(db)

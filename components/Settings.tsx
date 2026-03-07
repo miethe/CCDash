@@ -21,6 +21,14 @@ const SKILLMEAT_SETUP_COMMANDS: string[] = [
   'python scripts/parse_test_failures.py --input-dir test-results --output test-failures.json',
 ];
 
+const DEFAULT_SKILLMEAT_CONFIG: Project['skillMeat'] = {
+  enabled: false,
+  baseUrl: '',
+  projectId: '',
+  workspaceId: '',
+  requestTimeoutSeconds: 5,
+};
+
 // ── Tab Button ─────────────────────────────────────────────────────
 
 const TabButton: React.FC<{
@@ -354,6 +362,13 @@ const ProjectsTab: React.FC = () => {
     setSaved(false);
   };
 
+  const updateSkillMeatConfig = (updater: (prev: Project['skillMeat']) => Project['skillMeat']) => {
+    if (!editData) return;
+    const nextConfig = updater(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
+    setEditData({ ...editData, skillMeat: nextConfig });
+    setSaved(false);
+  };
+
   const updateFlag = (key: keyof Project['testConfig']['flags'], value: boolean) => {
     updateTestConfig(prev => ({
       ...prev,
@@ -646,6 +661,70 @@ const ProjectsTab: React.FC = () => {
                   />
                   <p className="text-xs text-slate-500 mt-1">Relative to project root</p>
                 </div>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-800 pt-5 space-y-4">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Integration</h4>
+                <p className="text-xs text-slate-500">
+                  Configure the read-only SkillMeat definition source for artifacts, workflows, and context modules.
+                </p>
+              </div>
+
+              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <span className="text-sm text-slate-200">Enable SkillMeat integration</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(editData.skillMeat?.enabled)}
+                  onChange={e => updateSkillMeatConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                  className="h-4 w-4"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-4">
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Base URL</span>
+                  <input
+                    type="url"
+                    value={editData.skillMeat?.baseUrl || ''}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                    placeholder="http://localhost:8001"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Request Timeout (seconds)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    step={0.5}
+                    value={editData.skillMeat?.requestTimeoutSeconds ?? 5}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, requestTimeoutSeconds: Number(e.target.value || 5) }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">SkillMeat Project ID</span>
+                  <input
+                    type="text"
+                    value={editData.skillMeat?.projectId || ''}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, projectId: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                    placeholder="skillmeat-project"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Workspace ID</span>
+                  <input
+                    type="text"
+                    value={editData.skillMeat?.workspaceId || ''}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, workspaceId: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                    placeholder="default"
+                  />
+                </label>
               </div>
             </div>
 

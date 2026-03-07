@@ -1,0 +1,189 @@
+"""Integration endpoints for SkillMeat sync, cache access, and observation backfill."""
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+
+from backend.db import connection
+from backend.db.factory import get_agentic_intelligence_repository
+from backend.models import (
+    SessionStackComponent,
+    SessionStackObservation,
+    SkillMeatDefinition,
+    SkillMeatDefinitionSource,
+    SkillMeatDefinitionSyncResponse,
+    SkillMeatObservationBackfillRequest,
+    SkillMeatObservationBackfillResponse,
+    SkillMeatProjectConfig,
+    SkillMeatSyncRequest,
+    SkillMeatSyncWarning,
+)
+from backend.project_manager import project_manager
+from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
+from backend.services.stack_observations import backfill_session_stack_observations
+
+
+integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["integrations"])
+
+
+def _active_project_or_400() -> Any:
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=400, detail="No active project")
+    return project
+
+
+def _to_source_dto(row: dict[str, Any], project_config: SkillMeatProjectConfig | None = None) -> SkillMeatDefinitionSource:
+    config = project_config or SkillMeatProjectConfig()
+    return SkillMeatDefinitionSource(
+        id=int(row.get("id")) if row.get("id") is not None else None,
+        projectId=str(row.get("project_id") or ""),
+        sourceKind=str(row.get("source_kind") or "skillmeat"),
+        enabled=bool(row.get("enabled")),
+        baseUrl=str(row.get("base_url") or getattr(config, "baseUrl", "")),
+        projectMapping=row.get("project_mapping_json", {}) if isinstance(row.get("project_mapping_json"), dict) else {},
+        featureFlags=row.get("feature_flags_json", {}) if isinstance(row.get("feature_flags_json"), dict) else {},
+        lastSyncedAt=str(row.get("last_synced_at") or ""),
+        lastSyncStatus=str(row.get("last_sync_status") or "never"),
+        lastSyncError=str(row.get("last_sync_error") or ""),
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+def _to_definition_dto(row: dict[str, Any]) -> SkillMeatDefinition:
+    return SkillMeatDefinition(
+        id=int(row.get("id")) if row.get("id") is not None else None,
+        projectId=str(row.get("project_id") or ""),
+        sourceId=int(row.get("source_id")) if row.get("source_id") is not None else None,
+        definitionType=str(row.get("definition_type") or ""),
+        externalId=str(row.get("external_id") or ""),
+        displayName=str(row.get("display_name") or ""),
+        version=str(row.get("version") or ""),
+        sourceUrl=str(row.get("source_url") or ""),
+        resolutionMetadata=row.get("resolution_metadata_json", {}) if isinstance(row.get("resolution_metadata_json"), dict) else {},
+        rawSnapshot=row.get("raw_snapshot_json", {}) if isinstance(row.get("raw_snapshot_json"), dict) else {},
+        fetchedAt=str(row.get("fetched_at") or ""),
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+def _to_component_dto(row: dict[str, Any]) -> SessionStackComponent:
+    return SessionStackComponent(
+        id=int(row.get("id")) if row.get("id") is not None else None,
+        observationId=int(row.get("observation_id")) if row.get("observation_id") is not None else None,
+        projectId=str(row.get("project_id") or ""),
+        componentType=str(row.get("component_type") or ""),
+        componentKey=str(row.get("component_key") or ""),
+        status=str(row.get("status") or "explicit"),
+        confidence=float(row.get("confidence") or 0.0),
+        externalDefinitionId=int(row.get("external_definition_id")) if row.get("external_definition_id") is not None else None,
+        externalDefinitionType=str(row.get("external_definition_type") or ""),
+        externalDefinitionExternalId=str(row.get("external_definition_external_id") or ""),
+        sourceAttribution=str(row.get("source_attribution") or ""),
+        payload=row.get("component_payload_json", {}) if isinstance(row.get("component_payload_json"), dict) else {},
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+def _to_observation_dto(row: dict[str, Any]) -> SessionStackObservation:
+    components = row.get("components", [])
+    return SessionStackObservation(
+        id=int(row.get("id")) if row.get("id") is not None else None,
+        projectId=str(row.get("project_id") or ""),
+        sessionId=str(row.get("session_id") or ""),
+        featureId=str(row.get("feature_id") or ""),
+        workflowRef=str(row.get("workflow_ref") or ""),
+        confidence=float(row.get("confidence") or 0.0),
+        source=str(row.get("observation_source") or "backfill"),
+        evidence=row.get("evidence_json", {}) if isinstance(row.get("evidence_json"), dict) else {},
+        components=[_to_component_dto(component) for component in components if isinstance(component, dict)],
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+@integrations_router.post("/sync", response_model=SkillMeatDefinitionSyncResponse)
+async def sync_skillmeat(req: SkillMeatSyncRequest | None = None):
+    project = _active_project_or_400()
+    requested_project_id = str((req.projectId if req else "") or "").strip()
+    if requested_project_id and requested_project_id != str(project.id):
+        raise HTTPException(status_code=400, detail="Sync only supports the active project")
+
+    db = await connection.get_connection()
+    payload = await sync_skillmeat_definitions(db, project)
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    warnings = payload.get("warnings", [])
+    return SkillMeatDefinitionSyncResponse(
+        projectId=str(payload.get("projectId") or project.id),
+        source=_to_source_dto(source, getattr(project, "skillMeat", None)),
+        totalDefinitions=int(payload.get("totalDefinitions") or 0),
+        countsByType=payload.get("countsByType", {}) if isinstance(payload.get("countsByType"), dict) else {},
+        fetchedAt=str(payload.get("fetchedAt") or ""),
+        warnings=[SkillMeatSyncWarning(**warning) for warning in warnings if isinstance(warning, dict)],
+    )
+
+
+@integrations_router.get("/definitions", response_model=list[SkillMeatDefinition])
+async def list_skillmeat_definitions(
+    definition_type: str | None = Query(default=None, alias="definitionType"),
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+):
+    project = _active_project_or_400()
+    db = await connection.get_connection()
+    repo = get_agentic_intelligence_repository(db)
+    rows = await repo.list_external_definitions(
+        str(project.id),
+        definition_type=definition_type,
+        limit=limit,
+        offset=offset,
+    )
+    return [_to_definition_dto(row) for row in rows]
+
+
+@integrations_router.post("/observations/backfill", response_model=SkillMeatObservationBackfillResponse)
+async def backfill_skillmeat_observations(req: SkillMeatObservationBackfillRequest):
+    project = _active_project_or_400()
+    requested_project_id = str(req.projectId or "").strip()
+    if requested_project_id and requested_project_id != str(project.id):
+        raise HTTPException(status_code=400, detail="Backfill only supports the active project")
+
+    db = await connection.get_connection()
+    payload = await backfill_session_stack_observations(
+        db,
+        project,
+        limit=req.limit,
+        force_recompute=req.forceRecompute,
+    )
+    warnings = payload.get("warnings", [])
+    return SkillMeatObservationBackfillResponse(
+        projectId=str(payload.get("projectId") or project.id),
+        sessionsProcessed=int(payload.get("sessionsProcessed") or 0),
+        observationsStored=int(payload.get("observationsStored") or 0),
+        skippedSessions=int(payload.get("skippedSessions") or 0),
+        resolvedComponents=int(payload.get("resolvedComponents") or 0),
+        unresolvedComponents=int(payload.get("unresolvedComponents") or 0),
+        generatedAt=str(payload.get("generatedAt") or ""),
+        warnings=[SkillMeatSyncWarning(**warning) for warning in warnings if isinstance(warning, dict)],
+    )
+
+
+@integrations_router.get("/observations", response_model=list[SessionStackObservation])
+async def list_skillmeat_observations(
+    limit: int = Query(default=200, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+):
+    project = _active_project_or_400()
+    db = await connection.get_connection()
+    repo = get_agentic_intelligence_repository(db)
+    rows = await repo.list_stack_observations(str(project.id), limit=limit, offset=offset)
+    hydrated: list[SessionStackObservation] = []
+    for row in rows:
+        observation = await repo.get_stack_observation(str(project.id), str(row.get("session_id") or ""))
+        if observation:
+            hydrated.append(_to_observation_dto(observation))
+    return hydrated
