@@ -3053,81 +3053,144 @@ class SyncEngine:
             },
         ):
             await self.session_repo.delete_by_source(file_path)
+            await self.session_repo.delete_relationships_for_source(project_id, file_path)
 
             if session:
-                session_dict = session.model_dump()
-                session_dict["sourceFile"] = file_path
-                await self.session_repo.upsert(session_dict, project_id)
+                all_relationships: list[dict[str, Any]] = []
+                pending_sessions: list[dict[str, Any]] = []
 
-                # Detail tables
-                logs = [log.model_dump() for log in session.logs]
-                await self.session_repo.upsert_logs(session.id, logs)
+                def _collect_session_payload(payload: dict[str, Any]) -> None:
+                    session_payload = dict(payload)
+                    derived_sessions = session_payload.pop("derivedSessions", [])
+                    relationship_rows = session_payload.pop("sessionRelationships", [])
+                    if isinstance(relationship_rows, list):
+                        for row in relationship_rows:
+                            if isinstance(row, dict):
+                                all_relationships.append(dict(row))
+                    session_payload["sourceFile"] = file_path
+                    pending_sessions.append(session_payload)
+                    if isinstance(derived_sessions, list):
+                        for derived in derived_sessions:
+                            if isinstance(derived, dict):
+                                _collect_session_payload(derived)
 
-                tools = [t.model_dump() for t in session.toolsUsed]
-                await self.session_repo.upsert_tool_usage(session.id, tools)
+                _collect_session_payload(session.model_dump())
 
-                files = [f.model_dump() for f in session.updatedFiles]
-                await self.session_repo.upsert_file_updates(session.id, files)
-
-                artifacts = [a.model_dump() for a in session.linkedArtifacts]
-                await self.session_repo.upsert_artifacts(session.id, artifacts)
-
-                await self._replace_session_telemetry_events(
-                    project_id,
-                    session_dict,
-                    logs,
-                    tools,
-                    files,
-                    artifacts,
-                    source="sync",
-                )
-                await self._replace_session_commit_correlations(
-                    project_id,
-                    session_dict,
-                    logs,
-                    files,
-                    source="sync",
-                )
-
-                model = _first_non_empty(session_dict, "model")
-                feature_id = _first_non_empty(session_dict, "featureId", "feature_id")
-                observability.record_token_cost(
-                    project_id=project_id,
-                    model=model,
-                    feature_id=feature_id,
-                    token_input=_coerce_int(session_dict.get("tokensIn") or session_dict.get("tokens_in")),
-                    token_output=_coerce_int(session_dict.get("tokensOut") or session_dict.get("tokens_out")),
-                    cost_usd=_coerce_float(session_dict.get("totalCost") or session_dict.get("total_cost")),
-                )
-                for tool in tools:
-                    tool_name = _first_non_empty(tool, "name", "tool_name", default="unknown")
-                    call_count = _coerce_int(tool.get("count") or tool.get("call_count"))
-                    if call_count <= 0:
+                for session_dict in pending_sessions:
+                    session_id = str(session_dict.get("id") or "").strip()
+                    if not session_id:
                         continue
-                    success_count = _coerce_int(tool.get("success_count"))
-                    success_rate = _coerce_float(tool.get("successRate"))
-                    if success_count <= 0 and success_rate > 0:
-                        ratio = success_rate / 100.0 if success_rate > 1 else success_rate
-                        success_count = int(round(call_count * max(0.0, min(1.0, ratio))))
-                    success_count = max(0, min(call_count, success_count))
-                    failure_count = max(0, call_count - success_count)
-                    duration_ms = _coerce_float(tool.get("totalMs") or tool.get("total_ms"))
-                    if success_count > 0:
-                        observability.record_tool_result(
-                            tool_name,
-                            "success",
-                            project_id=project_id,
-                            count=success_count,
-                            duration_ms=duration_ms,
+
+                    await self.session_repo.upsert(session_dict, project_id)
+
+                    logs = session_dict.get("logs", [])
+                    if not isinstance(logs, list):
+                        logs = []
+                    await self.session_repo.upsert_logs(session_id, logs)
+
+                    tools = session_dict.get("toolsUsed", [])
+                    if not isinstance(tools, list):
+                        tools = []
+                    await self.session_repo.upsert_tool_usage(session_id, tools)
+
+                    files = session_dict.get("updatedFiles", [])
+                    if not isinstance(files, list):
+                        files = []
+                    await self.session_repo.upsert_file_updates(session_id, files)
+
+                    artifacts = session_dict.get("linkedArtifacts", [])
+                    if not isinstance(artifacts, list):
+                        artifacts = []
+                    await self.session_repo.upsert_artifacts(session_id, artifacts)
+
+                    await self._replace_session_telemetry_events(
+                        project_id,
+                        session_dict,
+                        logs,
+                        tools,
+                        files,
+                        artifacts,
+                        source="sync",
+                    )
+                    await self._replace_session_commit_correlations(
+                        project_id,
+                        session_dict,
+                        logs,
+                        files,
+                        source="sync",
+                    )
+
+                    model = _first_non_empty(session_dict, "model")
+                    feature_id = _first_non_empty(session_dict, "featureId", "feature_id")
+                    observability.record_token_cost(
+                        project_id=project_id,
+                        model=model,
+                        feature_id=feature_id,
+                        token_input=_coerce_int(session_dict.get("tokensIn") or session_dict.get("tokens_in")),
+                        token_output=_coerce_int(session_dict.get("tokensOut") or session_dict.get("tokens_out")),
+                        cost_usd=_coerce_float(session_dict.get("totalCost") or session_dict.get("total_cost")),
+                    )
+                    for tool in tools:
+                        if not isinstance(tool, dict):
+                            continue
+                        tool_name = _first_non_empty(tool, "name", "tool_name", default="unknown")
+                        call_count = _coerce_int(tool.get("count") or tool.get("call_count"))
+                        if call_count <= 0:
+                            continue
+                        success_count = _coerce_int(tool.get("success_count"))
+                        success_rate = _coerce_float(tool.get("successRate"))
+                        if success_count <= 0 and success_rate > 0:
+                            ratio = success_rate / 100.0 if success_rate > 1 else success_rate
+                            success_count = int(round(call_count * max(0.0, min(1.0, ratio))))
+                        success_count = max(0, min(call_count, success_count))
+                        failure_count = max(0, call_count - success_count)
+                        duration_ms = _coerce_float(tool.get("totalMs") or tool.get("total_ms"))
+                        if success_count > 0:
+                            observability.record_tool_result(
+                                tool_name,
+                                "success",
+                                project_id=project_id,
+                                count=success_count,
+                                duration_ms=duration_ms,
+                            )
+                        if failure_count > 0:
+                            observability.record_tool_result(
+                                tool_name,
+                                "failure",
+                                project_id=project_id,
+                                count=failure_count,
+                                duration_ms=duration_ms,
+                            )
+
+                deduped_relationships: dict[str, dict[str, Any]] = {}
+                for relationship in all_relationships:
+                    parent_session_id = str(relationship.get("parentSessionId") or "").strip()
+                    child_session_id = str(relationship.get("childSessionId") or "").strip()
+                    relationship_type = str(relationship.get("relationshipType") or "").strip()
+                    if not parent_session_id or not child_session_id or not relationship_type:
+                        continue
+                    rel_id = str(relationship.get("id") or "").strip()
+                    if not rel_id:
+                        signature = "::".join(
+                            [
+                                project_id,
+                                parent_session_id,
+                                child_session_id,
+                                relationship_type,
+                                str(relationship.get("parentEntryUuid") or "").strip(),
+                                str(relationship.get("childEntryUuid") or "").strip(),
+                            ]
                         )
-                    if failure_count > 0:
-                        observability.record_tool_result(
-                            tool_name,
-                            "failure",
-                            project_id=project_id,
-                            count=failure_count,
-                            duration_ms=duration_ms,
-                        )
+                        rel_id = f"REL-{hashlib.sha1(signature.encode('utf-8')).hexdigest()[:20]}"
+                        relationship["id"] = rel_id
+                    deduped_relationships[rel_id] = relationship
+
+                if deduped_relationships:
+                    await self.session_repo.upsert_relationships(
+                        project_id,
+                        file_path,
+                        list(deduped_relationships.values()),
+                    )
 
         # Update sync state
         await self.sync_repo.upsert_sync_state({

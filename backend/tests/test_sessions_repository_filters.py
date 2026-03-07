@@ -43,6 +43,9 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "parentSessionId": None,
                 "rootSessionId": "S-main",
                 "agentId": None,
+                "threadKind": "root",
+                "conversationFamilyId": "S-main",
+                "contextInheritance": "fresh",
             },
             "project-1",
         )
@@ -54,6 +57,29 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "parentSessionId": "S-main",
                 "rootSessionId": "S-main",
                 "agentId": "a1",
+                "threadKind": "subagent",
+                "conversationFamilyId": "S-main",
+                "contextInheritance": "fresh",
+            },
+            "project-1",
+        )
+        await self.repo.upsert(
+            {
+                **base,
+                "id": "S-fork-a",
+                "sessionType": "fork",
+                "parentSessionId": None,
+                "rootSessionId": "S-fork-a",
+                "agentId": None,
+                "threadKind": "fork",
+                "conversationFamilyId": "S-main",
+                "contextInheritance": "full",
+                "forkParentSessionId": "S-main",
+                "forkPointLogId": "log-4",
+                "forkPointEntryUuid": "entry-fork-a",
+                "forkPointParentEntryUuid": "entry-parent",
+                "forkDepth": 1,
+                "forkCount": 0,
             },
             "project-1",
         )
@@ -74,6 +100,9 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "parentSessionId": None,
                 "rootSessionId": "S-opus-45",
                 "agentId": None,
+                "threadKind": "root",
+                "conversationFamilyId": "S-opus-45",
+                "contextInheritance": "fresh",
             },
             "project-1",
         )
@@ -86,6 +115,9 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
                 "parentSessionId": None,
                 "rootSessionId": "S-opus-41",
                 "agentId": None,
+                "threadKind": "root",
+                "conversationFamilyId": "S-opus-41",
+                "contextInheritance": "fresh",
             },
             "project-1",
         )
@@ -97,7 +129,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
         rows = await self.repo.list_paginated(0, 50, "project-1", "started_at", "desc", {})
         row_ids = {r["id"] for r in rows}
         self.assertNotIn("S-agent-a1", row_ids)
-        self.assertEqual(row_ids, {"S-main", "S-opus-45", "S-opus-41"})
+        self.assertEqual(row_ids, {"S-main", "S-fork-a", "S-opus-45", "S-opus-41"})
 
     async def test_include_subagents_true_returns_both(self) -> None:
         rows = await self.repo.list_paginated(
@@ -108,7 +140,7 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "desc",
             {"include_subagents": True},
         )
-        self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1", "S-opus-45", "S-opus-41"})
+        self.assertEqual({r["id"] for r in rows}, {"S-main", "S-agent-a1", "S-fork-a", "S-opus-45", "S-opus-41"})
 
     async def test_root_session_filter_with_subagents(self) -> None:
         rows = await self.repo.list_paginated(
@@ -126,6 +158,33 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             {"include_subagents": True, "root_session_id": "S-main"},
         )
         self.assertEqual(count, 2)
+
+    async def test_thread_kind_filter_returns_only_forks(self) -> None:
+        rows = await self.repo.list_paginated(
+            0,
+            50,
+            "project-1",
+            "started_at",
+            "desc",
+            {"thread_kind": "fork", "include_subagents": True},
+        )
+        self.assertEqual([row["id"] for row in rows], ["S-fork-a"])
+
+    async def test_conversation_family_filter_returns_family_members(self) -> None:
+        rows = await self.repo.list_paginated(
+            0,
+            50,
+            "project-1",
+            "started_at",
+            "desc",
+            {"conversation_family_id": "S-main", "include_subagents": True},
+        )
+        self.assertEqual({row["id"] for row in rows}, {"S-main", "S-agent-a1", "S-fork-a"})
+        count = await self.repo.count(
+            "project-1",
+            {"conversation_family_id": "S-main", "include_subagents": True},
+        )
+        self.assertEqual(count, 3)
 
     async def test_model_identity_filters_match_provider_family_and_version(self) -> None:
         rows = await self.repo.list_paginated(
@@ -155,6 +214,51 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
+
+    async def test_relationship_upsert_and_lookup(self) -> None:
+        await self.repo.delete_relationships_for_source("project-1", "sessions/main.jsonl")
+        await self.repo.upsert_relationships(
+            "project-1",
+            "sessions/main.jsonl",
+            [
+                {
+                    "id": "REL-fork-main-a",
+                    "parentSessionId": "S-main",
+                    "childSessionId": "S-fork-a",
+                    "relationshipType": "fork",
+                    "contextInheritance": "full",
+                    "sourcePlatform": "claude_code",
+                    "parentEntryUuid": "entry-parent",
+                    "childEntryUuid": "entry-fork-a",
+                    "sourceLogId": "log-4",
+                    "metadata": {"label": "Fork A"},
+                }
+            ],
+        )
+        await self.repo.upsert_relationships(
+            "project-1",
+            "sessions/main.jsonl",
+            [
+                {
+                    "id": "REL-fork-main-a",
+                    "parentSessionId": "S-main",
+                    "childSessionId": "S-fork-a",
+                    "relationshipType": "fork",
+                    "contextInheritance": "full",
+                    "sourcePlatform": "claude_code",
+                    "parentEntryUuid": "entry-parent",
+                    "childEntryUuid": "entry-fork-a",
+                    "sourceLogId": "log-4",
+                    "metadata": {"label": "Fork A Updated"},
+                }
+            ],
+        )
+
+        rows = await self.repo.list_relationships("project-1", "S-main")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["relationship_type"], "fork")
+        self.assertEqual(rows[0]["child_session_id"], "S-fork-a")
+        self.assertIn("Fork A Updated", str(rows[0]["metadata_json"]))
 
 
 if __name__ == "__main__":

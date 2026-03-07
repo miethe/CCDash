@@ -166,6 +166,28 @@ export interface SessionArtifact {
   sourceToolName?: string;
 }
 
+export interface SessionRelationship {
+  id?: string;
+  relationshipType: string;
+  parentSessionId: string;
+  childSessionId: string;
+  contextInheritance?: string;
+  sourcePlatform?: string;
+  parentEntryUuid?: string;
+  childEntryUuid?: string;
+  sourceLogId?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface SessionForkSummary {
+  sessionId: string;
+  label?: string;
+  forkPointTimestamp?: string;
+  forkPointPreview?: string;
+  entryCount?: number;
+  contextInheritance?: string;
+}
+
 export interface AgentSession {
   id: string;
   title?: string;
@@ -189,6 +211,15 @@ export interface AgentSession {
   parentSessionId?: string | null;
   rootSessionId?: string;
   agentId?: string;
+  threadKind?: 'root' | 'fork' | 'subagent' | string;
+  conversationFamilyId?: string;
+  contextInheritance?: 'fresh' | 'full' | string;
+  forkParentSessionId?: string | null;
+  forkPointLogId?: string | null;
+  forkPointEntryUuid?: string | null;
+  forkPointParentEntryUuid?: string | null;
+  forkDepth?: number;
+  forkCount?: number;
   tokensIn: number;
   tokensOut: number;
   totalCost: number;
@@ -206,6 +237,8 @@ export interface AgentSession {
   sessionMetadata?: SessionMetadata | null;
   thinkingLevel?: 'low' | 'medium' | 'high' | string;
   sessionForensics?: Record<string, any>;
+  forks?: SessionForkSummary[];
+  sessionRelationships?: SessionRelationship[];
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];

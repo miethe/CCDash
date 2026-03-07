@@ -27,10 +27,12 @@ class PostgresSessionRepository:
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
+                thread_kind, conversation_family_id, context_inheritance,
+                fork_parent_session_id, fork_point_log_id, fork_point_entry_uuid, fork_point_parent_entry_uuid, fork_depth, fork_count,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=EXCLUDED.task_id, status=EXCLUDED.status, model=EXCLUDED.model,
                 platform_type=EXCLUDED.platform_type,
@@ -49,6 +51,15 @@ class PostgresSessionRepository:
                 parent_session_id=EXCLUDED.parent_session_id,
                 root_session_id=EXCLUDED.root_session_id,
                 agent_id=EXCLUDED.agent_id,
+                thread_kind=EXCLUDED.thread_kind,
+                conversation_family_id=EXCLUDED.conversation_family_id,
+                context_inheritance=EXCLUDED.context_inheritance,
+                fork_parent_session_id=EXCLUDED.fork_parent_session_id,
+                fork_point_log_id=EXCLUDED.fork_point_log_id,
+                fork_point_entry_uuid=EXCLUDED.fork_point_entry_uuid,
+                fork_point_parent_entry_uuid=EXCLUDED.fork_point_parent_entry_uuid,
+                fork_depth=EXCLUDED.fork_depth,
+                fork_count=EXCLUDED.fork_count,
                 started_at=EXCLUDED.started_at, ended_at=EXCLUDED.ended_at,
                 updated_at=EXCLUDED.updated_at, source_file=EXCLUDED.source_file,
                 dates_json=EXCLUDED.dates_json,
@@ -81,6 +92,15 @@ class PostgresSessionRepository:
             session_data.get("parentSessionId"),
             session_data.get("rootSessionId", session_data.get("id", "")),
             session_data.get("agentId"),
+            str(session_data.get("threadKind", "") or ""),
+            str(session_data.get("conversationFamilyId", "") or ""),
+            str(session_data.get("contextInheritance", "") or ""),
+            session_data.get("forkParentSessionId"),
+            session_data.get("forkPointLogId"),
+            session_data.get("forkPointEntryUuid"),
+            session_data.get("forkPointParentEntryUuid"),
+            int(session_data.get("forkDepth", 0) or 0),
+            int(session_data.get("forkCount", 0) or 0),
             session_data.get("startedAt", ""),
             session_data.get("endedAt", ""),
             created_at, updated_at,
@@ -160,6 +180,14 @@ class PostgresSessionRepository:
                 idx += 2
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("thread_kind"):
+            where_parts.append(f"LOWER(COALESCE(thread_kind, '')) = LOWER(${idx})")
+            params.append(str(filters["thread_kind"]))
+            idx += 1
+        if filters.get("conversation_family_id"):
+            where_parts.append(f"conversation_family_id = ${idx}")
+            params.append(str(filters["conversation_family_id"]))
+            idx += 1
         if filters.get("root_session_id"):
             where_parts.append(f"root_session_id = ${idx}")
             params.append(filters["root_session_id"])
@@ -268,6 +296,14 @@ class PostgresSessionRepository:
                 idx += 2
         if not filters.get("include_subagents", False):
             where_parts.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("thread_kind"):
+            where_parts.append(f"LOWER(COALESCE(thread_kind, '')) = LOWER(${idx})")
+            params.append(str(filters["thread_kind"]))
+            idx += 1
+        if filters.get("conversation_family_id"):
+            where_parts.append(f"conversation_family_id = ${idx}")
+            params.append(str(filters["conversation_family_id"]))
+            idx += 1
         if filters.get("root_session_id"):
             where_parts.append(f"root_session_id = ${idx}")
             params.append(filters["root_session_id"])
@@ -523,6 +559,71 @@ class PostgresSessionRepository:
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
                 records
             )
+
+    async def delete_relationships_for_source(self, project_id: str, source_file: str) -> None:
+        await self.db.execute(
+            "DELETE FROM session_relationships WHERE project_id = $1 AND source_file = $2",
+            project_id,
+            source_file,
+        )
+
+    async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
+        if not relationships:
+            return
+        records = []
+        for relationship in relationships:
+            records.append(
+                (
+                    str(relationship.get("id") or ""),
+                    project_id,
+                    str(relationship.get("parentSessionId") or ""),
+                    str(relationship.get("childSessionId") or ""),
+                    str(relationship.get("relationshipType") or ""),
+                    str(relationship.get("contextInheritance") or ""),
+                    str(relationship.get("sourcePlatform") or ""),
+                    str(relationship.get("parentEntryUuid") or ""),
+                    str(relationship.get("childEntryUuid") or ""),
+                    relationship.get("sourceLogId"),
+                    json.dumps(relationship.get("metadata") or {}),
+                    source_file,
+                )
+            )
+        await self.db.executemany(
+            """
+            INSERT INTO session_relationships (
+                id, project_id, parent_session_id, child_session_id,
+                relationship_type, context_inheritance, source_platform,
+                parent_entry_uuid, child_entry_uuid, source_log_id, metadata_json, source_file
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
+                project_id = EXCLUDED.project_id,
+                parent_session_id = EXCLUDED.parent_session_id,
+                child_session_id = EXCLUDED.child_session_id,
+                relationship_type = EXCLUDED.relationship_type,
+                context_inheritance = EXCLUDED.context_inheritance,
+                source_platform = EXCLUDED.source_platform,
+                parent_entry_uuid = EXCLUDED.parent_entry_uuid,
+                child_entry_uuid = EXCLUDED.child_entry_uuid,
+                source_log_id = EXCLUDED.source_log_id,
+                metadata_json = EXCLUDED.metadata_json,
+                source_file = EXCLUDED.source_file
+            """,
+            records,
+        )
+
+    async def list_relationships(self, project_id: str, session_id: str) -> list[dict]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM session_relationships
+            WHERE project_id = $1
+              AND (parent_session_id = $2 OR child_session_id = $2)
+            ORDER BY created_at ASC, id ASC
+            """,
+            project_id,
+            session_id,
+        )
+        return [dict(r) for r in rows]
 
     async def get_logs(self, session_id: str) -> list[dict]:
         rows = await self.db.fetch(

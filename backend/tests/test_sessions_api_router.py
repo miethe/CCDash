@@ -30,6 +30,15 @@ class _FakeRepo:
                 "parent_session_id": None,
                 "root_session_id": "S-main",
                 "agent_id": None,
+                "thread_kind": "root",
+                "conversation_family_id": "S-main",
+                "context_inheritance": "fresh",
+                "fork_parent_session_id": None,
+                "fork_point_log_id": None,
+                "fork_point_entry_uuid": None,
+                "fork_point_parent_entry_uuid": None,
+                "fork_depth": 0,
+                "fork_count": 1,
                 "duration_seconds": 1,
                 "tokens_in": 1,
                 "tokens_out": 1,
@@ -71,6 +80,95 @@ class _FakeSessionDetailRepo:
         if session_id == "S-main":
             return {"id": session_id}
         return None
+
+
+class _FakeFullSessionRepo:
+    async def get_by_id(self, session_id):
+        if session_id == "S-main":
+            return {
+                "id": "S-main",
+                "project_id": "project-1",
+                "task_id": "",
+                "status": "completed",
+                "model": "claude-sonnet",
+                "platform_type": "Claude Code",
+                "platform_version": "2.1.52",
+                "platform_versions_json": "[\"2.1.52\"]",
+                "platform_version_transitions_json": "[]",
+                "session_type": "session",
+                "parent_session_id": None,
+                "root_session_id": "S-main",
+                "agent_id": None,
+                "thread_kind": "root",
+                "conversation_family_id": "S-main",
+                "context_inheritance": "fresh",
+                "fork_parent_session_id": None,
+                "fork_point_log_id": None,
+                "fork_point_entry_uuid": None,
+                "fork_point_parent_entry_uuid": None,
+                "fork_depth": 0,
+                "fork_count": 1,
+                "duration_seconds": 1,
+                "tokens_in": 1,
+                "tokens_out": 1,
+                "total_cost": 0.0,
+                "started_at": "2026-02-16T00:00:00Z",
+                "ended_at": "2026-02-16T00:00:01Z",
+                "created_at": "2026-02-16T00:00:00Z",
+                "updated_at": "2026-02-16T00:00:01Z",
+                "quality_rating": 0,
+                "friction_rating": 0,
+                "git_commit_hash": None,
+                "git_commit_hashes_json": "[]",
+                "git_author": None,
+                "git_branch": None,
+                "thinking_level": "high",
+                "impact_history_json": "[]",
+                "session_forensics_json": "{\"platform\":\"claude_code\"}",
+                "timeline_json": "[]",
+            }
+        if session_id == "S-fork-1":
+            return {
+                "id": "S-fork-1",
+                "project_id": "project-1",
+                "session_forensics_json": "{\"forkSummary\":{\"entryCount\":2}}",
+            }
+        return None
+
+    async def get_logs(self, session_id):
+        return []
+
+    async def get_tool_usage(self, session_id):
+        return []
+
+    async def get_file_updates(self, session_id):
+        return []
+
+    async def get_artifacts(self, session_id):
+        return []
+
+    async def list_relationships(self, project_id, session_id):
+        return [
+            {
+                "id": "REL-1",
+                "parent_session_id": "S-main",
+                "child_session_id": "S-fork-1",
+                "relationship_type": "fork",
+                "context_inheritance": "full",
+                "source_platform": "claude_code",
+                "parent_entry_uuid": "entry-parent",
+                "child_entry_uuid": "entry-fork-1",
+                "source_log_id": "log-4",
+                "metadata_json": json.dumps(
+                    {
+                        "label": "Fork 1",
+                        "forkPointTimestamp": "2026-02-16T00:00:00Z",
+                        "forkPointPreview": "fork preview",
+                        "entryCount": 2,
+                    }
+                ),
+            }
+        ]
 
 
 class _FakeLinkRepo:
@@ -227,6 +325,8 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.total, 1)
         self.assertFalse(repo.last_filters["include_subagents"])
         self.assertEqual(response.items[0].rootSessionId, "S-main")
+        self.assertEqual(response.items[0].threadKind, "root")
+        self.assertEqual(response.items[0].conversationFamilyId, "S-main")
         self.assertEqual(response.items[0].thinkingLevel, "high")
         self.assertEqual(response.items[0].sessionForensics.get("platform"), "claude_code")
 
@@ -235,10 +335,17 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         project = types.SimpleNamespace(id="project-1")
 
         with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
-            await api_router.list_sessions(include_subagents=True, root_session_id="S-main")
+            await api_router.list_sessions(
+                include_subagents=True,
+                root_session_id="S-main",
+                thread_kind="fork",
+                conversation_family_id="S-main",
+            )
 
         self.assertTrue(repo.last_filters["include_subagents"])
         self.assertEqual(repo.last_filters["root_session_id"], "S-main")
+        self.assertEqual(repo.last_filters["thread_kind"], "fork")
+        self.assertEqual(repo.last_filters["conversation_family_id"], "S-main")
 
     async def test_list_sessions_accepts_model_identity_filters(self) -> None:
         repo = _FakeRepo()
@@ -290,6 +397,21 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(repo.last_include_subagents_for_platform_facets)
         self.assertEqual(response[0].platformType, "Claude Code")
         self.assertEqual(response[0].platformVersion, "2.1.52")
+
+    async def test_get_session_includes_fork_relationships_and_summaries(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.get_session("S-main")
+
+        self.assertEqual(response.id, "S-main")
+        self.assertEqual(response.threadKind, "root")
+        self.assertEqual(response.conversationFamilyId, "S-main")
+        self.assertEqual(len(response.sessionRelationships or []), 1)
+        self.assertEqual(str((response.sessionRelationships or [])[0].get("childSessionId") or ""), "S-fork-1")
+        self.assertEqual(len(response.forks or []), 1)
+        self.assertEqual(str((response.forks or [])[0].get("sessionId") or ""), "S-fork-1")
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:
         session_repo = _FakeSessionDetailRepo()

@@ -702,6 +702,11 @@ const getTranscriptSourceText = (log: SessionLog): string => {
 };
 
 const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map<string, string>): string => {
+    if (isForkThread(thread)) {
+        const titledFork = (thread.title || '').trim();
+        if (titledFork && titledFork !== thread.id) return titledFork;
+        return `fork-${thread.id.slice(-6)}`;
+    }
     const titled = (thread.title || '').trim();
     return (
         subagentNameBySessionId.get(thread.id) ||
@@ -710,6 +715,13 @@ const getThreadDisplayName = (thread: AgentSession, subagentNameBySessionId: Map
         thread.sessionType ||
         'thread'
     );
+};
+
+const isForkStartSystemLog = (log: SessionLog): boolean => {
+    if (log.type !== 'system') return false;
+    const metadata = asRecord(log.metadata);
+    const syntheticType = String(metadata.syntheticEventType || metadata.eventType || '').trim().toLowerCase();
+    return syntheticType === 'fork_start';
 };
 
 const collectSessionSubagentTypes = (session: AgentSession): string[] => {
@@ -967,7 +979,22 @@ const threadNodeHasLiveSession = (node: SessionThreadNode, nowMs: number): boole
     return node.children.some(child => threadNodeHasLiveSession(child, nowMs));
 };
 
+const normalizedThreadKind = (session: AgentSession): string => {
+    const explicit = String(session.threadKind || '').trim().toLowerCase();
+    if (explicit) return explicit;
+    const sessionType = String(session.sessionType || '').trim().toLowerCase();
+    if (sessionType === 'fork') return 'fork';
+    if (sessionType === 'subagent') return 'subagent';
+    return 'root';
+};
+
+const isForkThread = (session: AgentSession): boolean => {
+    if (session.forkParentSessionId) return true;
+    return normalizedThreadKind(session) === 'fork';
+};
+
 const isSubthread = (session: AgentSession): boolean => {
+    if (isForkThread(session)) return true;
     if (session.parentSessionId) return true;
     return (session.sessionType || '').toLowerCase() === 'subagent';
 };
@@ -991,6 +1018,14 @@ const sortSessionThreadNodes = (nodes: SessionThreadNode[]): SessionThreadNode[]
 const countSessionThreadNodes = (nodes: SessionThreadNode[]): number =>
     nodes.reduce((sum, node) => sum + 1 + countSessionThreadNodes(node.children), 0);
 
+const threadToggleLabelForChildren = (children: SessionThreadNode[]): string => {
+    const hasFork = children.some(child => isForkThread(child.session));
+    const hasSubagent = children.some(child => !isForkThread(child.session));
+    if (hasFork && hasSubagent) return 'Forks & Sub-Threads';
+    if (hasFork) return 'Forks';
+    return 'Sub-Threads';
+};
+
 const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[] => {
     const nodes = new Map<string, SessionThreadNode>();
     sessions.forEach(session => {
@@ -1000,10 +1035,16 @@ const buildSessionThreadForest = (sessions: AgentSession[]): SessionThreadNode[]
     const attached = new Set<string>();
     sessions.forEach(session => {
         if (!isSubthread(session)) return;
-        const candidateParents = [
-            session.parentSessionId || '',
-            session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
-        ];
+        const candidateParents = isForkThread(session)
+            ? [
+                session.forkParentSessionId || '',
+                session.parentSessionId || '',
+                session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
+            ]
+            : [
+                session.parentSessionId || '',
+                session.rootSessionId && session.rootSessionId !== session.id ? session.rootSessionId : '',
+            ];
         const parentId = candidateParents.find(id => !!id && nodes.has(id));
         if (!parentId || parentId === session.id) return;
         const parentNode = nodes.get(parentId);
@@ -1039,6 +1080,7 @@ const LogItemBlurb: React.FC<{
     const isAgent = log.speaker === 'agent';
     const isUser = log.speaker === 'user';
     const isSystem = log.speaker === 'system';
+    const isForkStartEvent = isForkStartSystemLog(log);
 
     const renderMessagePreview = () => {
         const parsed = formattedMessage || parseTranscriptMessage(log.content);
@@ -1118,7 +1160,7 @@ const LogItemBlurb: React.FC<{
         return <p className="line-clamp-3 leading-relaxed whitespace-pre-wrap break-words">{log.content}</p>;
     };
 
-    if (log.type === 'message') {
+    if (log.type === 'message' || isForkStartEvent) {
         return (
             <div
                 onClick={onClick}
@@ -1129,11 +1171,19 @@ const LogItemBlurb: React.FC<{
                     ? 'border-indigo-500 bg-indigo-500/20 text-indigo-400'
                     : isUser
                         ? 'bg-slate-800 border-slate-700 text-slate-400'
-                        : isSystem
+                        : isForkStartEvent
+                            ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                            : isSystem
                             ? 'bg-slate-900 border-slate-700 text-slate-300'
                         : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
                     }`}>
-                    {isUser ? <span className="text-xs font-bold">U</span> : isSystem ? <span className="text-xs font-bold">S</span> : <Bot size={16} />}
+                    {isUser
+                        ? <span className="text-xs font-bold">U</span>
+                        : isForkStartEvent
+                            ? <GitBranch size={14} />
+                            : isSystem
+                                ? <span className="text-xs font-bold">S</span>
+                                : <Bot size={16} />}
                 </div>
 
                 <div className={`flex flex-col min-w-0 flex-1 ${isUser ? 'items-end' : 'items-start'}`}>
@@ -1146,6 +1196,8 @@ const LogItemBlurb: React.FC<{
                         ? 'bg-transparent border-transparent text-indigo-100'
                         : isUser
                             ? 'bg-slate-800 border-slate-700 text-slate-300'
+                            : isForkStartEvent
+                                ? 'bg-cyan-500/10 border-cyan-500/35 text-cyan-100'
                             : isSystem
                                 ? 'bg-slate-900/60 border-slate-700 text-slate-300'
                             : 'bg-slate-900 border-slate-800 text-slate-300'
@@ -1153,6 +1205,17 @@ const LogItemBlurb: React.FC<{
                         {renderMessagePreview()}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
+                        {isForkStartEvent && log.linkedSessionId && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenThread?.(log.linkedSessionId!);
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded border border-cyan-500/40 text-cyan-200 bg-cyan-500/10 hover:bg-cyan-500/20"
+                            >
+                                Open Fork
+                            </button>
+                        )}
                         {fileCount > 0 && (
                             <button
                                 onClick={(e) => {
@@ -1186,7 +1249,7 @@ const LogItemBlurb: React.FC<{
         subagent: <Zap size={12} className="text-purple-400" />,
         skill: <Cpu size={12} className="text-blue-400" />,
         thought: <MessageSquare size={12} className="text-slate-300" />,
-        system: <ShieldAlert size={12} className="text-slate-400" />,
+        system: isForkStartEvent ? <GitBranch size={12} className="text-cyan-300" /> : <ShieldAlert size={12} className="text-slate-400" />,
         command: <Terminal size={12} className="text-emerald-400" />,
         subagent_start: <Zap size={12} className="text-purple-300" />,
     };
@@ -1202,7 +1265,7 @@ const LogItemBlurb: React.FC<{
     const label = log.type === 'tool' ? (mappedNonMessageLabel || `Used Tool: ${log.toolCall?.name}`) :
         log.type === 'subagent_start' ? `Sub-thread Started` :
             log.type === 'thought' ? 'Agent Thought' :
-                log.type === 'system' ? 'System Event' :
+                log.type === 'system' ? (isForkStartEvent ? 'Fork Started' : 'System Event') :
                     log.type === 'command'
                         ? (formattedMessage && isMappedTranscriptMessageKind(formattedMessage.kind) && formattedMessage.mapped
                             ? `${formattedMessage.mapped.transcriptLabel}: ${formattedMessage.summary}`
@@ -1970,9 +2033,55 @@ const TranscriptView: React.FC<{
     });
     const selectedLog = animatedLogs.items.find(l => l.id === selectedLogId);
     const threadLinks = threadSessions.filter(t => t.id !== session.id);
+    const forkLinks = useMemo(
+        () => threadLinks.filter(thread => isForkThread(thread)),
+        [threadLinks],
+    );
+    const linkedSubthreads = useMemo(
+        () => threadLinks.filter(thread => !isForkThread(thread)),
+        [threadLinks],
+    );
+    const directForkLinks = useMemo(
+        () => forkLinks.filter(thread => String(thread.forkParentSessionId || '').trim() === session.id),
+        [forkLinks, session.id],
+    );
+    const parentForkSessionId = String(session.forkParentSessionId || '').trim();
+    const currentSessionIsFork = isForkThread(session);
+    const parentForkLink = useMemo(
+        () => (parentForkSessionId ? threadLinks.find(thread => thread.id === parentForkSessionId) || null : null),
+        [parentForkSessionId, threadLinks],
+    );
+    const siblingForkLinks = useMemo(
+        () => (
+            currentSessionIsFork && parentForkSessionId
+                ? forkLinks.filter(thread => (
+                    thread.id !== session.id
+                    && String(thread.forkParentSessionId || '').trim() === parentForkSessionId
+                ))
+                : []
+        ),
+        [currentSessionIsFork, forkLinks, parentForkSessionId, session.id],
+    );
+    const forkSummaryBySessionId = useMemo(() => {
+        const map = new Map<string, {
+            sessionId: string;
+            label?: string;
+            forkPointTimestamp?: string;
+            forkPointPreview?: string;
+            entryCount?: number;
+            contextInheritance?: string;
+        }>();
+        (session.forks || []).forEach(summary => {
+            const id = String(summary.sessionId || '').trim();
+            if (id && !map.has(id)) {
+                map.set(id, summary);
+            }
+        });
+        return map;
+    }, [session.forks]);
     const liveNowMs = Date.now();
     const activeLiveAgents = useMemo<LiveAgentActivity[]>(() => {
-        return threadLinks
+        return linkedSubthreads
             .filter(thread => isSessionLiveInFlight(thread, liveNowMs))
             .map(thread => ({
                 agentName: getLiveAgentLabel(thread, subagentNameBySessionId),
@@ -1982,7 +2091,7 @@ const TranscriptView: React.FC<{
                 status: 'active' as const,
             }))
             .sort((a, b) => toEpoch(b.lastSeenAt) - toEpoch(a.lastSeenAt));
-    }, [liveNowMs, subagentNameBySessionId, threadLinks]);
+    }, [linkedSubthreads, liveNowMs, subagentNameBySessionId]);
     const liveTranscriptState = useMemo<LiveTranscriptState>(() => ({
         isLive: session.status === 'active',
         pendingMessageCount: smartScroll.pendingInserts,
@@ -2487,25 +2596,87 @@ const TranscriptView: React.FC<{
                     </div>
                 </div>
 
-                {/* Linked Sub-Threads */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Linked Sub-Threads</h3>
-                    <div className="space-y-2 max-h-56 overflow-y-auto">
-                        {threadLinks.length === 0 && (
-                            <div className="text-xs text-slate-500">No linked sub-threads found.</div>
-                        )}
-                        {threadLinks.map(thread => (
-                            <button
-                                key={thread.id}
-                                onClick={() => onOpenThread(thread.id)}
-                                className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
-                            >
-                                <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
-                                <div className="text-[10px] text-slate-500 mt-1">
-                                    {getThreadDisplayName(thread, subagentNameBySessionId)}
-                                </div>
-                            </button>
-                        ))}
+                {/* Forks and Threads */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div>
+                        <h3 className="text-xs font-bold text-cyan-300 uppercase tracking-widest mb-3">Forks</h3>
+                        <div className="space-y-2 max-h-56 overflow-y-auto">
+                            {!parentForkLink && directForkLinks.length === 0 && siblingForkLinks.length === 0 && (session.forks || []).length === 0 && (
+                                <div className="text-xs text-slate-500">No related forks found.</div>
+                            )}
+                            {parentForkLink && (
+                                <button
+                                    onClick={() => onOpenThread(parentForkLink.id)}
+                                    className="w-full text-left p-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 hover:border-cyan-400/50 transition-colors"
+                                >
+                                    <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">Parent</div>
+                                    <div className="text-[11px] font-mono text-cyan-200 truncate">{parentForkLink.id}</div>
+                                    <div className="text-[10px] text-cyan-100/80 mt-1">{getThreadDisplayName(parentForkLink, subagentNameBySessionId)}</div>
+                                </button>
+                            )}
+                            {directForkLinks.map(thread => {
+                                const summary = forkSummaryBySessionId.get(thread.id);
+                                return (
+                                    <button
+                                        key={`fork-child-${thread.id}`}
+                                        onClick={() => onOpenThread(thread.id)}
+                                        className="w-full text-left p-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 hover:border-cyan-400/50 transition-colors"
+                                    >
+                                        <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">Child Fork</div>
+                                        <div className="text-[11px] font-mono text-cyan-200 truncate">{thread.id}</div>
+                                        <div className="text-[10px] text-cyan-100/80 mt-1">{summary?.forkPointPreview || getThreadDisplayName(thread, subagentNameBySessionId)}</div>
+                                    </button>
+                                );
+                            })}
+                            {siblingForkLinks.map(thread => (
+                                <button
+                                    key={`fork-sibling-${thread.id}`}
+                                    onClick={() => onOpenThread(thread.id)}
+                                    className="w-full text-left p-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 hover:border-cyan-400/50 transition-colors"
+                                >
+                                    <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">Sibling Fork</div>
+                                    <div className="text-[11px] font-mono text-cyan-200 truncate">{thread.id}</div>
+                                    <div className="text-[10px] text-cyan-100/80 mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
+                                </button>
+                            ))}
+                            {(session.forks || []).map(summary => {
+                                if (threadLinks.some(thread => thread.id === summary.sessionId)) {
+                                    return null;
+                                }
+                                return (
+                                    <button
+                                        key={`fork-summary-${summary.sessionId}`}
+                                        onClick={() => onOpenThread(summary.sessionId)}
+                                        className="w-full text-left p-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 hover:border-cyan-400/50 transition-colors"
+                                    >
+                                        <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">Fork</div>
+                                        <div className="text-[11px] font-mono text-cyan-200 truncate">{summary.sessionId}</div>
+                                        <div className="text-[10px] text-cyan-100/80 mt-1">{summary.forkPointPreview || summary.label || 'Fork branch'}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Linked Sub-Threads</h3>
+                        <div className="space-y-2 max-h-56 overflow-y-auto">
+                            {linkedSubthreads.length === 0 && (
+                                <div className="text-xs text-slate-500">No linked sub-threads found.</div>
+                            )}
+                            {linkedSubthreads.map(thread => (
+                                <button
+                                    key={thread.id}
+                                    onClick={() => onOpenThread(thread.id)}
+                                    className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
+                                >
+                                    <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        {getThreadDisplayName(thread, subagentNameBySessionId)}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -5831,13 +6002,35 @@ const compareVersionLabelsDesc = (left: string, right: string): number => {
     return right.localeCompare(left);
 };
 
+type StringSessionFilterKey =
+    'status'
+    | 'thread_kind'
+    | 'conversation_family_id'
+    | 'model'
+    | 'model_provider'
+    | 'model_family'
+    | 'model_version'
+    | 'platform_type'
+    | 'platform_version'
+    | 'root_session_id'
+    | 'start_date'
+    | 'end_date'
+    | 'created_start'
+    | 'created_end'
+    | 'completed_start'
+    | 'completed_end'
+    | 'updated_start'
+    | 'updated_end';
+
 const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFilters => {
     const payload: SessionFilters = {
         include_subagents: filters.include_subagents ?? true,
     };
 
-    const stringKeys: Array<keyof SessionFilters> = [
+    const stringKeys: StringSessionFilterKey[] = [
         'status',
+        'thread_kind',
+        'conversation_family_id',
         'model',
         'model_provider',
         'model_family',
@@ -5857,7 +6050,7 @@ const buildSessionFilterPayload = (filters: Partial<SessionFilters>): SessionFil
     stringKeys.forEach(key => {
         const rawValue = filters[key];
         const value = typeof rawValue === 'string' ? rawValue.trim() : '';
-        if (value) payload[key] = value as any;
+        if (value) payload[key] = value;
     });
 
     if (typeof filters.min_duration === 'number' && Number.isFinite(filters.min_duration)) {
@@ -6212,6 +6405,8 @@ const SessionFilterBar: React.FC = () => {
 
     const hasActiveFilters = Boolean(
         localFilters.status
+        || localFilters.thread_kind
+        || localFilters.conversation_family_id
         || localFilters.model
         || localFilters.model_provider
         || localFilters.model_family
@@ -6278,6 +6473,31 @@ const SessionFilterBar: React.FC = () => {
                                     <option value="completed">Completed</option>
                                     <option value="failed">Failed</option>
                                 </select>
+                            </div>
+
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Thread</label>
+                                <select
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    value={localFilters.thread_kind || ''}
+                                    onChange={e => handleChange('thread_kind', e.target.value)}
+                                >
+                                    <option value="">All</option>
+                                    <option value="root">Root</option>
+                                    <option value="fork">Fork</option>
+                                    <option value="subagent">Subagent</option>
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-[74px_1fr] items-center gap-2">
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Family</label>
+                                <input
+                                    type="text"
+                                    value={localFilters.conversation_family_id || ''}
+                                    onChange={e => handleChange('conversation_family_id', e.target.value)}
+                                    placeholder="conversation family id"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                                />
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
@@ -6501,7 +6721,8 @@ const SessionDetail: React.FC<{
 
     useEffect(() => {
         let cancelled = false;
-        const rootSessionId = session.rootSessionId || session.id;
+        const conversationFamilyId = (session.conversationFamilyId || '').trim();
+        const fallbackRootSessionId = session.rootSessionId || session.id;
         const load = async () => {
             try {
                 const params = new URLSearchParams({
@@ -6510,8 +6731,12 @@ const SessionDetail: React.FC<{
                     sort_by: 'started_at',
                     sort_order: 'desc',
                     include_subagents: 'true',
-                    root_session_id: rootSessionId,
                 });
+                if (conversationFamilyId) {
+                    params.set('conversation_family_id', conversationFamilyId);
+                } else {
+                    params.set('root_session_id', fallbackRootSessionId);
+                }
                 const res = await fetch(`/api/sessions?${params.toString()}`);
                 if (!res.ok) return;
                 const data = await res.json();
@@ -6535,7 +6760,7 @@ const SessionDetail: React.FC<{
                 window.clearInterval(intervalId);
             }
         };
-    }, [session.id, session.rootSessionId, session.status]);
+    }, [session.conversationFamilyId, session.id, session.rootSessionId, session.status]);
 
     useEffect(() => {
         setThreadSessionDetails(prev => ({ ...prev, [session.id]: session }));
@@ -6853,6 +7078,38 @@ const SessionDetail: React.FC<{
         [session.id, session.title, session.sessionMetadata]
     );
     const sessionForensics = useMemo(() => asRecord(session.sessionForensics), [session.sessionForensics]);
+    const forkSummary = useMemo(() => asRecord(sessionForensics.forkSummary), [sessionForensics]);
+    const threadKind = normalizedThreadKind(session);
+    const isForkSession = isForkThread(session);
+    const parentForkSessionId = (session.forkParentSessionId || '').trim();
+    const parentForkSession = parentForkSessionId
+        ? threadSessions.find(thread => thread.id === parentForkSessionId)
+        : null;
+    const forkPointPreview = String(
+        forkSummary.forkPointPreview
+        || session.sessionForensics?.forkPointPreview
+        || '',
+    ).trim();
+    const forkPointTimestamp = String(forkSummary.forkPointTimestamp || '').trim();
+    const siblingForkCount = useMemo(
+        () => (
+            isForkSession && parentForkSessionId
+                ? threadSessions.filter(thread => (
+                    thread.id !== session.id
+                    && isForkThread(thread)
+                    && String(thread.forkParentSessionId || '').trim() === parentForkSessionId
+                )).length
+                : 0
+        ),
+        [isForkSession, parentForkSessionId, session.id, threadSessions],
+    );
+    const threadKindBadge = (
+        threadKind === 'fork'
+            ? { label: 'fork', style: 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/35' }
+            : threadKind === 'subagent'
+                ? { label: 'subagent', style: 'bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30' }
+                : { label: 'root', style: 'bg-slate-800 text-slate-300 border border-slate-700' }
+    );
     const primaryFeatureDetail = useMemo(
         () => (primaryFeatureLink ? (linkedFeatureDetailsById[primaryFeatureLink.featureId] || null) : null),
         [linkedFeatureDetailsById, primaryFeatureLink]
@@ -6898,6 +7155,9 @@ const SessionDetail: React.FC<{
                                 <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
                                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
                                     {session.status}
+                                </span>
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${threadKindBadge.style}`}>
+                                    {threadKindBadge.label}
                                 </span>
                             </div>
                         </div>
@@ -7040,6 +7300,41 @@ const SessionDetail: React.FC<{
                         </div>
                     </div>
                 </div>
+
+                {isForkSession && (
+                    <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/8 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-[11px] text-cyan-100 flex items-center gap-1.5">
+                                <GitBranch size={12} className="text-cyan-300" />
+                                <span className="uppercase tracking-wider font-semibold">Fork Origin</span>
+                                <span className="text-cyan-200/80">
+                                    Inherits {String(session.contextInheritance || 'full').trim() || 'full'} parent context
+                                </span>
+                            </div>
+                            {parentForkSessionId && (
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenSession(parentForkSessionId)}
+                                    className="text-[10px] font-semibold rounded-md border border-cyan-400/35 bg-cyan-500/10 text-cyan-100 px-2 py-1 hover:bg-cyan-500/20 transition-colors"
+                                >
+                                    Open Parent
+                                </button>
+                            )}
+                        </div>
+                        <div className="mt-1.5 text-[11px] text-cyan-200/90 font-mono break-all">
+                            parent: {(parentForkSession?.title || parentForkSessionId || 'unknown').trim()}
+                        </div>
+                        {(forkPointPreview || forkPointTimestamp || siblingForkCount > 0) && (
+                            <div className="mt-1.5 text-[11px] text-cyan-100/80">
+                                {forkPointPreview && <span className="mr-3">"{forkPointPreview}"</span>}
+                                {forkPointTimestamp && (
+                                    <span className="mr-3">at {new Date(forkPointTimestamp).toLocaleString()}</span>
+                                )}
+                                {siblingForkCount > 0 && <span>{siblingForkCount} sibling fork{siblingForkCount === 1 ? '' : 's'}</span>}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Tabs */}
                 <div className="w-full flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
@@ -7398,7 +7693,7 @@ export const SessionInspector: React.FC = () => {
                         expanded,
                         childCount: countSessionThreadNodes(node.children),
                         onToggle: () => toggleThreadChildren(node.session.id),
-                        label: 'Sub-Threads',
+                        label: threadToggleLabelForChildren(node.children),
                     } : undefined}
                     onClick={() => openSessionFromList(node.session)}
                 />
@@ -7654,9 +7949,20 @@ const SessionSummaryCard: React.FC<{
                 </div>
             )}
             infoBadges={(
-                <span className="text-[10px] text-slate-500 font-mono">
-                    {session.logs.length} logs
-                </span>
+                <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider ${
+                        isForkThread(session)
+                            ? 'text-cyan-300 border-cyan-500/35 bg-cyan-500/10'
+                            : normalizedThreadKind(session) === 'subagent'
+                                ? 'text-fuchsia-300 border-fuchsia-500/35 bg-fuchsia-500/10'
+                                : 'text-slate-400 border-slate-700 bg-slate-900'
+                    }`}>
+                        {normalizedThreadKind(session)}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                        {session.logs.length} logs
+                    </span>
+                </div>
             )}
         >
             {displayStatus === 'active' && (

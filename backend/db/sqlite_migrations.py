@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     parent_session_id TEXT,
     root_session_id  TEXT DEFAULT '',
     agent_id         TEXT,
+    thread_kind      TEXT DEFAULT '',
+    conversation_family_id TEXT DEFAULT '',
+    context_inheritance TEXT DEFAULT '',
+    fork_parent_session_id TEXT,
+    fork_point_log_id TEXT,
+    fork_point_entry_uuid TEXT,
+    fork_point_parent_entry_uuid TEXT,
+    fork_depth       INTEGER DEFAULT 0,
+    fork_count       INTEGER DEFAULT 0,
     started_at       TEXT DEFAULT '',
     ended_at         TEXT DEFAULT '',
     created_at       TEXT NOT NULL,
@@ -188,6 +197,32 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
     source_log_id TEXT,
     source_tool_name TEXT
 );
+
+-- Session lineage relationships (fork/subagent and future kinds)
+CREATE TABLE IF NOT EXISTS session_relationships (
+    id                 TEXT PRIMARY KEY,
+    project_id         TEXT NOT NULL,
+    parent_session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    child_session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    relationship_type  TEXT NOT NULL,
+    context_inheritance TEXT DEFAULT '',
+    source_platform    TEXT DEFAULT '',
+    parent_entry_uuid  TEXT DEFAULT '',
+    child_entry_uuid   TEXT DEFAULT '',
+    source_log_id      TEXT,
+    metadata_json      TEXT DEFAULT '{}',
+    source_file        TEXT DEFAULT '',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_relationships_parent
+    ON session_relationships(project_id, parent_session_id, relationship_type);
+CREATE INDEX IF NOT EXISTS idx_session_relationships_child
+    ON session_relationships(project_id, child_session_id, relationship_type);
+CREATE INDEX IF NOT EXISTS idx_session_relationships_source
+    ON session_relationships(project_id, source_file);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_relationships_unique
+    ON session_relationships(project_id, parent_session_id, child_session_id, relationship_type, parent_entry_uuid, child_entry_uuid);
 
 -- ── 5. Documents ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS documents (
@@ -749,7 +784,18 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
     await _ensure_column(db, "sessions", "platform_version_transitions_json", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "sessions", "thread_kind", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "conversation_family_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "context_inheritance", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "fork_parent_session_id", "TEXT")
+    await _ensure_column(db, "sessions", "fork_point_log_id", "TEXT")
+    await _ensure_column(db, "sessions", "fork_point_entry_uuid", "TEXT")
+    await _ensure_column(db, "sessions", "fork_point_parent_entry_uuid", "TEXT")
+    await _ensure_column(db, "sessions", "fork_depth", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "fork_count", "INTEGER DEFAULT 0")
     await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_root ON sessions(project_id, root_session_id, started_at DESC)")
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_family ON sessions(project_id, conversation_family_id, started_at DESC)")
+    await _ensure_index(db, "CREATE INDEX IF NOT EXISTS idx_sessions_thread_kind ON sessions(project_id, thread_kind, started_at DESC)")
 
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
@@ -768,6 +814,42 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS session_relationships (
+            id                 TEXT PRIMARY KEY,
+            project_id         TEXT NOT NULL,
+            parent_session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            child_session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            relationship_type  TEXT NOT NULL,
+            context_inheritance TEXT DEFAULT '',
+            source_platform    TEXT DEFAULT '',
+            parent_entry_uuid  TEXT DEFAULT '',
+            child_entry_uuid   TEXT DEFAULT '',
+            source_log_id      TEXT,
+            metadata_json      TEXT DEFAULT '{}',
+            source_file        TEXT DEFAULT '',
+            created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_relationships_parent ON session_relationships(project_id, parent_session_id, relationship_type)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_relationships_child ON session_relationships(project_id, child_session_id, relationship_type)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_relationships_source ON session_relationships(project_id, source_file)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_relationships_unique ON session_relationships(project_id, parent_session_id, child_session_id, relationship_type, parent_entry_uuid, child_entry_uuid)",
+    )
 
     await _ensure_column(db, "documents", "canonical_path", "TEXT DEFAULT ''")
     await _ensure_column(db, "documents", "root_kind", "TEXT DEFAULT 'project_plans'")

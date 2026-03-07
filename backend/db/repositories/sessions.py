@@ -26,10 +26,12 @@ class SqliteSessionRepository:
                 quality_rating, friction_rating,
                 git_commit_hash, git_commit_hashes_json, git_author, git_branch,
                 session_type, parent_session_id, root_session_id, agent_id,
+                thread_kind, conversation_family_id, context_inheritance,
+                fork_parent_session_id, fork_point_log_id, fork_point_entry_uuid, fork_point_parent_entry_uuid, fork_depth, fork_count,
                 started_at, ended_at, created_at, updated_at, source_file,
                 dates_json, timeline_json, impact_history_json,
                 thinking_level, session_forensics_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 task_id=excluded.task_id, status=excluded.status, model=excluded.model,
                 platform_type=excluded.platform_type,
@@ -48,6 +50,15 @@ class SqliteSessionRepository:
                 parent_session_id=excluded.parent_session_id,
                 root_session_id=excluded.root_session_id,
                 agent_id=excluded.agent_id,
+                thread_kind=excluded.thread_kind,
+                conversation_family_id=excluded.conversation_family_id,
+                context_inheritance=excluded.context_inheritance,
+                fork_parent_session_id=excluded.fork_parent_session_id,
+                fork_point_log_id=excluded.fork_point_log_id,
+                fork_point_entry_uuid=excluded.fork_point_entry_uuid,
+                fork_point_parent_entry_uuid=excluded.fork_point_parent_entry_uuid,
+                fork_depth=excluded.fork_depth,
+                fork_count=excluded.fork_count,
                 started_at=excluded.started_at, ended_at=excluded.ended_at,
                 updated_at=excluded.updated_at, source_file=excluded.source_file,
                 dates_json=excluded.dates_json,
@@ -79,6 +90,15 @@ class SqliteSessionRepository:
                 session_data.get("parentSessionId"),
                 session_data.get("rootSessionId", session_data.get("id", "")),
                 session_data.get("agentId"),
+                str(session_data.get("threadKind", "") or ""),
+                str(session_data.get("conversationFamilyId", "") or ""),
+                str(session_data.get("contextInheritance", "") or ""),
+                session_data.get("forkParentSessionId"),
+                session_data.get("forkPointLogId"),
+                session_data.get("forkPointEntryUuid"),
+                session_data.get("forkPointParentEntryUuid"),
+                int(session_data.get("forkDepth", 0) or 0),
+                int(session_data.get("forkCount", 0) or 0),
                 session_data.get("startedAt", ""),
                 session_data.get("endedAt", ""),
                 created_at, updated_at,
@@ -161,6 +181,12 @@ class SqliteSessionRepository:
                 params.append(f'%"{version}"%')
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("thread_kind"):
+            where_clauses.append("LOWER(COALESCE(thread_kind, '')) = LOWER(?)")
+            params.append(str(filters["thread_kind"]))
+        if filters.get("conversation_family_id"):
+            where_clauses.append("conversation_family_id = ?")
+            params.append(str(filters["conversation_family_id"]))
         if filters.get("root_session_id"):
             where_clauses.append("root_session_id = ?")
             params.append(filters["root_session_id"])
@@ -258,6 +284,12 @@ class SqliteSessionRepository:
                 params.append(f'%"{version}"%')
         if not filters.get("include_subagents", False):
             where_clauses.append("(session_type IS NULL OR session_type != 'subagent')")
+        if filters.get("thread_kind"):
+            where_clauses.append("LOWER(COALESCE(thread_kind, '')) = LOWER(?)")
+            params.append(str(filters["thread_kind"]))
+        if filters.get("conversation_family_id"):
+            where_clauses.append("conversation_family_id = ?")
+            params.append(str(filters["conversation_family_id"]))
         if filters.get("root_session_id"):
             where_clauses.append("root_session_id = ?")
             params.append(filters["root_session_id"])
@@ -477,6 +509,65 @@ class SqliteSessionRepository:
                  a.get("url"), a.get("sourceLogId"), a.get("sourceToolName")),
             )
         await self.db.commit()
+
+    async def delete_relationships_for_source(self, project_id: str, source_file: str) -> None:
+        await self.db.execute(
+            "DELETE FROM session_relationships WHERE project_id = ? AND source_file = ?",
+            (project_id, source_file),
+        )
+        await self.db.commit()
+
+    async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
+        for relationship in relationships:
+            await self.db.execute(
+                """
+                INSERT INTO session_relationships (
+                    id, project_id, parent_session_id, child_session_id,
+                    relationship_type, context_inheritance, source_platform,
+                    parent_entry_uuid, child_entry_uuid, source_log_id, metadata_json, source_file
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    project_id=excluded.project_id,
+                    parent_session_id=excluded.parent_session_id,
+                    child_session_id=excluded.child_session_id,
+                    relationship_type=excluded.relationship_type,
+                    context_inheritance=excluded.context_inheritance,
+                    source_platform=excluded.source_platform,
+                    parent_entry_uuid=excluded.parent_entry_uuid,
+                    child_entry_uuid=excluded.child_entry_uuid,
+                    source_log_id=excluded.source_log_id,
+                    metadata_json=excluded.metadata_json,
+                    source_file=excluded.source_file
+                """,
+                (
+                    str(relationship.get("id") or ""),
+                    project_id,
+                    str(relationship.get("parentSessionId") or ""),
+                    str(relationship.get("childSessionId") or ""),
+                    str(relationship.get("relationshipType") or ""),
+                    str(relationship.get("contextInheritance") or ""),
+                    str(relationship.get("sourcePlatform") or ""),
+                    str(relationship.get("parentEntryUuid") or ""),
+                    str(relationship.get("childEntryUuid") or ""),
+                    relationship.get("sourceLogId"),
+                    json.dumps(relationship.get("metadata") or {}),
+                    source_file,
+                ),
+            )
+        await self.db.commit()
+
+    async def list_relationships(self, project_id: str, session_id: str) -> list[dict]:
+        async with self.db.execute(
+            """
+            SELECT *
+            FROM session_relationships
+            WHERE project_id = ?
+              AND (parent_session_id = ? OR child_session_id = ?)
+            ORDER BY created_at ASC, id ASC
+            """,
+            (project_id, session_id, session_id),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
     async def get_logs(self, session_id: str) -> list[dict]:
         async with self.db.execute(

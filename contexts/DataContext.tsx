@@ -4,6 +4,8 @@ import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 
 export interface SessionFilters {
     status?: string;
+    thread_kind?: string;
+    conversation_family_id?: string;
     model?: string;
     model_provider?: string;
     model_family?: string;
@@ -206,6 +208,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
 
             if (sessionFilters.status) params.append('status', sessionFilters.status);
+            if (sessionFilters.thread_kind) params.append('thread_kind', sessionFilters.thread_kind);
+            if (sessionFilters.conversation_family_id) params.append('conversation_family_id', sessionFilters.conversation_family_id);
             if (sessionFilters.model) params.append('model', sessionFilters.model);
             if (sessionFilters.model_provider) params.append('model_provider', sessionFilters.model_provider);
             if (sessionFilters.model_family) params.append('model_family', sessionFilters.model_family);

@@ -253,6 +253,38 @@ def _phase_label(phase_token: str) -> str:
     return f"Phase {token}"
 
 
+def _normalize_thread_kind(row: dict[str, Any]) -> str:
+    explicit = str(row.get("thread_kind") or "").strip().lower()
+    if explicit:
+        return explicit
+    session_type = str(row.get("session_type") or "").strip().lower()
+    if session_type == "subagent":
+        return "subagent"
+    return "root"
+
+
+def _default_context_inheritance(thread_kind: str, row: dict[str, Any]) -> str:
+    explicit = str(row.get("context_inheritance") or "").strip().lower()
+    if explicit:
+        return explicit
+    return "full" if thread_kind == "fork" else "fresh"
+
+
+def _relationship_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row.get("id") or ""),
+        "relationshipType": str(row.get("relationship_type") or ""),
+        "parentSessionId": str(row.get("parent_session_id") or ""),
+        "childSessionId": str(row.get("child_session_id") or ""),
+        "contextInheritance": str(row.get("context_inheritance") or ""),
+        "sourcePlatform": str(row.get("source_platform") or ""),
+        "parentEntryUuid": str(row.get("parent_entry_uuid") or ""),
+        "childEntryUuid": str(row.get("child_entry_uuid") or ""),
+        "sourceLogId": row.get("source_log_id"),
+        "metadata": _safe_json(row.get("metadata_json")),
+    }
+
+
 def _session_dates_payload(row: dict[str, Any]) -> dict[str, Any]:
     row_dates = _safe_json(row.get("dates_json"))
     if isinstance(row_dates, dict) and row_dates:
@@ -358,6 +390,8 @@ async def list_sessions(
     model_version: str | None = Query(None, description="Filter by model version"),
     platform_type: str | None = Query(None, description="Filter by agent platform type"),
     platform_version: str | None = Query(None, description="Filter by agent platform version"),
+    thread_kind: str | None = Query(None, description="Filter by normalized thread kind (root|fork|subagent)"),
+    conversation_family_id: str | None = Query(None, description="Filter by conversation family id"),
     include_subagents: bool = Query(False, description="Include subagent sessions in list results"),
     root_session_id: str | None = Query(None, description="Filter to a specific root thread family"),
     start_date: str | None = Query(None, description="ISO timestamp for start range"),
@@ -389,6 +423,8 @@ async def list_sessions(
     if model_version: filters["model_version"] = model_version
     if platform_type: filters["platform_type"] = platform_type
     if platform_version: filters["platform_version"] = platform_version
+    if thread_kind: filters["thread_kind"] = thread_kind
+    if conversation_family_id: filters["conversation_family_id"] = conversation_family_id
     filters["include_subagents"] = include_subagents
     if root_session_id: filters["root_session_id"] = root_session_id
     if start_date: filters["start_date"] = start_date
@@ -450,6 +486,13 @@ async def list_sessions(
                     parent_logs = await repo.get_logs(parent_session_id)
                     parent_logs_cache[parent_session_id] = parent_logs
                 subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
+        thread_kind_value = _normalize_thread_kind(s)
+        conversation_family_id_value = (
+            str(s.get("conversation_family_id") or "").strip()
+            or str(s.get("root_session_id") or "").strip()
+            or session_id
+        )
+        context_inheritance_value = _default_context_inheritance(thread_kind_value, s)
         session_title = _derive_session_title(
             session_metadata,
             latest_summary,
@@ -493,6 +536,15 @@ async def list_sessions(
             parentSessionId=s["parent_session_id"],
             rootSessionId=s.get("root_session_id") or s["id"],
             agentId=s.get("agent_id"),
+            threadKind=thread_kind_value,
+            conversationFamilyId=conversation_family_id_value,
+            contextInheritance=context_inheritance_value,
+            forkParentSessionId=s.get("fork_parent_session_id"),
+            forkPointLogId=s.get("fork_point_log_id"),
+            forkPointEntryUuid=s.get("fork_point_entry_uuid"),
+            forkPointParentEntryUuid=s.get("fork_point_parent_entry_uuid"),
+            forkDepth=int(s.get("fork_depth") or 0),
+            forkCount=int(s.get("fork_count") or 0),
             durationSeconds=s["duration_seconds"],
             tokensIn=s["tokens_in"],
             tokensOut=s["tokens_out"],
@@ -602,6 +654,36 @@ async def get_session(session_id: str):
     tools = await repo.get_tool_usage(session_id)
     files = await repo.get_file_updates(session_id)
     artifacts = await repo.get_artifacts(session_id)
+    project_id_for_relationships = str(s.get("project_id") or (project.id if project else ""))
+    relationship_rows = (
+        await repo.list_relationships(project_id_for_relationships, session_id)
+        if project_id_for_relationships
+        else []
+    )
+    session_relationships = [_relationship_payload(row) for row in relationship_rows]
+    fork_summaries: list[dict[str, Any]] = []
+    for row in relationship_rows:
+        if str(row.get("relationship_type") or "").strip().lower() != "fork":
+            continue
+        if str(row.get("parent_session_id") or "").strip() != session_id:
+            continue
+        child_id = str(row.get("child_session_id") or "").strip()
+        if not child_id:
+            continue
+        child_row = await repo.get_by_id(child_id)
+        child_forensics = _safe_json(child_row.get("session_forensics_json")) if child_row else {}
+        child_summary = child_forensics.get("forkSummary", {}) if isinstance(child_forensics, dict) else {}
+        metadata = _safe_json(row.get("metadata_json"))
+        fork_summaries.append(
+            {
+                "sessionId": child_id,
+                "label": str(metadata.get("label") or child_summary.get("label") or child_id),
+                "forkPointTimestamp": str(metadata.get("forkPointTimestamp") or ""),
+                "forkPointPreview": str(metadata.get("forkPointPreview") or ""),
+                "entryCount": int(metadata.get("entryCount") or child_summary.get("entryCount") or 0),
+                "contextInheritance": str(row.get("context_inheritance") or ""),
+            }
+        )
     
     # Transform details to model format
     
@@ -670,6 +752,13 @@ async def get_session(session_id: str):
     )
     model_identity = derive_model_identity(s.get("model"))
     session_type_value = str(s.get("session_type") or "").strip().lower()
+    thread_kind_value = _normalize_thread_kind(s)
+    conversation_family_id_value = (
+        str(s.get("conversation_family_id") or "").strip()
+        or str(s.get("root_session_id") or "").strip()
+        or str(s.get("id") or "")
+    )
+    context_inheritance_value = _default_context_inheritance(thread_kind_value, s)
     subagent_type = _subagent_type_from_logs(logs)
     if not subagent_type and session_type_value == "subagent":
         parent_session_id = str(s.get("parent_session_id") or "").strip()
@@ -760,6 +849,15 @@ async def get_session(session_id: str):
         parentSessionId=s["parent_session_id"],
         rootSessionId=s.get("root_session_id") or s["id"],
         agentId=s.get("agent_id"),
+        threadKind=thread_kind_value,
+        conversationFamilyId=conversation_family_id_value,
+        contextInheritance=context_inheritance_value,
+        forkParentSessionId=s.get("fork_parent_session_id"),
+        forkPointLogId=s.get("fork_point_log_id"),
+        forkPointEntryUuid=s.get("fork_point_entry_uuid"),
+        forkPointParentEntryUuid=s.get("fork_point_parent_entry_uuid"),
+        forkDepth=int(s.get("fork_depth") or 0),
+        forkCount=int(s.get("fork_count") or 0),
         durationSeconds=s["duration_seconds"],
         tokensIn=s["tokens_in"],
         tokensOut=s["tokens_out"],
@@ -782,6 +880,8 @@ async def get_session(session_id: str):
         sessionMetadata=session_metadata,
         thinkingLevel=str(s.get("thinking_level") or ""),
         sessionForensics=_safe_json(s.get("session_forensics_json")),
+        forks=fork_summaries,
+        sessionRelationships=session_relationships,
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

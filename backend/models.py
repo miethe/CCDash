@@ -168,6 +168,15 @@ class AgentSession(BaseModel):
     parentSessionId: Optional[str] = None
     rootSessionId: str = ""
     agentId: Optional[str] = None
+    threadKind: str = ""
+    conversationFamilyId: str = ""
+    contextInheritance: str = ""
+    forkParentSessionId: Optional[str] = None
+    forkPointLogId: Optional[str] = None
+    forkPointEntryUuid: Optional[str] = None
+    forkPointParentEntryUuid: Optional[str] = None
+    forkDepth: int = 0
+    forkCount: int = 0
     durationSeconds: int = 0
     tokensIn: int = 0
     tokensOut: int = 0
@@ -190,6 +199,9 @@ class AgentSession(BaseModel):
     sessionMetadata: Optional[SessionMetadata] = None
     thinkingLevel: str = ""
     sessionForensics: dict[str, Any] = Field(default_factory=dict)
+    forks: list[dict[str, Any]] = Field(default_factory=list)
+    sessionRelationships: list[dict[str, Any]] = Field(default_factory=list)
+    derivedSessions: list[dict[str, Any]] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 

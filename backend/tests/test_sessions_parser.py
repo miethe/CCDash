@@ -335,6 +335,96 @@ class SessionParserTests(unittest.TestCase):
         task_tools = [l for l in session.logs if l.type == "tool" and l.toolCall and l.toolCall.name == "Task"]
         self.assertEqual(task_tools[0].linkedSessionId, "S-agent-a456")
 
+    def test_detects_fork_and_materializes_derived_session(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:00Z",
+                    "uuid": "u0",
+                    "message": {"role": "user", "content": "Start task"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:01Z",
+                    "uuid": "a1",
+                    "parentUuid": "u0",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "content": [{"type": "text", "text": "Plan options"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:02Z",
+                    "uuid": "u2",
+                    "parentUuid": "a1",
+                    "message": {"role": "user", "content": "Take option A"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:03Z",
+                    "uuid": "a2",
+                    "parentUuid": "u2",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "content": [{"type": "text", "text": "Implementing A"}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-01T10:00:04Z",
+                    "uuid": "u3",
+                    "parentUuid": "a1",
+                    "message": {"role": "user", "content": "Fork to option B"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-01T10:00:05Z",
+                    "uuid": "a3",
+                    "parentUuid": "u3",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-0-20251001",
+                        "content": [{"type": "text", "text": "Implementing B"}],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        expected_fork_id = claude_parser._make_fork_session_id("session", "u3")
+        self.assertEqual(session.threadKind, "root")
+        self.assertEqual(session.forkCount, 1)
+        self.assertEqual(session.conversationFamilyId, session.id)
+        self.assertEqual(len(session.forks or []), 1)
+        self.assertEqual(str((session.forks or [])[0].get("sessionId") or ""), expected_fork_id)
+
+        fork_note_logs = [
+            log for log in session.logs
+            if log.type == "system" and log.metadata.get("eventType") == "fork_start"
+        ]
+        self.assertEqual(len(fork_note_logs), 1)
+        self.assertEqual(fork_note_logs[0].linkedSessionId, expected_fork_id)
+
+        derived_sessions = session.derivedSessions or []
+        self.assertEqual(len(derived_sessions), 1)
+        fork_session = derived_sessions[0]
+        self.assertEqual(fork_session["id"], expected_fork_id)
+        self.assertEqual(fork_session["threadKind"], "fork")
+        self.assertEqual(fork_session["forkParentSessionId"], session.id)
+        self.assertTrue(any(log.get("content") == "Fork to option B" for log in fork_session.get("logs", [])))
+
+        relationships = session.sessionRelationships or []
+        fork_relationships = [r for r in relationships if r.get("relationshipType") == "fork"]
+        self.assertEqual(len(fork_relationships), 1)
+        self.assertEqual(fork_relationships[0]["childSessionId"], expected_fork_id)
+
     def test_task_tool_extracts_metadata_from_description_and_prompt(self) -> None:
         path = self._write_jsonl(
             [

@@ -299,6 +299,119 @@ def _sha1_sample(path: Path) -> str:
         return ""
 
 
+def _parse_ts_epoch(value: str) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return float("inf")
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return float("inf")
+
+
+def _message_is_tool_result_wrapper(entry: dict[str, Any]) -> bool:
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    saw_block = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        saw_block = True
+        if str(block.get("type") or "").strip().lower() != "tool_result":
+            return False
+    return saw_block
+
+
+def _is_conversational_entry(entry: dict[str, Any]) -> bool:
+    entry_type = str(entry.get("type") or "").strip().lower()
+    if entry_type in {"assistant", "user"}:
+        if _message_is_tool_result_wrapper(entry):
+            return False
+        return True
+    message = entry.get("message")
+    if isinstance(message, dict):
+        role = str(message.get("role") or "").strip().lower()
+        if role in {"assistant", "user", "system"} and not _message_is_tool_result_wrapper(entry):
+            return True
+    return False
+
+
+def _build_entry_graph(entries: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]], dict[str, str]]:
+    nodes_by_uuid: dict[str, dict[str, Any]] = {}
+    children_by_parent: dict[str, list[str]] = {}
+    parent_by_child: dict[str, str] = {}
+
+    for index, entry in enumerate(entries):
+        entry_uuid = str(entry.get("uuid") or "").strip()
+        if not entry_uuid:
+            continue
+        parent_uuid = str(entry.get("parentUuid") or "").strip()
+        node = {
+            "uuid": entry_uuid,
+            "parentUuid": parent_uuid,
+            "timestamp": str(entry.get("timestamp") or ""),
+            "index": index,
+            "isConversational": _is_conversational_entry(entry),
+        }
+        nodes_by_uuid[entry_uuid] = node
+        if parent_uuid:
+            children_by_parent.setdefault(parent_uuid, []).append(entry_uuid)
+            parent_by_child[entry_uuid] = parent_uuid
+
+    for parent_uuid, children in children_by_parent.items():
+        children.sort(
+            key=lambda child_uuid: (
+                _parse_ts_epoch(str(nodes_by_uuid.get(child_uuid, {}).get("timestamp") or "")),
+                int(nodes_by_uuid.get(child_uuid, {}).get("index") or 0),
+            )
+        )
+    return nodes_by_uuid, children_by_parent, parent_by_child
+
+
+def _collect_subtree_uuids(root_uuid: str, children_by_parent: dict[str, list[str]]) -> set[str]:
+    visited: set[str] = set()
+    stack = [root_uuid]
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        for child_uuid in children_by_parent.get(current, []):
+            if child_uuid not in visited:
+                stack.append(child_uuid)
+    return visited
+
+
+def _make_fork_session_id(raw_session_id: str, fork_root_entry_uuid: str) -> str:
+    signature = f"claude_code::{raw_session_id}::{fork_root_entry_uuid}"
+    digest = hashlib.sha1(signature.encode("utf-8")).hexdigest()[:20]
+    return f"S-fork-{digest}"
+
+
+def _make_relationship_id(
+    parent_session_id: str,
+    child_session_id: str,
+    relationship_type: str,
+    parent_entry_uuid: str,
+    child_entry_uuid: str,
+) -> str:
+    signature = "::".join(
+        [
+            parent_session_id,
+            child_session_id,
+            relationship_type,
+            parent_entry_uuid,
+            child_entry_uuid,
+        ]
+    )
+    digest = hashlib.sha1(signature.encode("utf-8")).hexdigest()[:20]
+    return f"REL-{digest}"
+
+
 @lru_cache(maxsize=1)
 def _load_global_claude_config() -> dict[str, Any]:
     config_path = Path.home() / ".claude.json"
@@ -1479,6 +1592,12 @@ def parse_session_file(path: Path) -> AgentSession | None:
     subagent_link_by_parent_tool: dict[str, str] = {}
     skill_invocations_by_tool_use_id: dict[str, dict[str, Any]] = {}
     emitted_subagent_starts: set[tuple[str, str]] = set()
+    current_entry_lineage_metadata: dict[str, Any] = {}
+    entry_log_indices_by_uuid: dict[str, list[int]] = {}
+    derived_sessions: list[dict[str, Any]] = []
+    session_relationships: list[dict[str, Any]] = []
+    fork_descriptors_by_root: dict[str, dict[str, Any]] = {}
+    fork_partitions_by_session_id: dict[str, dict[str, Any]] = {}
 
     log_idx = 0
 
@@ -1489,8 +1608,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
             kwargs["metadata"] = {}
         elif not isinstance(metadata, dict):
             kwargs["metadata"] = {}
+        metadata = kwargs.get("metadata")
+        if isinstance(metadata, dict) and current_entry_lineage_metadata:
+            for key, value in current_entry_lineage_metadata.items():
+                if key not in metadata and value is not None and str(value).strip():
+                    metadata[key] = value
         log = SessionLog(id=f"log-{log_idx}", **kwargs)
         logs.append(log)
+        entry_uuid = str(log.metadata.get("entryUuid") or "").strip() if isinstance(log.metadata, dict) else ""
+        if entry_uuid:
+            entry_log_indices_by_uuid.setdefault(entry_uuid, []).append(len(logs) - 1)
         log_idx += 1
         return len(logs) - 1
 
@@ -2064,6 +2191,22 @@ def parse_session_file(path: Path) -> AgentSession | None:
         record_entry_context(entry)
         entry_type = entry.get("type", "")
         current_ts = entry.get("timestamp", "")
+        current_entry_lineage_metadata = {
+            "threadKind": "subagent" if is_subagent else "root",
+            "isSynthetic": False,
+        }
+        entry_uuid_value = str(entry.get("uuid") or "").strip()
+        parent_uuid_value = str(entry.get("parentUuid") or "").strip()
+        if entry_uuid_value:
+            current_entry_lineage_metadata["entryUuid"] = entry_uuid_value
+        if parent_uuid_value:
+            current_entry_lineage_metadata["parentUuid"] = parent_uuid_value
+        raw_message_id = str(entry.get("messageId") or "").strip()
+        message_payload = entry.get("message")
+        if not raw_message_id and isinstance(message_payload, dict):
+            raw_message_id = str(message_payload.get("id") or "").strip()
+        if raw_message_id:
+            current_entry_lineage_metadata["rawMessageId"] = raw_message_id
         platform_type = _detect_platform_type(entry) or platform_type
         record_platform_version(str(entry.get("version") or ""), current_ts)
         if current_ts and not first_ts:
@@ -2897,6 +3040,378 @@ def parse_session_file(path: Path) -> AgentSession | None:
             )
             postprocess_message_log(idx, message_text, speaker, entry)
 
+    if not is_subagent:
+        nodes_by_uuid, children_by_parent, parent_by_child = _build_entry_graph(entries)
+        fork_candidates: list[dict[str, Any]] = []
+        for parent_uuid, children in children_by_parent.items():
+            conversational_children = [
+                child_uuid
+                for child_uuid in children
+                if bool(nodes_by_uuid.get(child_uuid, {}).get("isConversational", False))
+            ]
+            if len(conversational_children) <= 1:
+                continue
+            primary_child_uuid = conversational_children[0]
+            for child_uuid in conversational_children[1:]:
+                child_node = nodes_by_uuid.get(child_uuid, {})
+                fork_candidates.append(
+                    {
+                        "parentEntryUuid": parent_uuid,
+                        "childEntryUuid": child_uuid,
+                        "primaryChildEntryUuid": primary_child_uuid,
+                        "childTimestamp": str(child_node.get("timestamp") or ""),
+                        "childIndex": int(child_node.get("index") or 0),
+                    }
+                )
+
+        fork_candidates.sort(key=lambda row: (int(row.get("childIndex") or 0), str(row.get("childEntryUuid") or "")))
+
+        if fork_candidates:
+            fork_session_id_by_root: dict[str, str] = {}
+            fork_depth_by_root: dict[str, int] = {}
+            fork_subtree_by_root: dict[str, set[str]] = {}
+
+            for candidate in fork_candidates:
+                child_entry_uuid = str(candidate.get("childEntryUuid") or "").strip()
+                parent_entry_uuid = str(candidate.get("parentEntryUuid") or "").strip()
+                if not child_entry_uuid or child_entry_uuid in fork_session_id_by_root:
+                    continue
+
+                ancestor_fork_root = ""
+                cursor = parent_entry_uuid
+                while cursor:
+                    if cursor in fork_session_id_by_root:
+                        ancestor_fork_root = cursor
+                        break
+                    cursor = parent_by_child.get(cursor, "")
+
+                parent_session_for_fork = fork_session_id_by_root.get(ancestor_fork_root, session_id)
+                parent_depth = fork_depth_by_root.get(ancestor_fork_root, 0) if ancestor_fork_root else 0
+                fork_depth = parent_depth + 1 if parent_session_for_fork else 1
+                fork_session_id = _make_fork_session_id(raw_session_id, child_entry_uuid)
+                subtree = _collect_subtree_uuids(child_entry_uuid, children_by_parent)
+
+                fork_session_id_by_root[child_entry_uuid] = fork_session_id
+                fork_depth_by_root[child_entry_uuid] = fork_depth
+                fork_subtree_by_root[child_entry_uuid] = subtree
+                fork_descriptors_by_root[child_entry_uuid] = {
+                    "forkSessionId": fork_session_id,
+                    "parentSessionId": parent_session_for_fork or session_id,
+                    "parentEntryUuid": parent_entry_uuid,
+                    "childEntryUuid": child_entry_uuid,
+                    "childTimestamp": str(candidate.get("childTimestamp") or ""),
+                    "contextInheritance": "full",
+                    "forkDepth": fork_depth,
+                    "entryCount": len(subtree),
+                    "detectorConfidence": 1.0,
+                }
+
+            if fork_descriptors_by_root:
+                entry_owner_by_uuid: dict[str, str] = {entry_uuid: session_id for entry_uuid in nodes_by_uuid}
+                ordered_roots = sorted(
+                    fork_descriptors_by_root.keys(),
+                    key=lambda root_uuid: int(nodes_by_uuid.get(root_uuid, {}).get("index") or 0),
+                )
+                for root_uuid in ordered_roots:
+                    owner_session_id = str(fork_descriptors_by_root[root_uuid]["forkSessionId"])
+                    for entry_uuid in fork_subtree_by_root.get(root_uuid, set()):
+                        entry_owner_by_uuid[entry_uuid] = owner_session_id
+
+                all_session_ids = [session_id] + [
+                    str(fork_descriptors_by_root[root_uuid]["forkSessionId"])
+                    for root_uuid in ordered_roots
+                ]
+                logs_by_session_id: dict[str, list[SessionLog]] = {sid: [] for sid in all_session_ids}
+                old_log_ids_by_session_id: dict[str, set[str]] = {sid: set() for sid in all_session_ids}
+
+                for log in logs:
+                    metadata = log.metadata if isinstance(log.metadata, dict) else {}
+                    entry_uuid = str(metadata.get("entryUuid") or "").strip()
+                    target_session_id = session_id
+                    if entry_uuid:
+                        target_session_id = entry_owner_by_uuid.get(entry_uuid, session_id)
+                    if not entry_uuid and target_session_id != session_id:
+                        continue
+                    if target_session_id not in logs_by_session_id:
+                        continue
+                    cloned_log = SessionLog(**log.model_dump())
+                    logs_by_session_id[target_session_id].append(cloned_log)
+                    old_log_ids_by_session_id[target_session_id].add(str(log.id))
+
+                for root_uuid in ordered_roots:
+                    descriptor = fork_descriptors_by_root[root_uuid]
+                    parent_session_for_fork = str(descriptor.get("parentSessionId") or session_id)
+                    parent_logs = logs_by_session_id.get(parent_session_for_fork, [])
+                    parent_entry_uuid = str(descriptor.get("parentEntryUuid") or "")
+                    fork_session_id = str(descriptor.get("forkSessionId") or "")
+                    insertion_index = len(parent_logs)
+                    if parent_entry_uuid:
+                        for idx, parent_log in enumerate(parent_logs):
+                            metadata = parent_log.metadata if isinstance(parent_log.metadata, dict) else {}
+                            if str(metadata.get("entryUuid") or "").strip() == parent_entry_uuid:
+                                insertion_index = idx + 1
+                    first_fork_log = logs_by_session_id.get(fork_session_id, [None])[0]
+                    preview_text = ""
+                    if isinstance(first_fork_log, SessionLog):
+                        preview_text = str(first_fork_log.content or "").strip()[:180]
+                    fork_note_id = f"fork-note-{root_uuid}"
+                    fork_note_metadata = {
+                        "eventType": "fork_start",
+                        "threadKind": "fork",
+                        "contextInheritance": "full",
+                        "isSynthetic": True,
+                        "syntheticEventType": "fork_start",
+                        "forkSessionId": fork_session_id,
+                        "forkPointEntryUuid": root_uuid,
+                        "forkPointParentEntryUuid": parent_entry_uuid,
+                        "forkPointTimestamp": str(descriptor.get("childTimestamp") or ""),
+                        "forkPointPreview": preview_text,
+                    }
+                    if parent_entry_uuid:
+                        fork_note_metadata["entryUuid"] = parent_entry_uuid
+                    note_log = SessionLog(
+                        id=fork_note_id,
+                        timestamp=str(descriptor.get("childTimestamp") or ""),
+                        speaker="system",
+                        type="system",
+                        content=f"Fork created: {fork_session_id} (inherits full parent context)",
+                        metadata=fork_note_metadata,
+                        linkedSessionId=fork_session_id,
+                    )
+                    parent_logs.insert(insertion_index, note_log)
+                    descriptor["forkPointLogId"] = fork_note_id
+                    descriptor["forkPointPreview"] = preview_text
+
+                lineage_root_session_id = session_id
+                root_id_map: dict[str, str] = {}
+                for target_session_id, target_logs in logs_by_session_id.items():
+                    id_map: dict[str, str] = {}
+                    for idx, target_log in enumerate(target_logs):
+                        old_log_id = str(target_log.id or "")
+                        new_log_id = f"log-{idx}"
+                        target_log.id = new_log_id
+                        id_map[old_log_id] = new_log_id
+                        metadata = target_log.metadata if isinstance(target_log.metadata, dict) else {}
+                        if target_session_id == lineage_root_session_id:
+                            metadata["threadKind"] = "root"
+                        else:
+                            metadata["threadKind"] = "fork"
+                            root_entry_uuid = next(
+                                (
+                                    root_uuid
+                                    for root_uuid, descriptor in fork_descriptors_by_root.items()
+                                    if str(descriptor.get("forkSessionId") or "") == target_session_id
+                                ),
+                                "",
+                            )
+                            if root_entry_uuid:
+                                metadata.setdefault("branchRootEntryUuid", root_entry_uuid)
+                    if target_session_id == lineage_root_session_id:
+                        root_id_map = id_map
+                    else:
+                        fork_partitions_by_session_id[target_session_id] = {
+                            "idMap": id_map,
+                        }
+
+                for root_uuid, descriptor in fork_descriptors_by_root.items():
+                    parent_session_for_fork = str(descriptor.get("parentSessionId") or session_id)
+                    fork_point_log_id = str(descriptor.get("forkPointLogId") or "")
+                    if parent_session_for_fork == lineage_root_session_id:
+                        descriptor["forkPointLogId"] = root_id_map.get(fork_point_log_id, fork_point_log_id)
+                    else:
+                        parent_partition = fork_partitions_by_session_id.get(parent_session_for_fork, {})
+                        parent_id_map = parent_partition.get("idMap", {})
+                        descriptor["forkPointLogId"] = parent_id_map.get(fork_point_log_id, fork_point_log_id)
+
+                    relationship_metadata = {
+                        "label": f"Fork at {root_uuid[:12]}",
+                        "forkPointTimestamp": str(descriptor.get("childTimestamp") or ""),
+                        "forkPointPreview": str(descriptor.get("forkPointPreview") or ""),
+                        "entryCount": int(descriptor.get("entryCount") or 0),
+                        "forkDepth": int(descriptor.get("forkDepth") or 0),
+                        "detectorConfidence": float(descriptor.get("detectorConfidence") or 1.0),
+                    }
+                    session_relationships.append(
+                        {
+                            "id": _make_relationship_id(
+                                str(descriptor.get("parentSessionId") or ""),
+                                str(descriptor.get("forkSessionId") or ""),
+                                "fork",
+                                str(descriptor.get("parentEntryUuid") or ""),
+                                str(descriptor.get("childEntryUuid") or ""),
+                            ),
+                            "relationshipType": "fork",
+                            "parentSessionId": str(descriptor.get("parentSessionId") or ""),
+                            "childSessionId": str(descriptor.get("forkSessionId") or ""),
+                            "contextInheritance": "full",
+                            "sourcePlatform": "claude_code",
+                            "parentEntryUuid": str(descriptor.get("parentEntryUuid") or ""),
+                            "childEntryUuid": str(descriptor.get("childEntryUuid") or ""),
+                            "sourceLogId": str(descriptor.get("forkPointLogId") or ""),
+                            "metadata": relationship_metadata,
+                        }
+                    )
+
+                logs = logs_by_session_id.get(lineage_root_session_id, [])
+                original_file_changes = [SessionFileUpdate(**update.model_dump()) for update in file_changes]
+                original_artifacts = [SessionArtifact(**artifact.model_dump()) for artifact in artifacts.values()]
+
+                root_old_ids = old_log_ids_by_session_id.get(lineage_root_session_id, set())
+                root_updates: list[SessionFileUpdate] = []
+                for update in original_file_changes:
+                    source_log_id = str(update.sourceLogId or "")
+                    if source_log_id and source_log_id not in root_old_ids:
+                        continue
+                    cloned_update = SessionFileUpdate(**update.model_dump())
+                    if source_log_id:
+                        cloned_update.sourceLogId = root_id_map.get(source_log_id, source_log_id)
+                    cloned_update.threadSessionId = lineage_root_session_id
+                    cloned_update.rootSessionId = lineage_root_session_id
+                    root_updates.append(cloned_update)
+                file_changes = root_updates
+
+                root_artifacts: dict[str, SessionArtifact] = {}
+                for artifact in original_artifacts:
+                    source_log_id = str(artifact.sourceLogId or "")
+                    if source_log_id and source_log_id not in root_old_ids:
+                        continue
+                    cloned_artifact = SessionArtifact(**artifact.model_dump())
+                    if source_log_id:
+                        cloned_artifact.sourceLogId = root_id_map.get(source_log_id, source_log_id)
+                    root_artifacts[cloned_artifact.id] = cloned_artifact
+                artifacts = root_artifacts
+
+                for root_uuid, descriptor in fork_descriptors_by_root.items():
+                    fork_session_id = str(descriptor.get("forkSessionId") or "")
+                    fork_logs = logs_by_session_id.get(fork_session_id, [])
+                    fork_old_ids = old_log_ids_by_session_id.get(fork_session_id, set())
+                    fork_id_map = fork_partitions_by_session_id.get(fork_session_id, {}).get("idMap", {})
+
+                    # Build fork updates/artifacts from original collections.
+                    fork_updates_payload: list[dict[str, Any]] = []
+                    for original_update in original_file_changes:
+                        source_log_id = str(original_update.sourceLogId or "")
+                        if source_log_id and source_log_id not in fork_old_ids:
+                            continue
+                        cloned_update = SessionFileUpdate(**original_update.model_dump())
+                        if source_log_id:
+                            cloned_update.sourceLogId = fork_id_map.get(source_log_id, source_log_id)
+                        cloned_update.threadSessionId = fork_session_id
+                        cloned_update.rootSessionId = fork_session_id
+                        fork_updates_payload.append(cloned_update.model_dump())
+
+                    fork_artifacts_payload: list[dict[str, Any]] = []
+                    for original_artifact in original_artifacts:
+                        source_log_id = str(original_artifact.sourceLogId or "")
+                        if not source_log_id or source_log_id not in fork_old_ids:
+                            continue
+                        cloned_artifact = SessionArtifact(**original_artifact.model_dump())
+                        cloned_artifact.sourceLogId = fork_id_map.get(source_log_id, source_log_id)
+                        fork_artifacts_payload.append(cloned_artifact.model_dump())
+
+                    fork_tokens_in = 0
+                    fork_tokens_out = 0
+                    fork_tool_counter: Counter[str] = Counter()
+                    fork_tool_success: Counter[str] = Counter()
+                    fork_tool_total: Counter[str] = Counter()
+                    fork_tool_duration: Counter[str] = Counter()
+                    fork_first_ts = ""
+                    fork_last_ts = ""
+                    for fork_log in fork_logs:
+                        if fork_log.timestamp and not fork_first_ts:
+                            fork_first_ts = fork_log.timestamp
+                        if fork_log.timestamp:
+                            fork_last_ts = fork_log.timestamp
+                        if fork_log.type == "message" and fork_log.speaker == "agent":
+                            metadata = fork_log.metadata if isinstance(fork_log.metadata, dict) else {}
+                            fork_tokens_in += _coerce_int(metadata.get("inputTokens"), 0)
+                            fork_tokens_out += _coerce_int(metadata.get("outputTokens"), 0)
+                        if fork_log.type == "tool" and fork_log.toolCall:
+                            tool_name = str(fork_log.toolCall.name or "").strip()
+                            if not tool_name:
+                                continue
+                            fork_tool_counter[tool_name] += 1
+                            fork_tool_total[tool_name] += 1
+                            if str(fork_log.toolCall.status or "").strip().lower() != "error":
+                                fork_tool_success[tool_name] += 1
+                            metadata = fork_log.metadata if isinstance(fork_log.metadata, dict) else {}
+                            fork_tool_duration[tool_name] += _coerce_int(metadata.get("durationMs"), 0)
+
+                    fork_tools_used: list[dict[str, Any]] = []
+                    for tool_name, count in fork_tool_counter.most_common():
+                        total = max(1, _coerce_int(fork_tool_total.get(tool_name), count))
+                        success = max(0, _coerce_int(fork_tool_success.get(tool_name), count))
+                        fork_tools_used.append(
+                            ToolUsage(
+                                name=tool_name,
+                                count=count,
+                                successRate=round(success / total, 2),
+                                totalMs=max(0, _coerce_int(fork_tool_duration.get(tool_name), 0)),
+                            ).model_dump()
+                        )
+
+                    fork_duration = 0
+                    if fork_first_ts and fork_last_ts:
+                        try:
+                            ts_a = datetime.fromisoformat(fork_first_ts.replace("Z", "+00:00"))
+                            ts_b = datetime.fromisoformat(fork_last_ts.replace("Z", "+00:00"))
+                            fork_duration = max(0, int((ts_b - ts_a).total_seconds()))
+                        except Exception:
+                            fork_duration = 0
+
+                    fork_partitions_by_session_id[fork_session_id] = {
+                        "idMap": fork_id_map,
+                        "logs": [log.model_dump() for log in fork_logs],
+                        "oldLogIds": list(fork_old_ids),
+                        "updatedFiles": fork_updates_payload,
+                        "linkedArtifacts": fork_artifacts_payload,
+                        "toolsUsed": fork_tools_used,
+                        "tokensIn": fork_tokens_in,
+                        "tokensOut": fork_tokens_out,
+                        "durationSeconds": fork_duration,
+                        "startedAt": fork_first_ts,
+                        "endedAt": fork_last_ts,
+                        "descriptor": descriptor,
+                        "rootEntryUuid": root_uuid,
+                    }
+
+                # Recalculate root counters after branch extraction so metrics remain direct-session scoped.
+                first_ts = ""
+                last_ts = ""
+                tokens_in = 0
+                tokens_out = 0
+                tool_counter = Counter()
+                tool_success = Counter()
+                tool_total = Counter()
+                tool_duration_ms = Counter()
+                extracted_commit_hashes: set[str] = set()
+                for log in logs:
+                    if log.timestamp and not first_ts:
+                        first_ts = log.timestamp
+                    if log.timestamp:
+                        last_ts = log.timestamp
+                    if log.type == "message" and log.speaker == "agent":
+                        metadata = log.metadata if isinstance(log.metadata, dict) else {}
+                        tokens_in += _coerce_int(metadata.get("inputTokens"), 0)
+                        tokens_out += _coerce_int(metadata.get("outputTokens"), 0)
+                    if log.type == "tool" and log.toolCall:
+                        tool_name = str(log.toolCall.name or "").strip()
+                        if tool_name:
+                            tool_counter[tool_name] += 1
+                            tool_total[tool_name] += 1
+                            if str(log.toolCall.status or "").strip().lower() != "error":
+                                tool_success[tool_name] += 1
+                            metadata = log.metadata if isinstance(log.metadata, dict) else {}
+                            tool_duration_ms[tool_name] += _coerce_int(metadata.get("durationMs"), 0)
+                    metadata = log.metadata if isinstance(log.metadata, dict) else {}
+                    commit_hashes = metadata.get("commitHashes")
+                    if isinstance(commit_hashes, list):
+                        for commit_hash in commit_hashes:
+                            clean_hash = str(commit_hash or "").strip()
+                            if clean_hash:
+                                extracted_commit_hashes.add(clean_hash)
+                git_commits.update(extracted_commit_hashes)
+
     duration = 0
     if first_ts and last_ts:
         try:
@@ -3147,6 +3662,40 @@ def parse_session_file(path: Path) -> AgentSession | None:
     test_execution = aggregate_test_runs(extracted_test_runs)
 
     platform_telemetry = _platform_telemetry_summary(sorted(session_context.get("workingDirectories", set())))
+    fork_cards_by_parent_session: dict[str, list[dict[str, Any]]] = {}
+    fork_children_count_by_parent: Counter[str] = Counter()
+    for root_uuid, descriptor in fork_descriptors_by_root.items():
+        parent_session_for_fork = str(descriptor.get("parentSessionId") or "")
+        child_session_id = str(descriptor.get("forkSessionId") or "")
+        fork_card = {
+            "sessionId": child_session_id,
+            "label": f"Fork {root_uuid[:8]}",
+            "forkPointTimestamp": str(descriptor.get("childTimestamp") or ""),
+            "forkPointPreview": str(descriptor.get("forkPointPreview") or ""),
+            "entryCount": int(descriptor.get("entryCount") or 0),
+            "contextInheritance": "full",
+        }
+        if parent_session_for_fork and child_session_id:
+            fork_cards_by_parent_session.setdefault(parent_session_for_fork, []).append(fork_card)
+            fork_children_count_by_parent[parent_session_for_fork] += 1
+    root_fork_cards = fork_cards_by_parent_session.get(session_id, [])
+    fork_max_depth = max((int(descriptor.get("forkDepth") or 0) for descriptor in fork_descriptors_by_root.values()), default=0)
+    branch_topology = {
+        "forkCount": len(fork_descriptors_by_root),
+        "maxForkDepth": fork_max_depth,
+        "forkSessionIds": sorted(
+            str(descriptor.get("forkSessionId") or "")
+            for descriptor in fork_descriptors_by_root.values()
+            if str(descriptor.get("forkSessionId") or "")
+        ),
+        "forkRootEntryUuids": sorted(fork_descriptors_by_root.keys()),
+    }
+    root_session_relationships = [
+        relationship
+        for relationship in session_relationships
+        if str(relationship.get("parentSessionId") or "") == session_id
+        or str(relationship.get("childSessionId") or "") == session_id
+    ]
 
     session_forensics = {
         "platform": str(forensics_schema.get("platform") or "claude_code"),
@@ -3239,6 +3788,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "largeFileCount": tool_result_large_file_count,
             "largestFiles": list(tool_results_sidecar.get("largestFiles") or [])[:20],
         },
+        "forkSummary": {
+            "threadKind": "subagent" if is_subagent else "root",
+            "conversationFamilyId": root_session_id if is_subagent and root_session_id else session_id,
+            "forkCount": len(fork_descriptors_by_root),
+            "detectorConfidence": 1.0 if fork_descriptors_by_root else 0.0,
+            "forks": root_fork_cards[:200],
+            "relationshipCount": len(session_relationships),
+        },
+        "branchTopology": branch_topology,
         "testExecution": test_execution,
         "platformTelemetry": platform_telemetry,
         "analysisSignals": {
@@ -3249,6 +3807,137 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "hasTestRunSignals": bool(_coerce_int(test_execution.get("runCount"), 0) > 0),
         },
     }
+
+    for fork_session_id, partition in fork_partitions_by_session_id.items():
+        if not isinstance(partition, dict):
+            continue
+        descriptor = partition.get("descriptor", {})
+        if not isinstance(descriptor, dict):
+            descriptor = {}
+        fork_started_at = str(partition.get("startedAt") or "")
+        fork_ended_at = str(partition.get("endedAt") or "")
+        fork_dates: dict[str, Any] = {}
+        for key, candidate in (
+            ("createdAt", make_date_value(fs_dates.get("createdAt", ""), "high", "filesystem", "session_file_created")),
+            ("updatedAt", make_date_value(fs_dates.get("updatedAt", ""), "high", "filesystem", "session_file_modified")),
+            ("startedAt", make_date_value(fork_started_at, "high", "session", "fork_first_log_event")),
+            ("completedAt", make_date_value(fork_ended_at, "high", "session", "fork_last_log_event")),
+            ("endedAt", make_date_value(fork_ended_at, "high", "session", "fork_last_log_event")),
+            ("lastActivityAt", make_date_value(fork_ended_at or fs_dates.get("updatedAt", ""), "high", "session", "fork_last_activity")),
+        ):
+            if candidate:
+                fork_dates[key] = candidate
+        fork_timeline: list[dict[str, Any]] = []
+        if fork_started_at:
+            fork_timeline.append(
+                {
+                    "id": "session-started",
+                    "timestamp": fork_started_at,
+                    "label": "Fork Started",
+                    "kind": "started",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "First fork log event",
+                }
+            )
+        if fork_ended_at:
+            fork_timeline.append(
+                {
+                    "id": "session-completed",
+                    "timestamp": fork_ended_at,
+                    "label": "Fork Completed",
+                    "kind": "completed",
+                    "confidence": "high",
+                    "source": "session",
+                    "description": "Last fork log event",
+                }
+            )
+
+        fork_session_relationships = [
+            relationship
+            for relationship in session_relationships
+            if str(relationship.get("parentSessionId") or "") == fork_session_id
+            or str(relationship.get("childSessionId") or "") == fork_session_id
+        ]
+        fork_forensics = {
+            "platform": str(forensics_schema.get("platform") or "claude_code"),
+            "schemaVersion": _coerce_int(forensics_schema.get("schema_version"), 1),
+            "rawSessionId": raw_session_id,
+            "sessionFile": str(path),
+            "threadKind": "fork",
+            "conversationFamilyId": session_id,
+            "forkSummary": {
+                "forkSessionId": fork_session_id,
+                "parentSessionId": str(descriptor.get("parentSessionId") or ""),
+                "forkPointEntryUuid": str(descriptor.get("childEntryUuid") or ""),
+                "forkPointParentEntryUuid": str(descriptor.get("parentEntryUuid") or ""),
+                "entryCount": int(descriptor.get("entryCount") or 0),
+                "forkDepth": int(descriptor.get("forkDepth") or 0),
+                "forkCount": int(fork_children_count_by_parent.get(fork_session_id, 0)),
+            },
+            "branchTopology": {
+                "branchRootEntryUuid": str(partition.get("rootEntryUuid") or ""),
+                "entryCount": int(descriptor.get("entryCount") or 0),
+                "forkDepth": int(descriptor.get("forkDepth") or 0),
+            },
+        }
+
+        derived_sessions.append(
+            AgentSession(
+                id=fork_session_id,
+                title=f"Fork from {str(descriptor.get('parentSessionId') or session_id)}",
+                taskId=task_id,
+                status=session_status,
+                model=model,
+                platformType=platform_type,
+                platformVersion=platform_version,
+                platformVersions=platform_versions,
+                platformVersionTransitions=[],
+                sessionType="fork",
+                parentSessionId=None,
+                rootSessionId=fork_session_id,
+                agentId=agent_id,
+                threadKind="fork",
+                conversationFamilyId=session_id,
+                contextInheritance="full",
+                forkParentSessionId=str(descriptor.get("parentSessionId") or ""),
+                forkPointLogId=str(descriptor.get("forkPointLogId") or ""),
+                forkPointEntryUuid=str(descriptor.get("childEntryUuid") or ""),
+                forkPointParentEntryUuid=str(descriptor.get("parentEntryUuid") or ""),
+                forkDepth=int(descriptor.get("forkDepth") or 0),
+                forkCount=int(fork_children_count_by_parent.get(fork_session_id, 0)),
+                durationSeconds=_coerce_int(partition.get("durationSeconds"), 0),
+                tokensIn=_coerce_int(partition.get("tokensIn"), 0),
+                tokensOut=_coerce_int(partition.get("tokensOut"), 0),
+                totalCost=round(
+                    _estimate_cost(
+                        _coerce_int(partition.get("tokensIn"), 0),
+                        _coerce_int(partition.get("tokensOut"), 0),
+                        model,
+                    ),
+                    4,
+                ),
+                startedAt=fork_started_at,
+                endedAt=fork_ended_at,
+                createdAt=fs_dates.get("createdAt", ""),
+                updatedAt=fs_dates.get("updatedAt", ""),
+                gitBranch=git_branch or None,
+                gitAuthor=git_author or None,
+                gitCommitHash=primary_commit,
+                gitCommitHashes=sorted_commits,
+                updatedFiles=partition.get("updatedFiles", []),
+                linkedArtifacts=partition.get("linkedArtifacts", []),
+                toolsUsed=partition.get("toolsUsed", []),
+                impactHistory=[],
+                logs=partition.get("logs", []),
+                thinkingLevel=thinking_level,
+                sessionForensics=fork_forensics,
+                forks=fork_cards_by_parent_session.get(fork_session_id, []),
+                sessionRelationships=fork_session_relationships,
+                dates=fork_dates,
+                timeline=fork_timeline,
+            ).model_dump()
+        )
 
     return AgentSession(
         id=session_id,
@@ -3263,6 +3952,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
         parentSessionId=parent_session_id or None,
         rootSessionId=root_session_id,
         agentId=agent_id,
+        threadKind="subagent" if is_subagent else "root",
+        conversationFamilyId=root_session_id if is_subagent and root_session_id else session_id,
+        contextInheritance="fresh",
+        forkParentSessionId=None,
+        forkPointLogId=None,
+        forkPointEntryUuid=None,
+        forkPointParentEntryUuid=None,
+        forkDepth=0,
+        forkCount=int(fork_children_count_by_parent.get(session_id, 0)),
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,
@@ -3282,6 +3980,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         logs=logs,
         thinkingLevel=thinking_level,
         sessionForensics=session_forensics,
+        forks=root_fork_cards,
+        sessionRelationships=root_session_relationships,
+        derivedSessions=derived_sessions,
         dates=session_dates,
         timeline=timeline,
     )
