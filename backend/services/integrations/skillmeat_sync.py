@@ -6,7 +6,11 @@ from typing import Any
 
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
-from backend.services.integrations.skillmeat_contracts import annotate_effective_workflows
+from backend.services.integrations.skillmeat_contracts import annotate_effective_workflows, attach_workflow_detail
+
+
+_MAX_WORKFLOW_DETAIL_CALLS = 50
+_MAX_WORKFLOW_PLAN_CALLS = 20
 
 
 def _now_iso() -> str:
@@ -170,6 +174,42 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                 *project_workflow_items,
             ]
         )
+        plan_calls = 0
+        for index, item in enumerate(workflow_items):
+            if index >= _MAX_WORKFLOW_DETAIL_CALLS:
+                break
+            workflow_id = str(item.get("external_id") or "").strip()
+            if not workflow_id:
+                continue
+            workflow_detail: dict[str, Any] | None = None
+            workflow_plan: dict[str, Any] | None = None
+            try:
+                workflow_detail = await client.get_workflow(workflow_id)
+            except SkillMeatClientError as exc:
+                warnings.append(
+                    {
+                        "section": "workflow_detail",
+                        "message": str(exc),
+                        "recoverable": True,
+                    }
+                )
+            if bool(item.get("resolution_metadata", {}).get("isEffective")) and plan_calls < _MAX_WORKFLOW_PLAN_CALLS:
+                try:
+                    workflow_plan = await client.plan_workflow(workflow_id)
+                    plan_calls += 1
+                except SkillMeatClientError as exc:
+                    warnings.append(
+                        {
+                            "section": "workflow_plan",
+                            "message": str(exc),
+                            "recoverable": True,
+                        }
+                    )
+            workflow_items[index] = attach_workflow_detail(
+                item,
+                workflow_detail=workflow_detail,
+                workflow_plan=workflow_plan,
+            )
         counts_by_type["workflow"] = len(workflow_items)
         await _store_definitions(
             repo,

@@ -46,13 +46,37 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
 
     async def test_sync_and_list_definitions(self) -> None:
-        def fake_request(endpoint: str, query: dict[str, str]):
+        def fake_request(endpoint: str, query: dict[str, str] | None, **_kwargs):
             if endpoint == "/api/v1/artifacts":
                 return {"items": [{"id": "artifact:build-docs", "title": "Build Docs"}], "page_info": {"has_next_page": False, "end_cursor": None}}
             if endpoint == "/api/v1/workflows":
                 if query.get("project_id") == "sm-project":
                     return [{"id": "wf_project", "name": "Phase Execution", "project_id": "sm-project"}]
                 return [{"id": "wf_global", "name": "Phase Execution", "project_id": None}]
+            if endpoint == "/api/v1/workflows/wf_project":
+                return {
+                    "id": "wf_project",
+                    "name": "Phase Execution",
+                    "project_id": "sm-project",
+                    "definition": "name: Phase Execution\nstages:\n  - id: planning\n    type: agent\n    agent: agent:planner\n  - id: implementation\n    type: fan_out\n    depends_on: [planning]\n    stages:\n      - id: backend\n        type: agent\n        agent: skill:symbols\n      - id: context\n        type: agent\n        memory: ctx:planning\n",
+                }
+            if endpoint == "/api/v1/workflows/wf_project/plan":
+                return {
+                    "estimated_batches": 2,
+                    "estimated_stages": 3,
+                    "has_gates": False,
+                    "execution_order": [
+                        {"batch_index": 0, "stages": [{"stage_id": "planning", "stage_type": "agent", "depends_on": []}]},
+                        {"batch_index": 1, "stages": [{"stage_id": "backend", "stage_type": "agent", "depends_on": ["planning"]}]},
+                    ],
+                }
+            if endpoint == "/api/v1/workflows/wf_global":
+                return {
+                    "id": "wf_global",
+                    "name": "Phase Execution",
+                    "project_id": None,
+                    "definition": "name: Phase Execution\nstages:\n  - id: planning\n    type: agent\n    agent: agent:planner\n",
+                }
             if endpoint == "/api/v1/context-modules":
                 return {"items": [{"id": "cm_1", "name": "planning"}], "next_cursor": None, "has_more": False}
             if endpoint == "/api/v1/bundles":
@@ -78,6 +102,9 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(effective.resolutionMetadata["isEffective"])
         self.assertFalse(overridden.resolutionMetadata["isEffective"])
         self.assertEqual(effective.resolutionMetadata["effectiveWorkflowId"], "wf_project")
+        self.assertIn("skill:symbols", effective.resolutionMetadata["swdlSummary"]["artifactRefs"])
+        self.assertIn("ctx:planning", effective.resolutionMetadata["swdlSummary"]["contextRefs"])
+        self.assertEqual(effective.resolutionMetadata["planSummary"]["batchCount"], 2)
 
     async def test_validate_config_reports_connection_and_project_status(self) -> None:
         with (
