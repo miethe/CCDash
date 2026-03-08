@@ -56,8 +56,10 @@ import { DocumentModal } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
 import { TestStatusView } from './TestVisualizer/TestStatusView';
 import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
+import { RecommendedStackCard } from './execution/RecommendedStackCard';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
+import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -1878,6 +1880,15 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   })}
                 </ul>
               </div>
+
+              <RecommendedStackCard
+                recommendedStack={context.recommendedStack}
+                stackAlternatives={context.stackAlternatives}
+                stackEvidence={context.stackEvidence}
+                definitionResolutionWarnings={context.definitionResolutionWarnings}
+                onOpenSession={openSession}
+                onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
+              />
             </section>
 
             <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
@@ -2341,25 +2352,44 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'analytics' && (
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
-                    <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
+                <div className="mt-4 space-y-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
+                      <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
+                      <p className="text-xs text-slate-500 mt-1">Models {context.analytics.modelCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
+                      <p className="text-xs text-slate-500 mt-1">{context.analytics.commandEventCount} command events</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
+                      <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
-                    <p className="text-xs text-slate-500 mt-1">Models {context.analytics.modelCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
-                    <p className="text-xs text-slate-500 mt-1">{context.analytics.commandEventCount} command events</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 md:col-span-2 xl:col-span-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
-                    <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
+
+                  <WorkflowEffectivenessSurface
+                    embedded
+                    featureId={context.feature.id}
+                    description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
+                    onOpenSession={openSession}
+                  />
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => navigate('/analytics?tab=workflow_intelligence')}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                    >
+                      <ExternalLink size={13} />
+                      Open Full Analytics
+                    </button>
                   </div>
                 </div>
               )}
