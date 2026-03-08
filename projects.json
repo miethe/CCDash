@@ -12,7 +12,105 @@
       ],
       "planDocsPath": "project_plans",
       "sessionsPath": "",
-      "progressPath": "progress"
+      "progressPath": "progress",
+      "testConfig": {
+        "flags": {
+          "testVisualizerEnabled": true,
+          "integritySignalsEnabled": true,
+          "liveTestUpdatesEnabled": true,
+          "semanticMappingEnabled": true
+        },
+        "platforms": [
+          {
+            "id": "pytest",
+            "enabled": true,
+            "resultsDir": "test-results",
+            "watch": true,
+            "patterns": [
+              "**/*.xml",
+              "**/junit*.xml",
+              "**/pytest*.xml"
+            ]
+          },
+          {
+            "id": "jest",
+            "enabled": false,
+            "resultsDir": "skillmeat/web",
+            "watch": true,
+            "patterns": [
+              "**/jest-results*.json",
+              "**/coverage/coverage-final.json"
+            ]
+          },
+          {
+            "id": "playwright",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/test-results",
+            "watch": true,
+            "patterns": [
+              "**/results.json"
+            ]
+          },
+          {
+            "id": "coverage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/coverage.xml",
+              "**/coverage.json",
+              "**/lcov.info",
+              "**/coverage-final.json"
+            ]
+          },
+          {
+            "id": "benchmark",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/benchmark*_results.json",
+              "**/benchmark*.json"
+            ]
+          },
+          {
+            "id": "lighthouse",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/lighthouse-reports",
+            "watch": false,
+            "patterns": [
+              "**/*.json",
+              "**/*.html"
+            ]
+          },
+          {
+            "id": "locust",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/locust_report.html",
+              "**/locust_results*.csv"
+            ]
+          },
+          {
+            "id": "triage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/test-failures.json",
+              "**/test-failures-summary.txt",
+              "**/test-failures.md"
+            ]
+          }
+        ],
+        "autoSyncOnStartup": true,
+        "maxFilesPerScan": 500,
+        "maxParseConcurrency": 4,
+        "instructionProfile": "skillmeat",
+        "instructionNotes": ""
+      }
     },
     {
       "id": "test-project-1",
@@ -25,7 +123,105 @@
       ],
       "planDocsPath": "plans",
       "sessionsPath": "",
-      "progressPath": "progress"
+      "progressPath": "progress",
+      "testConfig": {
+        "flags": {
+          "testVisualizerEnabled": true,
+          "integritySignalsEnabled": true,
+          "liveTestUpdatesEnabled": true,
+          "semanticMappingEnabled": true
+        },
+        "platforms": [
+          {
+            "id": "pytest",
+            "enabled": true,
+            "resultsDir": "test-results",
+            "watch": true,
+            "patterns": [
+              "**/*.xml",
+              "**/junit*.xml",
+              "**/pytest*.xml"
+            ]
+          },
+          {
+            "id": "jest",
+            "enabled": false,
+            "resultsDir": "skillmeat/web",
+            "watch": true,
+            "patterns": [
+              "**/jest-results*.json",
+              "**/coverage/coverage-final.json"
+            ]
+          },
+          {
+            "id": "playwright",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/test-results",
+            "watch": true,
+            "patterns": [
+              "**/results.json"
+            ]
+          },
+          {
+            "id": "coverage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/coverage.xml",
+              "**/coverage.json",
+              "**/lcov.info",
+              "**/coverage-final.json"
+            ]
+          },
+          {
+            "id": "benchmark",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/benchmark*_results.json",
+              "**/benchmark*.json"
+            ]
+          },
+          {
+            "id": "lighthouse",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/lighthouse-reports",
+            "watch": false,
+            "patterns": [
+              "**/*.json",
+              "**/*.html"
+            ]
+          },
+          {
+            "id": "locust",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/locust_report.html",
+              "**/locust_results*.csv"
+            ]
+          },
+          {
+            "id": "triage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/test-failures.json",
+              "**/test-failures-summary.txt",
+              "**/test-failures.md"
+            ]
+          }
+        ],
+        "autoSyncOnStartup": true,
+        "maxFilesPerScan": 500,
+        "maxParseConcurrency": 4,
+        "instructionProfile": "skillmeat",
+        "instructionNotes": ""
+      }
     },
     {
       "id": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
@@ -38,7 +234,105 @@
       ],
       "planDocsPath": "docs/project_plans/",
       "sessionsPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
-      "progressPath": ".claude/progress"
+      "progressPath": ".claude/progress",
+      "testConfig": {
+        "flags": {
+          "testVisualizerEnabled": true,
+          "integritySignalsEnabled": true,
+          "liveTestUpdatesEnabled": true,
+          "semanticMappingEnabled": true
+        },
+        "platforms": [
+          {
+            "id": "pytest",
+            "enabled": true,
+            "resultsDir": "test-results",
+            "watch": true,
+            "patterns": [
+              "**/*.xml",
+              "**/junit*.xml",
+              "**/pytest*.xml"
+            ]
+          },
+          {
+            "id": "jest",
+            "enabled": false,
+            "resultsDir": "skillmeat/web",
+            "watch": true,
+            "patterns": [
+              "**/jest-results*.json",
+              "**/coverage/coverage-final.json"
+            ]
+          },
+          {
+            "id": "playwright",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/test-results",
+            "watch": true,
+            "patterns": [
+              "**/results.json"
+            ]
+          },
+          {
+            "id": "coverage",
+            "enabled": true,
+            "resultsDir": ".",
+            "watch": true,
+            "patterns": [
+              "**/coverage.xml",
+              "**/coverage.json",
+              "**/lcov.info",
+              "**/coverage-final.json"
+            ]
+          },
+          {
+            "id": "benchmark",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/benchmark*_results.json",
+              "**/benchmark*.json"
+            ]
+          },
+          {
+            "id": "lighthouse",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/lighthouse-reports",
+            "watch": false,
+            "patterns": [
+              "**/*.json",
+              "**/*.html"
+            ]
+          },
+          {
+            "id": "locust",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/locust_report.html",
+              "**/locust_results*.csv"
+            ]
+          },
+          {
+            "id": "triage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/test-failures.json",
+              "**/test-failures-summary.txt",
+              "**/test-failures.md"
+            ]
+          }
+        ],
+        "autoSyncOnStartup": true,
+        "maxFilesPerScan": 500,
+        "maxParseConcurrency": 4,
+        "instructionProfile": "skillmeat",
+        "instructionNotes": ""
+      }
     }
   ]
 }
