@@ -7,9 +7,12 @@ import {
     AnalyticsBreakdownItem,
     AnalyticsCorrelationItem,
     AnalyticsArtifactsResponse,
+    EffectivenessScopeType,
+    FailurePatternResponse,
+    WorkflowEffectivenessResponse,
 } from '../types';
 
-const API_BASE = 'http://localhost:8000/api/analytics';
+const API_BASE = '/api/analytics';
 
 export const analyticsService = {
     async getMetrics(): Promise<AnalyticsMetric[]> {
@@ -109,6 +112,56 @@ export const analyticsService = {
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch artifact analytics');
+        return res.json();
+    },
+
+    async getWorkflowEffectiveness(params?: {
+        period?: 'all' | 'daily' | 'weekly';
+        scopeType?: EffectivenessScopeType;
+        scopeId?: string;
+        featureId?: string;
+        start?: string;
+        end?: string;
+        recompute?: boolean;
+        offset?: number;
+        limit?: number;
+    }): Promise<WorkflowEffectivenessResponse> {
+        const search = new URLSearchParams();
+        if (params?.period) search.append('period', params.period);
+        if (params?.scopeType) search.append('scopeType', params.scopeType);
+        if (params?.scopeId) search.append('scopeId', params.scopeId);
+        if (params?.featureId) search.append('featureId', params.featureId);
+        if (params?.start) search.append('start', params.start);
+        if (params?.end) search.append('end', params.end);
+        if (typeof params?.recompute === 'boolean') search.append('recompute', String(params.recompute));
+        if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
+        if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/workflow-effectiveness${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch workflow effectiveness');
+        return res.json();
+    },
+
+    async getFailurePatterns(params?: {
+        scopeType?: EffectivenessScopeType;
+        scopeId?: string;
+        featureId?: string;
+        start?: string;
+        end?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<FailurePatternResponse> {
+        const search = new URLSearchParams();
+        if (params?.scopeType) search.append('scopeType', params.scopeType);
+        if (params?.scopeId) search.append('scopeId', params.scopeId);
+        if (params?.featureId) search.append('featureId', params.featureId);
+        if (params?.start) search.append('start', params.start);
+        if (params?.end) search.append('end', params.end);
+        if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
+        if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/failure-patterns${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch failure patterns');
         return res.json();
     },
 

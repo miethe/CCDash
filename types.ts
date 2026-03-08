@@ -836,6 +836,69 @@ export interface AnalyticsArtifactsResponse {
   detailLimit: number;
 }
 
+export type EffectivenessScopeType = 'workflow' | 'agent' | 'skill' | 'context_module' | 'stack';
+
+export interface EffectivenessMetricDefinition {
+  id: 'successScore' | 'efficiencyScore' | 'qualityScore' | 'riskScore';
+  label: string;
+  description: string;
+  formula: string;
+  inputs: string[];
+}
+
+export interface WorkflowEffectivenessRollup {
+  id?: number | null;
+  projectId: string;
+  scopeType: EffectivenessScopeType;
+  scopeId: string;
+  scopeLabel: string;
+  period: string;
+  sampleSize: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+  evidenceSummary: Record<string, unknown>;
+  generatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowEffectivenessResponse {
+  projectId: string;
+  period: string;
+  metricDefinitions: EffectivenessMetricDefinition[];
+  items: WorkflowEffectivenessRollup[];
+  total: number;
+  offset: number;
+  limit: number;
+  generatedAt: string;
+}
+
+export interface FailurePatternRecord {
+  id: string;
+  patternType: string;
+  title: string;
+  scopeType: string;
+  scopeId: string;
+  severity: 'low' | 'medium' | 'high';
+  confidence: number;
+  occurrenceCount: number;
+  averageSuccessScore: number;
+  averageRiskScore: number;
+  evidenceSummary: Record<string, unknown>;
+  sessionIds: string[];
+}
+
+export interface FailurePatternResponse {
+  projectId: string;
+  items: FailurePatternRecord[];
+  total: number;
+  offset: number;
+  limit: number;
+  generatedAt: string;
+}
+
 // Alert System
 export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold' | string;
 export type AlertOperator = '>' | '<';

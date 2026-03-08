@@ -8,7 +8,7 @@ import {
     AnalyticsMetric,
     Notification,
 } from '../../types';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     BarChart3,
     Bell,
@@ -16,6 +16,7 @@ import {
     Layers3,
     Network,
     RefreshCcw,
+    Sparkles,
     Shapes,
     Wrench,
 } from 'lucide-react';
@@ -31,16 +32,24 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
 
-type AnalyticsTab = 'overview' | 'artifacts' | 'models_tools' | 'features' | 'correlation';
+type AnalyticsTab = 'overview' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'workflow_intelligence', label: 'Workflow Intel', icon: Sparkles },
     { id: 'artifacts', label: 'Artifacts', icon: Shapes },
     { id: 'models_tools', label: 'Models + Tools', icon: Network },
     { id: 'features', label: 'Features', icon: Layers3 },
     { id: 'correlation', label: 'Correlation', icon: Wrench },
 ];
+
+const TAB_IDS = new Set<AnalyticsTab>(TAB_LABELS.map(tab => tab.id));
+
+const isAnalyticsTab = (value: string | null): value is AnalyticsTab => (
+    Boolean(value) && TAB_IDS.has(value as AnalyticsTab)
+);
 
 const PIE_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316'];
 
@@ -86,8 +95,12 @@ const EntityLinkButton: React.FC<{ label: string; onClick: () => void; mono?: bo
 
 export const AnalyticsDashboard: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { getColorForModel, getBadgeStyleForModel } = useModelColors();
-    const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
+    const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
+        const tabParam = searchParams.get('tab');
+        return isAnalyticsTab(tabParam) ? tabParam : 'overview';
+    });
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
     const [metrics, setMetrics] = useState<AnalyticsMetric[]>([]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -131,6 +144,25 @@ export const AnalyticsDashboard: React.FC = () => {
     useEffect(() => {
         void loadAll();
     }, []);
+
+    useEffect(() => {
+        const tabParam = searchParams.get('tab');
+        if (isAnalyticsTab(tabParam)) {
+            setActiveTab(prev => (prev === tabParam ? prev : tabParam));
+        }
+    }, [searchParams]);
+
+    useEffect(() => {
+        const nextParams = new URLSearchParams(searchParams);
+        if (activeTab === 'overview') {
+            nextParams.delete('tab');
+        } else {
+            nextParams.set('tab', activeTab);
+        }
+        if (nextParams.toString() !== searchParams.toString()) {
+            setSearchParams(nextParams, { replace: true });
+        }
+    }, [activeTab, searchParams, setSearchParams]);
 
     const handleExport = () => {
         window.open(analyticsService.getPrometheusExportUrl(), '_blank');
@@ -300,6 +332,14 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {!loading && !error && activeTab === 'workflow_intelligence' && (
+                <WorkflowEffectivenessSurface
+                    title="Workflow Effectiveness"
+                    description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
+                    onOpenSession={(sessionId) => openSession(sessionId)}
+                />
             )}
 
             {!loading && !error && activeTab === 'artifacts' && (
