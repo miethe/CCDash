@@ -956,12 +956,18 @@ export interface ProjectTestConfig {
   instructionNotes: string;
 }
 
+export interface SkillMeatFeatureFlags {
+  stackRecommendationsEnabled: boolean;
+  workflowAnalyticsEnabled: boolean;
+}
+
 export interface SkillMeatProjectConfig {
   enabled: boolean;
   baseUrl: string;
   projectId: string;
   workspaceId: string;
   requestTimeoutSeconds: number;
+  featureFlags: SkillMeatFeatureFlags;
 }
 
 export interface Project {

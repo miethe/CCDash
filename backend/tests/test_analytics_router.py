@@ -225,6 +225,18 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].patternType, "queue_waste")
         self.assertEqual(response.items[0].scopeId, "debug-loop")
 
+    async def test_workflow_effectiveness_endpoint_returns_503_when_disabled(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router, "require_workflow_analytics_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.workflow_effectiveness(limit=20, offset=0)
+
+        self.assertEqual(ctx.exception.status_code, 503)
+
     async def test_prometheus_export_includes_artifact_metrics(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         artifact_payload = {

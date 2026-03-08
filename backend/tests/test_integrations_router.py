@@ -68,6 +68,17 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(observations, [])
 
+    async def test_sync_returns_503_when_global_integration_disabled(self) -> None:
+        with patch.object(
+            integrations_router,
+            "require_skillmeat_integration_enabled",
+            side_effect=integrations_router.HTTPException(status_code=503, detail="disabled"),
+        ):
+            with self.assertRaises(integrations_router.HTTPException) as ctx:
+                await integrations_router.sync_skillmeat(SkillMeatSyncRequest())
+
+        self.assertEqual(ctx.exception.status_code, 503)
+
 
 if __name__ == "__main__":
     unittest.main()

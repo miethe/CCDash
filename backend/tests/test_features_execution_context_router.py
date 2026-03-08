@@ -163,6 +163,29 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.recommendations.ruleId, "R6_FALLBACK_QUICK_FEATURE")
         self.assertGreaterEqual(len(payload.warnings), 1)
 
+    async def test_stack_recommendations_can_be_disabled_per_project(self) -> None:
+        feature = self._feature()
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(features_router.project_manager, "get_active_project", return_value=project),
+            patch.object(features_router.connection, "get_connection", return_value=object()),
+            patch.object(features_router, "get_feature", return_value=feature),
+            patch.object(features_router, "get_feature_linked_sessions", return_value=[]),
+            patch.object(features_router, "load_execution_documents", return_value=[]),
+            patch.object(
+                features_router,
+                "load_execution_analytics",
+                return_value=FeatureExecutionAnalyticsSummary(sessionCount=0),
+            ),
+            patch.object(features_router, "stack_recommendations_enabled", return_value=False),
+            patch.object(features_router, "build_stack_recommendations") as build_stack_recommendations,
+        ):
+            payload = await features_router.get_feature_execution_context("feat-1")
+
+        build_stack_recommendations.assert_not_called()
+        self.assertTrue(any("disabled for this project" in warning.message for warning in payload.warnings))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,7 @@ from backend.services.feature_execution import (
     load_execution_analytics,
     load_execution_documents,
 )
+from backend.services.agentic_intelligence_flags import stack_recommendations_enabled
 from backend.services.stack_recommendations import build_stack_recommendations
 
 
@@ -910,24 +911,32 @@ async def get_feature_execution_context(feature_id: str):
     stack_alternatives = []
     stack_evidence = []
     definition_resolution_warnings: list[FeatureExecutionWarning] = []
-    try:
-        stack_payload = await build_stack_recommendations(
-            db,
-            active_project,
-            feature=feature,
-            sessions=sessions,
-            recommendation=recommendation,
-        )
-        recommended_stack = stack_payload.get("recommendedStack")
-        stack_alternatives = stack_payload.get("stackAlternatives", [])
-        stack_evidence = stack_payload.get("stackEvidence", [])
-        definition_resolution_warnings = stack_payload.get("definitionResolutionWarnings", [])
-    except Exception:
-        logger.exception("Failed to build stack recommendations for '%s'", feature.id)
+    if stack_recommendations_enabled(active_project):
+        try:
+            stack_payload = await build_stack_recommendations(
+                db,
+                active_project,
+                feature=feature,
+                sessions=sessions,
+                recommendation=recommendation,
+            )
+            recommended_stack = stack_payload.get("recommendedStack")
+            stack_alternatives = stack_payload.get("stackAlternatives", [])
+            stack_evidence = stack_payload.get("stackEvidence", [])
+            definition_resolution_warnings = stack_payload.get("definitionResolutionWarnings", [])
+        except Exception:
+            logger.exception("Failed to build stack recommendations for '%s'", feature.id)
+            warnings.append(
+                FeatureExecutionWarning(
+                    section="stack",
+                    message="Historical stack recommendations are currently unavailable; command guidance is still available.",
+                )
+            )
+    else:
         warnings.append(
             FeatureExecutionWarning(
                 section="stack",
-                message="Historical stack recommendations are currently unavailable; command guidance is still available.",
+                message="Historical stack recommendations are disabled for this project; command guidance is still available.",
             )
         )
 

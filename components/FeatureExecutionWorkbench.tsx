@@ -49,6 +49,7 @@ import {
   retryExecutionRun,
   trackExecutionEvent,
 } from '../services/execution';
+import { isStackRecommendationsEnabled, isWorkflowAnalyticsEnabled } from '../services/agenticIntelligence';
 import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
@@ -124,6 +125,13 @@ const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
     description: 'Primary linked sessions that do not fit planning or phase execution.',
   },
 ];
+
+const IntelligenceDisabledNotice: React.FC<{ title: string; message: string }> = ({ title, message }) => (
+  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+    <p className="font-semibold">{title}</p>
+    <p className="mt-1 text-amber-100/80">{message}</p>
+  </div>
+);
 
 const DEFAULT_CORE_SESSION_GROUP_EXPANDED: Record<CoreSessionGroupId, boolean> = {
   plan: true,
@@ -509,6 +517,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
+  const stackRecommendationsAvailable = isStackRecommendationsEnabled(activeProject);
+  const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
   const featureParam = searchParams.get('feature') || '';
   const tabParam = searchParams.get('tab');
 
@@ -1881,14 +1891,21 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 </ul>
               </div>
 
-              <RecommendedStackCard
-                recommendedStack={context.recommendedStack}
-                stackAlternatives={context.stackAlternatives}
-                stackEvidence={context.stackEvidence}
-                definitionResolutionWarnings={context.definitionResolutionWarnings}
-                onOpenSession={openSession}
-                onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
-              />
+              {stackRecommendationsAvailable ? (
+                <RecommendedStackCard
+                  recommendedStack={context.recommendedStack}
+                  stackAlternatives={context.stackAlternatives}
+                  stackEvidence={context.stackEvidence}
+                  definitionResolutionWarnings={context.definitionResolutionWarnings}
+                  onOpenSession={openSession}
+                  onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
+                />
+              ) : (
+                <IntelligenceDisabledNotice
+                  title="Recommended Stack Disabled"
+                  message="Project settings have disabled historical stack recommendations. Command guidance and execution runs remain available."
+                />
+              )}
             </section>
 
             <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
@@ -2375,22 +2392,31 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     </div>
                   </div>
 
-                  <WorkflowEffectivenessSurface
-                    embedded
-                    featureId={context.feature.id}
-                    description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
-                    onOpenSession={openSession}
-                  />
+                  {workflowAnalyticsAvailable ? (
+                    <WorkflowEffectivenessSurface
+                      embedded
+                      featureId={context.feature.id}
+                      description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
+                      onOpenSession={openSession}
+                    />
+                  ) : (
+                    <IntelligenceDisabledNotice
+                      title="Workflow Intelligence Disabled"
+                      message="Workflow effectiveness analytics are disabled for this project. Session and execution summaries are still available."
+                    />
+                  )}
 
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => navigate('/analytics?tab=workflow_intelligence')}
-                      className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
-                    >
-                      <ExternalLink size={13} />
-                      Open Full Analytics
-                    </button>
-                  </div>
+                  {workflowAnalyticsAvailable && (
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => navigate('/analytics?tab=workflow_intelligence')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                      >
+                        <ExternalLink size={13} />
+                        Open Full Analytics
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

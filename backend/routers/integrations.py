@@ -12,6 +12,7 @@ from backend.models import (
     SessionStackObservation,
     SkillMeatDefinition,
     SkillMeatDefinitionSource,
+    SkillMeatFeatureFlags,
     SkillMeatDefinitionSyncResponse,
     SkillMeatObservationBackfillRequest,
     SkillMeatObservationBackfillResponse,
@@ -20,6 +21,7 @@ from backend.models import (
     SkillMeatSyncWarning,
 )
 from backend.project_manager import project_manager
+from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
 from backend.services.stack_observations import backfill_session_stack_observations
 
@@ -43,7 +45,7 @@ def _to_source_dto(row: dict[str, Any], project_config: SkillMeatProjectConfig |
         enabled=bool(row.get("enabled")),
         baseUrl=str(row.get("base_url") or getattr(config, "baseUrl", "")),
         projectMapping=row.get("project_mapping_json", {}) if isinstance(row.get("project_mapping_json"), dict) else {},
-        featureFlags=row.get("feature_flags_json", {}) if isinstance(row.get("feature_flags_json"), dict) else {},
+        featureFlags=SkillMeatFeatureFlags(**(row.get("feature_flags_json", {}) if isinstance(row.get("feature_flags_json"), dict) else {})),
         lastSyncedAt=str(row.get("last_synced_at") or ""),
         lastSyncStatus=str(row.get("last_sync_status") or "never"),
         lastSyncError=str(row.get("last_sync_error") or ""),
@@ -108,6 +110,7 @@ def _to_observation_dto(row: dict[str, Any]) -> SessionStackObservation:
 
 @integrations_router.post("/sync", response_model=SkillMeatDefinitionSyncResponse)
 async def sync_skillmeat(req: SkillMeatSyncRequest | None = None):
+    require_skillmeat_integration_enabled()
     project = _active_project_or_400()
     requested_project_id = str((req.projectId if req else "") or "").strip()
     if requested_project_id and requested_project_id != str(project.id):
@@ -133,6 +136,7 @@ async def list_skillmeat_definitions(
     limit: int = Query(default=500, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
 ):
+    require_skillmeat_integration_enabled()
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_agentic_intelligence_repository(db)
@@ -147,6 +151,7 @@ async def list_skillmeat_definitions(
 
 @integrations_router.post("/observations/backfill", response_model=SkillMeatObservationBackfillResponse)
 async def backfill_skillmeat_observations(req: SkillMeatObservationBackfillRequest):
+    require_skillmeat_integration_enabled()
     project = _active_project_or_400()
     requested_project_id = str(req.projectId or "").strip()
     if requested_project_id and requested_project_id != str(project.id):
@@ -177,6 +182,7 @@ async def list_skillmeat_observations(
     limit: int = Query(default=200, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
 ):
+    require_skillmeat_integration_enabled()
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_agentic_intelligence_repository(db)

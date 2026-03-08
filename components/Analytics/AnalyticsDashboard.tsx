@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendChart } from './TrendChart';
 import { analyticsService } from '../../services/analytics';
 import { useModelColors } from '../../contexts/ModelColorsContext';
+import { useData } from '../../contexts/DataContext';
+import { isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
 import {
     AnalyticsArtifactsResponse,
     AnalyticsCorrelationItem,
@@ -97,6 +99,7 @@ export const AnalyticsDashboard: React.FC = () => {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const { getColorForModel, getBadgeStyleForModel } = useModelColors();
+    const { activeProject } = useData();
     const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
         const tabParam = searchParams.get('tab');
         return isAnalyticsTab(tabParam) ? tabParam : 'overview';
@@ -109,6 +112,7 @@ export const AnalyticsDashboard: React.FC = () => {
     const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
 
     const openSession = useCallback((sessionId: string) => {
         if (!sessionId) return;
@@ -335,11 +339,20 @@ export const AnalyticsDashboard: React.FC = () => {
             )}
 
             {!loading && !error && activeTab === 'workflow_intelligence' && (
-                <WorkflowEffectivenessSurface
-                    title="Workflow Effectiveness"
-                    description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
-                    onOpenSession={(sessionId) => openSession(sessionId)}
-                />
+                workflowAnalyticsAvailable ? (
+                    <WorkflowEffectivenessSurface
+                        title="Workflow Effectiveness"
+                        description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
+                        onOpenSession={(sessionId) => openSession(sessionId)}
+                    />
+                ) : (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                        <p className="font-semibold">Workflow Intelligence Disabled</p>
+                        <p className="mt-1 text-amber-100/80">
+                            Project settings have disabled workflow effectiveness analytics for this surface.
+                        </p>
+                    </div>
+                )
             )}
 
             {!loading && !error && activeTab === 'artifacts' && (

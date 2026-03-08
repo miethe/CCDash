@@ -29,7 +29,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                 "projectId": str(getattr(config, "projectId", "") or ""),
                 "workspaceId": str(getattr(config, "workspaceId", "") or ""),
             },
-            "feature_flags": {},
+            "feature_flags": getattr(getattr(config, "featureFlags", {}), "model_dump", lambda: getattr(config, "featureFlags", {}))(),
         }
     )
 

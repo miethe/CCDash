@@ -29,6 +29,7 @@ from backend.db.factory import (
     get_session_repository,
     get_task_repository,
 )
+from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -1730,6 +1731,7 @@ async def workflow_effectiveness(
             limit=limit,
             generatedAt=datetime.now(timezone.utc).isoformat(),
         )
+    require_workflow_analytics_enabled(project)
 
     db = await connection.get_connection()
     payload = await get_workflow_effectiveness(
@@ -1767,6 +1769,7 @@ async def failure_patterns(
             limit=limit,
             generatedAt=datetime.now(timezone.utc).isoformat(),
         )
+    require_workflow_analytics_enabled(project)
 
     db = await connection.get_connection()
     payload = await detect_failure_patterns(

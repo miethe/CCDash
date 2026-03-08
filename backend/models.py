@@ -505,12 +505,18 @@ class ProjectTestConfig(BaseModel):
     instructionNotes: str = ""
 
 
+class SkillMeatFeatureFlags(BaseModel):
+    stackRecommendationsEnabled: bool = True
+    workflowAnalyticsEnabled: bool = True
+
+
 class SkillMeatProjectConfig(BaseModel):
     enabled: bool = False
     baseUrl: str = ""
     projectId: str = ""
     workspaceId: str = ""
     requestTimeoutSeconds: float = 5.0
+    featureFlags: SkillMeatFeatureFlags = Field(default_factory=SkillMeatFeatureFlags)
 
 
 # ── Project model ──────────────────────────────────────────────────
@@ -771,7 +777,7 @@ class SkillMeatDefinitionSource(BaseModel):
     enabled: bool = False
     baseUrl: str = ""
     projectMapping: dict[str, Any] = Field(default_factory=dict)
-    featureFlags: dict[str, Any] = Field(default_factory=dict)
+    featureFlags: SkillMeatFeatureFlags = Field(default_factory=SkillMeatFeatureFlags)
     lastSyncedAt: str = ""
     lastSyncStatus: str = "never"
     lastSyncError: str = ""
