@@ -255,6 +255,7 @@ def attach_workflow_executions(
         "running": running,
         "failed": failed,
         "latestStartedAt": next((str(item.get("startedAt") or "") for item in summaries if str(item.get("startedAt") or "").strip()), ""),
+        "liveUpdateHint": "view_scoped_polling" if running > 0 else "idle",
     }
     definition["resolution_metadata"] = metadata
     return definition

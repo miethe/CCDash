@@ -77,6 +77,30 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                     "project_id": None,
                     "definition": "name: Phase Execution\nstages:\n  - id: planning\n    type: agent\n    agent: agent:planner\n",
                 }
+            if endpoint == "/api/v1/workflow-executions":
+                if query.get("workflow_id") == "wf_project":
+                    return [
+                        {
+                            "id": "exec_1",
+                            "workflow_id": "wf_project",
+                            "status": "completed",
+                            "started_at": "2026-03-07T14:00:00Z",
+                            "completed_at": "2026-03-07T15:23:00Z",
+                        }
+                    ]
+                return []
+            if endpoint == "/api/v1/workflow-executions/exec_1":
+                return {
+                    "id": "exec_1",
+                    "workflow_id": "wf_project",
+                    "status": "completed",
+                    "started_at": "2026-03-07T14:00:00Z",
+                    "completed_at": "2026-03-07T15:23:00Z",
+                    "steps": [
+                        {"id": "step_1", "stage_id": "planning", "stage_type": "agent", "status": "completed"},
+                        {"id": "step_2", "stage_id": "approval", "stage_type": "gate", "status": "completed"},
+                    ],
+                }
             if endpoint == "/api/v1/context-modules":
                 return {"items": [{"id": "cm_1", "name": "planning"}], "next_cursor": None, "has_more": False}
             if endpoint == "/api/v1/context-packs/preview":
@@ -119,6 +143,8 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective.resolutionMetadata["contextSummary"]["resolved"], 1)
         self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["moduleId"], "cm_1")
         self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["previewSummary"]["totalTokens"], 97)
+        self.assertEqual(effective.resolutionMetadata["executionSummary"]["count"], 1)
+        self.assertEqual(effective.resolutionMetadata["recentExecutions"][0]["gateStepCount"], 1)
         bundle = next(item for item in definitions if item.definitionType == "bundle")
         self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
 

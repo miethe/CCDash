@@ -11,6 +11,7 @@ from backend.services.integrations.skillmeat_contracts import (
     attach_bundle_detail,
     attach_context_module_preview,
     attach_workflow_detail,
+    attach_workflow_executions,
     resolve_workflow_context_modules,
 )
 
@@ -18,6 +19,8 @@ from backend.services.integrations.skillmeat_contracts import (
 _MAX_WORKFLOW_DETAIL_CALLS = 50
 _MAX_WORKFLOW_PLAN_CALLS = 20
 _MAX_CONTEXT_PREVIEW_CALLS = 5
+_MAX_WORKFLOW_EXECUTION_WORKFLOWS = 10
+_MAX_WORKFLOW_EXECUTION_DETAIL_CALLS = 15
 
 
 def _now_iso() -> str:
@@ -199,6 +202,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             ]
         )
         plan_calls = 0
+        execution_workflow_calls = 0
+        execution_detail_calls = 0
         for index, item in enumerate(workflow_items):
             if index >= _MAX_WORKFLOW_DETAIL_CALLS:
                 break
@@ -207,6 +212,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                 continue
             workflow_detail: dict[str, Any] | None = None
             workflow_plan: dict[str, Any] | None = None
+            workflow_executions: list[dict[str, Any]] = []
             try:
                 workflow_detail = await client.get_workflow(workflow_id)
             except SkillMeatClientError as exc:
@@ -229,11 +235,52 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                             "recoverable": True,
                         }
                     )
+            if (
+                bool(item.get("resolution_metadata", {}).get("isEffective"))
+                and execution_workflow_calls < _MAX_WORKFLOW_EXECUTION_WORKFLOWS
+            ):
+                try:
+                    execution_list = await client.list_workflow_executions(
+                        workflow_id=workflow_id,
+                        limit=3,
+                    )
+                    execution_workflow_calls += 1
+                    for execution_item in execution_list:
+                        execution_id = str(execution_item.get("id") or "").strip()
+                        if not execution_id:
+                            workflow_executions.append(execution_item)
+                            continue
+                        if execution_detail_calls >= _MAX_WORKFLOW_EXECUTION_DETAIL_CALLS:
+                            workflow_executions.append(execution_item)
+                            continue
+                        try:
+                            execution_detail = await client.get_workflow_execution(execution_id)
+                            execution_detail_calls += 1
+                            workflow_executions.append(execution_detail or execution_item)
+                        except SkillMeatClientError as exc:
+                            warnings.append(
+                                {
+                                    "section": "workflow_execution_detail",
+                                    "message": str(exc),
+                                    "recoverable": True,
+                                }
+                            )
+                            workflow_executions.append(execution_item)
+                except SkillMeatClientError as exc:
+                    warnings.append(
+                        {
+                            "section": "workflow_execution",
+                            "message": str(exc),
+                            "recoverable": True,
+                        }
+                    )
             workflow_items[index] = attach_workflow_detail(
                 item,
                 workflow_detail=workflow_detail,
                 workflow_plan=workflow_plan,
             )
+            if workflow_executions:
+                workflow_items[index] = attach_workflow_executions(workflow_items[index], workflow_executions)
         if context_module_items:
             workflow_items = [
                 resolve_workflow_context_modules(
