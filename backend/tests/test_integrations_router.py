@@ -46,24 +46,38 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
 
     async def test_sync_and_list_definitions(self) -> None:
-        def fake_request(endpoint: str, _query: dict[str, str]):
+        def fake_request(endpoint: str, query: dict[str, str]):
             if endpoint == "/api/v1/artifacts":
                 return {"items": [{"id": "artifact:build-docs", "title": "Build Docs"}], "page_info": {"has_next_page": False, "end_cursor": None}}
             if endpoint == "/api/v1/workflows":
-                return [{"id": "wf_1", "name": "Phase Execution"}]
+                if query.get("project_id") == "sm-project":
+                    return [{"id": "wf_project", "name": "Phase Execution", "project_id": "sm-project"}]
+                return [{"id": "wf_global", "name": "Phase Execution", "project_id": None}]
             if endpoint == "/api/v1/context-modules":
                 return {"items": [{"id": "cm_1", "name": "planning"}], "next_cursor": None, "has_more": False}
+            if endpoint == "/api/v1/bundles":
+                return {"bundles": [{"bundle_id": "bundle_python", "name": "Python Essentials", "description": "Python bundle", "author": "system", "created_at": "2026-03-08T00:00:00Z", "artifact_count": 1, "total_size_bytes": 10, "source": "created"}], "total": 1}
+            if endpoint == "/api/v1/bundles/bundle_python":
+                return {"bundle_id": "bundle_python", "metadata": {"name": "Python Essentials", "version": "1.0.0"}, "artifacts": [{"type": "skill", "name": "symbols"}], "bundle_hash": "sha256:abc", "total_size_bytes": 10, "total_files": 1, "source": "created"}
             return []
 
         with patch.object(SkillMeatClient, "_request_json", side_effect=fake_request):
             payload = await integrations_router.sync_skillmeat(SkillMeatSyncRequest())
 
         definitions = await integrations_router.list_skillmeat_definitions(definition_type=None, limit=500, offset=0)
+        workflow_definitions = await integrations_router.list_skillmeat_definitions(definition_type="workflow", limit=500, offset=0)
 
-        self.assertEqual(payload.totalDefinitions, 3)
+        self.assertEqual(payload.totalDefinitions, 5)
         self.assertEqual(payload.countsByType["artifact"], 1)
-        self.assertEqual(len(definitions), 3)
+        self.assertEqual(payload.countsByType["bundle"], 1)
+        self.assertEqual(len(definitions), 5)
         self.assertEqual(definitions[0].projectId, "project-1")
+        self.assertEqual(len(workflow_definitions), 2)
+        effective = next(item for item in workflow_definitions if item.externalId == "wf_project")
+        overridden = next(item for item in workflow_definitions if item.externalId == "wf_global")
+        self.assertTrue(effective.resolutionMetadata["isEffective"])
+        self.assertFalse(overridden.resolutionMetadata["isEffective"])
+        self.assertEqual(effective.resolutionMetadata["effectiveWorkflowId"], "wf_project")
 
     async def test_validate_config_reports_connection_and_project_status(self) -> None:
         with (

@@ -659,7 +659,7 @@ class Feature(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
-SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module"]
+SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module", "bundle"]
 StackComponentType = Literal["workflow", "agent", "skill", "context_module", "command", "model_policy", "artifact"]
 StackComponentStatus = Literal["explicit", "inferred", "resolved", "unresolved"]
 DefinitionReferenceStatus = Literal["resolved", "cached", "unresolved"]
