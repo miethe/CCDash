@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: draft
+status: in-progress
 category: enhancements
 
 title: "Implementation Plan: Agentic SDLC Intelligence Foundation V2"
@@ -42,7 +42,10 @@ plan_ref: agentic-sdlc-intelligence-foundation-v2
 linked_sessions: []
 
 request_log_id: ""
-commits: []
+commits:
+  - 156cde6
+  - 13ba2a6
+  - a5ef78c
 prs: []
 owner: platform-engineering
 owners: [platform-engineering, ai-integrations, fullstack-engineering]
