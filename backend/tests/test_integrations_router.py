@@ -79,6 +79,17 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                 }
             if endpoint == "/api/v1/context-modules":
                 return {"items": [{"id": "cm_1", "name": "planning"}], "next_cursor": None, "has_more": False}
+            if endpoint == "/api/v1/context-packs/preview":
+                return {
+                    "items": [
+                        {"id": "mi_1", "type": "decision", "estimated_tokens": 45},
+                        {"id": "mi_2", "type": "gotcha", "estimated_tokens": 52},
+                    ],
+                    "total_items": 2,
+                    "total_estimated_tokens": 97,
+                    "budget_tokens": 4000,
+                    "budget_remaining": 3903,
+                }
             if endpoint == "/api/v1/bundles":
                 return {"bundles": [{"bundle_id": "bundle_python", "name": "Python Essentials", "description": "Python bundle", "author": "system", "created_at": "2026-03-08T00:00:00Z", "artifact_count": 1, "total_size_bytes": 10, "source": "created"}], "total": 1}
             if endpoint == "/api/v1/bundles/bundle_python":
@@ -105,6 +116,11 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("skill:symbols", effective.resolutionMetadata["swdlSummary"]["artifactRefs"])
         self.assertIn("ctx:planning", effective.resolutionMetadata["swdlSummary"]["contextRefs"])
         self.assertEqual(effective.resolutionMetadata["planSummary"]["batchCount"], 2)
+        self.assertEqual(effective.resolutionMetadata["contextSummary"]["resolved"], 1)
+        self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["moduleId"], "cm_1")
+        self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["previewSummary"]["totalTokens"], 97)
+        bundle = next(item for item in definitions if item.definitionType == "bundle")
+        self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
 
     async def test_validate_config_reports_connection_and_project_status(self) -> None:
         with (

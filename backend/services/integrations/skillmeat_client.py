@@ -12,6 +12,7 @@ _ARTIFACT_PAGE_LIMIT = 200
 _CONTEXT_MODULE_PAGE_LIMIT = 100
 _WORKFLOW_PAGE_LIMIT = 100
 _BUNDLE_PAGE_LIMIT = 100
+_WORKFLOW_EXECUTION_PAGE_LIMIT = 25
 _MAX_CURSOR_PAGES = 25
 _MAX_OFFSET_PAGES = 25
 
@@ -137,6 +138,29 @@ class SkillMeatClient:
         )
         return payload if isinstance(payload, dict) else {}
 
+    async def preview_context_pack(
+        self,
+        *,
+        project_id: str,
+        module_id: str | None = None,
+        budget_tokens: int = 4000,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not str(project_id or "").strip():
+            return {}
+        payload = await asyncio.to_thread(
+            self._request_json,
+            "/api/v1/context-packs/preview",
+            {"project_id": project_id},
+            method="POST",
+            body={
+                "module_id": str(module_id or "").strip() or None,
+                "budget_tokens": max(100, min(int(budget_tokens or 4000), 100000)),
+                "filters": filters,
+            },
+        )
+        return payload if isinstance(payload, dict) else {}
+
     async def list_bundles(self) -> list[dict[str, Any]]:
         payload = await asyncio.to_thread(self._request_json, "/api/v1/bundles", {"limit": _BUNDLE_PAGE_LIMIT})
         if isinstance(payload, dict):
@@ -149,6 +173,29 @@ class SkillMeatClient:
 
     async def get_bundle(self, bundle_id: str) -> dict[str, Any]:
         payload = await asyncio.to_thread(self._request_json, f"/api/v1/bundles/{parse.quote(bundle_id, safe='')}", None)
+        return payload if isinstance(payload, dict) else {}
+
+    async def list_workflow_executions(
+        self,
+        *,
+        workflow_id: str = "",
+        status: str = "",
+        limit: int = _WORKFLOW_EXECUTION_PAGE_LIMIT,
+    ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {"limit": max(1, min(int(limit or _WORKFLOW_EXECUTION_PAGE_LIMIT), 100))}
+        if workflow_id:
+            query["workflow_id"] = workflow_id
+        if status:
+            query["status"] = status
+        payload = await asyncio.to_thread(self._request_json, "/api/v1/workflow-executions", query)
+        return _extract_dict_items(payload, "items")
+
+    async def get_workflow_execution(self, execution_id: str) -> dict[str, Any]:
+        payload = await asyncio.to_thread(
+            self._request_json,
+            f"/api/v1/workflow-executions/{parse.quote(execution_id, safe='')}",
+            None,
+        )
         return payload if isinstance(payload, dict) else {}
 
     def _request_json(

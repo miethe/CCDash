@@ -55,6 +55,28 @@ class SkillMeatClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[0]["external_id"], "cm_123")
         self.assertIn("ctx:planning", items[0]["resolution_metadata"]["aliases"])
 
+    async def test_preview_context_pack_posts_project_scoped_request(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with patch.object(
+            SkillMeatClient,
+            "_request_json",
+            return_value={"items": [], "budget_tokens": 4000, "total_estimated_tokens": 0, "total_items": 0},
+        ) as request_mock:
+            payload = await client.preview_context_pack(
+                project_id="/tmp/project",
+                module_id="cm_123",
+                budget_tokens=4096,
+            )
+
+        self.assertEqual(payload["budget_tokens"], 4000)
+        request_mock.assert_called_once_with(
+            "/api/v1/context-packs/preview",
+            {"project_id": "/tmp/project"},
+            method="POST",
+            body={"module_id": "cm_123", "budget_tokens": 4096, "filters": None},
+        )
+
     async def test_request_json_sends_bearer_token_when_aaa_enabled(self) -> None:
         client = SkillMeatClient(
             base_url="http://skillmeat.local",

@@ -6,11 +6,18 @@ from typing import Any
 
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
-from backend.services.integrations.skillmeat_contracts import annotate_effective_workflows, attach_workflow_detail
+from backend.services.integrations.skillmeat_contracts import (
+    annotate_effective_workflows,
+    attach_bundle_detail,
+    attach_context_module_preview,
+    attach_workflow_detail,
+    resolve_workflow_context_modules,
+)
 
 
 _MAX_WORKFLOW_DETAIL_CALLS = 50
 _MAX_WORKFLOW_PLAN_CALLS = 20
+_MAX_CONTEXT_PREVIEW_CALLS = 5
 
 
 def _now_iso() -> str:
@@ -138,6 +145,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
 
     configured_project_id = str(getattr(config, "projectId", "") or "")
     configured_collection_id = str(getattr(config, "collectionId", "") or "")
+    context_module_items: list[dict[str, Any]] = []
+    workflow_items: list[dict[str, Any]] = []
 
     try:
         artifact_items = await client.fetch_definitions(
@@ -157,6 +166,21 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
         warnings.append(
             {
                 "section": "artifact",
+                "message": str(exc),
+                "recoverable": True,
+            }
+        )
+
+    try:
+        context_module_items = await client.fetch_definitions(
+            definition_type="context_module",
+            project_id=configured_project_id,
+        )
+        counts_by_type["context_module"] = len(context_module_items)
+    except SkillMeatClientError as exc:
+        warnings.append(
+            {
+                "section": "context_module",
                 "message": str(exc),
                 "recoverable": True,
             }
@@ -210,6 +234,72 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                 workflow_detail=workflow_detail,
                 workflow_plan=workflow_plan,
             )
+        if context_module_items:
+            workflow_items = [
+                resolve_workflow_context_modules(
+                    item,
+                    context_modules=context_module_items,
+                    preview_summaries={},
+                )
+                for item in workflow_items
+            ]
+            preview_targets: list[str] = []
+            seen_preview_targets: set[str] = set()
+            for item in workflow_items:
+                if not bool(item.get("resolution_metadata", {}).get("isEffective")):
+                    continue
+                resolved = item.get("resolution_metadata", {}).get("resolvedContextModules", [])
+                if not isinstance(resolved, list):
+                    continue
+                for ref in resolved:
+                    if not isinstance(ref, dict):
+                        continue
+                    module_id = str(ref.get("moduleId") or "").strip()
+                    if not module_id or module_id in seen_preview_targets:
+                        continue
+                    preview_targets.append(module_id)
+                    seen_preview_targets.add(module_id)
+                    if len(preview_targets) >= _MAX_CONTEXT_PREVIEW_CALLS:
+                        break
+                if len(preview_targets) >= _MAX_CONTEXT_PREVIEW_CALLS:
+                    break
+
+            preview_summaries: dict[str, dict[str, Any]] = {}
+            if configured_project_id:
+                for module_id in preview_targets:
+                    try:
+                        preview_payload = await client.preview_context_pack(
+                            project_id=configured_project_id,
+                            module_id=module_id,
+                        )
+                        preview_summaries[module_id] = preview_payload
+                    except SkillMeatClientError as exc:
+                        warnings.append(
+                            {
+                                "section": "context_preview",
+                                "message": str(exc),
+                                "recoverable": True,
+                            }
+                        )
+                if preview_summaries:
+                    for index, item in enumerate(context_module_items):
+                        module_id = str(item.get("external_id") or "").strip()
+                        if module_id in preview_summaries:
+                            context_module_items[index] = attach_context_module_preview(item, preview_summaries[module_id])
+                    preview_summaries = {
+                        str(item.get("external_id") or "").strip(): dict(item.get("resolution_metadata", {})).get("previewSummary")
+                        for item in context_module_items
+                        if isinstance(dict(item.get("resolution_metadata", {})).get("previewSummary"), dict)
+                    }
+
+            workflow_items = [
+                resolve_workflow_context_modules(
+                    item,
+                    context_modules=context_module_items,
+                    preview_summaries=preview_summaries,
+                )
+                for item in workflow_items
+            ]
         counts_by_type["workflow"] = len(workflow_items)
         await _store_definitions(
             repo,
@@ -228,12 +318,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             }
         )
 
-    try:
-        context_module_items = await client.fetch_definitions(
-            definition_type="context_module",
-            project_id=configured_project_id,
-        )
-        counts_by_type["context_module"] = len(context_module_items)
+    if context_module_items:
         await _store_definitions(
             repo,
             source_id=source.get("id"),
@@ -242,14 +327,6 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             items=context_module_items,
             fetched_at=fetched_at,
         )
-    except SkillMeatClientError as exc:
-        warnings.append(
-            {
-                "section": "context_module",
-                "message": str(exc),
-                "recoverable": True,
-            }
-        )
 
     try:
         bundle_items = await client.fetch_definitions(definition_type="bundle")
@@ -257,7 +334,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
         for item in bundle_items:
             bundle_id = str(item.get("external_id") or "").strip()
             if not bundle_id:
-                detailed_bundles.append(item)
+                detailed_bundles.append(attach_bundle_detail(item))
                 continue
             try:
                 detail = await client.get_bundle(bundle_id)
@@ -267,7 +344,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                 metadata = dict(item.get("resolution_metadata", {}))
                 metadata["artifactCount"] = len(raw_snapshot.get("artifacts", [])) if isinstance(raw_snapshot, dict) else metadata.get("artifactCount", 0)
                 enriched["resolution_metadata"] = metadata
-                detailed_bundles.append(enriched)
+                detailed_bundles.append(attach_bundle_detail(enriched))
             except SkillMeatClientError as exc:
                 warnings.append(
                     {
@@ -276,7 +353,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
                         "recoverable": True,
                     }
                 )
-                detailed_bundles.append(item)
+                detailed_bundles.append(attach_bundle_detail(item))
         counts_by_type["bundle"] = len(detailed_bundles)
         await _store_definitions(
             repo,
