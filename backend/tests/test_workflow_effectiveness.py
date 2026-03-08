@@ -29,6 +29,53 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         self.intelligence_repo = get_agentic_intelligence_repository(self.db)
         self.test_run_repo = get_test_run_repository(self.db)
         self.integrity_repo = get_test_integrity_repository(self.db)
+        source = await self.intelligence_repo.upsert_definition_source(
+            {
+                "project_id": "project-1",
+                "source_kind": "skillmeat",
+                "enabled": True,
+                "base_url": "http://skillmeat.local",
+            }
+        )
+        workflow = await self.intelligence_repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
+                "definition_type": "workflow",
+                "external_id": "wf_project",
+                "display_name": "Phase Execution",
+                "resolution_metadata": {
+                    "effectiveWorkflowId": "wf_project",
+                    "effectiveWorkflowName": "Phase Execution",
+                    "swdlSummary": {"artifactRefs": ["skill:symbols"]},
+                },
+            }
+        )
+        skill = await self.intelligence_repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
+                "definition_type": "artifact",
+                "external_id": "symbols",
+                "display_name": "symbols",
+                "resolution_metadata": {
+                    "artifactType": "skill",
+                    "artifactName": "symbols",
+                },
+            }
+        )
+        await self.intelligence_repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
+                "definition_type": "bundle",
+                "external_id": "bundle_python",
+                "display_name": "Python Essentials",
+                "resolution_metadata": {
+                    "bundleSummary": {"artifactRefs": ["skill:symbols"]},
+                },
+            }
+        )
 
         await self.session_repo.upsert(
             {
@@ -89,6 +136,17 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
             components=[
                 {
                     "project_id": "project-1",
+                    "component_type": "workflow",
+                    "component_key": "phase-execution",
+                    "status": "resolved",
+                    "confidence": 0.95,
+                    "external_definition_id": workflow["id"],
+                    "external_definition_type": "workflow",
+                    "external_definition_external_id": "wf_project",
+                    "payload": {"workflowRef": "phase-execution"},
+                },
+                {
+                    "project_id": "project-1",
                     "component_type": "agent",
                     "component_key": "backend-architect",
                     "status": "resolved",
@@ -101,6 +159,9 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                     "component_key": "symbols",
                     "status": "resolved",
                     "confidence": 0.9,
+                    "external_definition_id": skill["id"],
+                    "external_definition_type": "artifact",
+                    "external_definition_external_id": "symbols",
                     "payload": {"skill": "symbols"},
                 },
             ],
@@ -202,6 +263,29 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("queue_waste", pattern_types)
         self.assertIn("debug_loop", pattern_types)
         self.assertIn("weak_validation", pattern_types)
+
+    async def test_effectiveness_rollups_include_effective_workflow_and_bundle_scopes(self) -> None:
+        effective_payload = await get_workflow_effectiveness(
+            self.db,
+            self.project,
+            period="all",
+            scope_type="effective_workflow",
+            recompute=True,
+            limit=20,
+            offset=0,
+        )
+        bundle_payload = await get_workflow_effectiveness(
+            self.db,
+            self.project,
+            period="all",
+            scope_type="bundle",
+            recompute=True,
+            limit=20,
+            offset=0,
+        )
+
+        self.assertEqual(effective_payload["items"][0]["scopeId"], "wf_project")
+        self.assertEqual(bundle_payload["items"][0]["scopeId"], "bundle_python")
 
 
 if __name__ == "__main__":

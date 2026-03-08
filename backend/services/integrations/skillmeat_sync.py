@@ -14,6 +14,7 @@ from backend.services.integrations.skillmeat_contracts import (
     attach_workflow_executions,
     resolve_workflow_context_modules,
 )
+from backend.services.integrations.skillmeat_routes import attach_stable_definition_source
 
 
 _MAX_WORKFLOW_DETAIL_CALLS = 50
@@ -35,19 +36,26 @@ async def _store_definitions(
     definition_type: str,
     items: list[dict[str, Any]],
     fetched_at: str,
+    base_url: str,
+    source_project_id: str,
 ) -> None:
     for item in items:
+        stored_item = attach_stable_definition_source(
+            item,
+            base_url=base_url,
+            project_id=source_project_id,
+        )
         await repo.upsert_external_definition(
             {
                 "project_id": project_id,
                 "source_id": source_id,
                 "definition_type": definition_type,
-                "external_id": item.get("external_id", ""),
-                "display_name": item.get("display_name", ""),
-                "version": item.get("version", ""),
-                "source_url": item.get("source_url", ""),
-                "resolution_metadata": item.get("resolution_metadata", {}),
-                "raw_snapshot": item.get("raw_snapshot", {}),
+                "external_id": stored_item.get("external_id", ""),
+                "display_name": stored_item.get("display_name", ""),
+                "version": stored_item.get("version", ""),
+                "source_url": stored_item.get("source_url", ""),
+                "resolution_metadata": stored_item.get("resolution_metadata", {}),
+                "raw_snapshot": stored_item.get("raw_snapshot", {}),
                 "fetched_at": fetched_at,
             }
         )
@@ -164,6 +172,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="artifact",
             items=artifact_items,
             fetched_at=fetched_at,
+            base_url=base_url,
+            source_project_id=configured_project_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(
@@ -355,6 +365,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="workflow",
             items=workflow_items,
             fetched_at=fetched_at,
+            base_url=base_url,
+            source_project_id=configured_project_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(
@@ -373,6 +385,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="context_module",
             items=context_module_items,
             fetched_at=fetched_at,
+            base_url=base_url,
+            source_project_id=configured_project_id,
         )
 
     try:
@@ -409,6 +423,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="bundle",
             items=detailed_bundles,
             fetched_at=fetched_at,
+            base_url=base_url,
+            source_project_id=configured_project_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(

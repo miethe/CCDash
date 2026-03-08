@@ -116,6 +116,28 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                 "external_id": "phase-execution",
                 "display_name": "Phase Execution",
                 "source_url": "http://skillmeat.local/workflows/phase-execution",
+                "resolution_metadata": {
+                    "isEffective": True,
+                    "effectiveWorkflowId": "phase-execution",
+                    "effectiveWorkflowName": "Phase Execution",
+                    "swdlSummary": {"artifactRefs": ["skill:symbols"], "contextRefs": ["ctx:planning"]},
+                    "contextSummary": {"referenced": 1, "resolved": 1, "previewed": 1, "previewTokenFootprint": 97},
+                    "recentExecutions": [
+                        {
+                            "executionId": "exec_1",
+                            "status": "completed",
+                            "startedAt": "2026-03-07T14:00:00Z",
+                            "parameters": {"feature_name": "Current Feature"},
+                            "sourceUrl": "http://skillmeat.local/workflows/executions?workflow_id=phase-execution",
+                        }
+                    ],
+                    "executionSummary": {
+                        "count": 1,
+                        "completed": 1,
+                        "sourceUrl": "http://skillmeat.local/workflows/executions?workflow_id=phase-execution",
+                        "liveUpdateHint": "idle",
+                    },
+                },
             }
         )
         skill = await self.intelligence_repo.upsert_external_definition(
@@ -126,6 +148,19 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                 "external_id": "symbols",
                 "display_name": "symbols",
                 "source_url": "http://skillmeat.local/artifacts/symbols",
+            }
+        )
+        await self.intelligence_repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
+                "definition_type": "bundle",
+                "external_id": "bundle_python",
+                "display_name": "Python Essentials",
+                "source_url": "http://skillmeat.local/collection",
+                "resolution_metadata": {
+                    "bundleSummary": {"artifactRefs": ["skill:symbols"]},
+                },
             }
         )
         return workflow, skill
@@ -264,6 +299,11 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(similar_work_evidence.similarWork), 3)
         self.assertGreaterEqual(len(similar_work_evidence.similarWork), 1)
         self.assertTrue(similar_work_evidence.similarWork[0].reasons)
+        evidence_types = {item.sourceType for item in payload["stackEvidence"]}
+        self.assertIn("effective_workflow", evidence_types)
+        self.assertIn("context_preview", evidence_types)
+        self.assertIn("bundle_alignment", evidence_types)
+        self.assertIn("workflow_execution", evidence_types)
         self.assertEqual(payload["definitionResolutionWarnings"], [])
 
     async def test_build_stack_recommendations_warns_when_definitions_are_missing(self) -> None:

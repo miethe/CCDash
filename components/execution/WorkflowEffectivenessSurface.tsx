@@ -21,9 +21,11 @@ interface WorkflowEffectivenessSurfaceProps {
 
 const SCOPE_OPTIONS: Array<{ value: EffectivenessScopeType; label: string }> = [
   { value: 'workflow', label: 'Workflow' },
+  { value: 'effective_workflow', label: 'Effective Workflow' },
   { value: 'agent', label: 'Agent' },
   { value: 'skill', label: 'Skill' },
   { value: 'context_module', label: 'Context Module' },
+  { value: 'bundle', label: 'Bundle Family' },
   { value: 'stack', label: 'Stack' },
 ];
 

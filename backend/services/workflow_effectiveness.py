@@ -105,6 +105,125 @@ def _safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _definition_metadata(definition: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(definition, dict):
+        return {}
+    metadata = definition.get("resolution_metadata_json")
+    if isinstance(metadata, dict):
+        return metadata
+    metadata = definition.get("resolution_metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _normalize_ref_token(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _definition_for_component(
+    component: dict[str, Any],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    definition_id = _safe_int(component.get("external_definition_id"), 0)
+    if definition_id and definition_id in definition_by_id:
+        return definition_by_id[definition_id]
+    definition_type = str(component.get("external_definition_type") or "").strip()
+    external_id = str(component.get("external_definition_external_id") or "").strip()
+    if definition_type and external_id:
+        return definition_by_key.get((definition_type, external_id))
+    return None
+
+
+def _artifact_refs_from_definition(definition: dict[str, Any] | None) -> set[str]:
+    if not isinstance(definition, dict):
+        return set()
+    metadata = _definition_metadata(definition)
+    refs: set[str] = set()
+    artifact_type = str(metadata.get("artifactType") or "").strip()
+    artifact_name = str(metadata.get("artifactName") or "").strip()
+    if artifact_type and artifact_name:
+        refs.add(_normalize_ref_token(f"{artifact_type}:{artifact_name}"))
+    external_id = str(definition.get("external_id") or "").strip()
+    if ":" in external_id:
+        refs.add(_normalize_ref_token(external_id))
+    for alias in _safe_list(metadata.get("aliases")):
+        token = str(alias).strip()
+        if ":" in token and not token.startswith("ctx:"):
+            refs.add(_normalize_ref_token(token))
+    return {ref for ref in refs if ref}
+
+
+def _stack_artifact_refs(
+    observation: dict[str, Any],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> tuple[set[str], dict[str, Any] | None]:
+    workflow_definition: dict[str, Any] | None = None
+    refs: set[str] = set()
+    for component in _safe_list(observation.get("components")):
+        component_type = str(component.get("component_type") or "").strip()
+        definition = _definition_for_component(component, definition_by_id, definition_by_key)
+        if component_type == "workflow" and definition and workflow_definition is None:
+            workflow_definition = definition
+        if component_type in {"artifact", "skill"}:
+            refs.update(_artifact_refs_from_definition(definition))
+            component_key = str(component.get("component_key") or "").strip()
+            if definition is None and component_type == "skill" and component_key:
+                refs.add(_normalize_ref_token(f"skill:{component_key}"))
+    workflow_metadata = _definition_metadata(workflow_definition)
+    swdl_summary = workflow_metadata.get("swdlSummary")
+    if isinstance(swdl_summary, dict):
+        refs.update(_normalize_ref_token(str(value)) for value in _safe_list(swdl_summary.get("artifactRefs")) if str(value).strip())
+    return ({ref for ref in refs if ref}, workflow_definition)
+
+
+def _best_bundle_scope(
+    observation: dict[str, Any],
+    definitions: list[dict[str, Any]],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    stack_refs, workflow_definition = _stack_artifact_refs(observation, definition_by_id, definition_by_key)
+    best_bundle_id = ""
+    best_bundle_label = ""
+    best_score = 0.0
+    if not stack_refs:
+        return {"bundleId": "", "bundleLabel": "", "effectiveWorkflowId": "", "effectiveWorkflowLabel": ""}
+
+    for definition in definitions:
+        if str(definition.get("definition_type") or "") != "bundle":
+            continue
+        metadata = _definition_metadata(definition)
+        bundle_summary = metadata.get("bundleSummary")
+        bundle_refs = _safe_list(bundle_summary.get("artifactRefs")) if isinstance(bundle_summary, dict) else []
+        normalized_bundle_refs = {_normalize_ref_token(str(value)) for value in bundle_refs if str(value).strip()}
+        if not normalized_bundle_refs:
+            continue
+        matched = stack_refs & normalized_bundle_refs
+        if not matched:
+            continue
+        score = 0.65 * (len(matched) / max(1, len(normalized_bundle_refs))) + 0.35 * (len(matched) / max(1, len(stack_refs)))
+        if score > best_score:
+            best_score = score
+            best_bundle_id = str(definition.get("external_id") or "")
+            best_bundle_label = str(definition.get("display_name") or best_bundle_id)
+
+    workflow_metadata = _definition_metadata(workflow_definition)
+    effective_workflow = _safe_dict(workflow_metadata.get("effectiveWorkflow"))
+    effective_workflow_id = str(workflow_metadata.get("effectiveWorkflowId") or effective_workflow.get("id") or "")
+    effective_workflow_label = str(workflow_metadata.get("effectiveWorkflowName") or effective_workflow.get("name") or effective_workflow_id)
+    if not effective_workflow_id and workflow_definition is not None:
+        effective_workflow_id = str(workflow_definition.get("external_id") or "")
+        effective_workflow_label = str(workflow_definition.get("display_name") or effective_workflow_id)
+
+    return {
+        "bundleId": best_bundle_id if best_score >= 0.34 else "",
+        "bundleLabel": best_bundle_label if best_score >= 0.34 else "",
+        "effectiveWorkflowId": effective_workflow_id,
+        "effectiveWorkflowLabel": effective_workflow_label,
+    }
+
+
 def _median_or_zero(values: list[float]) -> float:
     usable = [value for value in values if value > 0]
     return float(median(usable)) if usable else 0.0
@@ -243,7 +362,11 @@ def _stack_scope_id(observation: dict[str, Any]) -> str:
     )
 
 
-def _scope_keys(observation: dict[str, Any]) -> list[tuple[str, str]]:
+def _scope_keys(
+    observation: dict[str, Any],
+    *,
+    extra_scopes: list[tuple[str, str]] | None = None,
+) -> list[tuple[str, str]]:
     keys: list[tuple[str, str]] = []
     workflow_ref = str(observation.get("workflow_ref") or "").strip()
     if workflow_ref:
@@ -265,6 +388,9 @@ def _scope_keys(observation: dict[str, Any]) -> list[tuple[str, str]]:
             keys.append(("context_module", component_key))
 
     keys.append(("stack", _stack_scope_id(observation)))
+    for scope_type, scope_id in extra_scopes or []:
+        if scope_type and scope_id:
+            keys.append((scope_type, scope_id))
     deduped: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for item in keys:
@@ -339,6 +465,17 @@ async def _collect_effectiveness_dataset(
     session_repo = get_session_repository(db)
     test_run_repo = get_test_run_repository(db)
     integrity_repo = get_test_integrity_repository(db)
+    definitions = await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0)
+    definition_by_id: dict[int, dict[str, Any]] = {}
+    definition_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for definition in definitions:
+        definition_id = _safe_int(definition.get("id"), 0)
+        if definition_id:
+            definition_by_id[definition_id] = definition
+        definition_type = str(definition.get("definition_type") or "").strip()
+        external_id = str(definition.get("external_id") or "").strip()
+        if definition_type and external_id:
+            definition_by_key[(definition_type, external_id)] = definition
 
     session_filters: dict[str, Any] = {"include_subagents": True}
     if start:
@@ -452,6 +589,12 @@ async def _collect_effectiveness_dataset(
         integrity_rows = integrity_by_session.get(session_id, [])
         severity_points = _severity_points(integrity_rows)
         resolution_score = _resolution_score(observation)
+        scope_alignment = _best_bundle_scope(
+            observation,
+            definitions,
+            definition_by_id,
+            definition_by_key,
+        )
         queue_ops = _queue_operation_count(forensics)
         subagent_starts = _subagent_start_count(forensics)
         total_tokens = _safe_float(row.get("tokens_in"), 0.0) + _safe_float(row.get("tokens_out"), 0.0)
@@ -506,6 +649,12 @@ async def _collect_effectiveness_dataset(
                 "qualityScore": round(quality_score, 4),
                 "riskScore": round(risk_score, 4),
                 "observation": observation,
+                "effectiveWorkflowScopeId": str(scope_alignment.get("effectiveWorkflowId") or ""),
+                "bundleScopeId": str(scope_alignment.get("bundleId") or ""),
+                "scopeLabels": {
+                    "effective_workflow": str(scope_alignment.get("effectiveWorkflowLabel") or ""),
+                    "bundle": str(scope_alignment.get("bundleLabel") or ""),
+                },
             }
         )
     return dataset
@@ -523,7 +672,12 @@ def _aggregate_rollups(
     for item in dataset:
         observation = _safe_dict(item.get("observation"))
         period_key = _period_bucket(_parse_iso(str(item.get("startedAt") or "")), period)
-        for candidate_scope_type, candidate_scope_id in _scope_keys(observation):
+        extra_scopes = [
+            ("effective_workflow", str(item.get("effectiveWorkflowScopeId") or "")),
+            ("bundle", str(item.get("bundleScopeId") or "")),
+        ]
+        scope_labels = _safe_dict(item.get("scopeLabels"))
+        for candidate_scope_type, candidate_scope_id in _scope_keys(observation, extra_scopes=extra_scopes):
             if scope_type and candidate_scope_type != scope_type:
                 continue
             if scope_id and candidate_scope_id != scope_id:
@@ -535,7 +689,7 @@ def _aggregate_rollups(
                     "projectId": str(observation.get("project_id") or ""),
                     "scopeType": candidate_scope_type,
                     "scopeId": candidate_scope_id,
-                    "scopeLabel": _scope_label(candidate_scope_type, candidate_scope_id),
+                    "scopeLabel": str(scope_labels.get(candidate_scope_type) or _scope_label(candidate_scope_type, candidate_scope_id)),
                     "period": period_key,
                     "sampleSize": 0,
                     "successTotal": 0.0,
@@ -705,7 +859,13 @@ async def detect_failure_patterns(
     grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
     for item in dataset:
         observation = _safe_dict(item.get("observation"))
-        scopes = _scope_keys(observation)
+        scopes = _scope_keys(
+            observation,
+            extra_scopes=[
+                ("effective_workflow", str(item.get("effectiveWorkflowScopeId") or "")),
+                ("bundle", str(item.get("bundleScopeId") or "")),
+            ],
+        )
         scoped_candidates = [
             (candidate_scope_type, candidate_scope_id)
             for candidate_scope_type, candidate_scope_id in scopes

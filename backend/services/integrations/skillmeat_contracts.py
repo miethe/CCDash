@@ -50,6 +50,7 @@ class WorkflowExecutionSummary:
     executionId: str = ""
     workflowId: str = ""
     status: str = ""
+    parameters: dict[str, Any] = field(default_factory=dict)
     startedAt: str = ""
     completedAt: str = ""
     errorMessage: str = ""
@@ -389,6 +390,7 @@ def summarize_workflow_execution(payload: dict[str, Any]) -> WorkflowExecutionSu
         executionId=str(payload.get("id") or ""),
         workflowId=str(payload.get("workflow_id") or ""),
         status=str(payload.get("status") or ""),
+        parameters=payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {},
         startedAt=str(payload.get("started_at") or ""),
         completedAt=str(payload.get("completed_at") or ""),
         errorMessage=str(payload.get("error_message") or ""),

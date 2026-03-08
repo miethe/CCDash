@@ -836,7 +836,7 @@ export interface AnalyticsArtifactsResponse {
   detailLimit: number;
 }
 
-export type EffectivenessScopeType = 'workflow' | 'agent' | 'skill' | 'context_module' | 'stack';
+export type EffectivenessScopeType = 'workflow' | 'effective_workflow' | 'agent' | 'skill' | 'context_module' | 'bundle' | 'stack';
 
 export interface EffectivenessMetricDefinition {
   id: 'successScore' | 'efficiencyScore' | 'qualityScore' | 'riskScore';

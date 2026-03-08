@@ -1,6 +1,7 @@
 """Recommended stack ranking for the feature execution workbench."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.db.factory import get_agentic_intelligence_repository, get_session_repository
@@ -313,6 +314,332 @@ def _current_context(
     }
 
 
+def _parse_iso(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _definition_metadata_row(definition: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(definition, dict):
+        return {}
+    metadata = definition.get("resolution_metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    metadata = definition.get("resolution_metadata_json")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _normalize_ref_token(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _tokenize_text(value: str) -> set[str]:
+    token = "".join(ch.lower() if ch.isalnum() else " " for ch in str(value or ""))
+    return {part for part in token.split() if len(part) >= 3}
+
+
+def _feature_tokens(feature: Feature) -> set[str]:
+    return _tokenize_text(feature.id) | _tokenize_text(feature.name)
+
+
+def _workflow_definition_for_observation(
+    observation: dict[str, Any] | None,
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(observation, dict):
+        return None
+    for component in _safe_list(observation.get("components")):
+        component_type = str(component.get("component_type") or component.get("componentType") or "")
+        if component_type != "workflow":
+            continue
+        definition_row, _ = _definition_for_component(component, definition_by_id, definition_by_key)
+        if definition_row:
+            return definition_row
+    return None
+
+
+def _artifact_refs_from_definition(definition: dict[str, Any] | None) -> set[str]:
+    if not isinstance(definition, dict):
+        return set()
+    metadata = _definition_metadata_row(definition)
+    refs: set[str] = set()
+    artifact_type = str(metadata.get("artifactType") or "").strip()
+    artifact_name = str(metadata.get("artifactName") or "").strip()
+    if artifact_type and artifact_name:
+        refs.add(_normalize_ref_token(f"{artifact_type}:{artifact_name}"))
+    external_id = str(definition.get("external_id") or "").strip()
+    if ":" in external_id:
+        refs.add(_normalize_ref_token(external_id))
+    for alias in _safe_list(metadata.get("aliases")):
+        token = str(alias).strip()
+        if ":" in token and not token.startswith("ctx:"):
+            refs.add(_normalize_ref_token(token))
+    return {ref for ref in refs if ref}
+
+
+def _stack_artifact_refs(
+    observation: dict[str, Any] | None,
+    workflow_definition: dict[str, Any] | None,
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(observation, dict):
+        for component in _safe_list(observation.get("components")):
+            component_type = str(component.get("component_type") or component.get("componentType") or "")
+            if component_type not in {"artifact", "skill"}:
+                continue
+            definition_row, _ = _definition_for_component(component, definition_by_id, definition_by_key)
+            refs.update(_artifact_refs_from_definition(definition_row))
+            if definition_row is None:
+                component_key = str(component.get("component_key") or component.get("componentKey") or "").strip()
+                if component_type == "skill" and component_key:
+                    refs.add(_normalize_ref_token(f"skill:{component_key}"))
+                elif component_key and ":" in component_key:
+                    refs.add(_normalize_ref_token(component_key))
+
+    workflow_metadata = _definition_metadata_row(workflow_definition)
+    swdl_summary = workflow_metadata.get("swdlSummary")
+    if isinstance(swdl_summary, dict):
+        refs.update(_normalize_ref_token(str(value)) for value in _safe_list(swdl_summary.get("artifactRefs")) if str(value).strip())
+    return {ref for ref in refs if ref}
+
+
+def _best_bundle_alignment(
+    *,
+    observation: dict[str, Any] | None,
+    workflow_definition: dict[str, Any] | None,
+    definitions: list[dict[str, Any]],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    stack_refs = _stack_artifact_refs(observation, workflow_definition, definition_by_id, definition_by_key)
+    if not stack_refs:
+        return None
+
+    best: dict[str, Any] | None = None
+    for definition in definitions:
+        if str(definition.get("definition_type") or "") != "bundle":
+            continue
+        metadata = _definition_metadata_row(definition)
+        bundle_summary = metadata.get("bundleSummary")
+        bundle_refs = _safe_list(bundle_summary.get("artifactRefs")) if isinstance(bundle_summary, dict) else []
+        normalized_bundle_refs = {_normalize_ref_token(str(value)) for value in bundle_refs if str(value).strip()}
+        if not normalized_bundle_refs:
+            continue
+        matched = sorted(stack_refs & normalized_bundle_refs)
+        if not matched:
+            continue
+        score = round(
+            0.65 * (len(matched) / max(1, len(normalized_bundle_refs)))
+            + 0.35 * (len(matched) / max(1, len(stack_refs))),
+            4,
+        )
+        candidate = {
+            "bundleId": str(definition.get("external_id") or ""),
+            "bundleName": str(definition.get("display_name") or ""),
+            "matchScore": score,
+            "matchedRefs": matched,
+            "sourceUrl": str(definition.get("source_url") or ""),
+        }
+        if best is None or score > _safe_float(best.get("matchScore"), 0.0):
+            best = candidate
+    return best if best and _safe_float(best.get("matchScore"), 0.0) >= 0.34 else None
+
+
+def _context_alignment_signal(workflow_definition: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = _definition_metadata_row(workflow_definition)
+    context_summary = metadata.get("contextSummary")
+    if not isinstance(context_summary, dict):
+        return {"bonus": 0.0, "evidence": None}
+
+    referenced = _safe_int(context_summary.get("referenced"), 0)
+    resolved = _safe_int(context_summary.get("resolved"), 0)
+    previewed = _safe_int(context_summary.get("previewed"), 0)
+    token_footprint = _safe_int(context_summary.get("previewTokenFootprint"), 0)
+    if referenced <= 0:
+        return {"bonus": 0.0, "evidence": None}
+
+    bonus = 0.04 * (resolved / max(1, referenced)) + 0.03 * (previewed / max(1, referenced))
+    summary = f"Resolved {resolved} of {referenced} workflow context references"
+    if previewed > 0:
+        summary += f"; previewed {previewed} module pack(s) for ~{token_footprint} tokens."
+    else:
+        summary += "."
+    return {
+        "bonus": round(bonus, 4),
+        "evidence": {
+            "label": "Context availability",
+            "summary": summary,
+            "sourceType": "context_preview",
+            "confidence": round((resolved + previewed) / max(1, referenced * 2), 4),
+            "metrics": {
+                "referenced": referenced,
+                "resolved": resolved,
+                "previewed": previewed,
+                "previewTokenFootprint": token_footprint,
+            },
+        },
+    }
+
+
+def _execution_alignment_signal(feature: Feature, workflow_definition: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = _definition_metadata_row(workflow_definition)
+    executions = metadata.get("recentExecutions")
+    execution_summary = metadata.get("executionSummary")
+    if not isinstance(executions, list) or not executions:
+        return {"bonus": 0.0, "evidence": None}
+
+    feature_tokens = _feature_tokens(feature)
+    completed = 0
+    active = 0
+    feature_correlated = 0
+    recent = 0
+    latest_started_at = ""
+    valid_execution_count = 0
+    for execution in executions:
+        if not isinstance(execution, dict):
+            continue
+        valid_execution_count += 1
+        status = str(execution.get("status") or "").lower()
+        if status == "completed":
+            completed += 1
+        if status in {"running", "pending", "paused"}:
+            active += 1
+        parameter_tokens: set[str] = set()
+        parameters = execution.get("parameters")
+        if isinstance(parameters, dict):
+            for value in parameters.values():
+                if isinstance(value, str):
+                    parameter_tokens |= _tokenize_text(value)
+        if feature_tokens and parameter_tokens and feature_tokens & parameter_tokens:
+            feature_correlated += 1
+        started_at = str(execution.get("startedAt") or "").strip()
+        latest_started_at = latest_started_at or started_at
+        started_dt = _parse_iso(started_at)
+        if started_dt is not None:
+            age = datetime.now(timezone.utc) - started_dt.astimezone(timezone.utc)
+            if age.days <= 14:
+                recent += 1
+
+    count = max(1, valid_execution_count)
+    bonus = (
+        0.06 * (completed / count)
+        + 0.04 * (feature_correlated / count)
+        + 0.02 * (recent / count)
+        + (0.02 if active > 0 else 0.0)
+    )
+    latest_label = latest_started_at or (str(execution_summary.get("latestStartedAt") or "") if isinstance(execution_summary, dict) else "")
+    summary = f"{count} recent SkillMeat execution(s); {completed} completed"
+    if active > 0:
+        summary += f", {active} active"
+    if feature_correlated > 0:
+        summary += f", {feature_correlated} matched current feature metadata"
+    if latest_label:
+        summary += f". Latest start: {latest_label}."
+    else:
+        summary += "."
+    return {
+        "bonus": round(bonus, 4),
+        "evidence": {
+            "label": "Workflow execution history",
+            "summary": summary,
+            "sourceType": "workflow_execution",
+            "confidence": round((completed + feature_correlated + recent) / max(1, count * 3), 4),
+            "metrics": {
+                "count": count,
+                "completed": completed,
+                "active": active,
+                "featureCorrelated": feature_correlated,
+                "recent": recent,
+                "sourceUrl": str(execution_summary.get("sourceUrl") or "") if isinstance(execution_summary, dict) else "",
+                "liveUpdateHint": str(execution_summary.get("liveUpdateHint") or "") if isinstance(execution_summary, dict) else "",
+            },
+        },
+    }
+
+
+def _candidate_enrichment(
+    *,
+    feature: Feature,
+    observation: dict[str, Any] | None,
+    definitions: list[dict[str, Any]],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    workflow_definition = _workflow_definition_for_observation(observation, definition_by_id, definition_by_key)
+    workflow_metadata = _definition_metadata_row(workflow_definition)
+
+    bonus = 0.0
+    evidence: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    is_effective = bool(workflow_metadata.get("isEffective")) or bool(_safe_dict(workflow_metadata.get("effectiveWorkflow")).get("isEffective"))
+    if is_effective:
+        bonus += 0.08
+        notes.append("uses effective SkillMeat workflow precedence")
+        evidence.append(
+            {
+                "label": "Effective workflow precedence",
+                "summary": "Project-scoped effective workflow metadata outranks same-name global definitions for this stack.",
+                "sourceType": "effective_workflow",
+                "confidence": 0.92,
+                "metrics": {
+                    "effectiveWorkflowId": str(workflow_metadata.get("effectiveWorkflowId") or _safe_dict(workflow_metadata.get("effectiveWorkflow")).get("id") or ""),
+                },
+            }
+        )
+
+    context_signal = _context_alignment_signal(workflow_definition)
+    bonus += _safe_float(context_signal.get("bonus"), 0.0)
+    if context_signal.get("evidence"):
+        evidence.append(context_signal["evidence"])
+        notes.append("has resolved workflow context coverage")
+
+    bundle_alignment = _best_bundle_alignment(
+        observation=observation,
+        workflow_definition=workflow_definition,
+        definitions=definitions,
+        definition_by_id=definition_by_id,
+        definition_by_key=definition_by_key,
+    )
+    if bundle_alignment:
+        match_score = _safe_float(bundle_alignment.get("matchScore"), 0.0)
+        bonus += 0.08 * match_score
+        notes.append(f"aligns to curated bundle {bundle_alignment.get('bundleName') or bundle_alignment.get('bundleId')}")
+        evidence.append(
+            {
+                "label": "Curated bundle alignment",
+                "summary": (
+                    f"Matches curated bundle `{bundle_alignment.get('bundleName') or bundle_alignment.get('bundleId')}` "
+                    f"with {round(match_score * 100)}% fit across {len(_safe_list(bundle_alignment.get('matchedRefs')))} artifact refs."
+                ),
+                "sourceType": "bundle_alignment",
+                "confidence": round(match_score, 4),
+                "metrics": bundle_alignment,
+            }
+        )
+
+    execution_signal = _execution_alignment_signal(feature, workflow_definition)
+    bonus += _safe_float(execution_signal.get("bonus"), 0.0)
+    if execution_signal.get("evidence"):
+        evidence.append(execution_signal["evidence"])
+        notes.append("has relevant execution history")
+
+    return {
+        "workflowDefinition": workflow_definition,
+        "bonus": round(bonus, 4),
+        "evidence": evidence,
+        "notes": notes,
+    }
+
+
 def _stack_rank(item: dict[str, Any], context: dict[str, Any]) -> float:
     scope = _parse_stack_scope_id(str(item.get("scopeId") or ""))
     workflow_ref = str(scope.get("workflowRef") or "")
@@ -560,21 +887,9 @@ async def build_stack_recommendations(
         if session_id:
             observation_by_session_id[session_id] = observation
 
-    ranked = sorted(
-        (
-            (_stack_rank(item, context), item)
-            for item in stack_items
-        ),
-        key=lambda pair: (
-            -pair[0],
-            -_safe_int(pair[1].get("sampleSize"), 0),
-            -_safe_float(pair[1].get("successScore"), 0.0),
-            str(pair[1].get("scopeId") or ""),
-        ),
-    )
-
-    selected_records: list[RecommendedStack] = []
-    for rank_score, item in ranked[: 1 + _MAX_ALTERNATIVES]:
+    ranked_candidates: list[dict[str, Any]] = []
+    for item in stack_items:
+        rank_score = _stack_rank(item, context)
         scope_id = str(item.get("scopeId") or "")
         evidence_summary = _safe_dict(item.get("evidenceSummary"))
         representative_session_ids = [str(value) for value in _safe_list(evidence_summary.get("representativeSessionIds")) if str(value).strip()]
@@ -588,19 +903,48 @@ async def build_stack_recommendations(
             if scoped_observations:
                 representative_observation = scoped_observations[0]
 
-        selected_records.append(
-            _build_stack_record(
-                stack_item=item,
-                observation=representative_observation,
-                recommendation=recommendation,
-                definition_by_id=definition_by_id,
-                definition_by_key=definition_by_key,
-                rank_score=rank_score,
-            )
+        stack_record = _build_stack_record(
+            stack_item=item,
+            observation=representative_observation,
+            recommendation=recommendation,
+            definition_by_id=definition_by_id,
+            definition_by_key=definition_by_key,
+            rank_score=rank_score,
+        )
+        enrichment = _candidate_enrichment(
+            feature=feature,
+            observation=representative_observation,
+            definitions=definitions,
+            definition_by_id=definition_by_id,
+            definition_by_key=definition_by_key,
+        )
+        if enrichment["notes"]:
+            note_preview = ", ".join(str(note) for note in enrichment["notes"][:3])
+            stack_record.commandAlignment = f"{stack_record.commandAlignment} Ranked higher because it {note_preview}."
+            stack_record.explanation = f"{stack_record.explanation} It {note_preview}."
+        ranked_candidates.append(
+            {
+                "rankScore": rank_score,
+                "adjustedRank": rank_score + _safe_float(enrichment.get("bonus"), 0.0),
+                "stackItem": item,
+                "record": stack_record,
+                "observation": representative_observation,
+                "enrichment": enrichment,
+            }
         )
 
-    primary = selected_records[0] if selected_records else None
-    alternatives = selected_records[1 : 1 + _MAX_ALTERNATIVES]
+    ranked_candidates.sort(
+        key=lambda item: (
+            -_safe_float(item.get("adjustedRank"), 0.0),
+            -_safe_int(_safe_dict(item.get("stackItem")).get("sampleSize"), 0),
+            -_safe_float(_safe_dict(item.get("stackItem")).get("successScore"), 0.0),
+            str(_safe_dict(item.get("stackItem")).get("scopeId") or ""),
+        )
+    )
+
+    primary_candidate = ranked_candidates[0] if ranked_candidates else None
+    primary = primary_candidate["record"] if primary_candidate else None
+    alternatives = [item["record"] for item in ranked_candidates[1 : 1 + _MAX_ALTERNATIVES]]
 
     session_cache: dict[str, dict[str, Any] | None] = {}
 
@@ -738,6 +1082,20 @@ async def build_stack_recommendations(
                 },
             )
         )
+        enrichment_evidence = _safe_list(_safe_dict(primary_candidate).get("enrichment", {}).get("evidence")) if primary_candidate else []
+        for index, evidence_item in enumerate(enrichment_evidence, start=5):
+            metrics = _safe_dict(evidence_item.get("metrics"))
+            stack_evidence.append(
+                StackRecommendationEvidence(
+                    id=f"STK-EV-{index}",
+                    label=str(evidence_item.get("label") or "SkillMeat evidence"),
+                    summary=str(evidence_item.get("summary") or ""),
+                    sourceType=str(evidence_item.get("sourceType") or "skillmeat"),
+                    sourceId=primary.id,
+                    confidence=round(_safe_float(evidence_item.get("confidence"), 0.0), 4),
+                    metrics=metrics,
+                )
+            )
 
     return {
         "recommendedStack": primary,

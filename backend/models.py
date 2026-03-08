@@ -909,7 +909,7 @@ class SkillMeatObservationBackfillResponse(BaseModel):
     warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
 
 
-EffectivenessScopeType = Literal["workflow", "agent", "skill", "context_module", "stack"]
+EffectivenessScopeType = Literal["workflow", "effective_workflow", "agent", "skill", "context_module", "bundle", "stack"]
 
 
 class EffectivenessMetricDefinition(BaseModel):

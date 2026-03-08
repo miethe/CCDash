@@ -145,8 +145,18 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["previewSummary"]["totalTokens"], 97)
         self.assertEqual(effective.resolutionMetadata["executionSummary"]["count"], 1)
         self.assertEqual(effective.resolutionMetadata["recentExecutions"][0]["gateStepCount"], 1)
+        self.assertEqual(effective.sourceUrl, "http://skillmeat.local/workflows/wf_project")
+        self.assertEqual(
+            effective.resolutionMetadata["resolvedContextModules"][0]["sourceUrl"],
+            "http://skillmeat.local/projects/sm-project/memory",
+        )
+        self.assertEqual(
+            effective.resolutionMetadata["executionSummary"]["sourceUrl"],
+            "http://skillmeat.local/workflows/executions?workflow_id=wf_project",
+        )
         bundle = next(item for item in definitions if item.definitionType == "bundle")
         self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
+        self.assertEqual(bundle.sourceUrl, "http://skillmeat.local/collection")
 
     async def test_validate_config_reports_connection_and_project_status(self) -> None:
         with (
