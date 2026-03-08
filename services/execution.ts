@@ -2,11 +2,52 @@ import {
   ExecutionPolicyResult,
   ExecutionRun,
   ExecutionRunEventPage,
+  FeatureExecutionWarning,
   FeatureExecutionContext,
+  RecommendedStack,
+  RecommendedStackComponent,
+  SimilarWorkExample,
+  StackRecommendationEvidence,
 } from '../types';
 
 const API_BASE = '/api/features';
 const EXECUTION_API_BASE = '/api/execution';
+
+const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+const normalizeSimilarWork = (item: SimilarWorkExample): SimilarWorkExample => ({
+  ...item,
+  reasons: asArray<string>(item?.reasons),
+  matchedComponents: asArray<string>(item?.matchedComponents),
+});
+
+const normalizeStackEvidence = (evidence: StackRecommendationEvidence): StackRecommendationEvidence => ({
+  ...evidence,
+  similarWork: asArray<SimilarWorkExample>(evidence?.similarWork).map(normalizeSimilarWork),
+});
+
+const normalizeRecommendedStack = (stack?: RecommendedStack | null): RecommendedStack | null | undefined => {
+  if (!stack) return stack;
+  return {
+    ...stack,
+    components: asArray<RecommendedStackComponent>(stack.components),
+  };
+};
+
+const normalizeFeatureExecutionContext = (context: FeatureExecutionContext): FeatureExecutionContext => ({
+  ...context,
+  warnings: asArray<FeatureExecutionWarning>(context?.warnings),
+  recommendedStack: normalizeRecommendedStack(context?.recommendedStack),
+  stackAlternatives: asArray<RecommendedStack>(context?.stackAlternatives).map((stack) => {
+    const normalized = normalizeRecommendedStack(stack);
+    return normalized ?? {
+      ...stack,
+      components: [],
+    };
+  }),
+  stackEvidence: asArray<StackRecommendationEvidence>(context?.stackEvidence).map(normalizeStackEvidence),
+  definitionResolutionWarnings: asArray<FeatureExecutionWarning>(context?.definitionResolutionWarnings),
+});
 
 export interface ExecutionEventPayload {
   eventType: 'execution_workbench_opened' | 'execution_begin_work_clicked' | 'execution_recommendation_generated' | 'execution_command_copied' | 'execution_source_link_clicked';
@@ -47,7 +88,8 @@ export async function getFeatureExecutionContext(featureId: string): Promise<Fea
   if (!res.ok) {
     throw new Error(`Failed to fetch execution context (${res.status})`);
   }
-  return res.json();
+  const payload = await res.json() as FeatureExecutionContext;
+  return normalizeFeatureExecutionContext(payload);
 }
 
 export async function trackExecutionEvent(payload: ExecutionEventPayload): Promise<void> {

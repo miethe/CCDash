@@ -306,9 +306,9 @@ const SimilarWorkModal: React.FC<{
 
 export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
   recommendedStack,
-  stackAlternatives,
-  stackEvidence,
-  definitionResolutionWarnings,
+  stackAlternatives = [],
+  stackEvidence = [],
+  definitionResolutionWarnings = [],
   onOpenSession,
   onOpenFeature,
 }) => {
