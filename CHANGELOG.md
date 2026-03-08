@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-03-08
+
+### Added
+
+- Agentic SDLC intelligence rollout tooling:
+  - `backend/scripts/agentic_intelligence_rollout.py` to sync SkillMeat definitions, backfill stack observations, and recompute workflow rollups.
+- Agentic intelligence feature-flag layer:
+  - global env gates for SkillMeat integration, stack recommendations, and workflow effectiveness analytics.
+  - project-scoped SkillMeat feature flags for the recommended-stack UI and workflow intelligence surfaces.
+- Regression coverage for:
+  - router disable paths for integrations, execution-context stack recommendations, and workflow analytics.
+  - frontend SkillMeat feature-flag helpers.
+
+### Changed
+
+- SkillMeat project settings now expose intelligence-surface toggles in the Settings UI.
+- `/execution` and `/analytics` now render explicit disabled-state messaging when project settings turn off stack recommendations or workflow intelligence.
+- SkillMeat definition source sync now persists project feature-flag metadata alongside project mappings.
+
+### Docs
+
+- Added:
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
+- Updated:
+  - `README.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/execution-workbench-developer-reference.md`
+  - `docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v1.md`
+
 ## 2026-03-06
 
 ### Added

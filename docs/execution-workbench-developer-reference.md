@@ -1,6 +1,6 @@
 # Execution Workbench Developer Reference
 
-Last updated: 2026-03-03
+Last updated: 2026-03-08
 
 This reference documents the local-terminal execution integration for the Execution Workbench.
 
@@ -15,10 +15,14 @@ Execution UI components:
 - `/Users/miethe/dev/homelab/development/CCDash/components/execution/ExecutionRunHistory.tsx`
 - `/Users/miethe/dev/homelab/development/CCDash/components/execution/ExecutionRunPanel.tsx`
 - `/Users/miethe/dev/homelab/development/CCDash/components/execution/ExecutionApprovalDialog.tsx`
+- `/Users/miethe/dev/homelab/development/CCDash/components/execution/RecommendedStackCard.tsx`
+- `/Users/miethe/dev/homelab/development/CCDash/components/execution/WorkflowEffectivenessSurface.tsx`
 
 Client service + shared types:
 
 - `/Users/miethe/dev/homelab/development/CCDash/services/execution.ts`
+- `/Users/miethe/dev/homelab/development/CCDash/services/analytics.ts`
+- `/Users/miethe/dev/homelab/development/CCDash/services/agenticIntelligence.ts`
 - `/Users/miethe/dev/homelab/development/CCDash/types.ts`
 
 Route wiring:
@@ -54,6 +58,9 @@ Repositories:
 - `POST /api/execution/runs/{run_id}/approve`
 - `POST /api/execution/runs/{run_id}/cancel`
 - `POST /api/execution/runs/{run_id}/retry`
+- `GET /api/features/{feature_id}/execution-context`
+- `GET /api/analytics/workflow-effectiveness`
+- `GET /api/analytics/failure-patterns`
 
 ## Run lifecycle
 
@@ -89,6 +96,8 @@ Key columns:
 - Selected run event feed is loaded once, then incrementally polled.
 - Polling runs only while selected run is `queued` or `running`.
 - Approval dialog and review modal both mutate run state through API, then refresh list.
+- Stack recommendations are only rendered when project SkillMeat feature flags keep them enabled.
+- Workflow intelligence can be disabled independently; the workbench and analytics dashboard render explicit fallback notices instead of firing disabled requests.
 
 ## Validation
 
@@ -103,3 +112,12 @@ Frontend build:
 ```bash
 npm run build
 ```
+
+Additional intelligence checks:
+
+```bash
+python3 -m pytest backend/tests/test_agentic_intelligence_flags.py backend/tests/test_integrations_router.py backend/tests/test_features_execution_context_router.py backend/tests/test_analytics_router.py -q
+npm test -- --run services/__tests__/agenticIntelligence.test.ts
+```
+
+See `/Users/miethe/dev/homelab/development/CCDash/docs/agentic-sdlc-intelligence-developer-reference.md` for rollout and flag details.
