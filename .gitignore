@@ -31,6 +31,7 @@ __pycache__/
 venv/
 ENV/
 env/
+.pytest_cache/
 
 examples/*
 # Database

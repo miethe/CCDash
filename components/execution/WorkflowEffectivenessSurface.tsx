@@ -1,7 +1,7 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCcw, Search, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
 
-import { analyticsService } from '../../services/analytics';
+import { AnalyticsApiError, analyticsService } from '../../services/analytics';
 import {
   EffectivenessScopeType,
   FailurePatternRecord,
@@ -36,6 +36,20 @@ const PERIOD_OPTIONS: Array<{ value: PeriodPreset; label: string }> = [
 const formatPercent = (value: number): string => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`;
 const formatDecimal = (value: number): string => Number(value || 0).toFixed(2);
 const formatInteger = (value: number): string => Number(value || 0).toLocaleString();
+
+const formatLoadError = (err: unknown): string => {
+  if (err instanceof AnalyticsApiError) {
+    const suffix = err.hint ? ` ${err.hint}` : '';
+    if (err.status === 404) {
+      return `Workflow analytics endpoints are unavailable from the current backend.${suffix}`;
+    }
+    if (err.status === 503) {
+      return `${err.message}.${suffix}`.replace(/\.\s*\./g, '.');
+    }
+    return `${err.message}${suffix ? ` ${err.hint}` : ''}`.trim();
+  }
+  return err instanceof Error ? err.message : 'Failed to load workflow effectiveness';
+};
 
 const buildDateRange = (preset: PeriodPreset): { start: string; end: string } => {
   const days = preset === '7d' ? 7 : preset === '90d' ? 90 : 30;
@@ -154,7 +168,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
       if (requestId !== requestIdRef.current) return;
       setPayload(null);
       setFailurePatterns([]);
-      setError(err instanceof Error ? err.message : 'Failed to load workflow effectiveness');
+      setError(formatLoadError(err));
     } finally {
       if (requestId === requestIdRef.current) {
         setLoading(false);
@@ -317,13 +331,13 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
             <div className="px-4 py-8 text-sm text-slate-400">Loading workflow effectiveness...</div>
           )}
 
-          {!loading && filteredItems.length === 0 && (
+          {!loading && !error && filteredItems.length === 0 && (
             <div className="px-4 py-10 text-sm text-slate-500">
               No effectiveness rows matched the current filters.
             </div>
           )}
 
-          {!loading && filteredItems.map(item => (
+          {!loading && !error && filteredItems.map(item => (
             <div
               key={`${item.scopeType}-${item.scopeId}`}
               className="grid grid-cols-[minmax(220px,1.3fr)_repeat(4,minmax(120px,1fr))_84px] gap-4 border-b border-slate-900/80 px-4 py-4 last:border-b-0"
@@ -353,13 +367,13 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
             </div>
           </div>
           <div className="space-y-3 px-4 py-4">
-            {!loading && failurePatterns.length === 0 && (
+            {!loading && !error && failurePatterns.length === 0 && (
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-5 text-sm text-slate-500">
                 No low-yield patterns were flagged for this scope and time window.
               </div>
             )}
 
-            {failurePatterns.map((pattern, index) => (
+            {!error && failurePatterns.map((pattern, index) => (
               <div
                 key={pattern.id}
                 className={`rounded-2xl border px-4 py-4 ${severityClass(pattern.severity)}`}

@@ -14,6 +14,52 @@ import {
 
 const API_BASE = '/api/analytics';
 
+export class AnalyticsApiError extends Error {
+    status: number;
+    hint: string;
+    code: string;
+
+    constructor(message: string, status: number, hint = '', code = '') {
+        super(message);
+        this.name = 'AnalyticsApiError';
+        this.status = status;
+        this.hint = hint;
+        this.code = code;
+    }
+}
+
+const buildAnalyticsApiError = async (res: Response, fallbackMessage: string): Promise<AnalyticsApiError> => {
+    let message = fallbackMessage;
+    let hint = '';
+    let code = '';
+    const contentType = res.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+        const payload = await res.json().catch(() => null) as { detail?: unknown } | null;
+        const detail = payload?.detail;
+        if (typeof detail === 'string') {
+            message = detail;
+        } else if (detail && typeof detail === 'object') {
+            const detailRecord = detail as Record<string, unknown>;
+            if (typeof detailRecord.message === 'string' && detailRecord.message.trim()) {
+                message = detailRecord.message;
+            }
+            if (typeof detailRecord.hint === 'string' && detailRecord.hint.trim()) {
+                hint = detailRecord.hint;
+            }
+            if (typeof detailRecord.error === 'string' && detailRecord.error.trim()) {
+                code = detailRecord.error;
+            }
+        }
+    }
+
+    if (res.status === 404 && !hint) {
+        hint = 'Restart the backend so it loads the latest analytics routes.';
+    }
+
+    return new AnalyticsApiError(message, res.status, hint, code);
+};
+
 export const analyticsService = {
     async getMetrics(): Promise<AnalyticsMetric[]> {
         const res = await fetch(`${API_BASE}/metrics`);
@@ -138,7 +184,7 @@ export const analyticsService = {
         if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/workflow-effectiveness${qs ? `?${qs}` : ''}`);
-        if (!res.ok) throw new Error('Failed to fetch workflow effectiveness');
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch workflow effectiveness');
         return res.json();
     },
 
@@ -161,7 +207,7 @@ export const analyticsService = {
         if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/failure-patterns${qs ? `?${qs}` : ''}`);
-        if (!res.ok) throw new Error('Failed to fetch failure patterns');
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch failure patterns');
         return res.json();
     },
 
