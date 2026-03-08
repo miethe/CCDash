@@ -1,7 +1,9 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import Any, Optional, Generic, TypeVar, Literal
+
+from typing import Any, Generic, Literal, Optional, TypeVar
+
+from pydantic import BaseModel, Field, model_validator
 
 T = TypeVar("T")
 
@@ -514,9 +516,24 @@ class SkillMeatProjectConfig(BaseModel):
     enabled: bool = False
     baseUrl: str = ""
     projectId: str = ""
-    workspaceId: str = ""
+    collectionId: str = ""
+    aaaEnabled: bool = False
+    apiKey: str = ""
     requestTimeoutSeconds: float = 5.0
     featureFlags: SkillMeatFeatureFlags = Field(default_factory=SkillMeatFeatureFlags)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_workspace_id(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        collection_id = str(migrated.get("collectionId") or "").strip()
+        legacy_workspace_id = str(migrated.get("workspaceId") or "").strip()
+        if not collection_id and legacy_workspace_id:
+            migrated["collectionId"] = legacy_workspace_id
+        migrated.pop("workspaceId", None)
+        return migrated
 
 
 # ── Project model ──────────────────────────────────────────────────
@@ -805,6 +822,30 @@ class SkillMeatSyncWarning(BaseModel):
     section: str
     message: str
     recoverable: bool = True
+
+
+SkillMeatProbeState = Literal["idle", "success", "warning", "error"]
+
+
+class SkillMeatProbeResult(BaseModel):
+    state: SkillMeatProbeState = "idle"
+    message: str = ""
+    checkedAt: str = ""
+    httpStatus: Optional[int] = None
+
+
+class SkillMeatConfigValidationRequest(BaseModel):
+    baseUrl: str = ""
+    projectId: str = ""
+    aaaEnabled: bool = False
+    apiKey: str = ""
+    requestTimeoutSeconds: float = 5.0
+
+
+class SkillMeatConfigValidationResponse(BaseModel):
+    baseUrl: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
+    projectMapping: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
+    auth: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
 
 
 class SkillMeatSyncRequest(BaseModel):

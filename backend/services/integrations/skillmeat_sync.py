@@ -17,7 +17,19 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
     config = getattr(project, "skillMeat", None)
     project_id = str(getattr(project, "id", "") or "")
     if config is None:
-        config = type("SkillMeatConfig", (), {"enabled": False, "baseUrl": "", "projectId": "", "workspaceId": "", "requestTimeoutSeconds": 5.0})()
+        config = type(
+            "SkillMeatConfig",
+            (),
+            {
+                "enabled": False,
+                "baseUrl": "",
+                "projectId": "",
+                "collectionId": "",
+                "aaaEnabled": False,
+                "apiKey": "",
+                "requestTimeoutSeconds": 5.0,
+            },
+        )()
 
     source = await repo.upsert_definition_source(
         {
@@ -27,7 +39,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             "base_url": str(getattr(config, "baseUrl", "") or ""),
             "project_mapping": {
                 "projectId": str(getattr(config, "projectId", "") or ""),
-                "workspaceId": str(getattr(config, "workspaceId", "") or ""),
+                "collectionId": str(getattr(config, "collectionId", "") or ""),
             },
             "feature_flags": getattr(getattr(config, "featureFlags", {}), "model_dump", lambda: getattr(config, "featureFlags", {}))(),
         }
@@ -89,6 +101,8 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
     client = SkillMeatClient(
         base_url=base_url,
         timeout_seconds=float(getattr(config, "requestTimeoutSeconds", 5.0) or 5.0),
+        aaa_enabled=bool(getattr(config, "aaaEnabled", False)),
+        api_key=str(getattr(config, "apiKey", "") or ""),
     )
 
     for definition_type in ("artifact", "workflow", "context_module"):
@@ -96,7 +110,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             items = await client.fetch_definitions(
                 definition_type=definition_type,
                 project_id=str(getattr(config, "projectId", "") or ""),
-                workspace_id=str(getattr(config, "workspaceId", "") or ""),
+                collection_id=str(getattr(config, "collectionId", "") or ""),
             )
             counts_by_type[definition_type] = len(items)
             for item in items:

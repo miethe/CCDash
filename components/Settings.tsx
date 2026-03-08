@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
-import { AlertConfig, Project, ProjectTestPlatformConfig, TestSourceStatus } from '../types';
+import { AlertConfig, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
-import { DEFAULT_SKILLMEAT_FEATURE_FLAGS } from '../services/agenticIntelligence';
+import { DEFAULT_SKILLMEAT_FEATURE_FLAGS, defaultSkillMeatConfig, normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { validateSkillMeatConfig } from '../services/skillmeat';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
@@ -22,13 +23,26 @@ const SKILLMEAT_SETUP_COMMANDS: string[] = [
   'python scripts/parse_test_failures.py --input-dir test-results --output test-failures.json',
 ];
 
-const DEFAULT_SKILLMEAT_CONFIG: Project['skillMeat'] = {
-  enabled: false,
-  baseUrl: '',
-  projectId: '',
-  workspaceId: '',
-  requestTimeoutSeconds: 5,
-  featureFlags: { ...DEFAULT_SKILLMEAT_FEATURE_FLAGS },
+const DEFAULT_SKILLMEAT_CONFIG: Project['skillMeat'] = defaultSkillMeatConfig();
+
+const SKILLMEAT_STATUS_STYLES: Record<SkillMeatProbeResult['state'], string> = {
+  idle: 'border-slate-700 text-slate-400 bg-slate-900',
+  success: 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10',
+  warning: 'border-amber-500/30 text-amber-300 bg-amber-500/10',
+  error: 'border-rose-500/30 text-rose-300 bg-rose-500/10',
+};
+
+const SkillMeatStatusBadge: React.FC<{
+  result?: SkillMeatProbeResult | null;
+  fallback: string;
+}> = ({ result, fallback }) => {
+  const label = result?.message || fallback;
+  const state = result?.state || 'idle';
+  return (
+    <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-1 text-[11px] leading-none ${SKILLMEAT_STATUS_STYLES[state]}`}>
+      <span className="truncate">{label}</span>
+    </span>
+  );
 };
 
 // ── Tab Button ─────────────────────────────────────────────────────
@@ -312,6 +326,9 @@ const ProjectsTab: React.FC = () => {
   const [generatedScript, setGeneratedScript] = useState('');
   const [generatedScriptName, setGeneratedScriptName] = useState('');
   const [scriptCopied, setScriptCopied] = useState(false);
+  const [skillMeatValidation, setSkillMeatValidation] = useState<SkillMeatConfigValidationResponse | null>(null);
+  const [skillMeatValidationBusy, setSkillMeatValidationBusy] = useState(false);
+  const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -329,7 +346,11 @@ const ProjectsTab: React.FC = () => {
 
     const project = projects.find(p => p.id === selectedProjectId);
     if (project) {
-      setEditData({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) });
+      setEditData({
+        ...project,
+        testConfig: ensureProjectTestConfig(project.testConfig),
+        skillMeat: normalizeSkillMeatConfig(project),
+      });
       setDirtyPaths(false);
       setSaved(false);
       setError(null);
@@ -339,6 +360,8 @@ const ProjectsTab: React.FC = () => {
       setGeneratedScript('');
       setGeneratedScriptName('');
       setScriptCopied(false);
+      setSkillMeatValidation(null);
+      setSkillMeatValidationError(null);
     }
   }, [selectedProjectId, projects]);
 
@@ -369,6 +392,22 @@ const ProjectsTab: React.FC = () => {
     const nextConfig = updater(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
     setEditData({ ...editData, skillMeat: nextConfig });
     setSaved(false);
+    setSkillMeatValidation(null);
+    setSkillMeatValidationError(null);
+  };
+
+  const handleValidateSkillMeat = async () => {
+    if (!editData) return;
+    setSkillMeatValidationBusy(true);
+    setSkillMeatValidationError(null);
+    try {
+      const response = await validateSkillMeatConfig(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
+      setSkillMeatValidation(response);
+    } catch (e: any) {
+      setSkillMeatValidationError(e?.message || 'Failed to validate SkillMeat configuration');
+    } finally {
+      setSkillMeatValidationBusy(false);
+    }
   };
 
   const updateFlag = (key: keyof Project['testConfig']['flags'], value: boolean) => {
@@ -667,11 +706,22 @@ const ProjectsTab: React.FC = () => {
             </div>
 
             <div className="border-t border-slate-800 pt-5 space-y-4">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Integration</h4>
-                <p className="text-xs text-slate-500">
-                  Configure the read-only SkillMeat definition source for artifacts, workflows, and context modules.
-                </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Integration</h4>
+                  <p className="text-xs text-slate-500">
+                    Configure the read-only SkillMeat source for artifacts, workflows, context modules, and bundle metadata.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleValidateSkillMeat}
+                  disabled={skillMeatValidationBusy}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={skillMeatValidationBusy ? 'animate-spin' : ''} />
+                  {skillMeatValidationBusy ? 'Checking...' : 'Check Connection'}
+                </button>
               </div>
 
               <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
@@ -684,15 +734,27 @@ const ProjectsTab: React.FC = () => {
                 />
               </label>
 
+              {skillMeatValidationError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                  {skillMeatValidationError}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">Base URL</span>
+                  <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+                    <span>Base URL</span>
+                    <SkillMeatStatusBadge
+                      result={skillMeatValidation?.baseUrl}
+                      fallback="Unchecked"
+                    />
+                  </span>
                   <input
                     type="url"
                     value={editData.skillMeat?.baseUrl || ''}
                     onChange={e => updateSkillMeatConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                    placeholder="http://localhost:8001"
+                    placeholder="http://127.0.0.1:8080"
                   />
                 </label>
                 <label className="block">
@@ -708,26 +770,78 @@ const ProjectsTab: React.FC = () => {
                   />
                 </label>
                 <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">SkillMeat Project ID</span>
+                  <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+                    <span>SkillMeat Project Path</span>
+                    <SkillMeatStatusBadge
+                      result={skillMeatValidation?.projectMapping}
+                      fallback="Unchecked"
+                    />
+                  </span>
                   <input
                     type="text"
                     value={editData.skillMeat?.projectId || ''}
                     onChange={e => updateSkillMeatConfig(prev => ({ ...prev, projectId: e.target.value }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                    placeholder="skillmeat-project"
+                    placeholder="/absolute/path/to/skillmeat-project"
                   />
+                  <p className="mt-1 text-xs text-slate-500">Use the SkillMeat project filesystem path. CCDash no longer uses `workspaceId` here.</p>
                 </label>
                 <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">Workspace ID</span>
+                  <span className="block text-xs text-slate-400 mb-1">Collection ID (optional)</span>
                   <input
                     type="text"
-                    value={editData.skillMeat?.workspaceId || ''}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, workspaceId: e.target.value }))}
+                    value={editData.skillMeat?.collectionId || ''}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, collectionId: e.target.value }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
                     placeholder="default"
                   />
+                  <p className="mt-1 text-xs text-slate-500">Use this when bundle or artifact context should be scoped to a specific collection.</p>
                 </label>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <div>
+                    <span className="block text-sm text-slate-200">AAA enabled</span>
+                    <span className="block text-xs text-slate-500">Turn this on for auth-protected SkillMeat instances.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editData.skillMeat?.aaaEnabled)}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, aaaEnabled: e.target.checked }))}
+                    className="h-4 w-4"
+                  />
+                </label>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                    <span>Auth Status</span>
+                    <SkillMeatStatusBadge
+                      result={skillMeatValidation?.auth}
+                      fallback="Unchecked"
+                    />
+                  </span>
+                  <p className="text-xs text-slate-500">
+                    Local development usually runs without auth. AAA mode sends `Authorization: Bearer &lt;token&gt;`.
+                  </p>
+                </div>
+              </div>
+
+              {editData.skillMeat?.aaaEnabled ? (
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">API Key / Bearer Token</span>
+                  <input
+                    type="password"
+                    value={editData.skillMeat?.apiKey || ''}
+                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                    placeholder="sm_pat_..."
+                  />
+                </label>
+              ) : (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-500">
+                  Local mode is selected, so CCDash will not send a credential until AAA is enabled.
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">

@@ -11,6 +11,7 @@ def resolve_stack_components(
 ) -> list[dict[str, Any]]:
     by_external_id: dict[tuple[str, str], dict[str, Any]] = {}
     by_display_name: dict[tuple[str, str], dict[str, Any]] = {}
+    by_alias: dict[tuple[str, str], dict[str, Any]] = {}
     for definition in definitions:
         definition_type = str(definition.get("definition_type") or "")
         external_id = _normalize_token(definition.get("external_id"))
@@ -19,6 +20,11 @@ def resolve_stack_components(
             by_external_id[(definition_type, external_id)] = definition
         if definition_type and display_name:
             by_display_name[(definition_type, display_name)] = definition
+        for alias in _definition_aliases(definition):
+            key = (definition_type, alias)
+            existing = by_alias.get(key)
+            if existing is None or _definition_priority(definition) >= _definition_priority(existing):
+                by_alias[key] = definition
 
     resolved: list[dict[str, Any]] = []
     for component in components:
@@ -41,6 +47,15 @@ def resolve_stack_components(
                     normalized = _normalize_token(token)
                     if not normalized:
                         continue
+                    matched = by_alias.get((definition_type, normalized))
+                    if matched:
+                        matched_via = "alias_exact"
+                        break
+            if matched is None:
+                for token in candidate_tokens:
+                    normalized = _normalize_token(token)
+                    if not normalized:
+                        continue
                     matched = by_display_name.get((definition_type, normalized))
                     if matched:
                         matched_via = "display_name_exact"
@@ -48,7 +63,10 @@ def resolve_stack_components(
 
         if matched:
             updated["status"] = "resolved"
-            updated["confidence"] = max(float(updated.get("confidence") or 0.0), 0.95 if matched_via == "external_id_exact" else 0.85)
+            updated["confidence"] = max(
+                float(updated.get("confidence") or 0.0),
+                0.95 if matched_via == "external_id_exact" else 0.9 if matched_via == "alias_exact" else 0.85,
+            )
             updated["external_definition_id"] = matched.get("id")
             updated["external_definition_type"] = matched.get("definition_type", "")
             updated["external_definition_external_id"] = matched.get("external_id", "")
@@ -96,3 +114,33 @@ def _normalize_token(value: object) -> str:
         return ""
     normalized = "".join(ch.lower() if ch.isalnum() or ch in {":", "-", "_"} else " " for ch in value.strip())
     return " ".join(normalized.split())
+
+
+def _definition_aliases(definition: dict[str, Any]) -> list[str]:
+    metadata = definition.get("resolution_metadata_json")
+    if not isinstance(metadata, dict):
+        metadata = definition.get("resolution_metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    aliases: list[str] = []
+    for candidate in metadata.get("aliases", []):
+        normalized = _normalize_token(candidate)
+        if normalized:
+            aliases.append(normalized)
+    return aliases
+
+
+def _definition_priority(definition: dict[str, Any]) -> int:
+    metadata = definition.get("resolution_metadata_json")
+    if not isinstance(metadata, dict):
+        metadata = definition.get("resolution_metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    score = 0
+    if bool(metadata.get("isEffective")):
+        score += 2
+    if str(metadata.get("workflowScope") or "") == "project":
+        score += 1
+    return score

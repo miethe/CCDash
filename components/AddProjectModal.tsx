@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { Project } from '../types';
-import { DEFAULT_SKILLMEAT_FEATURE_FLAGS } from '../services/agenticIntelligence';
+import { defaultSkillMeatConfig } from '../services/agenticIntelligence';
 import { defaultTestConfig } from '../services/testConfigDefaults';
 
 interface AddProjectModalProps {
@@ -43,14 +43,7 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                 sessionsPath,
                 progressPath,
                 testConfig: defaultTestConfig(),
-                skillMeat: {
-                    enabled: false,
-                    baseUrl: '',
-                    projectId: '',
-                    workspaceId: '',
-                    requestTimeoutSeconds: 5,
-                    featureFlags: { ...DEFAULT_SKILLMEAT_FEATURE_FLAGS },
-                },
+                skillMeat: defaultSkillMeatConfig(),
             };
             await addProject(newProject);
             onClose();

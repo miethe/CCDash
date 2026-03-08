@@ -1,6 +1,7 @@
 """Integration endpoints for SkillMeat sync, cache access, and observation backfill."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,9 +11,12 @@ from backend.db.factory import get_agentic_intelligence_repository
 from backend.models import (
     SessionStackComponent,
     SessionStackObservation,
+    SkillMeatConfigValidationRequest,
+    SkillMeatConfigValidationResponse,
     SkillMeatDefinition,
     SkillMeatDefinitionSource,
     SkillMeatFeatureFlags,
+    SkillMeatProbeResult,
     SkillMeatDefinitionSyncResponse,
     SkillMeatObservationBackfillRequest,
     SkillMeatObservationBackfillResponse,
@@ -22,11 +26,16 @@ from backend.models import (
 )
 from backend.project_manager import project_manager
 from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
+from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
 from backend.services.stack_observations import backfill_session_stack_observations
 
 
 integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["integrations"])
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _active_project_or_400() -> Any:
@@ -105,6 +114,81 @@ def _to_observation_dto(row: dict[str, Any]) -> SessionStackObservation:
         components=[_to_component_dto(component) for component in components if isinstance(component, dict)],
         createdAt=str(row.get("created_at") or ""),
         updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+def _probe_result(state: str, message: str, *, http_status: int | None = None) -> SkillMeatProbeResult:
+    return SkillMeatProbeResult(
+        state=state,
+        message=message,
+        checkedAt=_now_iso(),
+        httpStatus=http_status,
+    )
+
+
+@integrations_router.post("/validate-config", response_model=SkillMeatConfigValidationResponse)
+async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
+    require_skillmeat_integration_enabled()
+    base_url = str(req.baseUrl or "").strip()
+    if not base_url:
+        idle = _probe_result("idle", "Enter a SkillMeat base URL to run validation.")
+        return SkillMeatConfigValidationResponse(
+            baseUrl=idle,
+            projectMapping=_probe_result("idle", "Project path validation is waiting for a base URL."),
+            auth=_probe_result("idle", "Auth validation is waiting for a base URL."),
+        )
+
+    client = SkillMeatClient(
+        base_url=base_url,
+        timeout_seconds=float(req.requestTimeoutSeconds or 5.0),
+        aaa_enabled=bool(req.aaaEnabled),
+        api_key=str(req.apiKey or ""),
+    )
+
+    try:
+        await client.validate_base_url()
+        base_status = _probe_result("success", "SkillMeat responded at the configured base URL.")
+    except SkillMeatClientError as exc:
+        failure = _probe_result(
+            "error",
+            exc.detail or str(exc),
+            http_status=exc.status_code,
+        )
+        auth_status = failure if req.aaaEnabled else _probe_result("idle", "Enable AAA to validate credentials.")
+        return SkillMeatConfigValidationResponse(
+            baseUrl=failure,
+            projectMapping=_probe_result("idle", "Project path validation is blocked until the base URL responds."),
+            auth=auth_status,
+        )
+
+    if req.aaaEnabled:
+        api_key = str(req.apiKey or "").strip()
+        if api_key:
+            auth_status = _probe_result("success", "The configured credential was accepted by SkillMeat.")
+        else:
+            auth_status = _probe_result("warning", "AAA is enabled, but no API key is configured.")
+    else:
+        auth_status = _probe_result("success", "Local no-auth mode is active. No credential is required.")
+
+    configured_project_id = str(req.projectId or "").strip()
+    if not configured_project_id:
+        project_status = _probe_result("warning", "Set the SkillMeat project path to validate project mapping.")
+    else:
+        try:
+            await client.get_project(configured_project_id)
+            project_status = _probe_result("success", "SkillMeat resolved the configured project path.")
+        except SkillMeatClientError as exc:
+            state = "warning" if exc.status_code == 404 else "error"
+            project_status = _probe_result(
+                state,
+                exc.detail or str(exc),
+                http_status=exc.status_code,
+            )
+
+    return SkillMeatConfigValidationResponse(
+        baseUrl=base_status,
+        projectMapping=project_status,
+        auth=auth_status,
     )
 
 

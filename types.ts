@@ -965,9 +965,26 @@ export interface SkillMeatProjectConfig {
   enabled: boolean;
   baseUrl: string;
   projectId: string;
-  workspaceId: string;
+  collectionId: string;
+  aaaEnabled: boolean;
+  apiKey: string;
   requestTimeoutSeconds: number;
   featureFlags: SkillMeatFeatureFlags;
+}
+
+export type SkillMeatProbeState = 'idle' | 'success' | 'warning' | 'error';
+
+export interface SkillMeatProbeResult {
+  state: SkillMeatProbeState;
+  message: string;
+  checkedAt: string;
+  httpStatus?: number | null;
+}
+
+export interface SkillMeatConfigValidationResponse {
+  baseUrl: SkillMeatProbeResult;
+  projectMapping: SkillMeatProbeResult;
+  auth: SkillMeatProbeResult;
 }
 
 export interface Project {

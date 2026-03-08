@@ -24,7 +24,7 @@ class IntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
                 "source_kind": "skillmeat",
                 "enabled": True,
                 "base_url": "http://skillmeat.local",
-                "project_mapping": {"projectId": "sm-project", "workspaceId": "default"},
+                "project_mapping": {"projectId": "sm-project", "collectionId": "default"},
             }
         )
         definition = await self.repo.upsert_external_definition(
