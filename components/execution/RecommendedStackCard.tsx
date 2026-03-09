@@ -41,6 +41,32 @@ interface ReferenceChipData {
   sourceUrl: string;
 }
 
+interface InsightMetric {
+  label: string;
+  value: string;
+  tone?: 'default' | 'success' | 'warning' | 'info';
+}
+
+interface InsightAction {
+  label: string;
+  url: string;
+}
+
+interface InsightTag {
+  label: string;
+  url?: string;
+}
+
+interface InsightSection {
+  key: string;
+  title: string;
+  summary: string;
+  metrics: InsightMetric[];
+  actions: InsightAction[];
+  tags: InsightTag[];
+  footnote?: string;
+}
+
 const COMPONENT_GROUPS: Array<{ key: RecommendedStackComponent['componentType']; label: string; multiple: boolean }> = [
   { key: 'workflow', label: 'Workflow', multiple: false },
   { key: 'agent', label: 'Agent', multiple: true },
@@ -53,6 +79,12 @@ const COMPONENT_GROUPS: Array<{ key: RecommendedStackComponent['componentType'];
 
 const formatPercent = (value: number): string => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`;
 const formatCurrency = (value: number): string => `$${Number(value || 0).toFixed(2)}`;
+const asNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const formatDuration = (seconds: number): string => {
   const total = Math.max(0, Number(seconds || 0));
@@ -89,6 +121,16 @@ const getReferenceLabel = (component: RecommendedStackComponent): string => {
   return component.label || component.componentKey || 'local-only';
 };
 
+const compactUnique = (values: string[]): string[] => {
+  const seen = new Set<string>();
+  return values.filter(value => {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+};
+
 const getReferenceData = (component: RecommendedStackComponent): ReferenceChipData => {
   if (component.definition) {
     return {
@@ -116,6 +158,136 @@ const getReferenceData = (component: RecommendedStackComponent): ReferenceChipDa
 const openExternalReference = (reference: ReferenceChipData) => {
   if (!reference.sourceUrl) return;
   window.open(reference.sourceUrl, '_blank', 'noopener,noreferrer');
+};
+
+const openExternalUrl = (url: string) => {
+  if (!url) return;
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
+const insightMetricToneClass = (tone: InsightMetric['tone']): string => {
+  if (tone === 'success') return 'text-emerald-200';
+  if (tone === 'warning') return 'text-amber-200';
+  if (tone === 'info') return 'text-sky-200';
+  return 'text-slate-100';
+};
+
+const buildInsightSections = (stackEvidence: StackRecommendationEvidence[]): InsightSection[] => {
+  const sections: InsightSection[] = [];
+
+  stackEvidence.forEach(evidence => {
+    const metrics = evidence.metrics || {};
+
+    if (evidence.sourceType === 'context_preview') {
+      const resolvedContexts = asArray<Record<string, unknown>>(metrics.resolvedContexts);
+      const tags = resolvedContexts
+        .filter(item => asString(item.moduleName) || asString(item.contextRef))
+        .slice(0, 4)
+        .map(item => ({
+          label: asString(item.moduleName) || asString(item.contextRef) || 'Context',
+          url: asString(item.sourceUrl) || undefined,
+        }));
+      const actions = compactUnique(resolvedContexts.map(item => asString(item.sourceUrl))).map(url => ({
+        label: 'Open memory',
+        url,
+      }));
+      sections.push({
+        key: evidence.id || evidence.sourceType,
+        title: 'Context Coverage',
+        summary: evidence.summary,
+        metrics: [
+          { label: 'Resolved', value: `${asNumber(metrics.resolved)}/${Math.max(1, asNumber(metrics.referenced))}`, tone: 'success' },
+          { label: 'Previewed', value: String(asNumber(metrics.previewed)), tone: 'info' },
+          { label: 'Token Footprint', value: `${asNumber(metrics.previewTokenFootprint)} tok`, tone: 'warning' },
+        ],
+        actions,
+        tags,
+      });
+      return;
+    }
+
+    if (evidence.sourceType === 'bundle_alignment') {
+      const bundleName = asString(metrics.bundleName) || asString(metrics.bundleId) || 'Curated bundle';
+      const matchedRefs = asArray<string>(metrics.matchedRefs).slice(0, 4).map(ref => ({ label: ref }));
+      const sourceUrl = asString(metrics.sourceUrl);
+      sections.push({
+        key: evidence.id || evidence.sourceType,
+        title: bundleName,
+        summary: evidence.summary,
+        metrics: [
+          { label: 'Bundle Fit', value: formatPercent(asNumber(metrics.matchScore)), tone: 'success' },
+          { label: 'Matched Refs', value: String(asArray<string>(metrics.matchedRefs).length), tone: 'info' },
+        ],
+        actions: sourceUrl ? [{ label: 'Open curated bundle', url: sourceUrl }] : [],
+        tags: matchedRefs,
+      });
+      return;
+    }
+
+    if (evidence.sourceType === 'workflow_execution') {
+      const active = asNumber(metrics.active);
+      const hint = asString(metrics.liveUpdateHint);
+      const sourceUrl = asString(metrics.sourceUrl);
+      sections.push({
+        key: evidence.id || evidence.sourceType,
+        title: 'Execution Awareness',
+        summary: evidence.summary,
+        metrics: [
+          { label: 'Recent Runs', value: String(asNumber(metrics.count)), tone: 'info' },
+          { label: 'Completed', value: String(asNumber(metrics.completed)), tone: 'success' },
+          { label: 'Active', value: String(active), tone: active > 0 ? 'warning' : 'default' },
+        ],
+        actions: sourceUrl ? [{ label: 'Open executions', url: sourceUrl }] : [],
+        tags: active > 0 ? [{ label: `${active} active execution${active === 1 ? '' : 's'}` }] : [],
+        footnote: hint === 'view_scoped_polling' ? 'Live refresh is available while this workflow is in view.' : undefined,
+      });
+    }
+  });
+
+  return sections;
+};
+
+const buildHeadlineTags = (stackEvidence: StackRecommendationEvidence[]): InsightTag[] => {
+  const tags: InsightTag[] = [];
+
+  stackEvidence.forEach(evidence => {
+    const metrics = evidence.metrics || {};
+    if (evidence.sourceType === 'effective_workflow') {
+      tags.push({
+        label: 'Effective workflow',
+        url: asString(metrics.sourceUrl) || undefined,
+      });
+      return;
+    }
+    if (evidence.sourceType === 'bundle_alignment') {
+      const bundleName = asString(metrics.bundleName) || asString(metrics.bundleId);
+      if (bundleName) {
+        tags.push({
+          label: `Bundle: ${bundleName}`,
+          url: asString(metrics.sourceUrl) || undefined,
+        });
+      }
+      return;
+    }
+    if (evidence.sourceType === 'workflow_execution') {
+      const active = asNumber(metrics.active);
+      const count = asNumber(metrics.count);
+      if (active > 0) {
+        tags.push({ label: `${active} active execution${active === 1 ? '' : 's'}` });
+      } else if (count > 0) {
+        tags.push({ label: `${count} recent execution${count === 1 ? '' : 's'}` });
+      }
+      return;
+    }
+    if (evidence.sourceType === 'context_preview') {
+      const previewed = asNumber(metrics.previewed);
+      if (previewed > 0) {
+        tags.push({ label: `${previewed} context preview${previewed === 1 ? '' : 's'}` });
+      }
+    }
+  });
+
+  return tags.slice(0, 4);
 };
 
 const DefinitionChip: React.FC<{ reference: ReferenceChipData }> = ({ reference }) => {
@@ -176,6 +348,68 @@ const DefinitionChip: React.FC<{ reference: ReferenceChipData }> = ({ reference 
     </Popover>
   );
 };
+
+const InsightCard: React.FC<{ section: InsightSection }> = ({ section }) => (
+  <div className="rounded-[24px] border border-slate-700/80 bg-slate-950/45 p-4">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="font-mono text-lg text-slate-100">{section.title}</div>
+        <div className="mt-1 text-sm text-slate-400">{section.summary}</div>
+      </div>
+      <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-slate-400">
+        Insight
+      </div>
+    </div>
+
+    <div className="mt-4 grid grid-cols-2 gap-3">
+      {section.metrics.map(metric => (
+        <div key={`${section.key}-${metric.label}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">{metric.label}</div>
+          <div className={`mt-1 font-mono text-lg ${insightMetricToneClass(metric.tone)}`}>{metric.value}</div>
+        </div>
+      ))}
+    </div>
+
+    {section.tags.length > 0 && (
+      <div className="mt-4 flex flex-wrap gap-2">
+        {section.tags.map(tag => (
+          tag.url ? (
+            <button
+              key={`${section.key}-${tag.label}`}
+              onClick={() => openExternalUrl(tag.url || '')}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-sky-200 hover:border-slate-500 hover:text-sky-100"
+            >
+              {tag.label}
+              <ExternalLink size={12} />
+            </button>
+          ) : (
+            <span key={`${section.key}-${tag.label}`} className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
+              {tag.label}
+            </span>
+          )
+        ))}
+      </div>
+    )}
+
+    {(section.actions.length > 0 || section.footnote) && (
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {section.actions.map(action => (
+          <button
+            key={`${section.key}-${action.label}`}
+            onClick={() => openExternalUrl(action.url)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 hover:bg-sky-500/20"
+          >
+            {action.label}
+            <ExternalLink size={12} />
+          </button>
+        ))}
+        {section.footnote && (
+          <span className="text-xs text-slate-500">{section.footnote}</span>
+        )}
+      </div>
+    )}
+  </div>
+);
 
 const SimilarWorkModal: React.FC<{
   evidence: StackRecommendationEvidence;
@@ -334,6 +568,16 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
     return Array.from(unique.values());
   }, [recommendedStack?.components]);
 
+  const insightSections = useMemo(
+    () => buildInsightSections(stackEvidence),
+    [stackEvidence],
+  );
+
+  const headlineTags = useMemo(
+    () => buildHeadlineTags(stackEvidence),
+    [stackEvidence],
+  );
+
   if (!recommendedStack) {
     return (
       <section className="rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_rgba(15,23,42,0.92)_42%,_rgba(2,6,23,0.96)_100%)] p-5">
@@ -383,6 +627,46 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
             <CheckCircle2 size={18} className="text-emerald-300" />
           </div>
 
+          {headlineTags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {headlineTags.map(tag => (
+                tag.url ? (
+                  <button
+                    key={tag.label}
+                    onClick={() => openExternalUrl(tag.url || '')}
+                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 hover:bg-sky-500/20"
+                  >
+                    {tag.label}
+                    <ExternalLink size={12} />
+                  </button>
+                ) : (
+                  <span key={tag.label} className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
+                    {tag.label}
+                  </span>
+                )
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Sample Size</div>
+              <div className="mt-1 font-mono text-lg text-slate-100">{recommendedStack.sampleSize}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Success</div>
+              <div className="mt-1 font-mono text-lg text-emerald-200">{formatPercent(recommendedStack.successScore)}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Quality</div>
+              <div className="mt-1 font-mono text-lg text-sky-200">{formatPercent(recommendedStack.qualityScore)}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Risk</div>
+              <div className="mt-1 font-mono text-lg text-amber-200">{formatPercent(recommendedStack.riskScore)}</div>
+            </div>
+          </div>
+
           {COMPONENT_GROUPS.map(group => {
             const items = groupedComponents.get(group.key) || [];
             if (items.length === 0) return null;
@@ -410,6 +694,14 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
             ))}
           </div>
         </div>
+
+        {insightSections.length > 0 && (
+          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+            {insightSections.map(section => (
+              <InsightCard key={section.key} section={section} />
+            ))}
+          </div>
+        )}
 
         {definitionResolutionWarnings.length > 0 && (
           <div className="mt-4 space-y-2">

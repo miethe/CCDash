@@ -466,6 +466,23 @@ def _context_alignment_signal(workflow_definition: dict[str, Any] | None) -> dic
     if referenced <= 0:
         return {"bonus": 0.0, "evidence": None}
 
+    resolved_contexts_raw = _safe_list(metadata.get("resolvedContextModules"))
+    resolved_contexts: list[dict[str, Any]] = []
+    for item in resolved_contexts_raw:
+        if not isinstance(item, dict):
+            continue
+        preview_summary = _safe_dict(item.get("previewSummary"))
+        resolved_contexts.append(
+            {
+                "contextRef": str(item.get("contextRef") or ""),
+                "moduleId": str(item.get("moduleId") or ""),
+                "moduleName": str(item.get("moduleName") or ""),
+                "status": str(item.get("status") or ""),
+                "sourceUrl": str(item.get("sourceUrl") or ""),
+                "previewTokens": _safe_int(preview_summary.get("totalTokens"), 0),
+            }
+        )
+
     bonus = 0.04 * (resolved / max(1, referenced)) + 0.03 * (previewed / max(1, referenced))
     summary = f"Resolved {resolved} of {referenced} workflow context references"
     if previewed > 0:
@@ -484,6 +501,7 @@ def _context_alignment_signal(workflow_definition: dict[str, Any] | None) -> dic
                 "resolved": resolved,
                 "previewed": previewed,
                 "previewTokenFootprint": token_footprint,
+                "resolvedContexts": resolved_contexts,
             },
         },
     }
@@ -592,6 +610,9 @@ def _candidate_enrichment(
                 "confidence": 0.92,
                 "metrics": {
                     "effectiveWorkflowId": str(workflow_metadata.get("effectiveWorkflowId") or _safe_dict(workflow_metadata.get("effectiveWorkflow")).get("id") or ""),
+                    "effectiveWorkflowName": str(workflow_metadata.get("effectiveWorkflowName") or _safe_dict(workflow_metadata.get("effectiveWorkflow")).get("name") or ""),
+                    "workflowScope": str(workflow_metadata.get("workflowScope") or _safe_dict(workflow_metadata.get("effectiveWorkflow")).get("scope") or ""),
+                    "sourceUrl": str(workflow_definition.get("source_url") or "") if isinstance(workflow_definition, dict) else "",
                 },
             }
         )

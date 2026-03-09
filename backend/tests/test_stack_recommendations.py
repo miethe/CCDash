@@ -122,6 +122,16 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
                     "effectiveWorkflowName": "Phase Execution",
                     "swdlSummary": {"artifactRefs": ["skill:symbols"], "contextRefs": ["ctx:planning"]},
                     "contextSummary": {"referenced": 1, "resolved": 1, "previewed": 1, "previewTokenFootprint": 97},
+                    "resolvedContextModules": [
+                        {
+                            "contextRef": "ctx:planning",
+                            "moduleId": "module-planning",
+                            "moduleName": "planning",
+                            "status": "resolved",
+                            "sourceUrl": "http://skillmeat.local/projects/project-1/memory",
+                            "previewSummary": {"totalTokens": 97},
+                        }
+                    ],
                     "recentExecutions": [
                         {
                             "executionId": "exec_1",
@@ -304,6 +314,12 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("context_preview", evidence_types)
         self.assertIn("bundle_alignment", evidence_types)
         self.assertIn("workflow_execution", evidence_types)
+        context_evidence = next(item for item in payload["stackEvidence"] if item.sourceType == "context_preview")
+        self.assertEqual(context_evidence.metrics["resolved"], 1)
+        self.assertEqual(context_evidence.metrics["resolvedContexts"][0]["moduleName"], "planning")
+        effective_evidence = next(item for item in payload["stackEvidence"] if item.sourceType == "effective_workflow")
+        self.assertEqual(effective_evidence.metrics["effectiveWorkflowId"], "phase-execution")
+        self.assertEqual(effective_evidence.metrics["sourceUrl"], "http://skillmeat.local/workflows/phase-execution")
         self.assertEqual(payload["definitionResolutionWarnings"], [])
 
     async def test_build_stack_recommendations_warns_when_definitions_are_missing(self) -> None:
