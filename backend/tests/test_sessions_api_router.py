@@ -42,6 +42,16 @@ class _FakeRepo:
                 "duration_seconds": 1,
                 "tokens_in": 1,
                 "tokens_out": 1,
+                "model_io_tokens": 2,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 5,
+                "cache_input_tokens": 8,
+                "observed_tokens": 10,
+                "tool_reported_tokens": 13,
+                "tool_result_input_tokens": 21,
+                "tool_result_output_tokens": 34,
+                "tool_result_cache_creation_input_tokens": 55,
+                "tool_result_cache_read_input_tokens": 89,
                 "total_cost": 0.0,
                 "started_at": "2026-02-16T00:00:00Z",
                 "quality_rating": 0,
@@ -111,6 +121,16 @@ class _FakeFullSessionRepo:
                 "duration_seconds": 1,
                 "tokens_in": 1,
                 "tokens_out": 1,
+                "model_io_tokens": 2,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 5,
+                "cache_input_tokens": 8,
+                "observed_tokens": 10,
+                "tool_reported_tokens": 13,
+                "tool_result_input_tokens": 21,
+                "tool_result_output_tokens": 34,
+                "tool_result_cache_creation_input_tokens": 55,
+                "tool_result_cache_read_input_tokens": 89,
                 "total_cost": 0.0,
                 "started_at": "2026-02-16T00:00:00Z",
                 "ended_at": "2026-02-16T00:00:01Z",
@@ -329,6 +349,11 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].conversationFamilyId, "S-main")
         self.assertEqual(response.items[0].thinkingLevel, "high")
         self.assertEqual(response.items[0].sessionForensics.get("platform"), "claude_code")
+        self.assertEqual(response.items[0].observedTokens, 10)
+        self.assertEqual(response.items[0].cacheInputTokens, 8)
+        self.assertEqual(response.items[0].toolReportedTokens, 13)
+        self.assertAlmostEqual(response.items[0].cacheShare, 0.8)
+        self.assertAlmostEqual(response.items[0].outputShare, 0.5)
 
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()
@@ -412,6 +437,18 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str((response.sessionRelationships or [])[0].get("childSessionId") or ""), "S-fork-1")
         self.assertEqual(len(response.forks or []), 1)
         self.assertEqual(str((response.forks or [])[0].get("sessionId") or ""), "S-fork-1")
+        self.assertEqual(response.modelIOTokens, 2)
+        self.assertEqual(response.cacheCreationInputTokens, 3)
+        self.assertEqual(response.cacheReadInputTokens, 5)
+        self.assertEqual(response.cacheInputTokens, 8)
+        self.assertEqual(response.observedTokens, 10)
+        self.assertEqual(response.toolReportedTokens, 13)
+        self.assertEqual(response.toolResultInputTokens, 21)
+        self.assertEqual(response.toolResultOutputTokens, 34)
+        self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
+        self.assertEqual(response.toolResultCacheReadInputTokens, 89)
+        self.assertAlmostEqual(response.cacheShare, 0.8)
+        self.assertAlmostEqual(response.outputShare, 0.5)
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:
         session_repo = _FakeSessionDetailRepo()

@@ -222,6 +222,18 @@ export interface AgentSession {
   forkCount?: number;
   tokensIn: number;
   tokensOut: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  toolResultInputTokens?: number;
+  toolResultOutputTokens?: number;
+  toolResultCacheCreationInputTokens?: number;
+  toolResultCacheReadInputTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   totalCost: number;
   startedAt: string;
   endedAt?: string;

@@ -66,6 +66,47 @@ def _safe_json_list(raw: str | list | None) -> list:
         return []
 
 
+def _usage_ratio(numerator: Any, denominator: Any) -> float:
+    try:
+        num = max(0.0, float(numerator or 0))
+    except (TypeError, ValueError):
+        num = 0.0
+    try:
+        den = max(0.0, float(denominator or 0))
+    except (TypeError, ValueError):
+        den = 0.0
+    if den <= 0:
+        return 0.0
+    return round(num / den, 4)
+
+
+def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
+    model_io_tokens = int(row.get("model_io_tokens") or 0)
+    cache_creation_input_tokens = int(row.get("cache_creation_input_tokens") or 0)
+    cache_read_input_tokens = int(row.get("cache_read_input_tokens") or 0)
+    cache_input_tokens = int(row.get("cache_input_tokens") or 0)
+    observed_tokens = int(row.get("observed_tokens") or 0)
+    tool_reported_tokens = int(row.get("tool_reported_tokens") or 0)
+    tool_result_input_tokens = int(row.get("tool_result_input_tokens") or 0)
+    tool_result_output_tokens = int(row.get("tool_result_output_tokens") or 0)
+    tool_result_cache_creation_input_tokens = int(row.get("tool_result_cache_creation_input_tokens") or 0)
+    tool_result_cache_read_input_tokens = int(row.get("tool_result_cache_read_input_tokens") or 0)
+    return {
+        "modelIOTokens": model_io_tokens,
+        "cacheCreationInputTokens": cache_creation_input_tokens,
+        "cacheReadInputTokens": cache_read_input_tokens,
+        "cacheInputTokens": cache_input_tokens,
+        "observedTokens": observed_tokens,
+        "toolReportedTokens": tool_reported_tokens,
+        "toolResultInputTokens": tool_result_input_tokens,
+        "toolResultOutputTokens": tool_result_output_tokens,
+        "toolResultCacheCreationInputTokens": tool_result_cache_creation_input_tokens,
+        "toolResultCacheReadInputTokens": tool_result_cache_read_input_tokens,
+        "cacheShare": _usage_ratio(cache_input_tokens, observed_tokens),
+        "outputShare": _usage_ratio(row.get("tokens_out") or 0, model_io_tokens),
+    }
+
+
 def _string_list(raw: Any) -> list[str]:
     if isinstance(raw, list):
         return [str(v) for v in raw if isinstance(v, str) and str(v).strip()]
@@ -548,6 +589,7 @@ async def list_sessions(
             durationSeconds=s["duration_seconds"],
             tokensIn=s["tokens_in"],
             tokensOut=s["tokens_out"],
+            **_session_usage_fields(s),
             totalCost=s["total_cost"],
             startedAt=s["started_at"] or "",
             endedAt=s.get("ended_at") or "",
@@ -861,6 +903,7 @@ async def get_session(session_id: str):
         durationSeconds=s["duration_seconds"],
         tokensIn=s["tokens_in"],
         tokensOut=s["tokens_out"],
+        **_session_usage_fields(s),
         totalCost=s["total_cost"],
         startedAt=s["started_at"] or "",
         endedAt=s.get("ended_at") or "",

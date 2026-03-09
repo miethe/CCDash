@@ -98,6 +98,16 @@ CREATE TABLE IF NOT EXISTS sessions (
     duration_seconds INTEGER DEFAULT 0,
     tokens_in        INTEGER DEFAULT 0,
     tokens_out       INTEGER DEFAULT 0,
+    model_io_tokens  INTEGER DEFAULT 0,
+    cache_creation_input_tokens INTEGER DEFAULT 0,
+    cache_read_input_tokens INTEGER DEFAULT 0,
+    cache_input_tokens INTEGER DEFAULT 0,
+    observed_tokens  INTEGER DEFAULT 0,
+    tool_reported_tokens INTEGER DEFAULT 0,
+    tool_result_input_tokens INTEGER DEFAULT 0,
+    tool_result_output_tokens INTEGER DEFAULT 0,
+    tool_result_cache_creation_input_tokens INTEGER DEFAULT 0,
+    tool_result_cache_read_input_tokens INTEGER DEFAULT 0,
     total_cost       REAL DEFAULT 0.0,
     quality_rating   INTEGER DEFAULT 0,
     friction_rating  INTEGER DEFAULT 0,
@@ -882,6 +892,16 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "sessions", "impact_history_json", "TEXT DEFAULT '[]'")
     await _ensure_column(db, "sessions", "thinking_level", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "session_forensics_json", "TEXT DEFAULT '{}'")
+    await _ensure_column(db, "sessions", "model_io_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "cache_creation_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "cache_read_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "cache_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "observed_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "tool_reported_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "tool_result_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "tool_result_output_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "tool_result_cache_creation_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "tool_result_cache_read_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
     await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
