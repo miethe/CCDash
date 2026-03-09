@@ -32,6 +32,8 @@ related:
   - backend/routers/analytics.py
   - backend/routers/api.py
   - backend/services/workflow_effectiveness.py
+  - components/Dashboard.tsx
+  - components/ProjectBoard.tsx
   - components/SessionInspector.tsx
   - components/FeatureExecutionWorkbench.tsx
   - components/Analytics/AnalyticsDashboard.tsx
@@ -71,6 +73,7 @@ Turn the March 8, 2026 Claude Code schema/token audit into production behavior b
 4. Tool-reported totals are operational fallback signals, not additive totals when linked subagent sessions exist.
 5. Relay-wrapped `data.message.message.*` records remain excluded from observed totals until the attribution rule is explicitly implemented and tested.
 6. V1 is limited to Claude Code session semantics even if the contract later expands to other platforms.
+7. Cost remains model-IO-derived in V1; observed workload tokens do not automatically imply higher estimated dollar cost.
 
 ## Non-Goals
 
@@ -105,6 +108,36 @@ Rationale:
 2. They match the report's recommended token model.
 3. They prevent request-time reparsing of nested `sessionForensics`.
 
+## V2-Ready Attribution Guardrails
+
+V1 should preserve enough event-level detail to support later token attribution by skill, agent, command, or subthread without changing parser semantics again.
+
+Required guardrails:
+
+1. Preserve per-log usage deltas in normalized log metadata for every Claude message/tool record that exposes them, including cache families where available.
+2. Keep stable join keys across the stack:
+   - `session_id`
+   - `source_log_id`
+   - timestamp
+   - agent/subthread identity
+   - command/tool context
+   - skill/artifact refs when resolvable
+3. Treat later attribution as a separate derived layer, not as destructive mutation of session totals.
+4. When V2 arrives, write attribution rows with:
+   - `artifact_type`
+   - `artifact_id`
+   - `token_family`
+   - `delta_tokens`
+   - `attribution_method`
+   - `confidence`
+
+This keeps V1 focused on correctness while leaving room for:
+
+1. session totals for sessions that used a given skill
+2. subthread totals for a specific agent
+3. delta-based token attribution around skill or artifact usage windows
+4. correlation views across model, skill, agent, command, feature, and cost
+
 ## Phase 1: Persistence Contract and Schema Parity
 
 Tasks:
@@ -113,12 +146,14 @@ Tasks:
 2. Extend `backend/models.py`, `types.ts`, and API serialization contracts to expose the persisted usage fields and derived ratios.
 3. Update `backend/db/repositories/sessions.py` and `backend/db/repositories/postgres/sessions.py` to write/read the new fields.
 4. Keep `session_forensics_json` as the source for detailed usage families while making the stable totals queryable.
+5. Confirm normalized log metadata retains per-event token deltas and contextual join keys needed for later attribution work.
 
 Acceptance criteria:
 
 1. SQLite and PostgreSQL schemas stay aligned.
 2. Session rows can round-trip the new usage fields without breaking current readers.
 3. Existing `tokensIn` and `tokensOut` fields remain intact.
+4. Per-log usage metadata remains available for future attribution derivation.
 
 ## Phase 2: Sync Engine Mapping and Historical Backfill
 
@@ -131,13 +166,15 @@ Tasks:
    - `tool_reported_tokens` from `toolResultReportedTotals.totalTokens`
    - tool-result usage totals from `toolResultUsageTotals`
 3. Add a deterministic resync/backfill path for historical Claude sessions.
-4. Emit enough logging or summary output to verify how many sessions were updated during backfill.
+4. Preserve or enrich log-level metadata so message/tool rows still expose the event deltas later attribution will need.
+5. Emit enough logging or summary output to verify how many sessions were updated during backfill.
 
 Acceptance criteria:
 
 1. Historical Claude session rows populate the new usage fields after resync.
 2. Stored `observedTokens` matches parser-derived message totals on validation fixtures and sampled real sessions.
 3. Backfill is safe to rerun without duplicate side effects.
+4. Event-level metadata still supports reconstructing token deltas over time.
 
 ## Phase 3: Analytics, Feature Rollups, and Workflow Semantics
 
@@ -148,15 +185,18 @@ Tasks:
    - `cacheInputTokens`
    - `observedTokens`
    - `toolReportedTokens`
-2. Replace legacy default `totalTokens` rollups with `observedTokens`, while preserving compatibility behavior for callers that still expect `totalTokens`.
-3. Update feature/session aggregation logic in `backend/db/sync_engine.py` and `backend/services/workflow_effectiveness.py` to use the report's root/full-thread/fallback rules.
-4. Ensure tool-reported totals are used only when linked subagent sessions are absent.
+2. Update `/overview` and any landing-dashboard KPI payloads so app-level summaries remain aligned with the new token semantics.
+3. Replace legacy default `totalTokens` rollups with `observedTokens`, while preserving compatibility behavior for callers that still expect `totalTokens`.
+4. Update feature/session aggregation logic in `backend/db/sync_engine.py` and `backend/services/workflow_effectiveness.py` to use the report's root/full-thread/fallback rules.
+5. Ensure tool-reported totals are used only when linked subagent sessions are absent.
+6. Keep cost metrics explicitly model-IO-derived and labeled that way in contracts where both tokens and cost appear.
 
 Acceptance criteria:
 
 1. Analytics APIs no longer undercount Claude session workload by ignoring cache totals.
 2. Feature-level totals avoid double counting linked subagent sessions.
 3. Workflow effectiveness and related rollups use the new semantics consistently.
+4. Overview/dashboard payloads do not mix observed-token semantics with unlabeled model-IO cost semantics.
 
 ## Phase 4: Session, Feature, and Analytics UI Adoption
 
@@ -164,17 +204,20 @@ Tasks:
 
 1. Update `components/SessionInspector.tsx` to show a token-family breakdown and label legacy `tokensIn`/`tokensOut` as model IO.
 2. Update `components/FeatureExecutionWorkbench.tsx` to aggregate feature workload with `observedTokens` and expose cache contribution.
-3. Update `components/Analytics/AnalyticsDashboard.tsx` to:
+3. Update `components/ProjectBoard.tsx` token/cost surfaces so feature and commit views do not imply `tokenInput + tokenOutput` is the only meaningful total.
+4. Update `components/Dashboard.tsx` so any token KPI added or reused from overview follows the same semantics and cost labels.
+5. Update `components/Analytics/AnalyticsDashboard.tsx` to:
    - default "total tokens" cards/charts to `observedTokens`
    - add a cache-efficiency panel
    - surface ratios like cache share where useful
-4. Update shared frontend types and formatting helpers so new metrics render consistently.
+6. Update shared frontend types and formatting helpers so new metrics render consistently.
 
 Acceptance criteria:
 
 1. Users can distinguish model IO from cache-driven workload in the UI.
 2. Existing charts and cards keep working with the expanded payload shape.
 3. No major token surface still silently equates total tokens with `tokensIn + tokensOut`.
+4. Token/cost pairings on dashboard and feature views clearly distinguish observed workload from estimated model cost.
 
 ## Phase 5: Relay Attribution Policy and Guardrails
 
@@ -202,6 +245,7 @@ Tasks:
 3. Add frontend validation for token cards, tables, and cache-efficiency rendering.
 4. Document the metric semantics in developer-facing docs or inline implementation references so later work does not regress to legacy totals.
 5. Run a real-corpus verification pass against the inventory sample and at least one known high-cache session from the report.
+6. Capture follow-up notes for a V2 attribution plan once the event-level data contract is confirmed in real sessions.
 
 Acceptance criteria:
 

@@ -30,6 +30,8 @@ related:
   - backend/routers/analytics.py
   - backend/services/workflow_effectiveness.py
   - backend/routers/api.py
+  - components/Dashboard.tsx
+  - components/ProjectBoard.tsx
   - components/SessionInspector.tsx
   - components/FeatureExecutionWorkbench.tsx
   - components/Analytics/AnalyticsDashboard.tsx
@@ -115,6 +117,7 @@ Technical root causes:
 3. Normalize cache, tool-reported, and server-tool usage into queryable backend contracts.
 4. Expose token-family breakdowns in session, feature, and analytics UI so users can interpret workload composition.
 5. Establish an explicit attribution policy for relay-wrapped `data.message.message.*` records before they influence totals.
+6. Preserve enough event-level usage detail in normalized storage to support later skill-, agent-, and subthread-level token attribution without another parser redesign.
 
 ## Success Metrics
 
@@ -169,24 +172,38 @@ CCDash must distinguish, at minimum:
 
 1. Session Inspector must show a token-family breakdown for Claude Code sessions.
 2. Feature Execution Workbench must use `observedTokens` for high-level workload summaries and allow users to inspect cache contribution.
-3. Analytics Dashboard must expose a cache-efficiency panel with:
+3. Feature-facing surfaces in `ProjectBoard` that summarize session-, commit-, or correlation-level token usage must stop assuming `tokenInput + tokenOutput` is the only meaningful total.
+4. The landing dashboard overview contract must remain consistent with the analytics token model so any token KPIs added there do not regress to legacy semantics.
+5. Analytics Dashboard must expose a cache-efficiency panel with:
    - model IO tokens
    - cache read tokens
    - cache creation tokens
    - cache share
-4. Surfaces that previously rendered only `tokensIn + tokensOut` must be updated or explicitly labeled as model IO.
+6. Surfaces that previously rendered only `tokensIn + tokensOut` must be updated or explicitly labeled as model IO.
 
-### 6) Relay Attribution Policy
+### 6) Cost Semantics
+
+1. Cost must remain explicitly modeled as model-IO-derived cost unless and until CCDash introduces a validated pricing model for cache or tool-reported token families.
+2. UI surfaces that pair tokens and cost must not imply that `observedTokens` directly maps to current `totalCost`.
+3. Analytics and dashboard copy must distinguish "observed workload tokens" from "estimated model cost."
+
+### 7) Relay Attribution Policy
 
 1. `data.message.message.*` relay-wrapped records must not silently influence totals without a documented attribution rule.
 2. V1 must codify whether these records are excluded, counted conditionally, or exposed as a separate family.
 3. The policy must be testable and visible to maintainers.
 
-### 7) Backfill and Resync
+### 8) Backfill and Resync
 
 1. Historical Claude sessions must be resynced or backfilled so analytics stop depending on legacy totals only.
 2. The backfill path must be deterministic and safe to rerun.
 3. Backfill completion should be observable through logs or summary reporting.
+
+### 9) V2 Attribution Readiness
+
+1. V1 must preserve per-log or per-event usage deltas and the contextual keys needed for later attribution work, including session ID, source log ID, timestamp, model, agent/subthread context, and skill/artifact references when available.
+2. The storage contract must support future attribution rows that can assign token deltas to skills, agents, commands, or artifact usage with a method/confidence value.
+3. V1 must avoid baking in assumptions that only session-level totals matter.
 
 ## Non-Functional Requirements
 
@@ -195,6 +212,7 @@ CCDash must distinguish, at minimum:
 3. Performance: the new hot-path metrics must be queryable without reparsing large nested JSON at request time.
 4. Correctness: token totals must not double count linked sessions or relay mirrors.
 5. Explainability: UI labels must distinguish model IO, cache input, and observed totals clearly.
+6. Extensibility: the normalized model must remain compatible with future token attribution by skill, agent, command, or subthread.
 
 ## Out of Scope
 
@@ -202,6 +220,7 @@ CCDash must distinguish, at minimum:
 2. Counting relay-wrapped records beyond the policy required to avoid silent ambiguity.
 3. General telemetry platform redesign outside Claude Code session usage semantics.
 4. Reworking non-Claude session token semantics in the same phase.
+5. Shipping v2 artifact attribution views in the same phase as core session/analytics correction.
 
 ## Dependencies and Assumptions
 
@@ -220,6 +239,8 @@ CCDash must distinguish, at minimum:
    - Mitigation: freeze counting behavior behind a documented policy before enabling them.
 4. Risk: Schema drift in future Claude Code payloads.
    - Mitigation: keep the inventory script in the maintenance loop and add regression coverage for new usage families.
+5. Risk: V1 session-only persistence leaves later skill/agent attribution too coarse.
+   - Mitigation: preserve event-level usage deltas and contextual keys now, even if V2 is the first release to query them.
 
 ## Acceptance Criteria
 
@@ -230,3 +251,5 @@ CCDash must distinguish, at minimum:
 5. Historical Claude sessions can be resynced/backfilled to populate the new fields.
 6. Relay-wrapped `data.message.message.*` counting behavior is explicitly documented and covered by tests.
 7. Session, workbench, and analytics UI surfaces show cache contribution instead of hiding it behind one overloaded total.
+8. Dashboard and feature-facing token/cost surfaces either adopt the new semantics or explicitly label model-IO-only values.
+9. V1 storage preserves enough event-level usage context to support later skill-, agent-, and subthread-level attribution work.

@@ -15,7 +15,6 @@ import {
   FeatureExecutionWarning,
   RecommendedStack,
   RecommendedStackComponent,
-  RecommendedStackDefinitionRef,
   SimilarWorkExample,
   StackRecommendationEvidence,
 } from '../../types';
@@ -292,9 +291,9 @@ const buildHeadlineTags = (stackEvidence: StackRecommendationEvidence[]): Insigh
 
 const DefinitionChip: React.FC<{ reference: ReferenceChipData }> = ({ reference }) => {
   const content = (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${statusChipClass(reference.status)}`}>
+    <span className={`inline-flex max-w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs leading-4 ${statusChipClass(reference.status)}`}>
       <span className={`h-2 w-2 rounded-full ${reference.status === 'resolved' ? 'bg-emerald-300' : reference.status === 'cached' ? 'bg-sky-300' : 'bg-amber-300'}`} />
-      {reference.label}
+      <span className="min-w-0 break-words text-left">{reference.label}</span>
       {reference.sourceUrl ? <ExternalLink size={12} /> : <Info size={12} />}
     </span>
   );
@@ -349,12 +348,35 @@ const DefinitionChip: React.FC<{ reference: ReferenceChipData }> = ({ reference 
   );
 };
 
+const StackStatCard: React.FC<{
+  label: string;
+  value: string;
+  tone?: 'default' | 'success' | 'info' | 'warning';
+}> = ({ label, value, tone = 'default' }) => (
+  <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+    <div
+      className={`mt-1 font-mono text-lg ${
+        tone === 'success'
+          ? 'text-emerald-200'
+          : tone === 'info'
+            ? 'text-sky-200'
+            : tone === 'warning'
+              ? 'text-amber-200'
+              : 'text-slate-100'
+      }`}
+    >
+      {value}
+    </div>
+  </div>
+);
+
 const InsightCard: React.FC<{ section: InsightSection }> = ({ section }) => (
-  <div className="rounded-[24px] border border-slate-700/80 bg-slate-950/45 p-4">
+  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4">
     <div className="flex items-start justify-between gap-3">
       <div>
-        <div className="font-mono text-lg text-slate-100">{section.title}</div>
-        <div className="mt-1 text-sm text-slate-400">{section.summary}</div>
+        <div className="text-base font-semibold text-slate-100">{section.title}</div>
+        <div className="mt-1 text-sm leading-6 text-slate-400">{section.summary}</div>
       </div>
       <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-slate-400">
         Insight
@@ -580,12 +602,12 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
 
   if (!recommendedStack) {
     return (
-      <section className="rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_rgba(15,23,42,0.92)_42%,_rgba(2,6,23,0.96)_100%)] p-5">
+      <section className="rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.18)]">
         <div className="flex items-start gap-3">
           <ShieldAlert size={18} className="mt-0.5 text-amber-300" />
           <div>
-            <h3 className="font-mono text-2xl text-slate-100">Recommended Stack</h3>
-            <p className="mt-2 text-sm text-slate-400">
+            <h3 className="text-xl font-semibold tracking-tight text-slate-100">Recommended Stack</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
               Historical stack guidance is not available for this feature yet. Command recommendations remain active.
             </p>
             {definitionResolutionWarnings.length > 0 && (
@@ -605,75 +627,94 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
 
   return (
     <TooltipProvider>
-      <section className="rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_rgba(15,23,42,0.92)_42%,_rgba(2,6,23,0.96)_100%)] p-5 shadow-[0_24px_70px_rgba(2,6,23,0.32)]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-sky-100">
+      <section className="rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.2)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-100">
               <Sparkles size={12} />
               Historical Match
             </div>
-            <h3 className="mt-3 font-mono text-3xl text-slate-100">Recommended Stack</h3>
+            <h3 className="mt-3 text-xl font-semibold tracking-tight text-slate-100 md:text-2xl">Recommended Stack</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              {recommendedStack.explanation || recommendedStack.commandAlignment || 'Historical execution signals were matched against related work to suggest the best-fit stack.'}
+            </p>
           </div>
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-3 text-right">
-            <div className="font-mono text-3xl text-emerald-100">{formatPercent(recommendedStack.confidence)}</div>
-            <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">Match</div>
+          <div className="grid min-w-[220px] gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/80">Match</div>
+              <div className="mt-1 font-mono text-3xl text-emerald-100">{formatPercent(recommendedStack.confidence)}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Sample Size</div>
+              <div className="mt-1 font-mono text-3xl text-slate-100">{recommendedStack.sampleSize}</div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-5 space-y-4 rounded-[24px] border border-slate-700/80 bg-slate-950/45 p-4">
-          <div className="flex items-center gap-2 text-lg text-slate-200">
-            <span className="text-slate-500">Workflow name:</span>
-            <span className="font-mono text-slate-100">{recommendedStack.workflowRef || recommendedStack.label}</span>
-            <CheckCircle2 size={18} className="text-emerald-300" />
+        <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+          <div className="rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4">
+            <div className="flex flex-wrap items-center gap-2 text-slate-200">
+              <span className="text-sm text-slate-500">Workflow</span>
+              <span className="font-mono text-sm text-slate-100 [overflow-wrap:anywhere]">{recommendedStack.workflowRef || recommendedStack.label}</span>
+              <CheckCircle2 size={16} className="text-emerald-300" />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Execution Alignment</div>
+                <div className="mt-1 text-sm leading-6 text-slate-300">{recommendedStack.commandAlignment || 'Aligned to the current execution pattern.'}</div>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Primary Evidence</div>
+                <div className="mt-1 text-sm leading-6 text-slate-300">{recommendedStack.label || 'Historical stack recommendation'}</div>
+              </div>
+            </div>
+
+            {headlineTags.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {headlineTags.map(tag => (
+                  tag.url ? (
+                    <button
+                      key={tag.label}
+                      onClick={() => openExternalUrl(tag.url || '')}
+                      className="inline-flex items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 hover:bg-sky-500/20"
+                    >
+                      {tag.label}
+                      <ExternalLink size={12} />
+                    </button>
+                  ) : (
+                    <span key={tag.label} className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
+                      {tag.label}
+                    </span>
+                  )
+                ))}
+              </div>
+            )}
           </div>
 
-          {headlineTags.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {headlineTags.map(tag => (
-                tag.url ? (
-                  <button
-                    key={tag.label}
-                    onClick={() => openExternalUrl(tag.url || '')}
-                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 hover:bg-sky-500/20"
-                  >
-                    {tag.label}
-                    <ExternalLink size={12} />
-                  </button>
-                ) : (
-                  <span key={tag.label} className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
-                    {tag.label}
-                  </span>
-                )
-              ))}
-            </div>
-          )}
-
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Sample Size</div>
-              <div className="mt-1 font-mono text-lg text-slate-100">{recommendedStack.sampleSize}</div>
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Success</div>
-              <div className="mt-1 font-mono text-lg text-emerald-200">{formatPercent(recommendedStack.successScore)}</div>
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Quality</div>
-              <div className="mt-1 font-mono text-lg text-sky-200">{formatPercent(recommendedStack.qualityScore)}</div>
-            </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Risk</div>
-              <div className="mt-1 font-mono text-lg text-amber-200">{formatPercent(recommendedStack.riskScore)}</div>
+          <div className="rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Outcome Snapshot</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <StackStatCard label="Success" value={formatPercent(recommendedStack.successScore)} tone="success" />
+              <StackStatCard label="Efficiency" value={formatPercent(recommendedStack.efficiencyScore)} tone="info" />
+              <StackStatCard label="Quality" value={formatPercent(recommendedStack.qualityScore)} tone="info" />
+              <StackStatCard label="Risk" value={formatPercent(recommendedStack.riskScore)} tone="warning" />
             </div>
           </div>
+        </div>
 
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
           {COMPONENT_GROUPS.map(group => {
             const items = groupedComponents.get(group.key) || [];
             if (items.length === 0) return null;
             return (
-              <div key={group.key} className="space-y-2">
-                <div className="text-sm text-slate-500">{group.label}</div>
-                <div className="flex flex-wrap gap-2">
+              <div key={group.key} className="rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-100">{group.label}</div>
+                  <div className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-400">
+                    {items.length}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
                   {items.map(component => (
                     <DefinitionChip key={`${group.key}-${component.componentKey}-${component.label}`} reference={getReferenceData(component)} />
                   ))}
@@ -683,17 +724,19 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
           })}
         </div>
 
-        <div className="mt-4 rounded-[24px] border border-slate-700/80 bg-slate-950/40 p-4">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-            <Link2 size={12} />
-            Workbench Inline View
+        {referenceChips.length > 0 && (
+          <div className="mt-4 rounded-[24px] border border-slate-800/80 bg-slate-950/45 p-4">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+              <Link2 size={12} />
+              Resolved References
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {referenceChips.map(reference => (
+                <DefinitionChip key={reference.key} reference={reference} />
+              ))}
+            </div>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {referenceChips.map(reference => (
-              <DefinitionChip key={reference.key} reference={reference} />
-            ))}
-          </div>
-        </div>
+        )}
 
         {insightSections.length > 0 && (
           <div className="mt-4 grid gap-4 xl:grid-cols-3">
@@ -715,10 +758,10 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
 
         <button
           onClick={() => setAlternativesOpen(prev => !prev)}
-          className="mt-5 flex w-full items-center justify-between rounded-[20px] border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-left"
+          className="mt-5 flex w-full items-center justify-between rounded-[20px] border border-slate-800/80 bg-slate-950/40 px-4 py-3 text-left"
           aria-expanded={alternativesOpen}
         >
-          <div className="flex items-center gap-2 font-mono text-xl text-slate-100">
+          <div className="flex items-center gap-2 text-base font-semibold text-slate-100">
             {alternativesOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
             Alternatives
           </div>
@@ -733,10 +776,10 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
               </div>
             )}
             {stackAlternatives.map((alternative, index) => (
-              <div key={alternative.id} className="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-4">
+              <div key={alternative.id} className="rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-lg text-slate-100">{index + 1}. {alternative.label || alternative.workflowRef}</div>
+                    <div className="text-base font-semibold text-slate-100">{index + 1}. {alternative.label || alternative.workflowRef}</div>
                     <div className="mt-1 text-sm text-slate-500">{alternative.commandAlignment || 'Aligned to current execution pattern'}</div>
                   </div>
                   <div className="font-mono text-xl text-slate-200">{formatPercent(alternative.confidence)}</div>
@@ -753,21 +796,26 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
           </div>
         )}
 
-        <div className="mt-5 rounded-[24px] border border-slate-700/80 bg-slate-950/40 p-4">
-          <div className="font-mono text-2xl text-slate-100">Evidence</div>
+        <div className="mt-5 rounded-[24px] border border-slate-800/80 bg-slate-950/40 p-4">
+          <div className="text-lg font-semibold text-slate-100">Evidence</div>
           <div className="mt-4 space-y-3">
             {stackEvidence.length === 0 && (
               <div className="text-sm text-slate-500">No historical evidence items were attached to this recommendation.</div>
             )}
             {stackEvidence.map(evidence => (
-              <div key={evidence.id} className="rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-4">
+              <div key={evidence.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-lg text-slate-100">{evidence.label}</div>
-                    <div className="mt-1 text-sm text-slate-400">{evidence.summary}</div>
+                    <div className="text-base font-semibold text-slate-100">{evidence.label}</div>
+                    <div className="mt-1 text-sm leading-6 text-slate-400">{evidence.summary}</div>
                   </div>
-                  <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
-                    {formatPercent(evidence.confidence)} confidence
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
+                      {evidence.sourceType.replace(/_/g, ' ')}
+                    </div>
+                    <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-300">
+                      {formatPercent(evidence.confidence)} confidence
+                    </div>
                   </div>
                 </div>
 

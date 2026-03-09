@@ -19,6 +19,14 @@ interface WorkflowEffectivenessSurfaceProps {
   onOpenSession?: (sessionId: string) => void;
 }
 
+interface EffectivenessEvidenceSummary {
+  featureIds: string[];
+  representativeSessionIds: string[];
+  averageQueueOperations: number;
+  averageLaterDebugSessions: number;
+  averageTestPassRatio: number;
+}
+
 const SCOPE_OPTIONS: Array<{ value: EffectivenessScopeType; label: string }> = [
   { value: 'workflow', label: 'Workflow' },
   { value: 'effective_workflow', label: 'Effective Workflow' },
@@ -36,7 +44,6 @@ const PERIOD_OPTIONS: Array<{ value: PeriodPreset; label: string }> = [
 ];
 
 const formatPercent = (value: number): string => `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`;
-const formatDecimal = (value: number): string => Number(value || 0).toFixed(2);
 const formatInteger = (value: number): string => Number(value || 0).toLocaleString();
 
 const formatLoadError = (err: unknown): string => {
@@ -66,16 +73,39 @@ const buildDateRange = (preset: PeriodPreset): { start: string; end: string } =>
 const scoreBarClass = (kind: 'success' | 'efficiency' | 'quality' | 'risk'): string => {
   if (kind === 'success') return 'from-emerald-400 to-emerald-500';
   if (kind === 'efficiency') return 'from-sky-400 to-blue-500';
-  if (kind === 'quality') return 'from-fuchsia-400 to-violet-500';
-  return 'from-rose-400 via-amber-400 to-yellow-500';
+  if (kind === 'quality') return 'from-cyan-400 to-indigo-500';
+  return 'from-amber-300 via-orange-400 to-rose-500';
 };
 
 const severityClass = (severity: string): string => {
   const normalized = String(severity || '').toLowerCase();
-  if (normalized === 'high') return 'border-rose-500/40 bg-rose-500/10 text-rose-100';
-  if (normalized === 'low') return 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100';
-  return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
+  if (normalized === 'high') return 'border-rose-500/30 bg-rose-500/10 text-rose-100';
+  if (normalized === 'low') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100';
+  return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
 };
+
+const scoreValueClass = (kind: 'success' | 'efficiency' | 'quality' | 'risk'): string => {
+  if (kind === 'success') return 'text-emerald-200';
+  if (kind === 'efficiency') return 'text-sky-200';
+  if (kind === 'quality') return 'text-cyan-200';
+  return 'text-amber-200';
+};
+
+const asArrayOfStrings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map(item => String(item || '').trim()).filter(Boolean) : [];
+
+const asNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const getEvidenceSummary = (summary: Record<string, unknown> | null | undefined): EffectivenessEvidenceSummary => ({
+  featureIds: asArrayOfStrings(summary?.featureIds),
+  representativeSessionIds: asArrayOfStrings(summary?.representativeSessionIds),
+  averageQueueOperations: asNumber(summary?.averageQueueOperations),
+  averageLaterDebugSessions: asNumber(summary?.averageLaterDebugSessions),
+  averageTestPassRatio: asNumber(summary?.averageTestPassRatio),
+});
 
 const summarizeScope = (item: WorkflowEffectivenessRollup): string => {
   if (item.scopeLabel && item.scopeLabel !== item.scopeId) return item.scopeId;
@@ -101,21 +131,49 @@ const weightedAverage = (items: WorkflowEffectivenessRollup[], key: keyof Workfl
   ) / totalWeight;
 };
 
+const scopeLabelFor = (scopeType: EffectivenessScopeType): string =>
+  SCOPE_OPTIONS.find(option => option.value === scopeType)?.label || scopeType.replace(/_/g, ' ');
+
 const ScoreBar: React.FC<{ label: string; value: number; kind: 'success' | 'efficiency' | 'quality' | 'risk' }> = ({
   label,
   value,
   kind,
 }) => (
-  <div className="space-y-1.5">
-    <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+  <div className="space-y-2">
+    <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
       <span>{label}</span>
-      <span className="font-semibold text-slate-300">{formatPercent(value)}</span>
+      <span className={`font-mono text-sm ${scoreValueClass(kind)}`}>{formatPercent(value)}</span>
     </div>
-    <div className="h-2 rounded-full bg-slate-800/90 overflow-hidden">
+    <div className="h-2 overflow-hidden rounded-full bg-slate-900">
       <div
         className={`h-full rounded-full bg-gradient-to-r ${scoreBarClass(kind)}`}
-        style={{ width: `${Math.max(6, Math.round(Math.max(0, Math.min(1, value)) * 100))}%` }}
+        style={{ width: `${Math.max(8, Math.round(Math.max(0, Math.min(1, value)) * 100))}%` }}
       />
+    </div>
+  </div>
+);
+
+const SummaryCard: React.FC<{ label: string; value: string; caption?: string }> = ({ label, value, caption }) => (
+  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 px-4 py-4">
+    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
+    <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-100 md:text-3xl [overflow-wrap:anywhere]">{value}</div>
+    {caption && <div className="mt-1 text-xs text-slate-500">{caption}</div>}
+  </div>
+);
+
+const EvidenceMetric: React.FC<{ label: string; value: string; tone?: 'default' | 'positive' | 'warning' }> = ({
+  label,
+  value,
+  tone = 'default',
+}) => (
+  <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-3 py-3">
+    <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
+    <div
+      className={`mt-1 font-mono text-base ${
+        tone === 'positive' ? 'text-emerald-200' : tone === 'warning' ? 'text-amber-200' : 'text-slate-200'
+      }`}
+    >
+      {value}
     </div>
   </div>
 );
@@ -186,11 +244,13 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
     const rows = payload?.items || [];
     if (!deferredSearch) return rows;
     return rows.filter(item => {
+      const evidence = getEvidenceSummary(item.evidenceSummary);
       const haystack = [
         item.scopeLabel,
         item.scopeId,
         item.scopeType,
-        String(item.evidenceSummary?.featureId || ''),
+        ...evidence.featureIds,
+        ...evidence.representativeSessionIds,
       ].join(' ').toLowerCase();
       return haystack.includes(deferredSearch);
     });
@@ -207,37 +267,37 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   }, [failurePatterns.length, filteredItems]);
 
   const shellClass = embedded
-    ? 'rounded-[24px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.18),_rgba(15,23,42,0.92)_42%,_rgba(2,6,23,0.96)_100%)] p-4 md:p-5'
-    : 'rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.2),_rgba(15,23,42,0.94)_42%,_rgba(2,6,23,0.98)_100%)] p-5 md:p-6 shadow-[0_28px_90px_rgba(15,23,42,0.38)]';
+    ? 'rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
+    : 'rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 md:p-6 shadow-[0_28px_90px_rgba(2,6,23,0.22)]';
 
   return (
     <section className={shellClass}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-sky-100">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-100">
             <Sparkles size={12} />
             Intelligence View
           </div>
-          <h3 className="mt-3 font-mono text-2xl text-slate-100">{title}</h3>
-          <p className="mt-2 max-w-3xl text-sm text-slate-400">{description}</p>
+          <h3 className="mt-3 text-xl font-semibold tracking-tight text-slate-100 md:text-2xl">{title}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
         </div>
         <button
           onClick={() => { void loadSurface(true); }}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500 disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-950 disabled:opacity-60"
         >
           <RefreshCcw size={14} className={loading ? 'animate-spin' : ''} />
           Refresh
         </button>
       </div>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_320px]">
-        <label className="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
+      <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_280px]">
+        <label className="rounded-2xl border border-slate-800/80 bg-slate-950/55 px-4 py-3">
           <span className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Scope</span>
           <select
             value={scopeType}
             onChange={event => setScopeType(event.target.value as EffectivenessScopeType)}
-            className="mt-2 w-full bg-transparent font-mono text-lg text-slate-100 outline-none"
+            className="mt-2 w-full bg-transparent text-base font-medium text-slate-100 outline-none"
           >
             {SCOPE_OPTIONS.map(option => (
               <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
@@ -247,12 +307,12 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           </select>
         </label>
 
-        <label className="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
+        <label className="rounded-2xl border border-slate-800/80 bg-slate-950/55 px-4 py-3">
           <span className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Period</span>
           <select
             value={periodPreset}
             onChange={event => setPeriodPreset(event.target.value as PeriodPreset)}
-            className="mt-2 w-full bg-transparent font-mono text-lg text-slate-100 outline-none"
+            className="mt-2 w-full bg-transparent text-base font-medium text-slate-100 outline-none"
           >
             {PERIOD_OPTIONS.map(option => (
               <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
@@ -262,7 +322,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           </select>
         </label>
 
-        <label className="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
+        <label className="rounded-2xl border border-slate-800/80 bg-slate-950/55 px-4 py-3">
           <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
             <Search size={12} />
             Search
@@ -270,8 +330,8 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           <input
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Filter names or IDs"
-            className="mt-2 w-full bg-transparent font-mono text-lg text-slate-100 outline-none placeholder:text-slate-500"
+            placeholder="Filter scopes, features, sessions"
+            className="mt-2 w-full bg-transparent text-base text-slate-100 outline-none placeholder:text-slate-500"
           />
         </label>
       </div>
@@ -284,32 +344,14 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
       )}
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-4 py-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Overall Success</div>
-          <div className="mt-2 font-mono text-4xl text-slate-100">{formatPercent(summary.overallSuccess)}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-4 py-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Avg Efficiency</div>
-          <div className="mt-2 font-mono text-4xl text-slate-100">{formatDecimal(summary.avgEfficiency)}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-4 py-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Top Performer</div>
-          <div className="mt-2 flex items-start gap-3">
-            <Trophy size={18} className="mt-1 text-amber-300" />
-            <div>
-              <div className="font-mono text-2xl text-slate-100">
-                {summary.topPerformer?.scopeLabel || summary.topPerformer?.scopeId || 'n/a'}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {summary.topPerformer ? `${summary.topPerformer.sampleSize} sessions` : 'No scored rows'}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-4 py-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Flagged Patterns</div>
-          <div className="mt-2 font-mono text-4xl text-slate-100">{formatInteger(summary.flaggedPatterns)}</div>
-        </div>
+        <SummaryCard label="Overall Success" value={formatPercent(summary.overallSuccess)} caption="Weighted across visible scopes" />
+        <SummaryCard label="Avg Efficiency" value={formatPercent(summary.avgEfficiency)} caption="Duration, cost, token, and queue pressure" />
+        <SummaryCard
+          label="Top Performer"
+          value={summary.topPerformer?.scopeLabel || summary.topPerformer?.scopeId || 'n/a'}
+          caption={summary.topPerformer ? `${scopeLabelFor(summary.topPerformer.scopeType)} • ${summary.topPerformer.sampleSize} sessions` : 'No scored rows'}
+        />
+        <SummaryCard label="Flagged Patterns" value={formatInteger(summary.flaggedPatterns)} caption="Low-yield patterns in this window" />
       </div>
 
       {error && (
@@ -319,54 +361,151 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
       )}
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="overflow-hidden rounded-[24px] border border-slate-700/80 bg-slate-950/45">
-          <div className="grid grid-cols-[minmax(220px,1.3fr)_repeat(4,minmax(120px,1fr))_84px] gap-4 border-b border-slate-800/90 px-4 py-4 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-            <div>Name</div>
-            <div>Success</div>
-            <div>Efficiency</div>
-            <div>Quality</div>
-            <div>Risk</div>
-            <div>Sessions</div>
-          </div>
+        <div className="space-y-4">
+          {!loading && !error && filteredItems.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Visible rollups</div>
+                <div className="mt-1 text-sm text-slate-300">
+                  {formatInteger(filteredItems.length)} scope{filteredItems.length === 1 ? '' : 's'} ranked by delivery outcome.
+                </div>
+              </div>
+              {payload?.metricDefinitions?.length ? (
+                <div className="text-xs text-slate-500">
+                  Metrics: {payload.metricDefinitions.map(metric => metric.label).join(' / ')}
+                </div>
+              ) : null}
+            </div>
+          )}
 
           {loading && (
-            <div className="px-4 py-8 text-sm text-slate-400">Loading workflow effectiveness...</div>
+            <div className="rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-8 text-sm text-slate-400">
+              Loading workflow effectiveness...
+            </div>
           )}
 
           {!loading && !error && filteredItems.length === 0 && (
-            <div className="px-4 py-10 text-sm text-slate-500">
+            <div className="rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-10 text-sm text-slate-500">
               No effectiveness rows matched the current filters.
             </div>
           )}
 
-          {!loading && !error && filteredItems.map(item => (
-            <div
-              key={`${item.scopeType}-${item.scopeId}`}
-              className="grid grid-cols-[minmax(220px,1.3fr)_repeat(4,minmax(120px,1fr))_84px] gap-4 border-b border-slate-900/80 px-4 py-4 last:border-b-0"
-            >
-              <div className="min-w-0">
-                <div className="truncate font-mono text-lg text-slate-100">
-                  {item.scopeLabel || item.scopeId}
+          {!loading && !error && filteredItems.map(item => {
+            const evidence = getEvidenceSummary(item.evidenceSummary);
+            const scopeTypeLabel = scopeLabelFor(item.scopeType);
+            const representativeSessions = evidence.representativeSessionIds.slice(0, 4);
+            const featureIds = evidence.featureIds.slice(0, 4);
+
+            return (
+              <article
+                key={`${item.scopeType}-${item.scopeId}`}
+                className="rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4 transition-colors hover:border-slate-700"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                        {scopeTypeLabel}
+                      </span>
+                      <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-300">
+                        {formatInteger(item.sampleSize)} sessions
+                      </span>
+                    </div>
+                    <h4 className="mt-3 text-lg font-semibold leading-tight text-slate-100 [overflow-wrap:anywhere]">
+                      {item.scopeLabel || item.scopeId}
+                    </h4>
+                    <p className="mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">
+                      {summarizeScope(item)}
+                    </p>
+                  </div>
+
+                  {summary.topPerformer?.scopeType === item.scopeType && summary.topPerformer?.scopeId === item.scopeId && (
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-100">
+                      <Trophy size={13} className="text-amber-300" />
+                      Top performer
+                    </div>
+                  )}
                 </div>
-                <div className="mt-1 truncate text-sm text-slate-500">
-                  {summarizeScope(item)}
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <ScoreBar label="Success" value={item.successScore} kind="success" />
+                  <ScoreBar label="Efficiency" value={item.efficiencyScore} kind="efficiency" />
+                  <ScoreBar label="Quality" value={item.qualityScore} kind="quality" />
+                  <ScoreBar label="Risk" value={item.riskScore} kind="risk" />
                 </div>
-              </div>
-              <ScoreBar label="Success" value={item.successScore} kind="success" />
-              <ScoreBar label="Efficiency" value={item.efficiencyScore} kind="efficiency" />
-              <ScoreBar label="Quality" value={item.qualityScore} kind="quality" />
-              <ScoreBar label="Risk" value={item.riskScore} kind="risk" />
-              <div className="font-mono text-2xl text-slate-200">{formatInteger(item.sampleSize)}</div>
-            </div>
-          ))}
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)]">
+                  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Evidence Snapshot</div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <EvidenceMetric
+                        label="Avg Test Pass"
+                        value={formatPercent(evidence.averageTestPassRatio)}
+                        tone={evidence.averageTestPassRatio >= 0.75 ? 'positive' : evidence.averageTestPassRatio > 0 ? 'default' : 'warning'}
+                      />
+                      <EvidenceMetric
+                        label="Avg Queue Ops"
+                        value={evidence.averageQueueOperations.toFixed(2)}
+                        tone={evidence.averageQueueOperations > 3 ? 'warning' : 'default'}
+                      />
+                      <EvidenceMetric
+                        label="Later Debug"
+                        value={evidence.averageLaterDebugSessions.toFixed(2)}
+                        tone={evidence.averageLaterDebugSessions > 0.5 ? 'warning' : 'default'}
+                      />
+                      <EvidenceMetric
+                        label="Features"
+                        value={formatInteger(evidence.featureIds.length)}
+                        tone={evidence.featureIds.length > 0 ? 'positive' : 'default'}
+                      />
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {featureIds.length > 0 ? featureIds.map(id => (
+                        <span
+                          key={`${item.scopeType}-${item.scopeId}-feature-${id}`}
+                          className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-mono text-slate-300"
+                        >
+                          {id}
+                        </span>
+                      )) : (
+                        <span className="text-xs text-slate-500">No feature coverage metadata was attached.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Representative Sessions</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {representativeSessions.length > 0 ? representativeSessions.map(sessionId => (
+                        <button
+                          key={`${item.scopeType}-${item.scopeId}-session-${sessionId}`}
+                          onClick={() => onOpenSession?.(sessionId)}
+                          disabled={!onOpenSession}
+                          className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-mono text-sky-200 transition-colors hover:border-slate-600 hover:text-sky-100 disabled:cursor-default disabled:text-slate-400"
+                        >
+                          {sessionId}
+                        </button>
+                      )) : (
+                        <div className="text-sm text-slate-500">No representative sessions were attached to this rollup.</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
 
-        <aside className="overflow-hidden rounded-[24px] border border-slate-700/80 bg-slate-950/45">
-          <div className="border-b border-slate-800/90 px-4 py-4">
-            <div className="flex items-center gap-2 font-mono text-2xl text-slate-100">
+        <aside className="overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50">
+          <div className="border-b border-slate-800 px-4 py-4">
+            <div className="flex items-center gap-2 text-lg font-semibold text-slate-100">
               <ShieldAlert size={18} className="text-amber-300" />
               Failure Patterns
             </div>
+            <p className="mt-2 text-sm text-slate-500">
+              Common ways this scope drifts into slow or low-confidence execution.
+            </p>
           </div>
           <div className="space-y-3 px-4 py-4">
             {!loading && !error && failurePatterns.length === 0 && (
@@ -375,35 +514,81 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
               </div>
             )}
 
-            {!error && failurePatterns.map((pattern, index) => (
-              <div
-                key={pattern.id}
-                className={`rounded-2xl border px-4 py-4 ${severityClass(pattern.severity)}`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="font-mono text-lg text-slate-300">{index + 1}.</div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle size={15} />
-                      <div className="font-mono text-base">{pattern.title}</div>
+            {!error && failurePatterns.map((pattern, index) => {
+              const evidence = getEvidenceSummary(pattern.evidenceSummary);
+              return (
+                <div
+                  key={pattern.id}
+                  className={`rounded-2xl border px-4 py-4 ${severityClass(pattern.severity)}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 rounded-full border border-current/25 px-2 py-1 text-[11px] font-semibold">
+                      {index + 1}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.16em] text-slate-300/75">
-                      <span>{pattern.occurrenceCount} hits</span>
-                      <span>{formatPercent(pattern.confidence)} confidence</span>
-                      <span>{formatPercent(pattern.averageRiskScore)} avg risk</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <AlertTriangle size={15} />
+                        <div className="text-base font-semibold">{pattern.title}</div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.16em] text-current/80">
+                        <span>{pattern.occurrenceCount} hits</span>
+                        <span>{formatPercent(pattern.confidence)} confidence</span>
+                        <span>{formatPercent(pattern.averageRiskScore)} avg risk</span>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl border border-current/15 bg-slate-950/35 px-3 py-2">
+                          <div className="text-current/70">Scope</div>
+                          <div className="mt-1 font-mono text-slate-100 [overflow-wrap:anywhere]">
+                            {pattern.scopeId || scopeLabelFor(pattern.scopeType as EffectivenessScopeType)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-current/15 bg-slate-950/35 px-3 py-2">
+                          <div className="text-current/70">Missing validation</div>
+                          <div className="mt-1 font-mono text-slate-100">{formatInteger(asNumber(pattern.evidenceSummary?.missingValidationSessions))}</div>
+                        </div>
+                        <div className="rounded-xl border border-current/15 bg-slate-950/35 px-3 py-2">
+                          <div className="text-current/70">Avg queue ops</div>
+                          <div className="mt-1 font-mono text-slate-100">{evidence.averageQueueOperations.toFixed(2)}</div>
+                        </div>
+                        <div className="rounded-xl border border-current/15 bg-slate-950/35 px-3 py-2">
+                          <div className="text-current/70">Later debug</div>
+                          <div className="mt-1 font-mono text-slate-100">{evidence.averageLaterDebugSessions.toFixed(2)}</div>
+                        </div>
+                      </div>
+
+                      {evidence.featureIds.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {evidence.featureIds.slice(0, 3).map(feature => (
+                            <span
+                              key={`${pattern.id}-${feature}`}
+                              className="rounded-full border border-current/20 bg-slate-950/35 px-2.5 py-1 text-[11px] font-mono text-slate-100"
+                            >
+                              {feature}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {pattern.sessionIds.length > 0 && onOpenSession && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {pattern.sessionIds.slice(0, 2).map(sessionId => (
+                            <button
+                              key={`${pattern.id}-${sessionId}`}
+                              onClick={() => onOpenSession(sessionId)}
+                              className="rounded-full border border-current/20 bg-slate-950/35 px-3 py-1.5 text-[11px] font-mono text-slate-100 underline decoration-current/30 underline-offset-4"
+                            >
+                              {sessionId}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    {pattern.sessionIds.length > 0 && onOpenSession && (
-                      <button
-                        onClick={() => onOpenSession(pattern.sessionIds[0])}
-                        className="mt-3 text-xs text-sky-200 underline decoration-slate-500 underline-offset-4 hover:text-sky-100"
-                      >
-                        Open sample session
-                      </button>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </aside>
       </div>
