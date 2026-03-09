@@ -5,7 +5,7 @@ import { useModelColors } from '../contexts/ModelColorsContext';
 import { AlertConfig, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
 import { DEFAULT_SKILLMEAT_FEATURE_FLAGS, defaultSkillMeatConfig, normalizeSkillMeatConfig } from '../services/agenticIntelligence';
-import { validateSkillMeatConfig } from '../services/skillmeat';
+import { refreshSkillMeatCache, validateSkillMeatConfig } from '../services/skillmeat';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
@@ -329,6 +329,8 @@ const ProjectsTab: React.FC = () => {
   const [skillMeatValidation, setSkillMeatValidation] = useState<SkillMeatConfigValidationResponse | null>(null);
   const [skillMeatValidationBusy, setSkillMeatValidationBusy] = useState(false);
   const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
+  const [skillMeatRefreshMessage, setSkillMeatRefreshMessage] = useState<string | null>(null);
+  const [skillMeatRefreshError, setSkillMeatRefreshError] = useState<string | null>(null);
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -362,6 +364,8 @@ const ProjectsTab: React.FC = () => {
       setScriptCopied(false);
       setSkillMeatValidation(null);
       setSkillMeatValidationError(null);
+      setSkillMeatRefreshMessage(null);
+      setSkillMeatRefreshError(null);
     }
   }, [selectedProjectId, projects]);
 
@@ -508,11 +512,28 @@ const ProjectsTab: React.FC = () => {
     setSaving(true);
     savingRef.current = true;
     setError(null);
+    setSkillMeatRefreshMessage(null);
+    setSkillMeatRefreshError(null);
     try {
       // updateProject already refreshes projects + sessions/documents/tasks/features
       await updateProject(editData.id, editData);
       setSaved(true);
       setDirtyPaths(false);
+
+      const skillMeatConfig = normalizeSkillMeatConfig(editData);
+      if (skillMeatConfig.enabled && skillMeatConfig.baseUrl.trim()) {
+        try {
+          const refreshResult = await refreshSkillMeatCache(editData.id);
+          const syncResult = refreshResult.sync;
+          const backfillResult = refreshResult.backfill;
+          const warningCount = (syncResult.warnings?.length || 0) + (backfillResult?.warnings?.length || 0);
+          setSkillMeatRefreshMessage(
+            `SkillMeat refresh complete: ${syncResult.totalDefinitions} definitions synced, ${backfillResult?.observationsStored ?? 0} observations rebuilt${warningCount > 0 ? `, ${warningCount} warning${warningCount === 1 ? '' : 's'}` : ''}.`,
+          );
+        } catch (skillMeatError: any) {
+          setSkillMeatRefreshError(skillMeatError?.message || 'Project saved, but SkillMeat refresh failed.');
+        }
+      }
     } catch (e: any) {
       setError(e.message || 'Failed to save project');
     } finally {
@@ -601,6 +622,18 @@ const ProjectsTab: React.FC = () => {
           <div className="mb-4 p-3 bg-emerald-900/30 border border-emerald-700/50 text-emerald-300 rounded-lg text-sm flex items-center gap-2">
             <Check size={14} />
             Project saved successfully{dirtyPaths ? ' — data rescanned' : ''}.
+          </div>
+        )}
+
+        {skillMeatRefreshMessage && !error && (
+          <div className="mb-4 p-3 bg-sky-900/30 border border-sky-700/50 text-sky-200 rounded-lg text-sm">
+            {skillMeatRefreshMessage}
+          </div>
+        )}
+
+        {skillMeatRefreshError && !error && (
+          <div className="mb-4 p-3 bg-amber-900/30 border border-amber-700/50 text-amber-200 rounded-lg text-sm">
+            {skillMeatRefreshError}
           </div>
         )}
 
@@ -771,7 +804,7 @@ const ProjectsTab: React.FC = () => {
                 </label>
                 <label className="block">
                   <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
-                    <span>SkillMeat Project Path</span>
+                    <span>SkillMeat Project ID</span>
                     <SkillMeatStatusBadge
                       result={skillMeatValidation?.projectMapping}
                       fallback="Unchecked"
@@ -782,9 +815,9 @@ const ProjectsTab: React.FC = () => {
                     value={editData.skillMeat?.projectId || ''}
                     onChange={e => updateSkillMeatConfig(prev => ({ ...prev, projectId: e.target.value }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                    placeholder="/absolute/path/to/skillmeat-project"
+                    placeholder="project UUID from SkillMeat"
                   />
-                  <p className="mt-1 text-xs text-slate-500">Use the SkillMeat project filesystem path. CCDash no longer uses `workspaceId` here.</p>
+                  <p className="mt-1 text-xs text-slate-500">Use the exact SkillMeat project ID, typically the UUID shown in the project details URL. Project names and local filesystem paths are not used here.</p>
                 </label>
                 <label className="block">
                   <span className="block text-xs text-slate-400 mb-1">Collection ID (optional)</span>

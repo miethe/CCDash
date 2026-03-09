@@ -197,6 +197,67 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.baseUrl.state, "success")
         self.assertEqual(payload.projectMapping.state, "warning")
 
+    async def test_refresh_runs_combined_pipeline_for_requested_project(self) -> None:
+        other_project = types.SimpleNamespace(
+            id="project-2",
+            skillMeat=SkillMeatProjectConfig(
+                enabled=True,
+                baseUrl="http://skillmeat-2.local",
+                projectId="sm-project-2",
+                collectionId="default",
+                aaaEnabled=False,
+                apiKey="",
+                requestTimeoutSeconds=2.0,
+            ),
+        )
+        payload = {
+            "sync": {
+                "projectId": "project-2",
+                "source": {
+                    "id": 7,
+                    "project_id": "project-2",
+                    "source_kind": "skillmeat",
+                    "enabled": True,
+                    "base_url": "http://skillmeat-2.local",
+                    "project_mapping_json": {"projectId": "sm-project-2", "collectionId": "default"},
+                    "feature_flags_json": {},
+                    "last_synced_at": "2026-03-09T12:00:00Z",
+                    "last_sync_status": "completed",
+                    "last_sync_error": "",
+                    "created_at": "2026-03-09T12:00:00Z",
+                    "updated_at": "2026-03-09T12:00:00Z",
+                },
+                "totalDefinitions": 3,
+                "countsByType": {"artifact": 1, "workflow": 1, "bundle": 1},
+                "fetchedAt": "2026-03-09T12:00:00Z",
+                "warnings": [],
+            },
+            "backfill": {
+                "projectId": "project-2",
+                "sessionsProcessed": 4,
+                "observationsStored": 4,
+                "skippedSessions": 0,
+                "resolvedComponents": 9,
+                "unresolvedComponents": 2,
+                "generatedAt": "2026-03-09T12:02:00Z",
+                "warnings": [],
+            },
+        }
+
+        with (
+            patch.object(integrations_router.project_manager, "get_project", return_value=other_project),
+            patch.object(integrations_router, "refresh_skillmeat_cache", AsyncMock(return_value=payload)) as refresh_mock,
+        ):
+            response = await integrations_router.refresh_skillmeat(
+                SkillMeatSyncRequest(projectId="project-2")
+            )
+
+        refresh_mock.assert_awaited_once()
+        self.assertEqual(response.projectId, "project-2")
+        self.assertEqual(response.sync.totalDefinitions, 3)
+        self.assertIsNotNone(response.backfill)
+        self.assertEqual(response.backfill.observationsStored, 4)
+
     async def test_list_observations_returns_empty_without_backfill(self) -> None:
         observations = await integrations_router.list_skillmeat_observations(limit=200, offset=0)
 

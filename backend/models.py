@@ -909,6 +909,12 @@ class SkillMeatObservationBackfillResponse(BaseModel):
     warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
 
 
+class SkillMeatRefreshResponse(BaseModel):
+    projectId: str
+    sync: SkillMeatDefinitionSyncResponse
+    backfill: SkillMeatObservationBackfillResponse | None = None
+
+
 EffectivenessScopeType = Literal["workflow", "effective_workflow", "agent", "skill", "context_module", "bundle", "stack"]
 
 

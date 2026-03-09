@@ -987,6 +987,37 @@ export interface SkillMeatConfigValidationResponse {
   auth: SkillMeatProbeResult;
 }
 
+export interface SkillMeatSyncWarning {
+  section: string;
+  message: string;
+  recoverable: boolean;
+}
+
+export interface SkillMeatDefinitionSyncResponse {
+  projectId: string;
+  totalDefinitions: number;
+  countsByType: Record<string, number>;
+  fetchedAt: string;
+  warnings: SkillMeatSyncWarning[];
+}
+
+export interface SkillMeatObservationBackfillResponse {
+  projectId: string;
+  sessionsProcessed: number;
+  observationsStored: number;
+  skippedSessions: number;
+  resolvedComponents: number;
+  unresolvedComponents: number;
+  generatedAt: string;
+  warnings: SkillMeatSyncWarning[];
+}
+
+export interface SkillMeatRefreshResponse {
+  projectId: string;
+  sync: SkillMeatDefinitionSyncResponse;
+  backfill: SkillMeatObservationBackfillResponse | null;
+}
+
 export interface Project {
   id: string;
   name: string;

@@ -110,6 +110,19 @@
         "maxParseConcurrency": 4,
         "instructionProfile": "skillmeat",
         "instructionNotes": ""
+      },
+      "skillMeat": {
+        "enabled": false,
+        "baseUrl": "",
+        "projectId": "",
+        "collectionId": "",
+        "aaaEnabled": false,
+        "apiKey": "",
+        "requestTimeoutSeconds": 5.0,
+        "featureFlags": {
+          "stackRecommendationsEnabled": true,
+          "workflowAnalyticsEnabled": true
+        }
       }
     },
     {
@@ -221,6 +234,19 @@
         "maxParseConcurrency": 4,
         "instructionProfile": "skillmeat",
         "instructionNotes": ""
+      },
+      "skillMeat": {
+        "enabled": false,
+        "baseUrl": "",
+        "projectId": "",
+        "collectionId": "",
+        "aaaEnabled": false,
+        "apiKey": "",
+        "requestTimeoutSeconds": 5.0,
+        "featureFlags": {
+          "stackRecommendationsEnabled": true,
+          "workflowAnalyticsEnabled": true
+        }
       }
     },
     {
@@ -332,6 +358,19 @@
         "maxParseConcurrency": 4,
         "instructionProfile": "skillmeat",
         "instructionNotes": ""
+      },
+      "skillMeat": {
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080",
+        "projectId": "L1VzZXJzL21pZXRoZS9kZXYvaG9tZWxhYi9kZXZlbG9wbWVudC9za2lsbG1lYXQ=",
+        "collectionId": "default",
+        "aaaEnabled": false,
+        "apiKey": "",
+        "requestTimeoutSeconds": 10.0,
+        "featureFlags": {
+          "stackRecommendationsEnabled": true,
+          "workflowAnalyticsEnabled": true
+        }
       }
     }
   ]

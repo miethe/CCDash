@@ -14,6 +14,7 @@ from backend.models import (
     SkillMeatConfigValidationRequest,
     SkillMeatConfigValidationResponse,
     SkillMeatDefinition,
+    SkillMeatRefreshResponse,
     SkillMeatDefinitionSource,
     SkillMeatFeatureFlags,
     SkillMeatProbeResult,
@@ -27,6 +28,7 @@ from backend.models import (
 from backend.project_manager import project_manager
 from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
 from backend.services.stack_observations import backfill_session_stack_observations
 
@@ -43,6 +45,16 @@ def _active_project_or_400() -> Any:
     if not project:
         raise HTTPException(status_code=400, detail="No active project")
     return project
+
+
+def _project_for_request_or_active(project_id: str | None = None) -> Any:
+    requested_project_id = str(project_id or "").strip()
+    if requested_project_id:
+        project = project_manager.get_project(requested_project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{requested_project_id}' not found")
+        return project
+    return _active_project_or_400()
 
 
 def _to_source_dto(row: dict[str, Any], project_config: SkillMeatProjectConfig | None = None) -> SkillMeatDefinitionSource:
@@ -157,7 +169,7 @@ async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
         auth_status = failure if req.aaaEnabled else _probe_result("idle", "Enable AAA to validate credentials.")
         return SkillMeatConfigValidationResponse(
             baseUrl=failure,
-            projectMapping=_probe_result("idle", "Project path validation is blocked until the base URL responds."),
+            projectMapping=_probe_result("idle", "Project ID validation is blocked until the base URL responds."),
             auth=auth_status,
         )
 
@@ -172,11 +184,11 @@ async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
 
     configured_project_id = str(req.projectId or "").strip()
     if not configured_project_id:
-        project_status = _probe_result("warning", "Set the SkillMeat project path to validate project mapping.")
+        project_status = _probe_result("warning", "Set the SkillMeat project ID to validate project mapping.")
     else:
         try:
             await client.get_project(configured_project_id)
-            project_status = _probe_result("success", "SkillMeat resolved the configured project path.")
+            project_status = _probe_result("success", "SkillMeat resolved the configured project ID.")
         except SkillMeatClientError as exc:
             state = "warning" if exc.status_code == 404 else "error"
             project_status = _probe_result(
@@ -195,10 +207,8 @@ async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
 @integrations_router.post("/sync", response_model=SkillMeatDefinitionSyncResponse)
 async def sync_skillmeat(req: SkillMeatSyncRequest | None = None):
     require_skillmeat_integration_enabled()
-    project = _active_project_or_400()
     requested_project_id = str((req.projectId if req else "") or "").strip()
-    if requested_project_id and requested_project_id != str(project.id):
-        raise HTTPException(status_code=400, detail="Sync only supports the active project")
+    project = _project_for_request_or_active(requested_project_id)
 
     db = await connection.get_connection()
     payload = await sync_skillmeat_definitions(db, project)
@@ -211,6 +221,59 @@ async def sync_skillmeat(req: SkillMeatSyncRequest | None = None):
         countsByType=payload.get("countsByType", {}) if isinstance(payload.get("countsByType"), dict) else {},
         fetchedAt=str(payload.get("fetchedAt") or ""),
         warnings=[SkillMeatSyncWarning(**warning) for warning in warnings if isinstance(warning, dict)],
+    )
+
+
+@integrations_router.post("/refresh", response_model=SkillMeatRefreshResponse)
+async def refresh_skillmeat(req: SkillMeatSyncRequest | None = None):
+    require_skillmeat_integration_enabled()
+    requested_project_id = str((req.projectId if req else "") or "").strip()
+    project = _project_for_request_or_active(requested_project_id)
+
+    db = await connection.get_connection()
+    payload = await refresh_skillmeat_cache(
+        db,
+        project,
+        force_observation_recompute=True,
+    )
+    sync_payload = payload.get("sync") if isinstance(payload, dict) else {}
+    if not isinstance(sync_payload, dict):
+        sync_payload = {}
+    backfill_payload = payload.get("backfill") if isinstance(payload, dict) else None
+    if not isinstance(backfill_payload, dict):
+        backfill_payload = None
+
+    source = sync_payload.get("source") if isinstance(sync_payload.get("source"), dict) else {}
+    sync_warnings = sync_payload.get("warnings", [])
+    sync_response = SkillMeatDefinitionSyncResponse(
+        projectId=str(sync_payload.get("projectId") or project.id),
+        source=_to_source_dto(source, getattr(project, "skillMeat", None)),
+        totalDefinitions=int(sync_payload.get("totalDefinitions") or 0),
+        countsByType=sync_payload.get("countsByType", {}) if isinstance(sync_payload.get("countsByType"), dict) else {},
+        fetchedAt=str(sync_payload.get("fetchedAt") or ""),
+        warnings=[SkillMeatSyncWarning(**warning) for warning in sync_warnings if isinstance(warning, dict)],
+    )
+    backfill_response = None
+    if backfill_payload is not None:
+        backfill_response = SkillMeatObservationBackfillResponse(
+            projectId=str(backfill_payload.get("projectId") or project.id),
+            sessionsProcessed=int(backfill_payload.get("sessionsProcessed") or 0),
+            observationsStored=int(backfill_payload.get("observationsStored") or 0),
+            skippedSessions=int(backfill_payload.get("skippedSessions") or 0),
+            resolvedComponents=int(backfill_payload.get("resolvedComponents") or 0),
+            unresolvedComponents=int(backfill_payload.get("unresolvedComponents") or 0),
+            generatedAt=str(backfill_payload.get("generatedAt") or ""),
+            warnings=[
+                SkillMeatSyncWarning(**warning)
+                for warning in backfill_payload.get("warnings", [])
+                if isinstance(warning, dict)
+            ],
+        )
+
+    return SkillMeatRefreshResponse(
+        projectId=str(project.id),
+        sync=sync_response,
+        backfill=backfill_response,
     )
 
 
@@ -236,10 +299,7 @@ async def list_skillmeat_definitions(
 @integrations_router.post("/observations/backfill", response_model=SkillMeatObservationBackfillResponse)
 async def backfill_skillmeat_observations(req: SkillMeatObservationBackfillRequest):
     require_skillmeat_integration_enabled()
-    project = _active_project_or_400()
-    requested_project_id = str(req.projectId or "").strip()
-    if requested_project_id and requested_project_id != str(project.id):
-        raise HTTPException(status_code=400, detail="Backfill only supports the active project")
+    project = _project_for_request_or_active(req.projectId)
 
     db = await connection.get_connection()
     payload = await backfill_session_stack_observations(

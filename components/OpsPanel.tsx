@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Database,
   FolderKanban,
   Gauge,
   Play,
@@ -12,7 +13,15 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
-import { CacheStatusResponse, LinkAuditResponse, SyncOperation } from '../types';
+import {
+  CacheStatusResponse,
+  LinkAuditResponse,
+  SkillMeatDefinitionSyncResponse,
+  SkillMeatObservationBackfillResponse,
+  SyncOperation,
+} from '../types';
+import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { refreshSkillMeatCache } from '../services/skillmeat';
 
 const API_BASE = '/api';
 
@@ -64,7 +73,7 @@ function opKindLabel(kind: string): string {
   }
 }
 
-type OpsTab = 'general' | 'testing';
+type OpsTab = 'general' | 'testing' | 'integrations';
 
 interface MappingBackfillResponse {
   project_id: string;
@@ -186,9 +195,12 @@ export const OpsPanel: React.FC = () => {
   const [mappingBackfillDetail, setMappingBackfillDetail] = useState<MappingBackfillResponse | null>(null);
   const [mappingBackfillOperationId, setMappingBackfillOperationId] = useState('');
   const [mappingResolverDetail, setMappingResolverDetail] = useState<MappingResolverDetailResponse | null>(null);
+  const [skillMeatSyncResult, setSkillMeatSyncResult] = useState<SkillMeatDefinitionSyncResponse | null>(null);
+  const [skillMeatBackfillResult, setSkillMeatBackfillResult] = useState<SkillMeatObservationBackfillResponse | null>(null);
   const [toasts, setToasts] = useState<OpsToast[]>([]);
   const handledOperationIdsRef = useRef<Set<string>>(new Set());
   const toastTimerIdsRef = useRef<number[]>([]);
+  const skillMeatConfig = useMemo(() => normalizeSkillMeatConfig(activeProject), [activeProject]);
 
   const loadOverview = async () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
@@ -341,6 +353,45 @@ export const OpsPanel: React.FC = () => {
     if (!operationId) throw new Error('Mapping backfill started without operation ID.');
     return operationId;
   }, [mappingRunLimit]);
+
+  const runSkillMeatRefresh = useCallback(async () => {
+    const projectId = status?.projectId || activeProject?.id || '';
+    if (!projectId) {
+      setError('No active project selected for SkillMeat refresh.');
+      return;
+    }
+    if (!skillMeatConfig.enabled) {
+      setError('Enable SkillMeat integration in Project Settings before running this pipeline.');
+      return;
+    }
+    if (!skillMeatConfig.baseUrl.trim()) {
+      setError('Configure a SkillMeat base URL in Project Settings before running this pipeline.');
+      return;
+    }
+
+    setBusyAction('skillmeat-refresh');
+    setError(null);
+    setNotice(null);
+    try {
+      const refreshResult = await refreshSkillMeatCache(projectId);
+      const syncResult = refreshResult.sync;
+      const backfillResult = refreshResult.backfill;
+      setSkillMeatSyncResult(syncResult);
+      setSkillMeatBackfillResult(backfillResult);
+      setNotice(
+        `SkillMeat refresh completed: ${syncResult.totalDefinitions} definitions synced and ${backfillResult?.observationsStored ?? 0} observations rebuilt.`,
+      );
+      pushToast('SkillMeat refresh pipeline completed.', 'success');
+      await refreshAll();
+      await loadOverview();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to refresh SkillMeat caches';
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activeProject?.id, loadOverview, pushToast, refreshAll, skillMeatConfig, status?.projectId]);
 
   const latestCompletedBackfillOperation = useMemo(
     () => operations.find(op => isMappingBackfillOperation(op) && (op.status || '').toLowerCase() === 'completed') || null,
@@ -567,6 +618,13 @@ export const OpsPanel: React.FC = () => {
           className={`rounded-md px-3 py-1.5 text-sm ${activeTab === 'testing' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
         >
           Testing Ops
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('integrations')}
+          className={`rounded-md px-3 py-1.5 text-sm ${activeTab === 'integrations' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+        >
+          Integrations
         </button>
       </div>
 
@@ -1116,6 +1174,131 @@ export const OpsPanel: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+            </section>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'integrations' && (
+        <section className="space-y-4">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)] gap-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-cyan-100">
+                    <Database size={12} />
+                    SkillMeat Pipeline
+                  </div>
+                  <h3 className="mt-3 text-lg font-semibold text-slate-100">Definition Sync + Observation Backfill</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Run the full SkillMeat refresh pipeline for the active project so recommendations and workflow intelligence surfaces have fresh cached data.
+                  </p>
+                </div>
+                <button
+                  onClick={() => { void runSkillMeatRefresh(); }}
+                  disabled={busyAction !== null}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60"
+                >
+                  <RefreshCw size={14} className={busyAction === 'skillmeat-refresh' ? 'animate-spin' : ''} />
+                  {busyAction === 'skillmeat-refresh' ? 'Refreshing SkillMeat…' : 'Run SkillMeat Refresh'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Integration</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-100">{skillMeatConfig.enabled ? 'Enabled' : 'Disabled'}</p>
+                  <p className="mt-2 text-xs text-slate-400 break-all">{skillMeatConfig.baseUrl || 'No base URL configured'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Project Path</p>
+                  <p className="mt-2 text-sm font-mono text-slate-100 break-all">{skillMeatConfig.projectId || 'Not configured'}</p>
+                  <p className="mt-2 text-xs text-slate-400">Collection: {skillMeatConfig.collectionId || 'default'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Feature Flags</p>
+                  <p className="mt-2 text-sm text-slate-100">
+                    Stack: {skillMeatConfig.featureFlags.stackRecommendationsEnabled ? 'on' : 'off'}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-100">
+                    Workflow: {skillMeatConfig.featureFlags.workflowAnalyticsEnabled ? 'on' : 'off'}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <h3 className="text-lg font-semibold text-slate-100">Operator Notes</h3>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
+                This button runs the same combined pipeline used after saving SkillMeat settings and during backend startup.
+              </div>
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                Use this after changing SkillMeat base URL, project mapping, auth mode, or collection scope when you want the new cache immediately.
+              </div>
+            </section>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-slate-100">Last Definition Sync</h3>
+                <span className="text-xs text-slate-500">{formatDate(skillMeatSyncResult?.fetchedAt)}</span>
+              </div>
+              {!skillMeatSyncResult && (
+                <p className="text-sm text-slate-400">No SkillMeat sync has been run from this panel yet.</p>
+              )}
+              {skillMeatSyncResult && (
+                <div className="space-y-2 text-sm">
+                  <p className="text-slate-300">Definitions synced: <span className="text-slate-100">{skillMeatSyncResult.totalDefinitions}</span></p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(skillMeatSyncResult.countsByType || {}).map(([key, value]) => (
+                      <div key={key} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{key.replace(/_/g, ' ')}</p>
+                        <p className="mt-1 text-lg font-semibold text-slate-100">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {skillMeatSyncResult.warnings.length > 0 && (
+                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-100">Warnings</p>
+                      <ul className="mt-2 space-y-1 text-xs text-amber-100/90">
+                        {skillMeatSyncResult.warnings.slice(0, 6).map((warning, index) => (
+                          <li key={`${warning.section}-${index}`}>{warning.section}: {warning.message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-slate-100">Last Observation Backfill</h3>
+                <span className="text-xs text-slate-500">{formatDate(skillMeatBackfillResult?.generatedAt)}</span>
+              </div>
+              {!skillMeatBackfillResult && (
+                <p className="text-sm text-slate-400">No SkillMeat backfill has been run from this panel yet.</p>
+              )}
+              {skillMeatBackfillResult && (
+                <div className="space-y-2 text-sm">
+                  <p className="text-slate-300">Sessions processed: <span className="text-slate-100">{skillMeatBackfillResult.sessionsProcessed}</span></p>
+                  <p className="text-slate-300">Observations stored: <span className="text-slate-100">{skillMeatBackfillResult.observationsStored}</span></p>
+                  <p className="text-slate-300">Resolved components: <span className="text-emerald-300">{skillMeatBackfillResult.resolvedComponents}</span></p>
+                  <p className="text-slate-300">Unresolved components: <span className="text-amber-300">{skillMeatBackfillResult.unresolvedComponents}</span></p>
+                  <p className="text-slate-300">Skipped sessions: <span className="text-slate-100">{skillMeatBackfillResult.skippedSessions}</span></p>
+                  {skillMeatBackfillResult.warnings.length > 0 && (
+                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-100">Warnings</p>
+                      <ul className="mt-2 space-y-1 text-xs text-amber-100/90">
+                        {skillMeatBackfillResult.warnings.slice(0, 6).map((warning, index) => (
+                          <li key={`${warning.section}-${index}`}>{warning.section}: {warning.message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </section>

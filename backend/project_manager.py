@@ -22,11 +22,13 @@ class ProjectManager:
         self.storage_path = storage_path
         self._projects: dict[str, Project] = {}
         self._active_project_id: Optional[str] = None
-        self._load()
+        migrated = self._load()
 
         # Ensure at least one default project exists if empty
         if not self._projects:
             self._create_default_project()
+        elif migrated:
+            self._save()
 
         # Set active project if not set
         if self._active_project_id is None or self._active_project_id not in self._projects:
@@ -35,19 +37,26 @@ class ProjectManager:
                 first_id = next(iter(self._projects))
                 self.set_active_project(first_id)
 
-    def _load(self):
+    def _load(self) -> bool:
         """Load projects from JSON storage."""
         if not self.storage_path.exists():
-            return
+            return False
 
+        migrated = False
         try:
             content = self.storage_path.read_text()
             if not content.strip():
-                return
+                return False
             data = json.loads(content)
             self._active_project_id = data.get("activeProjectId")
             for p_data in data.get("projects", []):
                 try:
+                    if isinstance(p_data, dict):
+                        if "skillMeat" not in p_data:
+                            migrated = True
+                        skillmeat = p_data.get("skillMeat")
+                        if isinstance(skillmeat, dict) and "workspaceId" in skillmeat and "collectionId" not in skillmeat:
+                            migrated = True
                     p = Project(**p_data)
                     normalize_project_test_config(p, legacy_test_results_dir=config.TEST_RESULTS_DIR)
                     self._projects[p.id] = p
@@ -55,12 +64,13 @@ class ProjectManager:
                     logger.error(f"Failed to load project: {e}")
         except Exception as e:
             logger.error(f"Failed to load projects file: {e}")
+        return migrated
 
     def _save(self):
         """Save projects to JSON storage."""
         data = {
             "activeProjectId": self._active_project_id,
-            "projects": [p.dict() for p in self._projects.values()]
+            "projects": [p.model_dump() for p in self._projects.values()]
         }
         self.storage_path.write_text(json.dumps(data, indent=2))
 
