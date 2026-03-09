@@ -594,6 +594,10 @@ export interface AnalyticsOverview {
     sessionTokens: number;
     sessionCount: number;
     sessionDurationAvg: number;
+    modelIOTokens?: number;
+    cacheInputTokens?: number;
+    observedTokens?: number;
+    toolReportedTokens?: number;
     taskVelocity: number;
     taskCompletionPct: number;
     featureProgress: number;
@@ -1284,6 +1288,16 @@ export interface FeatureExecutionSessionLink {
   toolSummary?: string[];
   totalCost?: number;
   durationSeconds?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;

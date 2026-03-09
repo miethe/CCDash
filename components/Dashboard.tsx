@@ -4,6 +4,8 @@ import { useData } from '../contexts/DataContext';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
+import { type AnalyticsOverview } from '../types';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 const StatCard = ({ label, value, sub, icon: Icon, color }: any) => (
   <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
@@ -24,7 +26,7 @@ export const Dashboard: React.FC = () => {
   const { sessions, tasks, loading } = useData();
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
-  const [overview, setOverview] = useState<any | null>(null);
+  const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [chartData, setChartData] = useState<Array<{ date: string; cost: number; velocity: number }>>([]);
   const [modelData, setModelData] = useState<Array<{ name: string; usage: number }>>([]);
 
@@ -89,6 +91,16 @@ export const Dashboard: React.FC = () => {
     };
   }, [sessions.length, tasks.length]);
 
+  const workloadMetrics = useMemo(
+    () => resolveTokenMetrics({
+      modelIOTokens: overview?.kpis?.modelIOTokens,
+      cacheInputTokens: overview?.kpis?.cacheInputTokens,
+      observedTokens: overview?.kpis?.observedTokens,
+      toolReportedTokens: overview?.kpis?.toolReportedTokens,
+    }),
+    [overview],
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
@@ -120,11 +132,18 @@ export const Dashboard: React.FC = () => {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <StatCard
+          label="Observed Workload (30d)"
+          value={formatTokenCount(workloadMetrics.workloadTokens)}
+          sub={`${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
+          icon={Cpu}
+          color="sky"
+        />
         <StatCard
           label="Total Spend (30d)"
           value={`$${Number(overview?.kpis?.sessionCost || 0).toFixed(2)}`}
-          sub="Derived from persisted session totals"
+          sub={`${formatTokenCount(workloadMetrics.modelIOTokens)} model IO tokens`}
           icon={DollarSign}
           color="emerald"
         />
@@ -149,6 +168,10 @@ export const Dashboard: React.FC = () => {
           icon={Zap}
           color="amber"
         />
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+        Observed workload includes cache-read and cache-creation input. Estimated cost remains model-IO-derived in V1.
       </div>
 
       {/* Main Chart Section */}

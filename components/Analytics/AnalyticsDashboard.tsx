@@ -7,7 +7,7 @@ import { isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
 import {
     AnalyticsArtifactsResponse,
     AnalyticsCorrelationItem,
-    AnalyticsMetric,
+    AnalyticsOverview,
     Notification,
 } from '../../types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -35,6 +35,7 @@ import {
     YAxis,
 } from 'recharts';
 import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
 
 type AnalyticsTab = 'overview' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
@@ -105,7 +106,7 @@ export const AnalyticsDashboard: React.FC = () => {
         return isAnalyticsTab(tabParam) ? tabParam : 'overview';
     });
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
-    const [metrics, setMetrics] = useState<AnalyticsMetric[]>([]);
+    const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
     const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
@@ -127,13 +128,13 @@ export const AnalyticsDashboard: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const [metricData, notificationData, artifactData, correlationData] = await Promise.all([
-                analyticsService.getMetrics(),
+            const [overviewData, notificationData, artifactData, correlationData] = await Promise.all([
+                analyticsService.getOverview(),
                 analyticsService.getNotifications(),
                 analyticsService.getArtifacts({ limit: 200 }),
                 analyticsService.getCorrelation(),
             ]);
-            setMetrics(metricData);
+            setOverview(overviewData);
             setNotifications(notificationData);
             setArtifacts(artifactData);
             setCorrelation(correlationData.items || []);
@@ -239,6 +240,15 @@ export const AnalyticsDashboard: React.FC = () => {
             totalTokens,
         };
     }, [correlation]);
+    const overviewWorkload = useMemo(
+        () => resolveTokenMetrics({
+            modelIOTokens: overview?.kpis?.modelIOTokens,
+            cacheInputTokens: overview?.kpis?.cacheInputTokens,
+            observedTokens: overview?.kpis?.observedTokens,
+            toolReportedTokens: overview?.kpis?.toolReportedTokens,
+        }),
+        [overview]
+    );
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -293,21 +303,42 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'overview' && (
                 <div className="space-y-6">
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                        {metrics.map((m) => (
-                            <div key={m.name} className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                                <p className="text-slate-500 text-xs font-medium uppercase">{m.name}</p>
-                                <div className="mt-2 flex items-baseline gap-1">
-                                    <span className="text-2xl font-bold text-slate-100">{m.value}</span>
-                                    <span className="text-sm text-slate-500">{m.unit}</span>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        <MetricCard
+                            label="Observed Workload"
+                            value={formatTokenCount(overviewWorkload.workloadTokens)}
+                            subtitle={`${formatTokenCount(overviewWorkload.cacheInputTokens)} cache input`}
+                        />
+                        <MetricCard
+                            label="Model IO"
+                            value={formatTokenCount(overviewWorkload.modelIOTokens)}
+                            subtitle={`${formatTokenCount(overviewWorkload.tokenOutput)} output tokens`}
+                        />
+                        <MetricCard
+                            label="Estimated Cost"
+                            value={formatCurrency(Number(overview?.kpis?.sessionCost || 0))}
+                            subtitle="Model-IO-derived in V1"
+                        />
+                        <MetricCard
+                            label="Sessions"
+                            value={formatNumber(Number(overview?.kpis?.sessionCount || 0))}
+                            subtitle={`${Number(overview?.kpis?.sessionDurationAvg || 0).toFixed(1)}s avg duration`}
+                        />
+                        <MetricCard
+                            label="Task Velocity"
+                            value={formatNumber(Number(overview?.kpis?.taskVelocity || 0))}
+                            subtitle={`${Number(overview?.kpis?.taskCompletionPct || 0).toFixed(1)}% completion`}
+                        />
+                        <MetricCard
+                            label="Tool Reliability"
+                            value={`${Number(overview?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
+                            subtitle={`${formatNumber(Number(overview?.kpis?.toolCallCount || 0))} calls tracked`}
+                        />
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <TrendChart metric="session_cost" title="Session Cost" color="#ef4444" valueFormatter={(v) => `$${v.toFixed(2)}`} />
-                        <TrendChart metric="session_tokens" title="Tokens Used" color="#3b82f6" valueFormatter={(v) => v.toLocaleString()} />
+                        <TrendChart metric="session_tokens" title="Observed Workload" color="#3b82f6" valueFormatter={(v) => v.toLocaleString()} />
                         <TrendChart metric="session_count" title="Sessions" color="#10b981" />
                         <TrendChart
                             metric="task_completion_pct"
@@ -315,6 +346,50 @@ export const AnalyticsDashboard: React.FC = () => {
                             color="#f59e0b"
                             valueFormatter={(v) => `${v.toFixed(1)}%`}
                         />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-slate-200">Cache Efficiency</h3>
+                            <p className="mt-1 text-sm text-slate-500">
+                                Observed workload defaults to message-derived tokens. Tool-reported totals remain fallback-only and are not additive.
+                            </p>
+                            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Share</div>
+                                    <div className="mt-2 text-2xl font-semibold text-cyan-300">{formatPercent(overviewWorkload.cacheShare)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">of observed workload</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Input</div>
+                                    <div className="mt-2 text-2xl font-semibold text-emerald-300">{formatTokenCount(overviewWorkload.cacheInputTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">cache creation + cache read</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Tool Fallback</div>
+                                    <div className="mt-2 text-2xl font-semibold text-amber-300">{formatTokenCount(overviewWorkload.toolReportedTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">visible for diagnostics only</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-slate-200">Token Semantics</h3>
+                            <div className="mt-4 space-y-3 text-sm text-slate-300">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Observed Workload</div>
+                                    <div className="mt-1">Model IO plus cache input when available.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Model IO</div>
+                                    <div className="mt-1">Legacy `tokensIn` + `tokensOut`, preserved for cost and compatibility.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Relay Policy</div>
+                                    <div className="mt-1">Relay-wrapped `data.message.message.*` records stay excluded until attribution is implemented.</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -443,7 +518,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-right py-2 pr-3">Count</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -472,7 +547,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Session</th>
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2 pr-3">Cost</th>
                                         <th className="text-left py-2">Feature(s)</th>
                                     </tr>
@@ -574,7 +649,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Family</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -611,7 +686,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-left py-2 pr-3">Tool</th>
                                         <th className="text-right py-2 pr-3">Count</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -759,7 +834,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -791,7 +866,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <MetricCard label="Linked Rows" value={formatNumber(correlationSummary.linkedRows)} subtitle="feature-attached rows" />
                         <MetricCard label="High Confidence" value={formatNumber(correlationSummary.highConfidenceRows)} subtitle="confidence >= 0.75" />
                         <MetricCard label="Avg Confidence" value={correlationSummary.avgConfidence.toFixed(2)} subtitle="linked rows only" />
-                        <MetricCard label="Session Tokens" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
+                        <MetricCard label="Observed Workload" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
                     </div>
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -820,7 +895,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Confidence</th>
                                         <th className="text-right py-2 pr-3">Linked Features</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">Observed Tokens</th>
                                         <th className="text-right py-2 pr-3">Cost</th>
                                         <th className="text-right py-2 pr-3">Duration</th>
                                         <th className="text-left py-2 pr-3">Model</th>

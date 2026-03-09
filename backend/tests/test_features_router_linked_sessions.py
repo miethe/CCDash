@@ -95,6 +95,16 @@ class _FakeSessionRepo:
             "started_at": "2026-02-17T00:00:00Z",
             "total_cost": 0.12,
             "duration_seconds": 120,
+            "tokens_in": 10,
+            "tokens_out": 20,
+            "model_io_tokens": 30,
+            "cache_creation_input_tokens": 5,
+            "cache_read_input_tokens": 15,
+            "cache_input_tokens": 20,
+            "observed_tokens": 50,
+            "tool_reported_tokens": 90,
+            "cache_share": 0.4,
+            "output_share": 0.67,
             "git_commit_hash": None,
             "git_commit_hashes_json": "[]",
             "git_branch": "feature/test",
@@ -170,6 +180,9 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response[0].gitBranch, "feature/test")
         self.assertEqual(len(response[0].pullRequests), 1)
         self.assertEqual(response[0].title, "Phased Execution - Phase 1")
+        self.assertEqual(response[0].observedTokens, 50)
+        self.assertEqual(response[0].cacheInputTokens, 20)
+        self.assertEqual(response[0].toolReportedTokens, 90)
 
     async def test_linked_sessions_include_inherited_subthreads_for_linked_main(self) -> None:
         feature_repo = _FakeFeatureRepo()

@@ -15,6 +15,7 @@ import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2419,9 +2420,17 @@ const TranscriptView: React.FC<{
                             <span className="text-xs font-mono text-slate-200">{session.durationSeconds}s</span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Tokens</div>
-                            <span className="text-xs font-mono text-slate-200">{(session.tokensIn + session.tokensOut).toLocaleString()}</span>
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Workload</div>
+                            <span className="text-xs font-mono text-slate-200">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
                         </div>
+                        {resolveTokenMetrics(session).cacheInputTokens > 0 && (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-500"><Zap size={14} /> Cache Input</div>
+                                <span className="text-xs font-mono text-cyan-300">
+                                    {formatTokenCount(resolveTokenMetrics(session).cacheInputTokens)} ({formatPercent(resolveTokenMetrics(session).cacheShare, 0)})
+                                </span>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-xs text-slate-400"><Code size={14} /> Base Model</div>
                             <span
@@ -4468,18 +4477,47 @@ const AnalyticsView: React.FC<{
         [scopeMode, session, threadSessions, threadSessionDetails]
     );
 
+    const sessionHasLinkedSubthreads = useCallback(
+        (sessionId: string) => sessionsInScope.some(candidate => (
+            candidate.id !== sessionId
+            && (
+                candidate.parentSessionId === sessionId
+                || candidate.rootSessionId === sessionId
+            )
+        )),
+        [sessionsInScope]
+    );
+
     const scopeTotals = useMemo(
         () => sessionsInScope.reduce(
             (acc, scopeSession) => {
-                acc.tokensIn += Number(scopeSession.tokensIn || 0);
-                acc.tokensOut += Number(scopeSession.tokensOut || 0);
+                const resolvedTokens = resolveTokenMetrics(scopeSession, {
+                    hasLinkedSubthreads: sessionHasLinkedSubthreads(scopeSession.id),
+                });
+                acc.tokensIn += resolvedTokens.tokenInput;
+                acc.tokensOut += resolvedTokens.tokenOutput;
+                acc.modelIOTokens += resolvedTokens.modelIOTokens;
+                acc.cacheInputTokens += resolvedTokens.cacheInputTokens;
+                acc.workloadTokens += resolvedTokens.workloadTokens;
+                acc.toolFallbackTokens += resolvedTokens.usedToolFallback ? resolvedTokens.workloadTokens : 0;
+                acc.toolFallbackCount += resolvedTokens.usedToolFallback ? 1 : 0;
                 acc.totalCost += Number(scopeSession.totalCost || 0);
                 acc.logCount += (scopeSession.logs || []).length;
                 return acc;
             },
-            { tokensIn: 0, tokensOut: 0, totalCost: 0, logCount: 0 }
+            {
+                tokensIn: 0,
+                tokensOut: 0,
+                modelIOTokens: 0,
+                cacheInputTokens: 0,
+                workloadTokens: 0,
+                toolFallbackTokens: 0,
+                toolFallbackCount: 0,
+                totalCost: 0,
+                logCount: 0,
+            }
         ),
-        [sessionsInScope]
+        [sessionHasLinkedSubthreads, sessionsInScope]
     );
 
     const toolData = useMemo(() => {
@@ -4495,7 +4533,7 @@ const AnalyticsView: React.FC<{
                 byTool.set(toolName, current);
             });
         });
-        const totalTokens = Math.max(1, scopeTotals.tokensIn + scopeTotals.tokensOut);
+        const totalTokens = Math.max(1, scopeTotals.workloadTokens);
         return Array.from(byTool.values())
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
@@ -4522,8 +4560,8 @@ const AnalyticsView: React.FC<{
             value: stat.count,
             tokens: Math.round(stat.tokens),
             toolCount: stat.tools,
-            cost: (scopeTotals.tokensIn + scopeTotals.tokensOut) > 0
-                ? (scopeTotals.totalCost * stat.tokens) / (scopeTotals.tokensIn + scopeTotals.tokensOut)
+            cost: scopeTotals.workloadTokens > 0
+                ? (scopeTotals.totalCost * stat.tokens) / scopeTotals.workloadTokens
                 : 0,
             type: 'agent'
         }));
@@ -4534,7 +4572,9 @@ const AnalyticsView: React.FC<{
         sessionsInScope.forEach(scopeSession => {
             const modelName = String(scopeSession.model || 'unknown').trim() || 'unknown';
             const current = byModel.get(modelName) || { name: modelName, value: 0, tokens: 0, toolCount: 0, cost: 0, type: 'model' };
-            const sessionTokens = Number(scopeSession.tokensIn || 0) + Number(scopeSession.tokensOut || 0);
+            const sessionTokens = resolveTokenMetrics(scopeSession, {
+                hasLinkedSubthreads: sessionHasLinkedSubthreads(scopeSession.id),
+            }).workloadTokens;
             current.value += (scopeSession.logs || []).length;
             current.tokens += sessionTokens;
             current.toolCount += (scopeSession.logs || []).filter(log => log.type === 'tool').length;
@@ -4542,7 +4582,7 @@ const AnalyticsView: React.FC<{
             byModel.set(modelName, current);
         });
         return Array.from(byModel.values()).sort((a, b) => b.value - a.value);
-    }, [sessionsInScope]);
+    }, [sessionHasLinkedSubthreads, sessionsInScope]);
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
@@ -4657,8 +4697,11 @@ const AnalyticsView: React.FC<{
                         {tokenViewMode === 'summary' ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={[
-                                    { name: 'Input', tokens: scopeTotals.tokensIn, fill: '#3b82f6' },
-                                    { name: 'Output', tokens: scopeTotals.tokensOut, fill: '#10b981' }
+                                    { name: 'Model IO', tokens: scopeTotals.modelIOTokens, fill: '#3b82f6' },
+                                    { name: 'Cache Input', tokens: scopeTotals.cacheInputTokens, fill: '#06b6d4' },
+                                    ...(scopeTotals.toolFallbackTokens > 0
+                                        ? [{ name: 'Tool Fallback', tokens: scopeTotals.toolFallbackTokens, fill: '#f59e0b' }]
+                                        : [])
                                 ]} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
                                     <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
@@ -4695,8 +4738,22 @@ const AnalyticsView: React.FC<{
                         <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd(scopeTotals.totalCost / Math.max(scopeTotals.logCount, 1), 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
-                        <div className="text-xs text-slate-500 mb-1">Tokens / Step</div>
-                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((scopeTotals.tokensIn + scopeTotals.tokensOut) / Math.max(scopeTotals.logCount, 1))}</div>
+                        <div className="text-xs text-slate-500 mb-1">Workload / Step</div>
+                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round(scopeTotals.workloadTokens / Math.max(scopeTotals.logCount, 1))}</div>
+                    </div>
+                </div>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Observed workload</span>
+                        <div className="mt-1 font-mono">{formatTokenCount(scopeTotals.workloadTokens)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Cache share</span>
+                        <div className="mt-1 font-mono">{formatPercent(scopeTotals.workloadTokens > 0 ? scopeTotals.cacheInputTokens / scopeTotals.workloadTokens : 0, 0)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Fallback sessions</span>
+                        <div className="mt-1 font-mono">{scopeTotals.toolFallbackCount}</div>
                     </div>
                 </div>
             </div>

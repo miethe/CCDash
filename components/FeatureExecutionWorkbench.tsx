@@ -61,6 +61,7 @@ import { RecommendedStackCard } from './execution/RecommendedStackCard';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -359,6 +360,17 @@ const isPrimarySession = (session: FeatureExecutionSessionLink): boolean => {
   if (session.isPrimaryLink) return true;
   return (session.confidence || 0) >= 0.9;
 };
+
+const sessionHasLinkedSubthreads = (sessionId: string, sessions: FeatureExecutionSessionLink[]): boolean => (
+  sessions.some(candidate => (
+    candidate.sessionId !== sessionId
+    && isSubthreadSession(candidate)
+    && (
+      candidate.parentSessionId === sessionId
+      || candidate.rootSessionId === sessionId
+    )
+  ))
+);
 
 const compareSessionsByConfidenceAndTime = (a: FeatureExecutionSessionLink, b: FeatureExecutionSessionLink): number => {
   if ((b.confidence || 0) !== (a.confidence || 0)) return (b.confidence || 0) - (a.confidence || 0);
@@ -1130,6 +1142,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     return Array.from(bestBySession.values()).sort(compareSessionsByConfidenceAndTime);
   }, [context?.sessions]);
 
+  const executionWorkload = useMemo(
+    () => executionSessions.reduce(
+      (acc, session) => {
+        const metrics = resolveTokenMetrics(session, {
+          hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, executionSessions),
+        });
+        acc.workloadTokens += metrics.workloadTokens;
+        acc.modelIOTokens += metrics.modelIOTokens;
+        acc.cacheInputTokens += metrics.cacheInputTokens;
+        acc.toolFallbackSessions += metrics.usedToolFallback ? 1 : 0;
+        return acc;
+      },
+      { workloadTokens: 0, modelIOTokens: 0, cacheInputTokens: 0, toolFallbackSessions: 0 },
+    ),
+    [executionSessions],
+  );
+
   const featureDetail = useMemo(() => {
     if (!context) return null;
     if (fullFeature && fullFeature.id === context.feature.id) return fullFeature;
@@ -1451,6 +1480,12 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       durationSeconds: artifactSourceSessions.reduce((sum, session) => sum + Number(session.durationSeconds || 0), 0),
       tokensIn: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensIn || 0), 0),
       tokensOut: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensOut || 0), 0),
+      modelIOTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.modelIOTokens || 0), 0),
+      cacheCreationInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheCreationInputTokens || 0), 0),
+      cacheReadInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheReadInputTokens || 0), 0),
+      cacheInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheInputTokens || 0), 0),
+      observedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.observedTokens || 0), 0),
+      toolReportedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.toolReportedTokens || 0), 0),
       totalCost: artifactSourceSessions.reduce((sum, session) => sum + Number(session.totalCost || 0), 0),
       startedAt: earliestStartedAt,
       endedAt: latestEndedAt || undefined,
@@ -1534,6 +1569,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       (session.title || '').trim(),
       session.sessionMetadata || null,
     );
+    const sessionTokenMetrics = resolveTokenMetrics(session, {
+      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, executionSessions),
+    });
 
     return (
       <SessionCard
@@ -1564,12 +1602,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         onClick={() => openSession(session.sessionId)}
         className="rounded-lg"
         infoBadges={(
-          <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
-            {Math.round((session.confidence || 0) * 100)}% confidence
-          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+              {Math.round((session.confidence || 0) * 100)}% confidence
+            </span>
+            {sessionTokenMetrics.cacheInputTokens > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/25 text-cyan-200 bg-cyan-500/10">
+                Cache {formatPercent(sessionTokenMetrics.cacheShare, 0)}
+              </span>
+            )}
+          </div>
         )}
         headerRight={(
           <div className="flex items-center gap-3 text-right">
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase">Workload</div>
+              <div className="text-xs font-mono text-sky-300">{formatTokenCount(sessionTokenMetrics.workloadTokens)}</div>
+            </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
               <div className="text-xs font-mono text-emerald-400">${Number(session.totalCost || 0).toFixed(2)}</div>
@@ -2367,21 +2416,31 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
               {activeTab === 'analytics' && (
                 <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
                       <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
                       <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Observed Workload</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{formatTokenCount(executionWorkload.workloadTokens)}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {formatTokenCount(executionWorkload.cacheInputTokens)} cache input
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
                       <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
-                      <p className="text-xs text-slate-500 mt-1">Models {context.analytics.modelCount}</p>
+                      <p className="text-xs text-slate-500 mt-1">{formatTokenCount(executionWorkload.modelIOTokens)} model IO tokens</p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
                       <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
-                      <p className="text-xs text-slate-500 mt-1">{context.analytics.commandEventCount} command events</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {context.analytics.commandEventCount} command events
+                        {executionWorkload.toolFallbackSessions > 0 ? ` • ${executionWorkload.toolFallbackSessions} tool fallback` : ''}
+                      </p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Last Event</p>

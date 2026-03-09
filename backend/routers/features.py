@@ -328,6 +328,16 @@ class FeatureSessionLink(BaseModel):
     updatedAt: str = ""
     totalCost: float = 0.0
     durationSeconds: int = 0
+    tokensIn: int = 0
+    tokensOut: int = 0
+    modelIOTokens: int = 0
+    cacheCreationInputTokens: int = 0
+    cacheReadInputTokens: int = 0
+    cacheInputTokens: int = 0
+    observedTokens: int = 0
+    toolReportedTokens: int = 0
+    cacheShare: float = 0.0
+    outputShare: float = 0.0
     gitCommitHash: str | None = None
     gitCommitHashes: list[str] = Field(default_factory=list)
     gitBranch: str | None = None
@@ -1441,6 +1451,16 @@ async def get_feature_linked_sessions(feature_id: str):
             updatedAt=str(session_row.get("updated_at") or ""),
             totalCost=float(session_row.get("total_cost") or 0.0),
             durationSeconds=int(session_row.get("duration_seconds") or 0),
+            tokensIn=_safe_int(session_row.get("tokens_in"), 0),
+            tokensOut=_safe_int(session_row.get("tokens_out"), 0),
+            modelIOTokens=_safe_int(session_row.get("model_io_tokens"), 0),
+            cacheCreationInputTokens=_safe_int(session_row.get("cache_creation_input_tokens"), 0),
+            cacheReadInputTokens=_safe_int(session_row.get("cache_read_input_tokens"), 0),
+            cacheInputTokens=_safe_int(session_row.get("cache_input_tokens"), 0),
+            observedTokens=_safe_int(session_row.get("observed_tokens"), 0),
+            toolReportedTokens=_safe_int(session_row.get("tool_reported_tokens"), 0),
+            cacheShare=float(session_row.get("cache_share") or 0.0),
+            outputShare=float(session_row.get("output_share") or 0.0),
             gitCommitHash=session_row.get("git_commit_hash"),
             gitCommitHashes=merged_hashes,
             gitBranch=session_row.get("git_branch"),
