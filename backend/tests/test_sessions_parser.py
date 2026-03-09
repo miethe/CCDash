@@ -95,6 +95,185 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(message_logs[0].metadata.get("outputTokens"), 34)
         self.assertEqual(message_logs[0].metadata.get("totalTokens"), 46)
 
+    def test_usage_summary_tracks_nested_usage_fields_and_tool_caller_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-08T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-opus-4-6",
+                        "id": "msg_usage_1",
+                        "type": "message",
+                        "stop_reason": "tool_use",
+                        "stop_sequence": "</tool>",
+                        "usage": {
+                            "input_tokens": 2,
+                            "cache_creation_input_tokens": 10,
+                            "cache_read_input_tokens": 20,
+                            "cache_creation": {
+                                "ephemeral_5m_input_tokens": 0,
+                                "ephemeral_1h_input_tokens": 10,
+                            },
+                            "output_tokens": 5,
+                            "service_tier": "standard",
+                            "inference_geo": "us",
+                            "server_tool_use": {
+                                "web_search_requests": 1,
+                                "web_fetch_requests": 2,
+                            },
+                            "iterations": [{"index": 1}],
+                            "speed": "standard",
+                        },
+                        "content": [
+                            {"type": "text", "text": "Searching for context."},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_usage_1",
+                                "name": "Grep",
+                                "input": {"pattern": "usage", "path": "/tmp/project"},
+                                "caller": {"type": "direct", "invoked_by": "assistant"},
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-03-08T10:00:01Z",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_usage_1",
+                                "is_error": False,
+                                "content": "backend/parsers/platforms/claude_code/parser.py",
+                            }
+                        ],
+                    },
+                    "toolUseResult": {
+                        "status": "completed",
+                        "totalTokens": 99,
+                        "totalDurationMs": 1500,
+                        "totalToolUseCount": 3,
+                        "usage": {
+                            "input_tokens": 7,
+                            "cache_creation_input_tokens": 13,
+                            "cache_read_input_tokens": 17,
+                            "cache_creation": {
+                                "ephemeral_5m_input_tokens": 13,
+                                "ephemeral_1h_input_tokens": 0,
+                            },
+                            "output_tokens": 11,
+                            "service_tier": "standard",
+                            "inference_geo": "us",
+                            "server_tool_use": {
+                                "web_search_requests": 4,
+                            },
+                            "iterations": [{"index": 1}, {"index": 2}],
+                            "speed": "fast",
+                        },
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        message_logs = [log for log in session.logs if log.type == "message"]
+        self.assertEqual(len(message_logs), 1)
+        self.assertEqual(message_logs[0].metadata.get("inputTokens"), 2)
+        self.assertEqual(message_logs[0].metadata.get("outputTokens"), 5)
+        self.assertEqual(message_logs[0].metadata.get("totalTokens"), 7)
+        self.assertEqual(message_logs[0].metadata.get("cache_creation_input_tokens"), 10)
+        self.assertEqual(message_logs[0].metadata.get("cache_read_input_tokens"), 20)
+        self.assertEqual(message_logs[0].metadata.get("service_tier"), "standard")
+        self.assertEqual(message_logs[0].metadata.get("inference_geo"), "us")
+        self.assertEqual(message_logs[0].metadata.get("speed"), "standard")
+        self.assertEqual(message_logs[0].metadata.get("iterationCount"), 1)
+        self.assertEqual(message_logs[0].metadata.get("stopReason"), "tool_use")
+        self.assertEqual(message_logs[0].metadata.get("stopSequence"), "</tool>")
+        self.assertEqual(
+            message_logs[0].metadata.get("server_tool_use"),
+            {"web_search_requests": 1, "web_fetch_requests": 2},
+        )
+
+        tool_logs = [log for log in session.logs if log.type == "tool" and log.toolCall]
+        self.assertEqual(len(tool_logs), 1)
+        self.assertEqual(tool_logs[0].metadata.get("callerType"), "direct")
+        self.assertEqual(
+            tool_logs[0].metadata.get("caller"),
+            {"type": "direct", "invoked_by": "assistant"},
+        )
+
+        usage_summary = session.sessionForensics.get("usageSummary", {})
+        self.assertEqual(usage_summary.get("assistantMessageCount"), 1)
+        self.assertEqual(usage_summary.get("assistantMessagesWithUsage"), 1)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("inputTokens"), 2)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("outputTokens"), 5)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("cacheCreationInputTokens"), 10)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("cacheReadInputTokens"), 20)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("allInputTokens"), 32)
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("allTokens"), 37)
+        self.assertEqual(
+            usage_summary.get("cacheCreationTotals", {}).get("ephemeral_1h_input_tokens"),
+            10,
+        )
+        self.assertEqual(
+            usage_summary.get("serverToolUseTotals", {}).get("web_fetch_requests"),
+            2,
+        )
+        self.assertEqual(usage_summary.get("iterationCount"), 1)
+        self.assertEqual(usage_summary.get("speedCounts", {}).get("standard"), 1)
+        self.assertEqual(usage_summary.get("serviceTierCounts", {}).get("standard"), 1)
+        self.assertEqual(usage_summary.get("inferenceGeoCounts", {}).get("us"), 1)
+        self.assertEqual(
+            usage_summary.get("toolResultReportedTotals", {}).get("totalTokens"),
+            99,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultReportedTotals", {}).get("totalDurationMs"),
+            1500,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultReportedTotals", {}).get("totalToolUseCount"),
+            3,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultUsageTotals", {}).get("inputTokens"),
+            7,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultUsageTotals", {}).get("outputTokens"),
+            11,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultUsageTotals", {}).get("cacheCreationInputTokens"),
+            13,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultUsageTotals", {}).get("cacheReadInputTokens"),
+            17,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultUsageTotals", {}).get("allTokens"),
+            48,
+        )
+        self.assertEqual(
+            usage_summary.get("toolResultServerToolUseTotals", {}).get("web_search_requests"),
+            4,
+        )
+        self.assertEqual(usage_summary.get("toolResultIterationCount"), 2)
+        self.assertEqual(usage_summary.get("toolResultSpeedCounts", {}).get("fast"), 1)
+
+        entry_context = session.sessionForensics.get("entryContext", {})
+        self.assertEqual(entry_context.get("messageStopReasonCounts", {}).get("tool_use"), 1)
+        self.assertEqual(entry_context.get("messageStopSequenceCounts", {}).get("</tool>"), 1)
+        self.assertEqual(entry_context.get("toolCallerTypeCounts", {}).get("direct"), 1)
+
     def test_platform_version_is_captured_and_transition_is_logged(self) -> None:
         path = self._write_jsonl(
             [

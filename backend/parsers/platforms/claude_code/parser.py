@@ -1529,6 +1529,44 @@ def parse_session_file(path: Path) -> AgentSession | None:
     tokens_out = 0
     first_ts = ""
     last_ts = ""
+    usage_message_totals: dict[str, int] = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+    }
+    usage_cache_creation_totals: dict[str, int] = {
+        "ephemeral_5m_input_tokens": 0,
+        "ephemeral_1h_input_tokens": 0,
+    }
+    usage_service_tier_counts: Counter[str] = Counter()
+    usage_inference_geo_counts: Counter[str] = Counter()
+    usage_speed_counts: Counter[str] = Counter()
+    usage_server_tool_use_totals: Counter[str] = Counter()
+    usage_iteration_count = 0
+    tool_result_reported_totals: dict[str, int] = {
+        "reportedCount": 0,
+        "totalTokens": 0,
+        "totalDurationMs": 0,
+        "totalToolUseCount": 0,
+    }
+    tool_result_usage_totals: dict[str, int] = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+    }
+    tool_result_usage_cache_creation_totals: dict[str, int] = {
+        "ephemeral_5m_input_tokens": 0,
+        "ephemeral_1h_input_tokens": 0,
+    }
+    tool_result_usage_service_tier_counts: Counter[str] = Counter()
+    tool_result_usage_inference_geo_counts: Counter[str] = Counter()
+    tool_result_usage_speed_counts: Counter[str] = Counter()
+    tool_result_usage_server_tool_use_totals: Counter[str] = Counter()
+    tool_result_usage_iteration_count = 0
+    assistant_message_count = 0
+    assistant_messages_with_usage = 0
 
     logs: list[SessionLog] = []
     tool_counter: Counter[str] = Counter()
@@ -1569,9 +1607,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "entryKeyCounts": Counter(),
         "messageRoleCounts": Counter(),
         "messageStopReasonCounts": Counter(),
+        "messageStopSequenceCounts": Counter(),
         "messageTypeCounts": Counter(),
         "contentBlockTypeCounts": Counter(),
         "contentBlockKeyCounts": Counter(),
+        "toolCallerTypeCounts": Counter(),
         "progressTypeCounts": Counter(),
         "progressDataKeyCounts": Counter(),
         "isSidechainCount": 0,
@@ -2103,6 +2143,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
             stop_reason = str(message.get("stop_reason") or "").strip().lower()
             if stop_reason:
                 session_context["messageStopReasonCounts"][stop_reason] += 1
+            stop_sequence = str(message.get("stop_sequence") or "").strip()
+            if stop_sequence:
+                session_context["messageStopSequenceCounts"][stop_sequence] += 1
 
             message_type = str(message.get("type") or "").strip().lower()
             if message_type:
@@ -2120,6 +2163,15 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         block_key = str(raw_block_key or "").strip()
                         if block_key:
                             session_context["contentBlockKeyCounts"][block_key] += 1
+                    if block_type == "tool_use":
+                        caller_payload = block.get("caller")
+                        caller_type = ""
+                        if isinstance(caller_payload, dict):
+                            caller_type = str(caller_payload.get("type") or "").strip().lower()
+                        elif isinstance(caller_payload, str):
+                            caller_type = caller_payload.strip().lower()
+                        if caller_type:
+                            session_context["toolCallerTypeCounts"][caller_type] += 1
 
         progress_data = entry.get("data")
         if isinstance(progress_data, dict):
@@ -2558,6 +2610,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
             if isinstance(stop_sequence, str) and stop_sequence.strip():
                 current_stop_sequence = stop_sequence.strip()
         if isinstance(message, dict) and speaker == "agent":
+            assistant_message_count += 1
             msg_model = message.get("model")
             if isinstance(msg_model, str) and msg_model.strip():
                 current_message_model = msg_model.strip()
@@ -2565,8 +2618,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     model = current_message_model
             usage = message.get("usage", {})
             if isinstance(usage, dict):
+                assistant_messages_with_usage += 1
                 message_usage_in = int(usage.get("input_tokens", 0) or 0)
                 message_usage_out = int(usage.get("output_tokens", 0) or 0)
+                usage_message_totals["inputTokens"] += message_usage_in
+                usage_message_totals["outputTokens"] += message_usage_out
                 for key in (
                     "cache_creation_input_tokens",
                     "cache_read_input_tokens",
@@ -2576,13 +2632,48 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     value = usage.get(key)
                     if isinstance(value, (str, int, float)) and str(value).strip():
                         message_usage_extra[key] = value
+                cache_creation_input_tokens = _coerce_int(usage.get("cache_creation_input_tokens"), 0)
+                cache_read_input_tokens = _coerce_int(usage.get("cache_read_input_tokens"), 0)
+                usage_message_totals["cacheCreationInputTokens"] += cache_creation_input_tokens
+                usage_message_totals["cacheReadInputTokens"] += cache_read_input_tokens
+                service_tier = str(usage.get("service_tier") or "").strip()
+                if service_tier:
+                    usage_service_tier_counts[service_tier] += 1
+                inference_geo = str(usage.get("inference_geo") or "").strip()
+                if inference_geo:
+                    usage_inference_geo_counts[inference_geo] += 1
+                speed = str(usage.get("speed") or "").strip()
+                if speed:
+                    usage_speed_counts[speed] += 1
+                    message_usage_extra["speed"] = speed
+                server_tool_use = usage.get("server_tool_use")
+                if isinstance(server_tool_use, dict):
+                    server_tool_payload: dict[str, int] = {}
+                    for key, value in server_tool_use.items():
+                        amount = _coerce_int(value, 0)
+                        if amount < 0:
+                            continue
+                        safe_key = str(key or "").strip()
+                        if not safe_key:
+                            continue
+                        server_tool_payload[safe_key] = amount
+                        usage_server_tool_use_totals[safe_key] += amount
+                    if server_tool_payload:
+                        message_usage_extra["server_tool_use"] = server_tool_payload
+                iterations = usage.get("iterations")
+                iteration_count = len(iterations) if isinstance(iterations, list) else _coerce_int(iterations, 0)
+                if iteration_count > 0:
+                    usage_iteration_count += iteration_count
+                    message_usage_extra["iterationCount"] = iteration_count
                 nested_cache = usage.get("cache_creation")
                 if isinstance(nested_cache, dict):
                     cache_payload = {}
                     for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"):
                         value = nested_cache.get(key)
                         if isinstance(value, (int, float)):
-                            cache_payload[key] = int(value)
+                            amount = int(value)
+                            cache_payload[key] = amount
+                            usage_cache_creation_totals[key] += amount
                     if cache_payload:
                         message_usage_extra["cache_creation"] = cache_payload
                 tokens_in += message_usage_in
@@ -2683,6 +2774,31 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 tool_id = block.get("id")
                 tool_input = block.get("input", {})
                 tool_args = json.dumps(tool_input, indent=2, ensure_ascii=True)[:12000]
+                tool_metadata: dict[str, Any] = {
+                    "toolInputKeys": list(tool_input.keys()) if isinstance(tool_input, dict) else [],
+                    "signature": str(block.get("signature") or "").strip(),
+                }
+                caller_payload = block.get("caller")
+                if isinstance(caller_payload, dict):
+                    caller_meta: dict[str, Any] = {}
+                    for key, value in caller_payload.items():
+                        safe_key = str(key or "").strip()
+                        if not safe_key:
+                            continue
+                        if isinstance(value, str):
+                            if value.strip():
+                                caller_meta[safe_key] = value.strip()
+                        elif isinstance(value, (int, float, bool)):
+                            caller_meta[safe_key] = value
+                    if caller_meta:
+                        tool_metadata["caller"] = caller_meta
+                        caller_type = str(caller_meta.get("type") or "").strip()
+                        if caller_type:
+                            tool_metadata["callerType"] = caller_type
+                elif isinstance(caller_payload, str) and caller_payload.strip():
+                    caller_text = caller_payload.strip()
+                    tool_metadata["caller"] = caller_text
+                    tool_metadata["callerType"] = caller_text
 
                 linked_session = None
                 if isinstance(tool_id, str):
@@ -2695,11 +2811,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     content=f"Called {tool_name}",
                     agentName=agent_name,
                     linkedSessionId=linked_session,
-                    metadata={
-                        "toolInputKeys": list(tool_input.keys()) if isinstance(tool_input, dict) else [],
-                        "caller": str(block.get("caller") or "").strip(),
-                        "signature": str(block.get("signature") or "").strip(),
-                    },
+                    metadata=tool_metadata,
                     toolCall=ToolCallInfo(
                         id=tool_id if isinstance(tool_id, str) else None,
                         name=tool_name,
@@ -2880,6 +2992,61 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 launch_status = ""
                 if isinstance(tool_use_result, dict):
                     launch_status = str(tool_use_result.get("status") or "").strip().lower()
+                    reported_total_tokens = _coerce_int(tool_use_result.get("totalTokens"), 0)
+                    reported_duration_ms = _coerce_int(
+                        tool_use_result.get("totalDurationMs") or tool_use_result.get("durationMs"),
+                        0,
+                    )
+                    reported_tool_use_count = _coerce_int(tool_use_result.get("totalToolUseCount"), 0)
+                    if reported_total_tokens > 0 or reported_duration_ms > 0 or reported_tool_use_count > 0:
+                        tool_result_reported_totals["reportedCount"] += 1
+                        tool_result_reported_totals["totalTokens"] += reported_total_tokens
+                        tool_result_reported_totals["totalDurationMs"] += reported_duration_ms
+                        tool_result_reported_totals["totalToolUseCount"] += reported_tool_use_count
+                    nested_usage = tool_use_result.get("usage")
+                    if isinstance(nested_usage, dict):
+                        nested_input_tokens = _coerce_int(nested_usage.get("input_tokens"), 0)
+                        nested_output_tokens = _coerce_int(nested_usage.get("output_tokens"), 0)
+                        nested_cache_creation_tokens = _coerce_int(nested_usage.get("cache_creation_input_tokens"), 0)
+                        nested_cache_read_tokens = _coerce_int(nested_usage.get("cache_read_input_tokens"), 0)
+                        tool_result_usage_totals["inputTokens"] += nested_input_tokens
+                        tool_result_usage_totals["outputTokens"] += nested_output_tokens
+                        tool_result_usage_totals["cacheCreationInputTokens"] += nested_cache_creation_tokens
+                        tool_result_usage_totals["cacheReadInputTokens"] += nested_cache_read_tokens
+                        nested_service_tier = str(nested_usage.get("service_tier") or "").strip()
+                        if nested_service_tier:
+                            tool_result_usage_service_tier_counts[nested_service_tier] += 1
+                        nested_inference_geo = str(nested_usage.get("inference_geo") or "").strip()
+                        if nested_inference_geo:
+                            tool_result_usage_inference_geo_counts[nested_inference_geo] += 1
+                        nested_speed = str(nested_usage.get("speed") or "").strip()
+                        if nested_speed:
+                            tool_result_usage_speed_counts[nested_speed] += 1
+                        nested_server_tool_use = nested_usage.get("server_tool_use")
+                        if isinstance(nested_server_tool_use, dict):
+                            for key, value in nested_server_tool_use.items():
+                                amount = _coerce_int(value, 0)
+                                if amount < 0:
+                                    continue
+                                safe_key = str(key or "").strip()
+                                if not safe_key:
+                                    continue
+                                tool_result_usage_server_tool_use_totals[safe_key] += amount
+                        nested_iterations = nested_usage.get("iterations")
+                        nested_iteration_count = (
+                            len(nested_iterations)
+                            if isinstance(nested_iterations, list)
+                            else _coerce_int(nested_iterations, 0)
+                        )
+                        if nested_iteration_count > 0:
+                            tool_result_usage_iteration_count += nested_iteration_count
+                        nested_cache = nested_usage.get("cache_creation")
+                        if isinstance(nested_cache, dict):
+                            for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"):
+                                amount = _coerce_int(nested_cache.get(key), 0)
+                                if amount < 0:
+                                    continue
+                                tool_result_usage_cache_creation_totals[key] += amount
 
                 if related_idx is not None:
                     related_log = logs[related_idx]
@@ -3730,9 +3897,11 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "entryKeyCounts": dict(session_context.get("entryKeyCounts", Counter())),
             "messageRoleCounts": dict(session_context.get("messageRoleCounts", Counter())),
             "messageStopReasonCounts": dict(session_context.get("messageStopReasonCounts", Counter())),
+            "messageStopSequenceCounts": dict(session_context.get("messageStopSequenceCounts", Counter())),
             "messageTypeCounts": dict(session_context.get("messageTypeCounts", Counter())),
             "contentBlockTypeCounts": dict(session_context.get("contentBlockTypeCounts", Counter())),
             "contentBlockKeyCounts": dict(session_context.get("contentBlockKeyCounts", Counter())),
+            "toolCallerTypeCounts": dict(session_context.get("toolCallerTypeCounts", Counter())),
             "progressTypeCounts": dict(session_context.get("progressTypeCounts", Counter())),
             "progressDataKeyCounts": dict(session_context.get("progressDataKeyCounts", Counter())),
             "isSidechainCount": int(session_context.get("isSidechainCount", 0)),
@@ -3787,6 +3956,51 @@ def parse_session_file(path: Path) -> AgentSession | None:
             "avgFileBytes": tool_result_avg_file_bytes,
             "largeFileCount": tool_result_large_file_count,
             "largestFiles": list(tool_results_sidecar.get("largestFiles") or [])[:20],
+        },
+        "usageSummary": {
+            "assistantMessageCount": assistant_message_count,
+            "assistantMessagesWithUsage": assistant_messages_with_usage,
+            "messageTotals": {
+                **usage_message_totals,
+                "allInputTokens": (
+                    usage_message_totals["inputTokens"]
+                    + usage_message_totals["cacheCreationInputTokens"]
+                    + usage_message_totals["cacheReadInputTokens"]
+                ),
+                "allTokens": (
+                    usage_message_totals["inputTokens"]
+                    + usage_message_totals["outputTokens"]
+                    + usage_message_totals["cacheCreationInputTokens"]
+                    + usage_message_totals["cacheReadInputTokens"]
+                ),
+            },
+            "cacheCreationTotals": usage_cache_creation_totals,
+            "serviceTierCounts": dict(usage_service_tier_counts),
+            "inferenceGeoCounts": dict(usage_inference_geo_counts),
+            "speedCounts": dict(usage_speed_counts),
+            "serverToolUseTotals": dict(usage_server_tool_use_totals),
+            "iterationCount": usage_iteration_count,
+            "toolResultReportedTotals": tool_result_reported_totals,
+            "toolResultUsageTotals": {
+                **tool_result_usage_totals,
+                "allInputTokens": (
+                    tool_result_usage_totals["inputTokens"]
+                    + tool_result_usage_totals["cacheCreationInputTokens"]
+                    + tool_result_usage_totals["cacheReadInputTokens"]
+                ),
+                "allTokens": (
+                    tool_result_usage_totals["inputTokens"]
+                    + tool_result_usage_totals["outputTokens"]
+                    + tool_result_usage_totals["cacheCreationInputTokens"]
+                    + tool_result_usage_totals["cacheReadInputTokens"]
+                ),
+            },
+            "toolResultCacheCreationTotals": tool_result_usage_cache_creation_totals,
+            "toolResultServiceTierCounts": dict(tool_result_usage_service_tier_counts),
+            "toolResultInferenceGeoCounts": dict(tool_result_usage_inference_geo_counts),
+            "toolResultSpeedCounts": dict(tool_result_usage_speed_counts),
+            "toolResultServerToolUseTotals": dict(tool_result_usage_server_tool_use_totals),
+            "toolResultIterationCount": tool_result_usage_iteration_count,
         },
         "forkSummary": {
             "threadKind": "subagent" if is_subagent else "root",

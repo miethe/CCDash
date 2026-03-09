@@ -9,6 +9,7 @@
     "dev:frontend": "vite",
     "dev:backend": "node ./scripts/backend.mjs --reload --host 127.0.0.1 --port 8000",
     "discover:sessions": "python3 backend/scripts/session_data_discovery.py --platform claude_code",
+    "discover:claude-schema": "python3 backend/scripts/claude_session_schema_inventory.py",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
