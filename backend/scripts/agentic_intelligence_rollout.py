@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.db import connection, migrations
+from backend.db.factory import get_agentic_intelligence_repository
 from backend.project_manager import project_manager
 from backend.services.agentic_intelligence_flags import (
     require_skillmeat_integration_enabled,
@@ -40,6 +41,44 @@ def _iter_projects(project_id: str | None, all_projects: bool) -> list[Any]:
     return [active] if active else []
 
 
+def _format_counts(counts_by_type: dict[str, Any]) -> str:
+    ordered_keys = ("artifact", "workflow", "context_module", "bundle")
+    parts = [f"{key}={int(counts_by_type.get(key) or 0)}" for key in ordered_keys]
+    return " ".join(parts)
+
+
+def _format_warning(warning: Any) -> str:
+    if not isinstance(warning, dict):
+        return str(warning)
+    section = str(warning.get("section") or "general")
+    message = str(warning.get("message") or "").strip()
+    if not message:
+        return section
+    return f"[{section}] {message}"
+
+
+def _definition_metadata(definition: dict[str, Any]) -> dict[str, Any]:
+    metadata = definition.get("resolution_metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+async def _build_enrichment_summary(repo: Any, project_id: str) -> dict[str, int]:
+    definitions = await repo.list_external_definitions(project_id, limit=1000)
+    workflows = [item for item in definitions if str(item.get("definition_type") or "") == "workflow"]
+    context_modules = [item for item in definitions if str(item.get("definition_type") or "") == "context_module"]
+
+    return {
+        "effectiveWorkflows": sum(1 for item in workflows if bool(_definition_metadata(item).get("isEffective"))),
+        "plannedWorkflows": sum(1 for item in workflows if bool(_definition_metadata(item).get("planSummary"))),
+        "executionEnrichedWorkflows": sum(
+            1
+            for item in workflows
+            if int(_definition_metadata(item).get("executionSummary", {}).get("count") or 0) > 0
+        ),
+        "contextPreviewModules": sum(1 for item in context_modules if bool(_definition_metadata(item).get("previewSummary"))),
+    }
+
+
 async def _run(
     project_id: str | None,
     *,
@@ -49,6 +88,7 @@ async def _run(
     skip_recompute: bool,
     limit: int,
     force_recompute: bool,
+    fail_on_warning: bool,
 ) -> int:
     require_skillmeat_integration_enabled()
     targets = [project for project in _iter_projects(project_id, all_projects) if project is not None]
@@ -58,17 +98,34 @@ async def _run(
 
     db = await connection.get_connection()
     await migrations.run_migrations(db)
+    intelligence_repo = get_agentic_intelligence_repository(db)
+    had_warnings = False
 
     try:
         for project in targets:
             print(f"[{project.id}]")
             if not skip_sync:
                 sync_payload = await sync_skillmeat_definitions(db, project)
+                counts_by_type = sync_payload.get("countsByType", {}) if isinstance(sync_payload.get("countsByType"), dict) else {}
+                warnings = sync_payload.get("warnings", []) if isinstance(sync_payload.get("warnings"), list) else []
                 print(
                     "  sync:"
                     f" total_definitions={int(sync_payload.get('totalDefinitions') or 0)}"
-                    f" warnings={len(sync_payload.get('warnings') or [])}"
+                    f" {_format_counts(counts_by_type)}"
+                    f" warnings={len(warnings)}"
                 )
+                enrichment_summary = await _build_enrichment_summary(intelligence_repo, project.id)
+                print(
+                    "  enrichment:"
+                    f" effective_workflows={enrichment_summary['effectiveWorkflows']}"
+                    f" planned_workflows={enrichment_summary['plannedWorkflows']}"
+                    f" execution_enriched_workflows={enrichment_summary['executionEnrichedWorkflows']}"
+                    f" context_preview_modules={enrichment_summary['contextPreviewModules']}"
+                )
+                if warnings:
+                    had_warnings = True
+                    for warning in warnings:
+                        print(f"  warning: {_format_warning(warning)}")
 
             if not skip_backfill:
                 backfill_payload = await backfill_session_stack_observations(
@@ -110,7 +167,7 @@ async def _run(
     finally:
         await connection.close_connection()
 
-    return 0
+    return 1 if fail_on_warning and had_warnings else 0
 
 
 def main() -> int:
@@ -122,6 +179,7 @@ def main() -> int:
     parser.add_argument("--skip-recompute", action="store_true", help="Skip workflow analytics recompute")
     parser.add_argument("--limit", type=int, default=5000, help="Max sessions to process during backfill")
     parser.add_argument("--force-recompute", action="store_true", help="Recompute stack observations even when cached rows exist")
+    parser.add_argument("--fail-on-warning", action="store_true", help="Exit non-zero when sync emits recoverable warnings")
     args = parser.parse_args()
     return asyncio.run(
         _run(
@@ -132,6 +190,7 @@ def main() -> int:
             skip_recompute=args.skip_recompute,
             limit=max(1, args.limit),
             force_recompute=args.force_recompute,
+            fail_on_warning=args.fail_on_warning,
         )
     )
 

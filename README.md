@@ -158,6 +158,7 @@ The core debugging loop for AI interactions.
 *   **Recommended Stack Card**:
     *   confidence-scored workflow/stack suggestion based on historical outcomes
     *   resolved SkillMeat definition chips and cached metadata fallbacks
+    *   inline insight panels for context coverage, curated bundle fit, and SkillMeat execution awareness
     *   similar-work evidence links into prior sessions/features
 *   **Run Launch UX**: `Run in Workbench` actions open a pre-run review modal with:
     *   editable command text
@@ -181,8 +182,9 @@ The core debugging loop for AI interactions.
 
 ### 10. Agentic SDLC Intelligence
 *   **Read-only SkillMeat integration**:
-    *   caches artifact, workflow, and context-module definitions per project
+    *   caches artifact, workflow, context-module, and bundle definitions per project
     *   stores normalized provenance and snapshot metadata for deterministic recommendations
+    *   enriches effective workflows with plan summaries, context previews, and recent workflow execution metadata
 *   **Observed Stack Extraction**:
     *   backfills historical sessions into stack observations using agents, skills, commands, linked artifacts, and session forensics
     *   resolves matching components against cached SkillMeat definitions when available
@@ -191,7 +193,7 @@ The core debugging loop for AI interactions.
     *   failure-pattern clustering highlights queue waste, repeated debug loops, and weak validation paths
 *   **Operator Tooling**:
     *   `python backend/scripts/agentic_intelligence_rollout.py` can sync definitions, backfill observations, and recompute workflow rollups for the active or selected project
-    *   support flags: `--project`, `--all-projects`, `--skip-sync`, `--skip-backfill`, `--skip-recompute`, `--force-recompute`
+    *   support flags: `--project`, `--all-projects`, `--skip-sync`, `--skip-backfill`, `--skip-recompute`, `--force-recompute`, `--fail-on-warning`
 
 ---
 

@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence User Guide
 
-Last updated: 2026-03-08
+Last updated: 2026-03-09
 
 Use the agentic SDLC intelligence surfaces to understand which workflow stacks are working, why they work, and where failure patterns are repeating.
 
@@ -21,9 +21,15 @@ The workbench card combines current feature state with historical evidence:
 
 - primary recommended stack with confidence, quality, efficiency, and risk scores
 - resolved SkillMeat workflow/skill/context chips when cached definitions are available
+- insight badges for effective workflow precedence, curated bundle matches, context previews, and recent SkillMeat executions
+- dedicated insight panels for:
+  - context coverage and preview token footprint
+  - curated bundle fit and matched artifact refs
+  - execution awareness, including recent/completed/active run counts
 - alternative stacks ranked behind the primary recommendation
 - similar-work examples that link back to past sessions and related features
 - warnings when the system falls back to local CCDash evidence instead of resolved SkillMeat definitions
+- direct open actions that route to the audited SkillMeat workflow, memory, bundle, or execution destination when CCDash has enough identifiers
 
 ## Workflow Intelligence view
 
@@ -55,12 +61,35 @@ If a project disables one of the intelligence surfaces:
 - `/analytics` keeps the rest of the analytics dashboard available.
 - the disabled surface shows an inline notice instead of a blank or broken panel.
 
+## SkillMeat settings modes
+
+Use `Settings > Projects > SkillMeat Integration`.
+
+- Local mode:
+  - leave `AAA enabled` off
+  - leave the API key empty
+  - set `Project Path` to the SkillMeat filesystem `project_id`
+  - use `Collection ID` only when artifact/bundle scope needs it
+- AAA-enabled mode:
+  - enable `AAA enabled`
+  - enter the API credential in `API Key`
+  - wait for the connection, project mapping, and auth indicators to confirm the config
+- Compatibility note:
+  - legacy `workspaceId` values are deprecated and are not the primary mapping key in V2
+  - CCDash now treats the SkillMeat project filesystem path as canonical
+
 ## Recommended pilot workflow
 
-1. Enable SkillMeat integration and enter the base URL, project ID, and workspace ID.
-2. Leave `Recommended Stack UI` and `Workflow Effectiveness` enabled for the pilot project.
-3. Ask an operator to run:
-   - `python backend/scripts/agentic_intelligence_rollout.py --project <project-id>`
-4. Open `/execution` for a feature with linked docs or linked sessions.
-5. Compare the recommended stack against recent similar work before launching a run.
-6. Review `/analytics?tab=workflow_intelligence` after a few sessions to spot patterns that should be standardized or retired.
+1. Enable SkillMeat integration and enter the base URL plus the SkillMeat project filesystem path.
+2. Leave `AAA enabled` off for local SkillMeat or enable it and provide an API key for protected instances.
+3. Confirm the connection, project mapping, and auth indicators in Settings.
+4. Leave `Recommended Stack UI` and `Workflow Effectiveness` enabled for the pilot project.
+5. Ask an operator to run:
+   - `python backend/scripts/agentic_intelligence_rollout.py --project <project-id> --fail-on-warning`
+6. Open `/execution` for a feature with linked docs or linked sessions.
+7. Review:
+   - the recommended stack
+   - the context coverage / curated bundle / execution awareness insight panels
+   - the similar-work evidence
+8. If SkillMeat is temporarily unavailable, continue using cached recommendations and previously computed rollups until the source comes back.
+9. Review `/analytics?tab=workflow_intelligence` after a few sessions to spot patterns that should be standardized or retired.

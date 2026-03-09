@@ -1,6 +1,6 @@
 # Execution Workbench User Guide
 
-Last updated: 2026-03-08
+Last updated: 2026-03-09
 
 Use the Execution Workbench to launch, monitor, and control local terminal commands from inside CCDash.
 
@@ -13,6 +13,7 @@ Route:
 - In-app local run launch from recommendation commands.
 - Recommended Stack card with confidence, alternatives, and similar-work evidence.
 - Resolved SkillMeat definition chips plus fallback warnings when only local CCDash evidence is available.
+- Inline V2 insight panels for context coverage, curated bundle fit, and recent SkillMeat execution activity.
 - Embedded Workflow Intelligence panel in the `Analytics` tab for feature-scoped effectiveness and failure-pattern review.
 - Pre-run policy review (command, working directory, env profile).
 - Approval workflow for high-risk commands.
@@ -25,7 +26,10 @@ Route:
 2. Review the Recommended Stack card before launching a run.
 3. Check:
    - confidence score
+   - sample size, success, quality, and risk metrics
    - primary components and resolved SkillMeat references
+   - effective workflow / bundle / execution badges
+   - context coverage, curated bundle, and execution-awareness panels
    - alternatives if the primary suggestion looks too risky
    - similar-work examples for prior sessions/features that produced the recommendation
 4. If the project disables stack recommendations, the workbench keeps command guidance available and shows a disabled-state notice instead.
