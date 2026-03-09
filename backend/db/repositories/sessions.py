@@ -665,7 +665,12 @@ class SqliteSessionRepository:
             SELECT
                 COUNT(*) as count,
                 SUM(total_cost) as cost,
-                SUM(tokens_in + tokens_out) as tokens,
+                SUM(
+                    CASE
+                        WHEN observed_tokens > 0 THEN observed_tokens
+                        ELSE tokens_in + tokens_out
+                    END
+                ) as tokens,
                 AVG(duration_seconds) as duration
             FROM sessions
             WHERE project_id = ?

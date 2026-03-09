@@ -12,12 +12,17 @@ from backend.db.factory import (
 )
 from backend.db.sqlite_migrations import run_migrations
 from backend.services.workflow_effectiveness import (
+    _session_workload_tokens,
     detect_failure_patterns,
     get_workflow_effectiveness,
 )
 
 
 class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
+    def test_session_workload_tokens_prefers_observed_tokens(self) -> None:
+        row = {"tokens_in": 10, "tokens_out": 20, "observed_tokens": 95}
+        self.assertEqual(_session_workload_tokens(row), 95)
+
     async def asyncSetUp(self) -> None:
         self._prev_flag = config.CCDASH_TEST_VISUALIZER_ENABLED
         config.CCDASH_TEST_VISUALIZER_ENABLED = True

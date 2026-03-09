@@ -6,6 +6,14 @@ from backend.routers import analytics as analytics_router
 
 
 class _FakeSessionRepo:
+    async def get_project_stats(self, project_id: str):
+        return {
+            "count": 3,
+            "cost": 4.5,
+            "tokens": 9876,
+            "duration": 123.0,
+        }
+
     async def get_logs(self, session_id: str):
         return [
             {"timestamp": "2026-02-16T10:00:00Z", "metadata_json": '{"inputTokens": 10, "outputTokens": 20}'},
@@ -148,6 +156,49 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["range"]["start"], "2026-02-01")
         self.assertEqual(response["range"]["end"], "2026-02-22")
         self.assertIn("generatedAt", response)
+
+    async def test_overview_prefers_observed_session_token_stats(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        class _TaskRepo:
+            async def get_project_stats(self, project_id: str):
+                return {"completed": 7, "completion_pct": 63.0}
+
+        class _SessionRepo(_FakeSessionRepo):
+            async def list_paginated(self, *args, **kwargs):
+                return [
+                    {
+                        "id": "S-1",
+                        "model": "claude-opus-4-5",
+                        "tokens_in": 120,
+                        "tokens_out": 180,
+                        "model_io_tokens": 300,
+                        "cache_input_tokens": 80,
+                        "observed_tokens": 380,
+                        "tool_reported_tokens": 500,
+                        "started_at": "2026-03-03T09:00:00Z",
+                    },
+                    {
+                        "id": "S-2",
+                        "model": "gpt-5",
+                        "tokens_in": 20,
+                        "tokens_out": 30,
+                        "model_io_tokens": 50,
+                        "cache_input_tokens": 10,
+                        "observed_tokens": 60,
+                        "tool_reported_tokens": 0,
+                        "started_at": "2026-03-03T09:01:00Z",
+                    },
+                ]
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_analytics_repository", return_value=_FakeAnalyticsRepo()), patch.object(analytics_router, "get_task_repository", return_value=_TaskRepo()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
+            response = await analytics_router.get_overview()
+
+        self.assertEqual(response["kpis"]["sessionTokens"], 9876)
+        self.assertEqual(response["kpis"]["modelIOTokens"], 350)
+        self.assertEqual(response["kpis"]["cacheInputTokens"], 90)
+        self.assertEqual(response["kpis"]["observedTokens"], 440)
+        self.assertEqual(response["kpis"]["toolReportedTokens"], 500)
 
     async def test_workflow_effectiveness_endpoint_wraps_service_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")
@@ -396,6 +447,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "duration_seconds": 300,
                         "tokens_in": 120,
                         "tokens_out": 180,
+                        "model_io_tokens": 300,
+                        "cache_creation_input_tokens": 20,
+                        "cache_read_input_tokens": 60,
+                        "cache_input_tokens": 80,
+                        "observed_tokens": 380,
+                        "tool_reported_tokens": 500,
                         "total_cost": 1.5,
                     },
                     {
@@ -411,6 +468,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "duration_seconds": 60,
                         "tokens_in": 20,
                         "tokens_out": 30,
+                        "model_io_tokens": 50,
+                        "cache_creation_input_tokens": 15,
+                        "cache_read_input_tokens": 25,
+                        "cache_input_tokens": 40,
+                        "observed_tokens": 90,
+                        "tool_reported_tokens": 140,
                         "total_cost": 0.2,
                     },
                 ]
@@ -445,7 +508,11 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked_row["linkedFeatureCount"], 1)
         self.assertEqual(linked_row["tokenInput"], 120)
         self.assertEqual(linked_row["tokenOutput"], 180)
-        self.assertEqual(linked_row["totalTokens"], 300)
+        self.assertEqual(linked_row["modelIOTokens"], 300)
+        self.assertEqual(linked_row["cacheInputTokens"], 80)
+        self.assertEqual(linked_row["observedTokens"], 380)
+        self.assertEqual(linked_row["toolReportedTokens"], 500)
+        self.assertEqual(linked_row["totalTokens"], 380)
         self.assertEqual(linked_row["durationSeconds"], 300)
         self.assertFalse(linked_row["isSubagent"])
 
@@ -454,6 +521,7 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unlinked_row["sessionType"], "subagent")
         self.assertEqual(unlinked_row["rootSessionId"], "S-1")
         self.assertEqual(unlinked_row["parentSessionId"], "S-1")
+        self.assertEqual(unlinked_row["observedTokens"], 90)
         self.assertTrue(unlinked_row["isSubagent"])
 
     def test_build_artifact_payload_agent_model_falls_back_to_main_agent_speaker(self) -> None:

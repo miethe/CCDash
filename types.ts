@@ -634,6 +634,14 @@ export interface AnalyticsCorrelationItem {
   durationSeconds?: number;
   tokenInput?: number;
   tokenOutput?: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   totalTokens?: number;
   totalCost?: number;
   linkedFeatureCount?: number;

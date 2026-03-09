@@ -262,6 +262,13 @@ def _subagent_start_count(forensics: dict[str, Any]) -> int:
     return _safe_int(topology.get("subagentStartCount"), 0)
 
 
+def _session_workload_tokens(row: dict[str, Any]) -> float:
+    observed_tokens = _safe_float(row.get("observed_tokens"), 0.0)
+    if observed_tokens > 0:
+        return observed_tokens
+    return _safe_float(row.get("tokens_in"), 0.0) + _safe_float(row.get("tokens_out"), 0.0)
+
+
 def _quality_rating_score(row: dict[str, Any]) -> float:
     rating = _safe_int(row.get("quality_rating"), 0)
     if rating <= 0:
@@ -537,10 +544,7 @@ async def _collect_effectiveness_dataset(
         rows.sort(key=lambda item: _parse_iso(str(item.get("started_at") or item.get("created_at") or "")) or datetime.min.replace(tzinfo=timezone.utc))
 
     baseline_durations = [_safe_float(row.get("duration_seconds"), 0.0) for row in filtered_sessions]
-    baseline_tokens = [
-        _safe_float(row.get("tokens_in"), 0.0) + _safe_float(row.get("tokens_out"), 0.0)
-        for row in filtered_sessions
-    ]
+    baseline_tokens = [_session_workload_tokens(row) for row in filtered_sessions]
     baseline_costs = [_safe_float(row.get("total_cost"), 0.0) for row in filtered_sessions]
     baseline_queue = [
         _queue_operation_count(_safe_dict(row.get("session_forensics_json")))
@@ -597,7 +601,7 @@ async def _collect_effectiveness_dataset(
         )
         queue_ops = _queue_operation_count(forensics)
         subagent_starts = _subagent_start_count(forensics)
-        total_tokens = _safe_float(row.get("tokens_in"), 0.0) + _safe_float(row.get("tokens_out"), 0.0)
+        total_tokens = _session_workload_tokens(row)
         retry_penalty = min(0.35, len(later_sessions) * 0.08 + later_debug_count * 0.12)
 
         success_score = _clamp(
