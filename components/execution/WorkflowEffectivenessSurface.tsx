@@ -267,8 +267,18 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   }, [failurePatterns.length, filteredItems]);
 
   const shellClass = embedded
-    ? 'rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
+    ? 'flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
     : 'rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 md:p-6 shadow-[0_28px_90px_rgba(2,6,23,0.22)]';
+  const contentGridClass = embedded
+    ? 'mt-5 grid min-h-0 flex-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[minmax(0,1fr)_320px] xl:overflow-hidden xl:pr-0'
+    : 'mt-5 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]';
+  const itemsColumnClass = embedded ? 'space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1' : 'space-y-4';
+  const failurePatternsBodyClass = embedded
+    ? 'space-y-3 px-4 py-4 xl:min-h-0 xl:overflow-y-auto xl:pr-2'
+    : 'space-y-3 px-4 py-4';
+  const failurePatternsAsideClass = embedded
+    ? 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50 xl:flex xl:min-h-0 xl:flex-col'
+    : 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50';
 
   return (
     <section className={shellClass}>
@@ -291,7 +301,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
         </button>
       </div>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_280px]">
+      <div className="mt-5 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))]">
         <label className="rounded-2xl border border-slate-800/80 bg-slate-950/55 px-4 py-3">
           <span className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Scope</span>
           <select
@@ -343,7 +353,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
         </div>
       )}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(13rem,1fr))]">
         <SummaryCard label="Overall Success" value={formatPercent(summary.overallSuccess)} caption="Weighted across visible scopes" />
         <SummaryCard label="Avg Efficiency" value={formatPercent(summary.avgEfficiency)} caption="Duration, cost, token, and queue pressure" />
         <SummaryCard
@@ -360,8 +370,8 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
         </div>
       )}
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-4">
+      <div className={contentGridClass}>
+        <div className={itemsColumnClass}>
           {!loading && !error && filteredItems.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-3">
               <div>
@@ -399,7 +409,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
             return (
               <article
                 key={`${item.scopeType}-${item.scopeId}`}
-                className="rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4 transition-colors hover:border-slate-700"
+                className="min-w-0 rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4 transition-colors hover:border-slate-700"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -427,17 +437,17 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                   )}
                 </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]">
                   <ScoreBar label="Success" value={item.successScore} kind="success" />
                   <ScoreBar label="Efficiency" value={item.efficiencyScore} kind="efficiency" />
                   <ScoreBar label="Quality" value={item.qualityScore} kind="quality" />
                   <ScoreBar label="Risk" value={item.riskScore} kind="risk" />
                 </div>
 
-                <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)]">
-                  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
+                <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">
+                  <div className="min-w-0 rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Evidence Snapshot</div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]">
                       <EvidenceMetric
                         label="Avg Test Pass"
                         value={formatPercent(evidence.averageTestPassRatio)}
@@ -474,7 +484,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
+                  <div className="min-w-0 rounded-2xl border border-slate-800/80 bg-slate-950/75 p-4">
                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Representative Sessions</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {representativeSessions.length > 0 ? representativeSessions.map(sessionId => (
@@ -497,7 +507,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           })}
         </div>
 
-        <aside className="overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50">
+        <aside className={failurePatternsAsideClass}>
           <div className="border-b border-slate-800 px-4 py-4">
             <div className="flex items-center gap-2 text-lg font-semibold text-slate-100">
               <ShieldAlert size={18} className="text-amber-300" />
@@ -507,7 +517,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
               Common ways this scope drifts into slow or low-confidence execution.
             </p>
           </div>
-          <div className="space-y-3 px-4 py-4">
+          <div className={failurePatternsBodyClass}>
             {!loading && !error && failurePatterns.length === 0 && (
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-5 text-sm text-slate-500">
                 No low-yield patterns were flagged for this scope and time window.
@@ -537,7 +547,7 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                         <span>{formatPercent(pattern.averageRiskScore)} avg risk</span>
                       </div>
 
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
                         <div className="rounded-xl border border-current/15 bg-slate-950/35 px-3 py-2">
                           <div className="text-current/70">Scope</div>
                           <div className="mt-1 font-mono text-slate-100 [overflow-wrap:anywhere]">

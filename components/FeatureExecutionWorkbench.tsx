@@ -1768,8 +1768,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-[390px_1fr] gap-4">
-            <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-fit sticky top-0 space-y-4">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
+            <section className="h-fit space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4 xl:sticky xl:top-0">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-[11px] uppercase tracking-wider text-slate-400">Recommendation</p>
@@ -1891,24 +1892,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 </ul>
               </div>
 
-              {stackRecommendationsAvailable ? (
-                <RecommendedStackCard
-                  recommendedStack={context.recommendedStack}
-                  stackAlternatives={context.stackAlternatives}
-                  stackEvidence={context.stackEvidence}
-                  definitionResolutionWarnings={context.definitionResolutionWarnings}
-                  onOpenSession={openSession}
-                  onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
-                />
-              ) : (
-                <IntelligenceDisabledNotice
-                  title="Recommended Stack Disabled"
-                  message="Project settings have disabled historical stack recommendations. Command guidance and execution runs remain available."
-                />
-              )}
             </section>
 
-            <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
+            <section className="min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-4 min-h-[42rem] h-[clamp(42rem,74vh,58rem)] flex flex-col">
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
                 {visibleTabItems.map(tab => (
                   <button
@@ -1926,8 +1912,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 ))}
               </div>
 
+              <div className="mt-4 min-h-0 flex-1 overflow-hidden">
               {activeTab === 'overview' && featureDetail && (
-                <div className="mt-4 space-y-4">
+                <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 xl:grid xl:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] xl:overflow-hidden xl:pr-0">
+                  <div className="space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'overview')}
@@ -1989,51 +1977,60 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       )}
                     </div>
                   </div>
+                  </div>
 
-                  {(featureDetail.linkedFeatures || []).length > 0 && (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div className="flex min-h-0 flex-col gap-4 xl:min-w-0">
+                    <div className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Typed Related Features</p>
-                      <div className="space-y-2">
-                        {(featureDetail.linkedFeatures || []).map((relation, index) => (
-                          <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
-                            <button
-                              onClick={() => openBoardFeature(relation.feature, 'overview')}
-                              className="font-mono text-indigo-300 hover:text-indigo-200"
-                            >
-                              {relation.feature}
-                            </button>
-                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
-                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
-                            {typeof relation.confidence === 'number' && (
-                              <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                      {(featureDetail.linkedFeatures || []).length > 0 ? (
+                        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                          {(featureDetail.linkedFeatures || []).map((relation, index) => (
+                            <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
+                              <button
+                                onClick={() => openBoardFeature(relation.feature, 'overview')}
+                                className="font-mono text-indigo-300 hover:text-indigo-200 [overflow-wrap:anywhere]"
+                              >
+                                {relation.feature}
+                              </button>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
+                              {typeof relation.confidence === 'number' && (
+                                <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-1 items-center rounded-lg border border-dashed border-slate-800 px-3 text-sm text-slate-500">
+                          No typed feature relations were detected for this feature.
+                        </div>
+                      )}
                     </div>
-                  )}
 
-                  {featureDetail.relatedFeatures.length > 0 && (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Related Features</p>
-                      <div className="flex flex-wrap gap-2">
-                        {featureDetail.relatedFeatures.map(featureId => (
-                          <button
-                            key={featureId}
-                            onClick={() => openBoardFeature(featureId, 'overview')}
-                            className="text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-indigo-300 hover:border-indigo-500/40"
-                          >
-                            {featureId}
-                          </button>
-                        ))}
-                      </div>
+                      {featureDetail.relatedFeatures.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {featureDetail.relatedFeatures.map(featureId => (
+                            <button
+                              key={featureId}
+                              onClick={() => openBoardFeature(featureId, 'overview')}
+                              className="text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-indigo-300 hover:border-indigo-500/40 [overflow-wrap:anywhere]"
+                            >
+                              {featureId}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-500">No secondary related feature IDs were attached.</p>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 
               {activeTab === 'runs' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {runsError && (
                     <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
                       {runsError}
@@ -2063,7 +2060,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'phases' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {fullFeatureLoading && (
                     <div className="text-xs text-slate-400 flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
@@ -2206,7 +2203,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'documents' && (
-                <div className="mt-4 space-y-2">
+                <div className="h-full overflow-y-auto pr-1 space-y-2">
                   {context.documents.length === 0 && <p className="text-sm text-slate-400">No correlated documents found.</p>}
                   {context.documents.map(doc => (
                     <button
@@ -2229,7 +2226,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'sessions' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {executionSessions.length === 0 && <p className="text-sm text-slate-400">No linked sessions available.</p>}
                   {executionSessions.length > 0 && (
                     <>
@@ -2299,7 +2296,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'artifacts' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {artifactsLoading && (
                     <div className="text-xs text-slate-400 flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
@@ -2321,7 +2318,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'history' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {featureHistoryEvents.length === 0 && (
                     <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
                       <Calendar size={32} className="mx-auto mb-3 opacity-50" />
@@ -2369,7 +2366,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'analytics' && (
-                <div className="mt-4 space-y-4">
+                <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
@@ -2392,19 +2389,21 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     </div>
                   </div>
 
-                  {workflowAnalyticsAvailable ? (
-                    <WorkflowEffectivenessSurface
-                      embedded
-                      featureId={context.feature.id}
-                      description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
-                      onOpenSession={openSession}
-                    />
-                  ) : (
-                    <IntelligenceDisabledNotice
-                      title="Workflow Intelligence Disabled"
-                      message="Workflow effectiveness analytics are disabled for this project. Session and execution summaries are still available."
-                    />
-                  )}
+                  <div className="min-h-0 overflow-hidden">
+                    {workflowAnalyticsAvailable ? (
+                      <WorkflowEffectivenessSurface
+                        embedded
+                        featureId={context.feature.id}
+                        description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
+                        onOpenSession={openSession}
+                      />
+                    ) : (
+                      <IntelligenceDisabledNotice
+                        title="Workflow Intelligence Disabled"
+                        message="Workflow effectiveness analytics are disabled for this project. Session and execution summaries are still available."
+                      />
+                    )}
+                  </div>
 
                   {workflowAnalyticsAvailable && (
                     <div className="flex justify-end">
@@ -2421,7 +2420,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'test-status' && context.feature && (
-                <div className="mt-4">
+                <div className="h-full overflow-y-auto pr-1">
                   {activeProject?.id ? (
                     <TestStatusView
                       projectId={activeProject.id}
@@ -2437,7 +2436,25 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   )}
                 </div>
               )}
+              </div>
             </section>
+            </div>
+
+            {stackRecommendationsAvailable ? (
+              <RecommendedStackCard
+                recommendedStack={context.recommendedStack}
+                stackAlternatives={context.stackAlternatives}
+                stackEvidence={context.stackEvidence}
+                definitionResolutionWarnings={context.definitionResolutionWarnings}
+                onOpenSession={openSession}
+                onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
+              />
+            ) : (
+              <IntelligenceDisabledNotice
+                title="Recommended Stack Disabled"
+                message="Project settings have disabled historical stack recommendations. Command guidance and execution runs remain available."
+              />
+            )}
           </div>
         </div>
       )}
