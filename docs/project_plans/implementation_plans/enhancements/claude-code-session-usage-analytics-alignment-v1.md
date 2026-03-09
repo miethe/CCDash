@@ -1,0 +1,225 @@
+---
+doc_type: implementation_plan
+status: draft
+category: enhancements
+
+title: "Implementation Plan: Claude Code Session Usage Analytics Alignment V1"
+description: "Persist stable Claude usage totals, backfill historical sessions, align analytics semantics around observed tokens, and expose cache-aware token breakdowns in the UI."
+author: codex
+audience: [ai-agents, developers, engineering-leads]
+created: 2026-03-09
+updated: 2026-03-09
+
+tags: [implementation, claude-code, sessions, tokens, analytics, cache, frontend, backend]
+feature_slug: claude-code-session-usage-analytics-alignment-v1
+feature_family: claude-code-session-usage-analytics-alignment
+lineage_family: claude-code-session-usage-analytics-alignment
+lineage_parent: ""
+lineage_children: []
+lineage_type: iteration
+linked_features: [claude-code-session-usage-analytics-alignment-v1]
+related:
+  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
+  - docs/project_plans/reports/claude-code-session-schema-and-token-audit-2026-03-08.md
+  - docs/project_plans/implementation_plans/telemetry-analytics-modernization-v1.md
+  - backend/parsers/platforms/claude_code/parser.py
+  - backend/models.py
+  - backend/db/sqlite_migrations.py
+  - backend/db/postgres_migrations.py
+  - backend/db/repositories/sessions.py
+  - backend/db/repositories/postgres/sessions.py
+  - backend/db/sync_engine.py
+  - backend/routers/analytics.py
+  - backend/routers/api.py
+  - backend/services/workflow_effectiveness.py
+  - components/SessionInspector.tsx
+  - components/FeatureExecutionWorkbench.tsx
+  - components/Analytics/AnalyticsDashboard.tsx
+  - types.ts
+plan_ref: claude-code-session-usage-analytics-alignment-v1
+linked_sessions: []
+
+request_log_id: ""
+commits: []
+prs: []
+owner: platform-engineering
+owners: [platform-engineering, fullstack-engineering]
+contributors: [ai-agents]
+
+complexity: High
+track: Standard
+timeline_estimate: "2-3 weeks across 6 phases"
+---
+
+# Implementation Plan: Claude Code Session Usage Analytics Alignment V1
+
+## Objective
+
+Turn the March 8, 2026 Claude Code schema/token audit into production behavior by:
+
+1. persisting stable usage totals for Claude sessions
+2. backfilling historical session rows
+3. redefining analytics defaults around `observedTokens`
+4. updating UI surfaces to show cache-aware token composition
+5. codifying a safe relay-attribution and tool-token fallback policy
+
+## Scope and Fixed Decisions
+
+1. `tokensIn` and `tokensOut` remain the backward-compatible model-IO fields.
+2. The default "total tokens" semantic becomes `observedTokens`, not `tokensIn + tokensOut`.
+3. Stable hot-path usage totals are persisted as first-class session fields in both SQLite and PostgreSQL; detailed usage families remain available in `session_forensics_json`.
+4. Tool-reported totals are operational fallback signals, not additive totals when linked subagent sessions exist.
+5. Relay-wrapped `data.message.message.*` records remain excluded from observed totals until the attribution rule is explicitly implemented and tested.
+6. V1 is limited to Claude Code session semantics even if the contract later expands to other platforms.
+
+## Non-Goals
+
+1. Recomputing cost models from cache-read or cache-creation token families.
+2. Building a new generic telemetry store for all session platforms.
+3. Full UI redesign of session or analytics pages beyond token-semantics updates.
+4. Counting relay-wrapped message mirrors in V1 without a safe deduplication model.
+
+## Recommended Data Contract
+
+Persist the following stable fields on `sessions`:
+
+1. `model_io_tokens`
+2. `cache_creation_input_tokens`
+3. `cache_read_input_tokens`
+4. `cache_input_tokens`
+5. `observed_tokens`
+6. `tool_reported_tokens`
+7. `tool_result_input_tokens`
+8. `tool_result_output_tokens`
+9. `tool_result_cache_creation_input_tokens`
+10. `tool_result_cache_read_input_tokens`
+
+Derived API-facing ratios:
+
+1. `cacheShare = cacheInputTokens / observedTokens`
+2. `outputShare = tokensOut / modelIOTokens`
+
+Rationale:
+
+1. These metrics are stable enough to query directly.
+2. They match the report's recommended token model.
+3. They prevent request-time reparsing of nested `sessionForensics`.
+
+## Phase 1: Persistence Contract and Schema Parity
+
+Tasks:
+
+1. Add the new Claude usage columns to `sessions` migrations in both `backend/db/sqlite_migrations.py` and `backend/db/postgres_migrations.py`.
+2. Extend `backend/models.py`, `types.ts`, and API serialization contracts to expose the persisted usage fields and derived ratios.
+3. Update `backend/db/repositories/sessions.py` and `backend/db/repositories/postgres/sessions.py` to write/read the new fields.
+4. Keep `session_forensics_json` as the source for detailed usage families while making the stable totals queryable.
+
+Acceptance criteria:
+
+1. SQLite and PostgreSQL schemas stay aligned.
+2. Session rows can round-trip the new usage fields without breaking current readers.
+3. Existing `tokensIn` and `tokensOut` fields remain intact.
+
+## Phase 2: Sync Engine Mapping and Historical Backfill
+
+Tasks:
+
+1. Update sync/session upsert logic in `backend/db/sync_engine.py` to map parser-emitted `sessionForensics.usageSummary` into the new session columns.
+2. Define one canonical source for each persisted field:
+   - `model_io_tokens` from message input/output totals
+   - `cache_*` from message usage totals
+   - `tool_reported_tokens` from `toolResultReportedTotals.totalTokens`
+   - tool-result usage totals from `toolResultUsageTotals`
+3. Add a deterministic resync/backfill path for historical Claude sessions.
+4. Emit enough logging or summary output to verify how many sessions were updated during backfill.
+
+Acceptance criteria:
+
+1. Historical Claude session rows populate the new usage fields after resync.
+2. Stored `observedTokens` matches parser-derived message totals on validation fixtures and sampled real sessions.
+3. Backfill is safe to rerun without duplicate side effects.
+
+## Phase 3: Analytics, Feature Rollups, and Workflow Semantics
+
+Tasks:
+
+1. Update `backend/routers/analytics.py` so overview, series, breakdown, and correlation outputs expose:
+   - `modelIOTokens`
+   - `cacheInputTokens`
+   - `observedTokens`
+   - `toolReportedTokens`
+2. Replace legacy default `totalTokens` rollups with `observedTokens`, while preserving compatibility behavior for callers that still expect `totalTokens`.
+3. Update feature/session aggregation logic in `backend/db/sync_engine.py` and `backend/services/workflow_effectiveness.py` to use the report's root/full-thread/fallback rules.
+4. Ensure tool-reported totals are used only when linked subagent sessions are absent.
+
+Acceptance criteria:
+
+1. Analytics APIs no longer undercount Claude session workload by ignoring cache totals.
+2. Feature-level totals avoid double counting linked subagent sessions.
+3. Workflow effectiveness and related rollups use the new semantics consistently.
+
+## Phase 4: Session, Feature, and Analytics UI Adoption
+
+Tasks:
+
+1. Update `components/SessionInspector.tsx` to show a token-family breakdown and label legacy `tokensIn`/`tokensOut` as model IO.
+2. Update `components/FeatureExecutionWorkbench.tsx` to aggregate feature workload with `observedTokens` and expose cache contribution.
+3. Update `components/Analytics/AnalyticsDashboard.tsx` to:
+   - default "total tokens" cards/charts to `observedTokens`
+   - add a cache-efficiency panel
+   - surface ratios like cache share where useful
+4. Update shared frontend types and formatting helpers so new metrics render consistently.
+
+Acceptance criteria:
+
+1. Users can distinguish model IO from cache-driven workload in the UI.
+2. Existing charts and cards keep working with the expanded payload shape.
+3. No major token surface still silently equates total tokens with `tokensIn + tokensOut`.
+
+## Phase 5: Relay Attribution Policy and Guardrails
+
+Tasks:
+
+1. Document the counting policy for `data.message.message.*` relay mirrors in the implementation and tests.
+2. Add explicit guardrails in parser-to-persistence or aggregation logic so excluded relay mirrors cannot leak into `observedTokens`.
+3. Define how relay data should be surfaced for diagnostics if it remains excluded from totals.
+4. Add targeted tests that demonstrate:
+   - excluded relay mirrors do not inflate totals
+   - tool-reported totals do not double count linked subagent sessions
+
+Acceptance criteria:
+
+1. Relay counting behavior is explicit rather than accidental.
+2. Double counting is prevented by code and regression tests.
+3. Maintainers can see the policy in code/docs without re-reading the audit report.
+
+## Phase 6: Validation, Rollout, and Documentation
+
+Tasks:
+
+1. Extend parser, repository, sync, and analytics tests to cover the new token model end to end.
+2. Add API contract coverage for the expanded analytics/session payloads.
+3. Add frontend validation for token cards, tables, and cache-efficiency rendering.
+4. Document the metric semantics in developer-facing docs or inline implementation references so later work does not regress to legacy totals.
+5. Run a real-corpus verification pass against the inventory sample and at least one known high-cache session from the report.
+
+Acceptance criteria:
+
+1. Backend and frontend test coverage exists for the new token semantics.
+2. Real-corpus spot checks reproduce the expected observed-token behavior.
+3. The rollout path is documented enough for future backfills and maintenance work.
+
+## Risks
+
+1. The largest product risk is semantic confusion if legacy and new totals coexist without clear labels.
+2. The largest technical risk is double counting across linked sessions, tool-reported totals, and relay mirrors.
+3. The largest rollout risk is partially backfilled data causing mixed analytics semantics across projects.
+
+## Recommended Rollout Order
+
+1. Persistence contract and schema parity
+2. Sync/backfill mapping
+3. Analytics and feature rollups
+4. UI adoption
+5. Relay guardrails
+6. Validation and documentation
