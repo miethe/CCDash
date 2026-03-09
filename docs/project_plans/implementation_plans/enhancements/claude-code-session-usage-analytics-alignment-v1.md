@@ -300,5 +300,6 @@ Phase 5 delivered:
 Phase 6 delivered:
 
 1. Added regression coverage for relay exclusion, feature-linked token payloads, and tool-fallback aggregation rules.
-2. Updated README, execution workbench user docs, and changelog to document observed workload, cache input, and model-IO semantics.
-3. Validation completed with targeted backend pytest coverage and frontend Vitest coverage for the new token helper.
+2. Real-corpus spot check completed against local Claude session `785bd0e5-bf81-4150-8407-ff7a2e6c45c3`, where `_derive_claude_usage_fields` resolved `model_io_tokens=5,834`, `cache_input_tokens=1,128,322`, and `observed_tokens=1,134,089`.
+3. Updated README, execution workbench user docs, and changelog to document observed workload, cache input, and model-IO semantics.
+4. Validation completed with targeted backend pytest coverage and frontend Vitest coverage for the new token helper.
