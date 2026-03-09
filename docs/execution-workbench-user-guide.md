@@ -73,7 +73,9 @@ The `Runs` tab provides:
 
 The workbench `Analytics` tab now includes:
 
-- summary cards for sessions, cost, telemetry, and last event
+- summary cards for sessions, observed workload, cost, telemetry, and last event
+- cache contribution surfaced alongside feature workload so high-cache Claude sessions are visible without opening the session detail page
+- model IO and cost kept separate so token totals do not imply a direct dollar mapping
 - embedded workflow intelligence scoped to the selected feature
 - a shortcut into `/analytics?tab=workflow_intelligence`
 

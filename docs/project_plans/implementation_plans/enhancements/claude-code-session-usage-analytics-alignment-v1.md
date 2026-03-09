@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Claude Code Session Usage Analytics Alignment V1'
 description: Persist stable Claude usage totals, backfill historical sessions, align
@@ -280,3 +280,25 @@ Acceptance criteria:
 4. UI adoption
 5. Relay guardrails
 6. Validation and documentation
+
+## Completion Notes
+
+Completed on 2026-03-09.
+
+Phase 4 delivered:
+
+1. Session, feature, dashboard, and analytics UI surfaces now default to observed workload semantics.
+2. Feature-facing session summaries and cards expose cache contribution and keep model IO labeled separately from cost.
+3. Session and analytics views now show token-family breakdowns instead of silently equating total tokens with `tokensIn + tokensOut`.
+
+Phase 5 delivered:
+
+1. Claude parser forensics now publish `usageSummary.relayMirrorTotals` for excluded `data.message.message.*` relay records.
+2. Sync/persistence continues to derive `observedTokens` only from parser `messageTotals`, making the exclusion explicit in code.
+3. Tool-reported totals remain fallback-only in shared aggregation logic when linked subthreads are present.
+
+Phase 6 delivered:
+
+1. Added regression coverage for relay exclusion, feature-linked token payloads, and tool-fallback aggregation rules.
+2. Updated README, execution workbench user docs, and changelog to document observed workload, cache input, and model-IO semantics.
+3. Validation completed with targeted backend pytest coverage and frontend Vitest coverage for the new token helper.

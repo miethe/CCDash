@@ -113,6 +113,7 @@ _DB_TOOL_PATTERN = re.compile(r"\b(psql|mysql|sqlite3|mongosh|mongo|redis-cli|pg
 _DOCKER_PATTERN = re.compile(r"\bdocker(?:\s+compose|[- ]compose|\s+\w+)")
 _SERVICE_PATTERN = re.compile(r"\b(pm2|systemctl)\b")
 _MAX_TOOL_RESULT_PREVIEW_BYTES = 1024 * 32
+_RELAY_MIRROR_POLICY = "excluded_from_observed_tokens_until_attribution"
 
 
 @lru_cache(maxsize=1)
@@ -137,6 +138,31 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _extract_relay_mirror_usage(progress_data: Any) -> dict[str, int] | None:
+    if not isinstance(progress_data, dict):
+        return None
+    progress_message = progress_data.get("message")
+    if not isinstance(progress_message, dict):
+        return None
+    nested_message = progress_message.get("message")
+    if not isinstance(nested_message, dict):
+        return None
+    usage = nested_message.get("usage")
+    if not isinstance(usage, dict):
+        return {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0,
+        }
+    return {
+        "inputTokens": _coerce_int(usage.get("input_tokens"), 0),
+        "outputTokens": _coerce_int(usage.get("output_tokens"), 0),
+        "cacheCreationInputTokens": _coerce_int(usage.get("cache_creation_input_tokens"), 0),
+        "cacheReadInputTokens": _coerce_int(usage.get("cache_read_input_tokens"), 0),
+    }
 
 
 def _normalize_host(raw_host: str) -> str:
@@ -1535,6 +1561,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "cacheCreationInputTokens": 0,
         "cacheReadInputTokens": 0,
     }
+    relay_mirror_totals: dict[str, int] = {
+        "excludedCount": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheReadInputTokens": 0,
+    }
     usage_cache_creation_totals: dict[str, int] = {
         "ephemeral_5m_input_tokens": 0,
         "ephemeral_1h_input_tokens": 0,
@@ -2302,6 +2335,13 @@ def parse_session_file(path: Path) -> AgentSession | None:
 
         if entry_type == "progress":
             data = entry.get("data", {})
+            relay_usage = _extract_relay_mirror_usage(data)
+            if relay_usage is not None:
+                relay_mirror_totals["excludedCount"] += 1
+                relay_mirror_totals["inputTokens"] += relay_usage["inputTokens"]
+                relay_mirror_totals["outputTokens"] += relay_usage["outputTokens"]
+                relay_mirror_totals["cacheCreationInputTokens"] += relay_usage["cacheCreationInputTokens"]
+                relay_mirror_totals["cacheReadInputTokens"] += relay_usage["cacheReadInputTokens"]
             if isinstance(data, dict) and data.get("type") == "agent_progress":
                 parent_tool_call_id = entry.get("parentToolUseID")
                 subagent_agent_id = data.get("agentId")
@@ -3973,6 +4013,21 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     + usage_message_totals["cacheCreationInputTokens"]
                     + usage_message_totals["cacheReadInputTokens"]
                 ),
+            },
+            "relayMirrorTotals": {
+                **relay_mirror_totals,
+                "allInputTokens": (
+                    relay_mirror_totals["inputTokens"]
+                    + relay_mirror_totals["cacheCreationInputTokens"]
+                    + relay_mirror_totals["cacheReadInputTokens"]
+                ),
+                "allTokens": (
+                    relay_mirror_totals["inputTokens"]
+                    + relay_mirror_totals["outputTokens"]
+                    + relay_mirror_totals["cacheCreationInputTokens"]
+                    + relay_mirror_totals["cacheReadInputTokens"]
+                ),
+                "policy": _RELAY_MIRROR_POLICY,
             },
             "cacheCreationTotals": usage_cache_creation_totals,
             "serviceTierCounts": dict(usage_service_tier_counts),

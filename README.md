@@ -36,7 +36,7 @@
 *   **Theme**: Deep "Slate" dark mode optimized for long engineering sessions.
 
 ### 2. Dashboard (Overview)
-*   **KPI Cards**: Backend-derived KPIs from `GET /api/analytics/overview` (cost, tokens, session count, completion, tool reliability, velocity).
+*   **KPI Cards**: Backend-derived KPIs from `GET /api/analytics/overview` now distinguish observed workload, model IO, cache contribution, cost, session count, completion, tool reliability, and velocity.
 *   **AI Insights**: Integrated **Google Gemini** analysis that reads current metrics/tasks and generates executive summaries on project health.
 *   **Visualizations**:
     *   **Cost vs. Velocity Area Chart**: Tracks spending against task velocity over time (`GET /api/analytics/series`).
@@ -51,6 +51,7 @@
     *   **Overview**: Visualize linked documents (PRDs, Plans, Reports), category badges, and related feature variants (v1, v2).
     *   **Phases tab**: Accordion view of implementation phases. Each phase expands to show a checklist of individual tasks with their real-time status.
     *   **Documents tab**: Quick access to all documentation files associated with the feature.
+    *   **Session summaries**: Feature-linked session chips and modal cards now surface observed workload and cache share instead of implying `tokensIn + tokensOut` is the only total.
 *   **Filtering**: Search features by name/slug/tag, filter by category/status (including deferred caveat), and sort by update date or total task count.
     *   In the feature modal, the **Phases** tab supports phase-status and task-status filtering, including deferred.
 
@@ -104,6 +105,7 @@ The core debugging loop for AI interactions.
     5.  **Analytics (Advanced)**:
         *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
         *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
+        *   **Token Semantics**: Session analytics now separate model IO, cache input, observed workload, and tool-reported fallback diagnostics.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Artifacts**:
         *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-03-09
+
+### Added
+
+- Claude Code relay-mirror diagnostics in parser forensics:
+  - `usageSummary.relayMirrorTotals` now tracks excluded `data.message.message.*` relay usage separately from observed totals.
+- Regression coverage for:
+  - relay-mirror exclusion from persisted observed workload.
+  - feature-linked session payloads exposing observed/cache/tool-reported token fields.
+  - frontend token fallback rules when linked subthreads are present.
+
+### Changed
+
+- Dashboard, Analytics, Session Inspector, Feature Board, and Execution Workbench token surfaces now default to observed workload semantics and label model IO separately.
+- Feature and session rollups now expose cache contribution directly instead of implying `tokensIn + tokensOut` is the only meaningful total.
+- Commit and artifact-adjacent token tables now label model-IO-style totals explicitly as IO tokens.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-analytics-alignment-v1.md`
+
 ## 2026-03-08
 
 ### Added

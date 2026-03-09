@@ -47,6 +47,41 @@ class SyncEngineTelemetryTests(unittest.TestCase):
         self.assertEqual(usage_fields["tool_result_cache_creation_input_tokens"], 13)
         self.assertEqual(usage_fields["tool_result_cache_read_input_tokens"], 17)
 
+    def test_derive_claude_usage_fields_ignores_excluded_relay_mirror_totals(self) -> None:
+        session_payload = {
+            "platformType": "Claude Code",
+            "tokensIn": 12,
+            "tokensOut": 8,
+            "sessionForensics": {
+                "platform": "claude_code",
+                "usageSummary": {
+                    "messageTotals": {
+                        "inputTokens": 12,
+                        "outputTokens": 8,
+                        "cacheCreationInputTokens": 5,
+                        "cacheReadInputTokens": 15,
+                        "allInputTokens": 32,
+                        "allTokens": 40,
+                    },
+                    "relayMirrorTotals": {
+                        "excludedCount": 1,
+                        "inputTokens": 100,
+                        "outputTokens": 200,
+                        "cacheCreationInputTokens": 300,
+                        "cacheReadInputTokens": 400,
+                        "allInputTokens": 800,
+                        "allTokens": 1000,
+                    },
+                },
+            },
+        }
+
+        usage_fields = _derive_claude_usage_fields(session_payload)
+
+        self.assertEqual(usage_fields["model_io_tokens"], 20)
+        self.assertEqual(usage_fields["cache_input_tokens"], 32)
+        self.assertEqual(usage_fields["observed_tokens"], 40)
+
     def test_derive_claude_usage_fields_preserves_existing_non_claude_values(self) -> None:
         session_payload = {
             "platformType": "Codex CLI",

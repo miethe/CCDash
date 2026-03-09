@@ -274,6 +274,57 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(entry_context.get("messageStopSequenceCounts", {}).get("</tool>"), 1)
         self.assertEqual(entry_context.get("toolCallerTypeCounts", {}).get("direct"), 1)
 
+    def test_relay_mirror_usage_is_tracked_but_excluded_from_observed_totals(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-08T10:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-opus-4-6",
+                        "usage": {
+                            "input_tokens": 3,
+                            "output_tokens": 7,
+                            "cache_creation_input_tokens": 11,
+                            "cache_read_input_tokens": 13,
+                        },
+                        "content": [{"type": "text", "text": "Primary assistant message."}],
+                    },
+                },
+                {
+                    "type": "progress",
+                    "timestamp": "2026-03-08T10:00:01Z",
+                    "data": {
+                        "type": "agent_progress",
+                        "message": {
+                            "message": {
+                                "usage": {
+                                    "input_tokens": 100,
+                                    "output_tokens": 200,
+                                    "cache_creation_input_tokens": 300,
+                                    "cache_read_input_tokens": 400,
+                                }
+                            }
+                        },
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        usage_summary = session.sessionForensics.get("usageSummary", {})
+        self.assertEqual(usage_summary.get("messageTotals", {}).get("allTokens"), 34)
+        self.assertEqual(usage_summary.get("relayMirrorTotals", {}).get("excludedCount"), 1)
+        self.assertEqual(usage_summary.get("relayMirrorTotals", {}).get("allTokens"), 1000)
+        self.assertEqual(
+            usage_summary.get("relayMirrorTotals", {}).get("policy"),
+            "excluded_from_observed_tokens_until_attribution",
+        )
+
     def test_platform_version_is_captured_and_transition_is_logged(self) -> None:
         path = self._write_jsonl(
             [

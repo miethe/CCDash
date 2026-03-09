@@ -314,6 +314,8 @@ def _derive_claude_usage_fields(payload: dict[str, Any]) -> dict[str, int]:
     )
     model_io = input_tokens + output_tokens
     cache_input = _coerce_int(message_totals.get("allInputTokens")) or (input_tokens + cache_creation + cache_read)
+    # V1 observed workload intentionally excludes relay-wrapped data.message.message.* mirrors.
+    # Only parser-emitted messageTotals participate here; relay diagnostics stay in forensics.
     observed_tokens = _coerce_int(message_totals.get("allTokens")) or (model_io + cache_creation + cache_read)
 
     return {
