@@ -471,6 +471,35 @@ class PostgresSessionRepository:
     async def delete_by_source(self, source_file: str) -> None:
         await self.db.execute("DELETE FROM sessions WHERE source_file = $1", source_file)
 
+    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None:
+        await self.db.execute(
+            """
+            UPDATE sessions
+            SET model_io_tokens = $1,
+                cache_creation_input_tokens = $2,
+                cache_read_input_tokens = $3,
+                cache_input_tokens = $4,
+                observed_tokens = $5,
+                tool_reported_tokens = $6,
+                tool_result_input_tokens = $7,
+                tool_result_output_tokens = $8,
+                tool_result_cache_creation_input_tokens = $9,
+                tool_result_cache_read_input_tokens = $10
+            WHERE id = $11
+            """,
+            int(usage_fields.get("model_io_tokens", 0) or 0),
+            int(usage_fields.get("cache_creation_input_tokens", 0) or 0),
+            int(usage_fields.get("cache_read_input_tokens", 0) or 0),
+            int(usage_fields.get("cache_input_tokens", 0) or 0),
+            int(usage_fields.get("observed_tokens", 0) or 0),
+            int(usage_fields.get("tool_reported_tokens", 0) or 0),
+            int(usage_fields.get("tool_result_input_tokens", 0) or 0),
+            int(usage_fields.get("tool_result_output_tokens", 0) or 0),
+            int(usage_fields.get("tool_result_cache_creation_input_tokens", 0) or 0),
+            int(usage_fields.get("tool_result_cache_read_input_tokens", 0) or 0),
+            session_id,
+        )
+
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:

@@ -441,6 +441,38 @@ class SqliteSessionRepository:
         await self.db.execute("DELETE FROM sessions WHERE source_file = ?", (source_file,))
         await self.db.commit()
 
+    async def update_usage_fields(self, session_id: str, usage_fields: dict[str, int]) -> None:
+        await self.db.execute(
+            """
+            UPDATE sessions
+            SET model_io_tokens = ?,
+                cache_creation_input_tokens = ?,
+                cache_read_input_tokens = ?,
+                cache_input_tokens = ?,
+                observed_tokens = ?,
+                tool_reported_tokens = ?,
+                tool_result_input_tokens = ?,
+                tool_result_output_tokens = ?,
+                tool_result_cache_creation_input_tokens = ?,
+                tool_result_cache_read_input_tokens = ?
+            WHERE id = ?
+            """,
+            (
+                int(usage_fields.get("model_io_tokens", 0) or 0),
+                int(usage_fields.get("cache_creation_input_tokens", 0) or 0),
+                int(usage_fields.get("cache_read_input_tokens", 0) or 0),
+                int(usage_fields.get("cache_input_tokens", 0) or 0),
+                int(usage_fields.get("observed_tokens", 0) or 0),
+                int(usage_fields.get("tool_reported_tokens", 0) or 0),
+                int(usage_fields.get("tool_result_input_tokens", 0) or 0),
+                int(usage_fields.get("tool_result_output_tokens", 0) or 0),
+                int(usage_fields.get("tool_result_cache_creation_input_tokens", 0) or 0),
+                int(usage_fields.get("tool_result_cache_read_input_tokens", 0) or 0),
+                session_id,
+            ),
+        )
+        await self.db.commit()
+
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:

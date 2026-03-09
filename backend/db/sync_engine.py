@@ -264,6 +264,107 @@ def _first_non_empty(payload: dict[str, Any], *keys: str, default: str = "") -> 
     return default
 
 
+def _usage_field_snapshot(payload: dict[str, Any]) -> dict[str, int]:
+    return {
+        "model_io_tokens": _coerce_int(payload.get("model_io_tokens") or payload.get("modelIOTokens")),
+        "cache_creation_input_tokens": _coerce_int(payload.get("cache_creation_input_tokens") or payload.get("cacheCreationInputTokens")),
+        "cache_read_input_tokens": _coerce_int(payload.get("cache_read_input_tokens") or payload.get("cacheReadInputTokens")),
+        "cache_input_tokens": _coerce_int(payload.get("cache_input_tokens") or payload.get("cacheInputTokens")),
+        "observed_tokens": _coerce_int(payload.get("observed_tokens") or payload.get("observedTokens")),
+        "tool_reported_tokens": _coerce_int(payload.get("tool_reported_tokens") or payload.get("toolReportedTokens")),
+        "tool_result_input_tokens": _coerce_int(payload.get("tool_result_input_tokens") or payload.get("toolResultInputTokens")),
+        "tool_result_output_tokens": _coerce_int(payload.get("tool_result_output_tokens") or payload.get("toolResultOutputTokens")),
+        "tool_result_cache_creation_input_tokens": _coerce_int(
+            payload.get("tool_result_cache_creation_input_tokens") or payload.get("toolResultCacheCreationInputTokens")
+        ),
+        "tool_result_cache_read_input_tokens": _coerce_int(
+            payload.get("tool_result_cache_read_input_tokens") or payload.get("toolResultCacheReadInputTokens")
+        ),
+    }
+
+
+def _is_claude_code_session(payload: dict[str, Any], forensics: dict[str, Any]) -> bool:
+    platform = str(
+        payload.get("platformType")
+        or payload.get("platform_type")
+        or forensics.get("platform")
+        or ""
+    ).strip().lower()
+    return platform in {"claude code", "claude_code"}
+
+
+def _derive_claude_usage_fields(payload: dict[str, Any]) -> dict[str, int]:
+    current = _usage_field_snapshot(payload)
+    forensics = _safe_json_dict(payload.get("sessionForensics") or payload.get("session_forensics_json"))
+    if not _is_claude_code_session(payload, forensics):
+        return current
+
+    usage_summary = _safe_json_dict(forensics.get("usageSummary"))
+    message_totals = _safe_json_dict(usage_summary.get("messageTotals"))
+    tool_result_reported_totals = _safe_json_dict(usage_summary.get("toolResultReportedTotals"))
+    tool_result_usage_totals = _safe_json_dict(usage_summary.get("toolResultUsageTotals"))
+
+    input_tokens = _coerce_int(message_totals.get("inputTokens", payload.get("tokensIn") or payload.get("tokens_in")))
+    output_tokens = _coerce_int(message_totals.get("outputTokens", payload.get("tokensOut") or payload.get("tokens_out")))
+    cache_creation = _coerce_int(
+        message_totals.get("cacheCreationInputTokens", current["cache_creation_input_tokens"])
+    )
+    cache_read = _coerce_int(
+        message_totals.get("cacheReadInputTokens", current["cache_read_input_tokens"])
+    )
+    model_io = input_tokens + output_tokens
+    cache_input = _coerce_int(message_totals.get("allInputTokens")) or (input_tokens + cache_creation + cache_read)
+    observed_tokens = _coerce_int(message_totals.get("allTokens")) or (model_io + cache_creation + cache_read)
+
+    return {
+        "model_io_tokens": model_io,
+        "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "cache_input_tokens": cache_input,
+        "observed_tokens": observed_tokens,
+        "tool_reported_tokens": _coerce_int(
+            tool_result_reported_totals.get("totalTokens", current["tool_reported_tokens"])
+        ),
+        "tool_result_input_tokens": _coerce_int(
+            tool_result_usage_totals.get("inputTokens", current["tool_result_input_tokens"])
+        ),
+        "tool_result_output_tokens": _coerce_int(
+            tool_result_usage_totals.get("outputTokens", current["tool_result_output_tokens"])
+        ),
+        "tool_result_cache_creation_input_tokens": _coerce_int(
+            tool_result_usage_totals.get(
+                "cacheCreationInputTokens",
+                current["tool_result_cache_creation_input_tokens"],
+            )
+        ),
+        "tool_result_cache_read_input_tokens": _coerce_int(
+            tool_result_usage_totals.get(
+                "cacheReadInputTokens",
+                current["tool_result_cache_read_input_tokens"],
+            )
+        ),
+    }
+
+
+def _apply_claude_usage_fields(payload: dict[str, Any]) -> dict[str, int]:
+    usage_fields = _derive_claude_usage_fields(payload)
+    payload.update(
+        {
+            "modelIOTokens": usage_fields["model_io_tokens"],
+            "cacheCreationInputTokens": usage_fields["cache_creation_input_tokens"],
+            "cacheReadInputTokens": usage_fields["cache_read_input_tokens"],
+            "cacheInputTokens": usage_fields["cache_input_tokens"],
+            "observedTokens": usage_fields["observed_tokens"],
+            "toolReportedTokens": usage_fields["tool_reported_tokens"],
+            "toolResultInputTokens": usage_fields["tool_result_input_tokens"],
+            "toolResultOutputTokens": usage_fields["tool_result_output_tokens"],
+            "toolResultCacheCreationInputTokens": usage_fields["tool_result_cache_creation_input_tokens"],
+            "toolResultCacheReadInputTokens": usage_fields["tool_result_cache_read_input_tokens"],
+        }
+    )
+    return usage_fields
+
+
 def _first_phase(session_payload: dict[str, Any]) -> str:
     metadata = session_payload.get("sessionMetadata")
     if isinstance(metadata, dict):
@@ -1528,6 +1629,46 @@ class SyncEngine:
             return {"sessions": 0, "events": 0}
         return await self._backfill_telemetry_events_for_project(project_id)
 
+    async def _backfill_session_usage_fields_for_project(self, project_id: str, batch_size: int = 200) -> dict[str, int]:
+        offset = 0
+        sessions_updated = 0
+
+        while True:
+            sessions = await self.session_repo.list_paginated(
+                offset,
+                batch_size,
+                project_id,
+                sort_by="started_at",
+                sort_order="desc",
+                filters={"include_subagents": True},
+            )
+            if not sessions:
+                break
+            for session in sessions:
+                session_id = _first_non_empty(session, "id")
+                if not session_id:
+                    continue
+                current_fields = _usage_field_snapshot(session)
+                derived_fields = _derive_claude_usage_fields(session)
+                if derived_fields == current_fields:
+                    continue
+                await self.session_repo.update_usage_fields(session_id, derived_fields)
+                sessions_updated += 1
+            offset += len(sessions)
+
+        if sessions_updated > 0:
+            logger.info(
+                "Backfilled Claude usage fields for %s sessions in project %s",
+                sessions_updated,
+                project_id,
+            )
+        return {"sessions": sessions_updated}
+
+    async def _maybe_backfill_session_usage_fields(self, project_id: str) -> dict[str, int]:
+        if await self._session_count(project_id) == 0:
+            return {"sessions": 0}
+        return await self._backfill_session_usage_fields_for_project(project_id)
+
     async def _backfill_commit_correlations_for_project(self, project_id: str, batch_size: int = 200) -> dict[str, int]:
         offset = 0
         sessions_backfilled = 0
@@ -2069,6 +2210,7 @@ class SyncEngine:
         stats = {
             "sessions_synced": 0,
             "sessions_skipped": 0,
+            "session_usage_backfilled": 0,
             "telemetry_backfilled_sessions": 0,
             "telemetry_backfilled_events": 0,
             "documents_synced": 0,
@@ -2120,6 +2262,8 @@ class SyncEngine:
                 s_stats = await self._sync_sessions(project.id, sessions_dir, force)
                 stats["sessions_synced"] = s_stats["synced"]
                 stats["sessions_skipped"] = s_stats["skipped"]
+                usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
+                stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
                 backfill_stats = await self._maybe_backfill_telemetry_events(project.id)
                 stats["telemetry_backfilled_sessions"] = int(backfill_stats.get("sessions", 0))
                 stats["telemetry_backfilled_events"] = int(backfill_stats.get("events", 0))
@@ -2133,6 +2277,7 @@ class SyncEngine:
                     counters={
                         "sessionsSynced": stats["sessions_synced"],
                         "sessionsSkipped": stats["sessions_skipped"],
+                        "sessionUsageBackfilled": stats["session_usage_backfilled"],
                         "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
                         "commitCorrelationsBackfilled": stats["commit_correlations_backfilled"],
                     },
@@ -3082,6 +3227,7 @@ class SyncEngine:
                             if isinstance(row, dict):
                                 all_relationships.append(dict(row))
                     session_payload["sourceFile"] = file_path
+                    _apply_claude_usage_fields(session_payload)
                     pending_sessions.append(session_payload)
                     if isinstance(derived_sessions, list):
                         for derived in derived_sessions:

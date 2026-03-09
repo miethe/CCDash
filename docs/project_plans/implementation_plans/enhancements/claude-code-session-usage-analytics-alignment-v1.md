@@ -1,56 +1,69 @@
 ---
 doc_type: implementation_plan
-status: draft
+status: in-progress
 category: enhancements
-
-title: "Implementation Plan: Claude Code Session Usage Analytics Alignment V1"
-description: "Persist stable Claude usage totals, backfill historical sessions, align analytics semantics around observed tokens, and expose cache-aware token breakdowns in the UI."
+title: 'Implementation Plan: Claude Code Session Usage Analytics Alignment V1'
+description: Persist stable Claude usage totals, backfill historical sessions, align
+  analytics semantics around observed tokens, and expose cache-aware token breakdowns
+  in the UI.
 author: codex
-audience: [ai-agents, developers, engineering-leads]
+audience:
+- ai-agents
+- developers
+- engineering-leads
 created: 2026-03-09
-updated: 2026-03-09
-
-tags: [implementation, claude-code, sessions, tokens, analytics, cache, frontend, backend]
+updated: '2026-03-09'
+tags:
+- implementation
+- claude-code
+- sessions
+- tokens
+- analytics
+- cache
+- frontend
+- backend
 feature_slug: claude-code-session-usage-analytics-alignment-v1
 feature_family: claude-code-session-usage-analytics-alignment
 lineage_family: claude-code-session-usage-analytics-alignment
-lineage_parent: ""
+lineage_parent: ''
 lineage_children: []
 lineage_type: iteration
-linked_features: [claude-code-session-usage-analytics-alignment-v1]
+linked_features:
+- claude-code-session-usage-analytics-alignment-v1
 related:
-  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
-  - docs/project_plans/reports/claude-code-session-schema-and-token-audit-2026-03-08.md
-  - docs/project_plans/implementation_plans/telemetry-analytics-modernization-v1.md
-  - backend/parsers/platforms/claude_code/parser.py
-  - backend/models.py
-  - backend/db/sqlite_migrations.py
-  - backend/db/postgres_migrations.py
-  - backend/db/repositories/sessions.py
-  - backend/db/repositories/postgres/sessions.py
-  - backend/db/sync_engine.py
-  - backend/routers/analytics.py
-  - backend/routers/api.py
-  - backend/services/workflow_effectiveness.py
-  - components/Dashboard.tsx
-  - components/ProjectBoard.tsx
-  - components/SessionInspector.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/Analytics/AnalyticsDashboard.tsx
-  - types.ts
+- docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
+- docs/project_plans/reports/claude-code-session-schema-and-token-audit-2026-03-08.md
+- docs/project_plans/implementation_plans/telemetry-analytics-modernization-v1.md
+- backend/parsers/platforms/claude_code/parser.py
+- backend/models.py
+- backend/db/sqlite_migrations.py
+- backend/db/postgres_migrations.py
+- backend/db/repositories/sessions.py
+- backend/db/repositories/postgres/sessions.py
+- backend/db/sync_engine.py
+- backend/routers/analytics.py
+- backend/routers/api.py
+- backend/services/workflow_effectiveness.py
+- components/Dashboard.tsx
+- components/ProjectBoard.tsx
+- components/SessionInspector.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/Analytics/AnalyticsDashboard.tsx
+- types.ts
 plan_ref: claude-code-session-usage-analytics-alignment-v1
 linked_sessions: []
-
-request_log_id: ""
+request_log_id: ''
 commits: []
 prs: []
 owner: platform-engineering
-owners: [platform-engineering, fullstack-engineering]
-contributors: [ai-agents]
-
+owners:
+- platform-engineering
+- fullstack-engineering
+contributors:
+- ai-agents
 complexity: High
 track: Standard
-timeline_estimate: "2-3 weeks across 6 phases"
+timeline_estimate: 2-3 weeks across 6 phases
 ---
 
 # Implementation Plan: Claude Code Session Usage Analytics Alignment V1
