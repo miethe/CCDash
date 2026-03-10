@@ -9,6 +9,9 @@ import {
     AnalyticsArtifactsResponse,
     EffectivenessScopeType,
     FailurePatternResponse,
+    SessionUsageAggregateResponse,
+    SessionUsageCalibrationSummary,
+    SessionUsageDrilldownResponse,
     WorkflowEffectivenessResponse,
 } from '../types';
 
@@ -158,6 +161,58 @@ export const analyticsService = {
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/artifacts${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch artifact analytics');
+        return res.json();
+    },
+
+    async getUsageAttribution(params?: {
+        start?: string;
+        end?: string;
+        entityType?: string;
+        entityId?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<SessionUsageAggregateResponse> {
+        const search = new URLSearchParams();
+        if (params?.start) search.append('start', params.start);
+        if (params?.end) search.append('end', params.end);
+        if (params?.entityType) search.append('entity_type', params.entityType);
+        if (params?.entityId) search.append('entity_id', params.entityId);
+        if (typeof params?.offset === 'number') search.append('offset', String(params.offset));
+        if (typeof params?.limit === 'number') search.append('limit', String(params.limit));
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/usage-attribution${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch usage attribution analytics');
+        return res.json();
+    },
+
+    async getUsageAttributionDrilldown(params: {
+        entityType: string;
+        entityId: string;
+        start?: string;
+        end?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<SessionUsageDrilldownResponse> {
+        const search = new URLSearchParams({
+            entity_type: params.entityType,
+            entity_id: params.entityId,
+        });
+        if (params.start) search.append('start', params.start);
+        if (params.end) search.append('end', params.end);
+        if (typeof params.offset === 'number') search.append('offset', String(params.offset));
+        if (typeof params.limit === 'number') search.append('limit', String(params.limit));
+        const res = await fetch(`${API_BASE}/usage-attribution/drilldown?${search.toString()}`);
+        if (!res.ok) throw new Error('Failed to fetch usage attribution drilldown');
+        return res.json();
+    },
+
+    async getUsageAttributionCalibration(start?: string, end?: string): Promise<SessionUsageCalibrationSummary> {
+        const search = new URLSearchParams();
+        if (start) search.append('start', start);
+        if (end) search.append('end', end);
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/usage-attribution/calibration${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch usage attribution calibration');
         return res.json();
     },
 

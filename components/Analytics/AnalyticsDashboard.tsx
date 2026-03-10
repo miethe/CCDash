@@ -9,6 +9,9 @@ import {
     AnalyticsCorrelationItem,
     AnalyticsOverview,
     Notification,
+    SessionUsageAggregateResponse,
+    SessionUsageCalibrationSummary,
+    SessionUsageDrilldownResponse,
 } from '../../types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -37,10 +40,11 @@ import {
 import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
 
-type AnalyticsTab = 'overview' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
+type AnalyticsTab = 'overview' | 'attribution' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'attribution', label: 'Attribution', icon: Sparkles },
     { id: 'workflow_intelligence', label: 'Workflow Intel', icon: Sparkles },
     { id: 'artifacts', label: 'Artifacts', icon: Shapes },
     { id: 'models_tools', label: 'Models + Tools', icon: Network },
@@ -110,6 +114,10 @@ export const AnalyticsDashboard: React.FC = () => {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
     const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
+    const [usageAttribution, setUsageAttribution] = useState<SessionUsageAggregateResponse | null>(null);
+    const [usageCalibration, setUsageCalibration] = useState<SessionUsageCalibrationSummary | null>(null);
+    const [usageDrilldown, setUsageDrilldown] = useState<SessionUsageDrilldownResponse | null>(null);
+    const [selectedUsageEntity, setSelectedUsageEntity] = useState<{ entityType: string; entityId: string } | null>(null);
     const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -128,16 +136,24 @@ export const AnalyticsDashboard: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const [overviewData, notificationData, artifactData, correlationData] = await Promise.all([
+            const [overviewData, notificationData, artifactData, correlationData, usageData, calibrationData] = await Promise.all([
                 analyticsService.getOverview(),
                 analyticsService.getNotifications(),
                 analyticsService.getArtifacts({ limit: 200 }),
                 analyticsService.getCorrelation(),
+                analyticsService.getUsageAttribution({ limit: 24 }),
+                analyticsService.getUsageAttributionCalibration(),
             ]);
             setOverview(overviewData);
             setNotifications(notificationData);
             setArtifacts(artifactData);
             setCorrelation(correlationData.items || []);
+            setUsageAttribution(usageData);
+            setUsageCalibration(calibrationData);
+            const firstRow = (usageData.rows || [])[0];
+            setSelectedUsageEntity(firstRow?.entityType && firstRow?.entityId
+                ? { entityType: firstRow.entityType, entityId: firstRow.entityId }
+                : null);
         } catch (e) {
             console.error('Failed to load analytics dashboard payloads', e);
             setError('Failed to load analytics data.');
@@ -168,6 +184,27 @@ export const AnalyticsDashboard: React.FC = () => {
             setSearchParams(nextParams, { replace: true });
         }
     }, [activeTab, searchParams, setSearchParams]);
+
+    useEffect(() => {
+        if (!selectedUsageEntity?.entityType || !selectedUsageEntity?.entityId) {
+            setUsageDrilldown(null);
+            return;
+        }
+        let cancelled = false;
+        void analyticsService.getUsageAttributionDrilldown({
+            entityType: selectedUsageEntity.entityType,
+            entityId: selectedUsageEntity.entityId,
+            limit: 30,
+        }).then(payload => {
+            if (!cancelled) setUsageDrilldown(payload);
+        }).catch(fetchError => {
+            console.error('Failed to load attribution drilldown', fetchError);
+            if (!cancelled) setUsageDrilldown(null);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedUsageEntity]);
 
     const handleExport = () => {
         window.open(analyticsService.getPrometheusExportUrl(), '_blank');
@@ -248,6 +285,14 @@ export const AnalyticsDashboard: React.FC = () => {
             toolReportedTokens: overview?.kpis?.toolReportedTokens,
         }),
         [overview]
+    );
+    const attributionMethodMix = useMemo(
+        () => (usageCalibration?.methodMix || []).slice(0, 6),
+        [usageCalibration]
+    );
+    const attributionRows = useMemo(
+        () => (usageAttribution?.rows || []).slice(0, 12),
+        [usageAttribution]
     );
 
     return (
@@ -408,6 +453,168 @@ export const AnalyticsDashboard: React.FC = () => {
                                     </div>
                                 ))
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {!loading && !error && activeTab === 'attribution' && (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <MetricCard
+                            label="Primary Coverage"
+                            value={formatPercent(Number(usageCalibration?.primaryCoverage || 0))}
+                            subtitle={`${formatNumber(Number(usageCalibration?.primaryAttributedEventCount || 0))} primary-attributed events`}
+                        />
+                        <MetricCard
+                            label="Exclusive Model IO"
+                            value={formatTokenCount(Number(usageCalibration?.exclusiveModelIOTokens || 0))}
+                            subtitle={`${formatTokenCount(Number(usageCalibration?.sessionModelIOTokens || 0))} session model IO`}
+                        />
+                        <MetricCard
+                            label="Model IO Gap"
+                            value={formatTokenCount(Math.abs(Number(usageCalibration?.modelIOGap || 0)))}
+                            subtitle={Number(usageCalibration?.modelIOGap || 0) === 0 ? 'fully reconciled' : 'needs tuning'}
+                        />
+                        <MetricCard
+                            label="Avg Confidence"
+                            value={Number(usageCalibration?.averageConfidence || 0).toFixed(2)}
+                            subtitle={`${formatNumber(Number(usageCalibration?.ambiguousEventCount || 0))} ambiguous events`}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 className="text-slate-200 font-semibold">Top Attribution Targets</h3>
+                                    <p className="mt-1 text-sm text-slate-500">Exclusive totals reconcile workload. Supporting totals show participation across overlaps.</p>
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    {formatNumber(Number(usageAttribution?.summary?.entityCount || 0))} entities
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-slate-400 border-b border-slate-800">
+                                            <th className="text-left py-2 pr-3">Entity</th>
+                                            <th className="text-right py-2 pr-3">Exclusive</th>
+                                            <th className="text-right py-2 pr-3">Supporting</th>
+                                            <th className="text-right py-2 pr-3">Cache Share</th>
+                                            <th className="text-right py-2 pr-3">Cost</th>
+                                            <th className="text-right py-2">Confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {attributionRows.map((row, idx) => {
+                                            const isSelected = selectedUsageEntity?.entityType === row.entityType && selectedUsageEntity?.entityId === row.entityId;
+                                            const cacheShare = Number(row.exclusiveTokens || 0) > 0
+                                                ? Number(row.exclusiveCacheInputTokens || 0) / Number(row.exclusiveTokens || 1)
+                                                : 0;
+                                            return (
+                                                <tr
+                                                    key={`${row.entityType}-${row.entityId}-${idx}`}
+                                                    className={`border-b border-slate-900/80 text-slate-300 ${isSelected ? 'bg-indigo-500/5' : ''}`}
+                                                >
+                                                    <td className="py-2 pr-3">
+                                                        <button
+                                                            onClick={() => setSelectedUsageEntity({ entityType: row.entityType, entityId: row.entityId })}
+                                                            className="text-left"
+                                                        >
+                                                            <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
+                                                            <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                                        </button>
+                                                    </td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.exclusiveTokens || 0))}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.supportingTokens || 0))}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatPercent(cacheShare)}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatCurrency(Number(row.exclusiveCostUsdModelIO || 0))}</td>
+                                                    <td className="py-2 text-right font-mono">{Number(row.averageConfidence || 0).toFixed(2)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <h3 className="text-slate-200 font-semibold">Calibration Summary</h3>
+                            <div className="mt-4 space-y-3 text-sm">
+                                {(usageCalibration?.confidenceBands || []).map((band, idx) => (
+                                    <div key={`${String(band.band)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                        <span className="text-slate-300 capitalize">{String(band.band || 'unknown')} confidence</span>
+                                        <span className="font-mono text-slate-100">{formatNumber(Number(band.count || 0))}</span>
+                                    </div>
+                                ))}
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-slate-300">Unattributed events</span>
+                                    <span className="font-mono text-slate-100">{formatNumber(Number(usageCalibration?.unattributedEventCount || 0))}</span>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-slate-300">Cache reconciliation gap</span>
+                                    <span className="font-mono text-slate-100">{formatTokenCount(Math.abs(Number(usageCalibration?.cacheGap || 0)))}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <h3 className="text-slate-200 font-semibold mb-4">Method Mix</h3>
+                            <div className="space-y-3">
+                                {attributionMethodMix.map((row, idx) => (
+                                    <div key={`${String(row.method)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span className="text-slate-200 text-sm">{String(row.method || 'unknown')}</span>
+                                            <span className="font-mono text-slate-100">{formatNumber(Number(row.tokens || 0))}</span>
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {formatNumber(Number(row.eventCount || 0))} events, avg confidence {Number(row.averageConfidence || 0).toFixed(2)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 className="text-slate-200 font-semibold">Entity Drill-down</h3>
+                                    <p className="mt-1 text-sm text-slate-500">
+                                        {selectedUsageEntity ? `${selectedUsageEntity.entityType}: ${selectedUsageEntity.entityId}` : 'Select an entity to inspect contributing events.'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-slate-400 border-b border-slate-800">
+                                            <th className="text-left py-2 pr-3">Captured</th>
+                                            <th className="text-left py-2 pr-3">Session</th>
+                                            <th className="text-left py-2 pr-3">Method</th>
+                                            <th className="text-right py-2 pr-3">Tokens</th>
+                                            <th className="text-right py-2 pr-3">Role</th>
+                                            <th className="text-right py-2">Confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(usageDrilldown?.items || []).map((row, idx) => (
+                                            <tr key={`${row.eventId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                                <td className="py-2 pr-3 text-xs text-slate-400">{new Date(row.capturedAt).toLocaleString()}</td>
+                                                <td className="py-2 pr-3">
+                                                    <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
+                                                </td>
+                                                <td className="py-2 pr-3 text-xs">{row.method}</td>
+                                                <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.deltaTokens || 0))}</td>
+                                                <td className="py-2 pr-3 text-right text-xs uppercase tracking-wide">{row.attributionRole}</td>
+                                                <td className="py-2 text-right font-mono">{Number(row.confidence || 0).toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>

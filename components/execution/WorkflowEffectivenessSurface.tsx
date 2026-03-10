@@ -261,6 +261,10 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
     return {
       overallSuccess: weightedAverage(filteredItems, 'successScore'),
       avgEfficiency: weightedAverage(filteredItems, 'efficiencyScore'),
+      attributedTokens: filteredItems.reduce((sum, item) => sum + Number(item.attributedTokens || 0), 0),
+      attributedCost: filteredItems.reduce((sum, item) => sum + Number(item.attributedCostUsdModelIO || 0), 0),
+      attributionCoverage: weightedAverage(filteredItems, 'attributionCoverage'),
+      attributionCacheShare: weightedAverage(filteredItems, 'attributionCacheShare'),
       topPerformer,
       flaggedPatterns: failurePatterns.length,
     };
@@ -356,6 +360,8 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
       <div className="mt-5 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(13rem,1fr))]">
         <SummaryCard label="Overall Success" value={formatPercent(summary.overallSuccess)} caption="Weighted across visible scopes" />
         <SummaryCard label="Avg Efficiency" value={formatPercent(summary.avgEfficiency)} caption="Duration, cost, token, and queue pressure" />
+        <SummaryCard label="Attributed Tokens" value={formatInteger(summary.attributedTokens)} caption={`${formatPercent(summary.attributionCoverage)} model-IO coverage`} />
+        <SummaryCard label="Attributed Cost" value={`$${summary.attributedCost.toFixed(2)}`} caption={`${formatPercent(summary.attributionCacheShare)} cache share`} />
         <SummaryCard
           label="Top Performer"
           value={summary.topPerformer?.scopeLabel || summary.topPerformer?.scopeId || 'n/a'}
@@ -442,6 +448,13 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                   <ScoreBar label="Efficiency" value={item.efficiencyScore} kind="efficiency" />
                   <ScoreBar label="Quality" value={item.qualityScore} kind="quality" />
                   <ScoreBar label="Risk" value={item.riskScore} kind="risk" />
+                </div>
+
+                <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]">
+                  <EvidenceMetric label="Attributed Tokens" value={formatInteger(Number(item.attributedTokens || 0))} />
+                  <EvidenceMetric label="Attributed Cost" value={`$${Number(item.attributedCostUsdModelIO || 0).toFixed(2)}`} />
+                  <EvidenceMetric label="Coverage" value={formatPercent(Number(item.attributionCoverage || 0))} tone={Number(item.attributionCoverage || 0) >= 0.75 ? 'positive' : 'warning'} />
+                  <EvidenceMetric label="Cache Share" value={formatPercent(Number(item.attributionCacheShare || 0))} />
                 </div>
 
                 <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">

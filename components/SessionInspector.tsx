@@ -4519,6 +4519,11 @@ const AnalyticsView: React.FC<{
         ),
         [sessionHasLinkedSubthreads, sessionsInScope]
     );
+    const attributionRows = useMemo(
+        () => (session.usageAttributionSummary?.rows || []).slice(0, 8),
+        [session.usageAttributionSummary]
+    );
+    const attributionCalibration = session.usageAttributionCalibration || null;
 
     const toolData = useMemo(() => {
         const byTool = new Map<string, { name: string; value: number; tokens: number; type: 'tool'; toolCount: number }>();
@@ -4726,6 +4731,64 @@ const AnalyticsView: React.FC<{
             </div>
 
             {/* COST SUMMARY */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h3 className="text-sm font-bold text-slate-300">Usage Attribution</h3>
+                        <p className="mt-1 text-xs text-slate-500">Event-level ownership for this session only. Exclusive totals reconcile; supporting totals are participatory.</p>
+                    </div>
+                    <div className="flex gap-3 text-xs">
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                            Coverage <span className="ml-1 font-mono text-slate-100">{formatPercent(Number(attributionCalibration?.primaryCoverage || 0), 0)}</span>
+                        </div>
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                            Model IO gap <span className="ml-1 font-mono text-slate-100">{formatTokenCount(Math.abs(Number(attributionCalibration?.modelIOGap || 0)))}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Model IO</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveModelIOTokens || 0))}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Cache</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveCacheInputTokens || 0))}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Confidence</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{Number(attributionCalibration?.averageConfidence || 0).toFixed(2)}</div>
+                    </div>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-slate-400 border-b border-slate-800">
+                                <th className="text-left py-2 pr-3">Entity</th>
+                                <th className="text-right py-2 pr-3">Exclusive</th>
+                                <th className="text-right py-2 pr-3">Supporting</th>
+                                <th className="text-right py-2 pr-3">Cost</th>
+                                <th className="text-right py-2">Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {attributionRows.map((row, idx) => (
+                                <tr key={`${row.entityType}-${row.entityId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                    <td className="py-2 pr-3">
+                                        <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
+                                        <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                    </td>
+                                    <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.exclusiveTokens || 0))}</td>
+                                    <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.supportingTokens || 0))}</td>
+                                    <td className="py-2 pr-3 text-right font-mono">${Number(row.exclusiveCostUsdModelIO || 0).toFixed(2)}</td>
+                                    <td className="py-2 text-right font-mono">{Number(row.averageConfidence || 0).toFixed(2)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h3 className="text-sm font-bold text-slate-300 mb-2">Cost Analysis</h3>
                 <div className="flex items-center gap-8">
