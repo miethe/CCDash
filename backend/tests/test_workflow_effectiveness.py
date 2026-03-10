@@ -7,6 +7,7 @@ from backend import config
 from backend.db.factory import (
     get_agentic_intelligence_repository,
     get_session_repository,
+    get_session_usage_repository,
     get_test_integrity_repository,
     get_test_run_repository,
 )
@@ -31,6 +32,7 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         await run_migrations(self.db)
         self.project = types.SimpleNamespace(id="project-1")
         self.session_repo = get_session_repository(self.db)
+        self.usage_repo = get_session_usage_repository(self.db)
         self.intelligence_repo = get_agentic_intelligence_repository(self.db)
         self.test_run_repo = get_test_run_repository(self.db)
         self.integrity_repo = get_test_integrity_repository(self.db)
@@ -91,6 +93,9 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 "durationSeconds": 600,
                 "tokensIn": 1200,
                 "tokensOut": 2000,
+                "modelIOTokens": 3200,
+                "cacheReadInputTokens": 300,
+                "cacheInputTokens": 300,
                 "totalCost": 1.5,
                 "qualityRating": 4,
                 "startedAt": "2026-03-07T10:00:00+00:00",
@@ -114,6 +119,7 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 "durationSeconds": 14400,
                 "tokensIn": 140000,
                 "tokensOut": 220000,
+                "modelIOTokens": 360000,
                 "totalCost": 20.0,
                 "qualityRating": 1,
                 "startedAt": "2026-03-07T12:00:00+00:00",
@@ -223,6 +229,74 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
                 "created_at": "2026-03-07T13:00:00+00:00",
             }
         )
+        await self.usage_repo.replace_session_usage(
+            "project-1",
+            "session-1",
+            [
+                {
+                    "id": "evt-session-1",
+                    "root_session_id": "session-1",
+                    "linked_session_id": "",
+                    "source_log_id": "log-1",
+                    "captured_at": "2026-03-07T10:01:00+00:00",
+                    "event_kind": "message",
+                    "model": "gpt-5",
+                    "tool_name": "",
+                    "agent_name": "backend-architect",
+                    "token_family": "model_input",
+                    "delta_tokens": 1200,
+                    "cost_usd_model_io": 1.5,
+                    "metadata_json": {},
+                },
+                {
+                    "id": "evt-session-1-cache",
+                    "root_session_id": "session-1",
+                    "linked_session_id": "",
+                    "source_log_id": "log-2",
+                    "captured_at": "2026-03-07T10:02:00+00:00",
+                    "event_kind": "message",
+                    "model": "gpt-5",
+                    "tool_name": "",
+                    "agent_name": "backend-architect",
+                    "token_family": "cache_read_input",
+                    "delta_tokens": 300,
+                    "cost_usd_model_io": 0.0,
+                    "metadata_json": {},
+                },
+            ],
+            [
+                {
+                    "event_id": "evt-session-1",
+                    "entity_type": "workflow",
+                    "entity_id": "phase-execution",
+                    "attribution_role": "primary",
+                    "weight": 1.0,
+                    "method": "workflow_membership",
+                    "confidence": 0.92,
+                    "metadata_json": {},
+                },
+                {
+                    "event_id": "evt-session-1",
+                    "entity_type": "skill",
+                    "entity_id": "symbols",
+                    "attribution_role": "supporting",
+                    "weight": 1.0,
+                    "method": "skill_window",
+                    "confidence": 0.7,
+                    "metadata_json": {},
+                },
+                {
+                    "event_id": "evt-session-1-cache",
+                    "entity_type": "workflow",
+                    "entity_id": "phase-execution",
+                    "attribution_role": "primary",
+                    "weight": 1.0,
+                    "method": "workflow_membership",
+                    "confidence": 0.92,
+                    "metadata_json": {},
+                },
+            ],
+        )
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -246,6 +320,9 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
             by_scope[("workflow", "phase-execution")]["successScore"],
             by_scope[("workflow", "debug-loop")]["successScore"],
         )
+        self.assertEqual(by_scope[("workflow", "phase-execution")]["attributedTokens"], 1500)
+        self.assertAlmostEqual(by_scope[("workflow", "phase-execution")]["attributionCoverage"], 0.375, places=4)
+        self.assertAlmostEqual(by_scope[("workflow", "phase-execution")]["attributedCostUsdModelIO"], 1.5, places=4)
 
         cached = await self.intelligence_repo.list_effectiveness_rollups(
             "project-1",
