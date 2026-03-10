@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 18
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -921,17 +921,14 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         # Table doesn't exist
         current_version = 0
 
-    if current_version >= SCHEMA_VERSION:
-        await _ensure_test_visualizer_tables(db)
-        await _ensure_entity_link_uniqueness(db)
-        logger.info(f"Schema is up to date (version {current_version})")
-        return
-
-    logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
-
-    # Execute all CREATE TABLE statements (split by semicolon if needed, but asyncpg execute() handles multiple statements?)
-    # asyncpg execute() supports multiple statements.
-    await db.execute(_TABLES)
+    should_record_version = current_version < SCHEMA_VERSION
+    if should_record_version:
+        logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
+        # Execute all CREATE TABLE statements (split by semicolon if needed, but asyncpg execute() handles multiple statements?)
+        # asyncpg execute() supports multiple statements.
+        await db.execute(_TABLES)
+    else:
+        logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
     await _ensure_test_visualizer_tables(db)
     await _ensure_entity_link_uniqueness(db)
 
@@ -1205,8 +1202,9 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await db.execute(_SEED_ALERT_CONFIGS)
 
     # Record schema version
-    await db.execute(
-        "INSERT INTO schema_version (version) VALUES ($1)",
-        SCHEMA_VERSION,
-    )
-    logger.info(f"Migrations complete — schema version {SCHEMA_VERSION}")
+    if should_record_version:
+        await db.execute(
+            "INSERT INTO schema_version (version) VALUES ($1)",
+            SCHEMA_VERSION,
+        )
+    logger.info(f"Migrations complete — schema version {max(current_version, SCHEMA_VERSION)}")

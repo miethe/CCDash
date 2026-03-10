@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -871,16 +871,14 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     except Exception:
         current_version = 0
 
-    if current_version >= SCHEMA_VERSION:
-        await _ensure_test_visualizer_tables(db)
-        await db.commit()
-        logger.info(f"Schema is up to date (version {current_version})")
-        return
+    should_record_version = current_version < SCHEMA_VERSION
+    if should_record_version:
+        logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
+        # Execute all CREATE TABLE statements
+        await db.executescript(_TABLES)
+    else:
+        logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
 
-    logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
-
-    # Execute all CREATE TABLE statements
-    await db.executescript(_TABLES)
     await _ensure_test_visualizer_tables(db)
 
     # Explicit table upgrades for existing DBs.
@@ -1166,9 +1164,10 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await db.executescript(_SEED_ALERT_CONFIGS)
 
     # Record schema version
-    await db.execute(
-        "INSERT INTO schema_version (version) VALUES (?)",
-        (SCHEMA_VERSION,),
-    )
+    if should_record_version:
+        await db.execute(
+            "INSERT INTO schema_version (version) VALUES (?)",
+            (SCHEMA_VERSION,),
+        )
     await db.commit()
-    logger.info(f"Migrations complete — schema version {SCHEMA_VERSION}")
+    logger.info(f"Migrations complete — schema version {max(current_version, SCHEMA_VERSION)}")
