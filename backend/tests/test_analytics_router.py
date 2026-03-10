@@ -524,6 +524,136 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unlinked_row["observedTokens"], 90)
         self.assertTrue(unlinked_row["isSubagent"])
 
+    async def test_usage_attribution_endpoint_wraps_rollup_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+            "total": 1,
+            "offset": 0,
+            "limit": 50,
+            "rows": [
+                {
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "entityLabel": "symbols",
+                    "exclusiveTokens": 80,
+                    "supportingTokens": 0,
+                    "exclusiveModelIOTokens": 60,
+                    "exclusiveCacheInputTokens": 20,
+                    "supportingModelIOTokens": 0,
+                    "supportingCacheInputTokens": 0,
+                    "exclusiveCostUsdModelIO": 0.6,
+                    "supportingCostUsdModelIO": 0.0,
+                    "eventCount": 2,
+                    "primaryEventCount": 2,
+                    "supportingEventCount": 0,
+                    "sessionCount": 1,
+                    "averageConfidence": 0.82,
+                    "methods": [],
+                }
+            ],
+            "summary": {
+                "entityCount": 1,
+                "sessionCount": 1,
+                "eventCount": 2,
+                "totalExclusiveTokens": 80,
+                "totalSupportingTokens": 0,
+                "totalExclusiveModelIOTokens": 60,
+                "totalExclusiveCacheInputTokens": 20,
+                "totalExclusiveCostUsdModelIO": 0.6,
+                "averageConfidence": 0.82,
+            },
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_rollup", return_value=payload):
+            response = await analytics_router.get_usage_attribution(limit=50, offset=0)
+
+        self.assertEqual(response.rows[0].entityType, "skill")
+        self.assertEqual(response.summary.totalExclusiveTokens, 80)
+
+    async def test_usage_attribution_drilldown_endpoint_wraps_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+            "total": 1,
+            "offset": 0,
+            "limit": 100,
+            "items": [
+                {
+                    "eventId": "evt-1",
+                    "sessionId": "S-1",
+                    "rootSessionId": "S-1",
+                    "linkedSessionId": "",
+                    "sessionType": "session",
+                    "parentSessionId": "",
+                    "sourceLogId": "log-1",
+                    "capturedAt": "2026-03-10T10:00:00Z",
+                    "eventKind": "message",
+                    "tokenFamily": "model_input",
+                    "deltaTokens": 60,
+                    "costUsdModelIO": 0.6,
+                    "model": "claude-opus-4-6",
+                    "toolName": "",
+                    "agentName": "planner",
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "entityLabel": "symbols",
+                    "attributionRole": "primary",
+                    "weight": 1.0,
+                    "method": "explicit_skill_invocation",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ],
+            "summary": {
+                "entityCount": 1,
+                "sessionCount": 1,
+                "eventCount": 1,
+                "totalExclusiveTokens": 60,
+                "totalSupportingTokens": 0,
+                "totalExclusiveModelIOTokens": 60,
+                "totalExclusiveCacheInputTokens": 0,
+                "totalExclusiveCostUsdModelIO": 0.6,
+                "averageConfidence": 1.0,
+            },
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_drilldown", return_value=payload):
+            response = await analytics_router.get_usage_attribution_drilldown_view(entity_type="skill", entity_id="symbols")
+
+        self.assertEqual(response.items[0].entityId, "symbols")
+        self.assertEqual(response.summary.totalExclusiveModelIOTokens, 60)
+
+    async def test_usage_attribution_calibration_endpoint_wraps_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "sessionCount": 1,
+            "eventCount": 3,
+            "attributedEventCount": 3,
+            "primaryAttributedEventCount": 3,
+            "ambiguousEventCount": 0,
+            "unattributedEventCount": 0,
+            "primaryCoverage": 1.0,
+            "supportingCoverage": 1.0,
+            "sessionModelIOTokens": 100,
+            "exclusiveModelIOTokens": 100,
+            "modelIOGap": 0,
+            "sessionCacheInputTokens": 20,
+            "exclusiveCacheInputTokens": 20,
+            "cacheGap": 0,
+            "averageConfidence": 0.84,
+            "confidenceBands": [{"band": "high", "count": 2}],
+            "methodMix": [{"method": "explicit_skill_invocation", "tokens": 60, "eventCount": 1, "averageConfidence": 1.0}],
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_calibration", return_value=payload):
+            response = await analytics_router.get_usage_attribution_calibration_view()
+
+        self.assertEqual(response.eventCount, 3)
+        self.assertEqual(response.modelIOGap, 0)
+
     def test_build_artifact_payload_agent_model_falls_back_to_main_agent_speaker(self) -> None:
         payload = analytics_router._build_artifact_analytics_payload(
             artifact_rows=[

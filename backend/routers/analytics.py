@@ -15,6 +15,9 @@ from backend.models import (
     AlertConfig,
     AnalyticsMetric,
     FailurePatternResponse,
+    SessionUsageAggregateResponse,
+    SessionUsageCalibrationSummary,
+    SessionUsageDrilldownResponse,
     Notification,
     WorkflowEffectivenessResponse,
 )
@@ -30,6 +33,11 @@ from backend.db.factory import (
     get_task_repository,
 )
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
+from backend.services.session_usage_analytics import (
+    get_usage_attribution_calibration,
+    get_usage_attribution_drilldown,
+    get_usage_attribution_rollup,
+)
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -1813,6 +1821,76 @@ async def get_correlation(
 
     total = len(items)
     return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
+
+
+@analytics_router.get("/usage-attribution", response_model=SessionUsageAggregateResponse)
+async def get_usage_attribution(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_rollup(
+        db,
+        project_id=project.id,
+        start=start,
+        end=end,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        offset=offset,
+        limit=limit,
+    )
+    return SessionUsageAggregateResponse(**payload)
+
+
+@analytics_router.get("/usage-attribution/drilldown", response_model=SessionUsageDrilldownResponse)
+async def get_usage_attribution_drilldown_view(
+    entity_type: str = Query(...),
+    entity_id: str = Query(...),
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_drilldown(
+        db,
+        project_id=project.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        start=start,
+        end=end,
+        offset=offset,
+        limit=limit,
+    )
+    return SessionUsageDrilldownResponse(**payload)
+
+
+@analytics_router.get("/usage-attribution/calibration", response_model=SessionUsageCalibrationSummary)
+async def get_usage_attribution_calibration_view(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_calibration(
+        db,
+        project_id=project.id,
+        start=start,
+        end=end,
+    )
+    return SessionUsageCalibrationSummary(**payload)
 
 
 @analytics_router.get("/artifacts")

@@ -251,6 +251,10 @@ export interface AgentSession {
   sessionForensics?: Record<string, any>;
   forks?: SessionForkSummary[];
   sessionRelationships?: SessionRelationship[];
+  usageEvents?: SessionUsageEvent[];
+  usageAttributions?: SessionUsageAttribution[];
+  usageAttributionSummary?: SessionUsageAggregateResponse | null;
+  usageAttributionCalibration?: SessionUsageCalibrationSummary | null;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];
@@ -329,19 +333,99 @@ export interface SessionUsageAttribution {
 export interface SessionUsageAggregateRow {
   entityType: SessionUsageEntityType;
   entityId: string;
+  entityLabel?: string;
   exclusiveTokens: number;
   supportingTokens: number;
+  exclusiveModelIOTokens?: number;
+  exclusiveCacheInputTokens?: number;
+  supportingModelIOTokens?: number;
+  supportingCacheInputTokens?: number;
   exclusiveCostUsdModelIO: number;
+  supportingCostUsdModelIO?: number;
   eventCount: number;
   primaryEventCount: number;
   supportingEventCount: number;
+  sessionCount?: number;
   averageConfidence: number;
   methods: Array<Record<string, unknown>>;
 }
 
+export interface SessionUsageAggregateSummary {
+  entityCount: number;
+  sessionCount: number;
+  eventCount: number;
+  totalExclusiveTokens: number;
+  totalSupportingTokens: number;
+  totalExclusiveModelIOTokens: number;
+  totalExclusiveCacheInputTokens: number;
+  totalExclusiveCostUsdModelIO: number;
+  averageConfidence: number;
+}
+
 export interface SessionUsageAggregateResponse {
   generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
   rows: SessionUsageAggregateRow[];
+  summary: SessionUsageAggregateSummary;
+}
+
+export interface SessionUsageDrilldownRow {
+  eventId: string;
+  sessionId: string;
+  rootSessionId?: string;
+  linkedSessionId?: string;
+  sessionType?: string;
+  parentSessionId?: string;
+  sourceLogId?: string;
+  capturedAt: string;
+  eventKind: string;
+  tokenFamily: SessionUsageTokenFamily;
+  deltaTokens: number;
+  costUsdModelIO: number;
+  model?: string;
+  toolName?: string;
+  agentName?: string;
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  entityLabel?: string;
+  attributionRole: SessionUsageAttributionRole;
+  weight: number;
+  method: SessionUsageAttributionMethod;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageDrilldownResponse {
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: SessionUsageDrilldownRow[];
+  summary: SessionUsageAggregateSummary;
+}
+
+export interface SessionUsageCalibrationSummary {
+  projectId: string;
+  sessionCount: number;
+  eventCount: number;
+  attributedEventCount: number;
+  primaryAttributedEventCount: number;
+  ambiguousEventCount: number;
+  unattributedEventCount: number;
+  primaryCoverage: number;
+  supportingCoverage: number;
+  sessionModelIOTokens: number;
+  exclusiveModelIOTokens: number;
+  modelIOGap: number;
+  sessionCacheInputTokens: number;
+  exclusiveCacheInputTokens: number;
+  cacheGap: number;
+  averageConfidence: number;
+  confidenceBands: Array<Record<string, unknown>>;
+  methodMix: Array<Record<string, unknown>>;
+  generatedAt: string;
 }
 
 export type MotionPresetKey = 'listInsertTop' | 'messageFlyIn' | 'typingPulse';
@@ -966,6 +1050,12 @@ export interface WorkflowEffectivenessRollup {
   efficiencyScore: number;
   qualityScore: number;
   riskScore: number;
+  attributedTokens?: number;
+  supportingAttributionTokens?: number;
+  attributedCostUsdModelIO?: number;
+  averageAttributionConfidence?: number;
+  attributionCoverage?: number;
+  attributionCacheShare?: number;
   evidenceSummary: Record<string, unknown>;
   generatedAt: string;
   createdAt: string;

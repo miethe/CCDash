@@ -216,6 +216,10 @@ class AgentSession(BaseModel):
     forks: list[dict[str, Any]] = Field(default_factory=list)
     sessionRelationships: list[dict[str, Any]] = Field(default_factory=list)
     derivedSessions: list[dict[str, Any]] = Field(default_factory=list)
+    usageEvents: list["SessionUsageEvent"] = Field(default_factory=list)
+    usageAttributions: list["SessionUsageAttribution"] = Field(default_factory=list)
+    usageAttributionSummary: Optional["SessionUsageAggregateResponse"] = None
+    usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
@@ -283,19 +287,99 @@ class SessionUsageAttribution(BaseModel):
 class SessionUsageAggregateRow(BaseModel):
     entityType: SessionUsageEntityType
     entityId: str
+    entityLabel: str = ""
     exclusiveTokens: int = 0
     supportingTokens: int = 0
+    exclusiveModelIOTokens: int = 0
+    exclusiveCacheInputTokens: int = 0
+    supportingModelIOTokens: int = 0
+    supportingCacheInputTokens: int = 0
     exclusiveCostUsdModelIO: float = 0.0
+    supportingCostUsdModelIO: float = 0.0
     eventCount: int = 0
     primaryEventCount: int = 0
     supportingEventCount: int = 0
+    sessionCount: int = 0
     averageConfidence: float = 0.0
     methods: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SessionUsageAggregateSummary(BaseModel):
+    entityCount: int = 0
+    sessionCount: int = 0
+    eventCount: int = 0
+    totalExclusiveTokens: int = 0
+    totalSupportingTokens: int = 0
+    totalExclusiveModelIOTokens: int = 0
+    totalExclusiveCacheInputTokens: int = 0
+    totalExclusiveCostUsdModelIO: float = 0.0
+    averageConfidence: float = 0.0
+
+
 class SessionUsageAggregateResponse(BaseModel):
     generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
     rows: list[SessionUsageAggregateRow] = Field(default_factory=list)
+    summary: SessionUsageAggregateSummary = Field(default_factory=SessionUsageAggregateSummary)
+
+
+class SessionUsageDrilldownRow(BaseModel):
+    eventId: str
+    sessionId: str
+    rootSessionId: str = ""
+    linkedSessionId: str = ""
+    sessionType: str = ""
+    parentSessionId: str = ""
+    sourceLogId: str = ""
+    capturedAt: str = ""
+    eventKind: str = ""
+    tokenFamily: SessionUsageTokenFamily
+    deltaTokens: int = 0
+    costUsdModelIO: float = 0.0
+    model: str = ""
+    toolName: str = ""
+    agentName: str = ""
+    entityType: SessionUsageEntityType
+    entityId: str
+    entityLabel: str = ""
+    attributionRole: SessionUsageAttributionRole
+    weight: float = 1.0
+    method: SessionUsageAttributionMethod
+    confidence: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageDrilldownResponse(BaseModel):
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SessionUsageDrilldownRow] = Field(default_factory=list)
+    summary: SessionUsageAggregateSummary = Field(default_factory=SessionUsageAggregateSummary)
+
+
+class SessionUsageCalibrationSummary(BaseModel):
+    projectId: str = ""
+    sessionCount: int = 0
+    eventCount: int = 0
+    attributedEventCount: int = 0
+    primaryAttributedEventCount: int = 0
+    ambiguousEventCount: int = 0
+    unattributedEventCount: int = 0
+    primaryCoverage: float = 0.0
+    supportingCoverage: float = 0.0
+    sessionModelIOTokens: int = 0
+    exclusiveModelIOTokens: int = 0
+    modelIOGap: int = 0
+    sessionCacheInputTokens: int = 0
+    exclusiveCacheInputTokens: int = 0
+    cacheGap: int = 0
+    averageConfidence: float = 0.0
+    confidenceBands: list[dict[str, Any]] = Field(default_factory=list)
+    methodMix: list[dict[str, Any]] = Field(default_factory=list)
+    generatedAt: str = ""
 
 
 # ── Document-related models ────────────────────────────────────────
@@ -1028,6 +1112,12 @@ class WorkflowEffectivenessRollup(BaseModel):
     efficiencyScore: float = 0.0
     qualityScore: float = 0.0
     riskScore: float = 0.0
+    attributedTokens: int = 0
+    supportingAttributionTokens: int = 0
+    attributedCostUsdModelIO: float = 0.0
+    averageAttributionConfidence: float = 0.0
+    attributionCoverage: float = 0.0
+    attributionCacheShare: float = 0.0
     evidenceSummary: dict[str, Any] = Field(default_factory=dict)
     generatedAt: str = ""
     createdAt: str = ""

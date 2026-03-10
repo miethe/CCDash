@@ -38,6 +38,7 @@ from backend.document_linking import (
     normalize_ref_path,
 )
 from backend.date_utils import make_date_value
+from backend.services.session_usage_analytics import get_session_usage_attribution_details
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
@@ -827,6 +828,20 @@ async def get_session(session_id: str):
         event for event in _safe_json_list(s.get("platform_version_transitions_json"))
         if isinstance(event, dict)
     ]
+    usage_attribution_details = (
+        await get_session_usage_attribution_details(
+            db,
+            project_id=project.id,
+            session_id=session_id,
+        )
+        if project
+        else {
+            "usageEvents": [],
+            "usageAttributions": [],
+            "usageAttributionSummary": None,
+            "usageAttributionCalibration": None,
+        }
+    )
         
     # Tools
     tool_usage = []
@@ -925,6 +940,10 @@ async def get_session(session_id: str):
         sessionForensics=_safe_json(s.get("session_forensics_json")),
         forks=fork_summaries,
         sessionRelationships=session_relationships,
+        usageEvents=usage_attribution_details["usageEvents"],
+        usageAttributions=usage_attribution_details["usageAttributions"],
+        usageAttributionSummary=usage_attribution_details["usageAttributionSummary"],
+        usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

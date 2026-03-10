@@ -12,6 +12,7 @@ from backend.db.factory import (
     get_test_integrity_repository,
     get_test_run_repository,
 )
+from backend.services.session_usage_analytics import get_session_scope_attribution_metrics
 
 
 _FINAL_SESSION_STATUSES = {"completed", "done", "succeeded"}
@@ -434,6 +435,12 @@ def _hydrate_rollup(row: dict[str, Any]) -> dict[str, Any]:
         "efficiencyScore": round(_safe_float(metrics.get("efficiencyScore"), 0.0), 4),
         "qualityScore": round(_safe_float(metrics.get("qualityScore"), 0.0), 4),
         "riskScore": round(_safe_float(metrics.get("riskScore"), 0.0), 4),
+        "attributedTokens": _safe_int(metrics.get("attributedTokens"), 0),
+        "supportingAttributionTokens": _safe_int(metrics.get("supportingAttributionTokens"), 0),
+        "attributedCostUsdModelIO": round(_safe_float(metrics.get("attributedCostUsdModelIO"), 0.0), 6),
+        "averageAttributionConfidence": round(_safe_float(metrics.get("averageAttributionConfidence"), 0.0), 4),
+        "attributionCoverage": round(_safe_float(metrics.get("attributionCoverage"), 0.0), 4),
+        "attributionCacheShare": round(_safe_float(metrics.get("attributionCacheShare"), 0.0), 4),
         "evidenceSummary": evidence,
         "generatedAt": str(metrics.get("generatedAt") or ""),
         "createdAt": str(row.get("created_at") or ""),
@@ -666,6 +673,7 @@ async def _collect_effectiveness_dataset(
 
 def _aggregate_rollups(
     dataset: list[dict[str, Any]],
+    scope_metrics: dict[tuple[str, str, str], dict[str, Any]],
     *,
     period: str,
     scope_type: str | None = None,
@@ -700,6 +708,13 @@ def _aggregate_rollups(
                     "efficiencyTotal": 0.0,
                     "qualityTotal": 0.0,
                     "riskTotal": 0.0,
+                    "attributedTokens": 0,
+                    "supportingAttributionTokens": 0,
+                    "attributedCostUsdModelIO": 0.0,
+                    "attributionConfidenceTotal": 0.0,
+                    "attributionConfidenceCount": 0,
+                    "attributionCoverageTotal": 0.0,
+                    "attributionCacheShareTotal": 0.0,
                     "sessionIds": [],
                     "featureIds": set(),
                     "queueOpsTotal": 0,
@@ -719,6 +734,15 @@ def _aggregate_rollups(
             bucket["sessionIds"].append(str(item.get("sessionId") or ""))
             if str(item.get("featureId") or "").strip():
                 bucket["featureIds"].add(str(item.get("featureId") or ""))
+            attribution_metrics = scope_metrics.get((str(item.get("sessionId") or ""), candidate_scope_type, candidate_scope_id), {})
+            if attribution_metrics:
+                bucket["attributedTokens"] += _safe_int(attribution_metrics.get("exclusiveTokens"), 0)
+                bucket["supportingAttributionTokens"] += _safe_int(attribution_metrics.get("supportingTokens"), 0)
+                bucket["attributedCostUsdModelIO"] += _safe_float(attribution_metrics.get("exclusiveCostUsdModelIO"), 0.0)
+                bucket["attributionCoverageTotal"] += _safe_float(attribution_metrics.get("attributionCoverage"), 0.0)
+                bucket["attributionCacheShareTotal"] += _safe_float(attribution_metrics.get("attributionCacheShare"), 0.0)
+                bucket["attributionConfidenceTotal"] += _safe_float(attribution_metrics.get("averageConfidence"), 0.0)
+                bucket["attributionConfidenceCount"] += 1
 
     items: list[dict[str, Any]] = []
     for bucket in buckets.values():
@@ -735,6 +759,15 @@ def _aggregate_rollups(
                 "efficiencyScore": round(bucket["efficiencyTotal"] / sample_size, 4),
                 "qualityScore": round(bucket["qualityTotal"] / sample_size, 4),
                 "riskScore": round(bucket["riskTotal"] / sample_size, 4),
+                "attributedTokens": bucket["attributedTokens"],
+                "supportingAttributionTokens": bucket["supportingAttributionTokens"],
+                "attributedCostUsdModelIO": round(bucket["attributedCostUsdModelIO"], 6),
+                "averageAttributionConfidence": round(
+                    bucket["attributionConfidenceTotal"] / max(1, bucket["attributionConfidenceCount"]),
+                    4,
+                ),
+                "attributionCoverage": round(bucket["attributionCoverageTotal"] / sample_size, 4),
+                "attributionCacheShare": round(bucket["attributionCacheShareTotal"] / sample_size, 4),
                 "evidenceSummary": {
                     "featureIds": sorted(bucket["featureIds"]),
                     "representativeSessionIds": bucket["sessionIds"][:_MAX_REPRESENTATIVE_SESSIONS],
@@ -798,8 +831,14 @@ async def get_workflow_effectiveness(
         start=start,
         end=end,
     )
+    scope_metrics = await get_session_scope_attribution_metrics(
+        db,
+        project_id=project_id,
+        session_ids=[str(item.get("sessionId") or "") for item in dataset if str(item.get("sessionId") or "").strip()],
+    )
     items = _aggregate_rollups(
         dataset,
+        scope_metrics,
         period=period,
         scope_type=scope_type,
         scope_id=scope_id,
@@ -821,6 +860,12 @@ async def get_workflow_effectiveness(
                         "efficiencyScore": item["efficiencyScore"],
                         "qualityScore": item["qualityScore"],
                         "riskScore": item["riskScore"],
+                        "attributedTokens": item["attributedTokens"],
+                        "supportingAttributionTokens": item["supportingAttributionTokens"],
+                        "attributedCostUsdModelIO": item["attributedCostUsdModelIO"],
+                        "averageAttributionConfidence": item["averageAttributionConfidence"],
+                        "attributionCoverage": item["attributionCoverage"],
+                        "attributionCacheShare": item["attributionCacheShare"],
                         "generatedAt": item["generatedAt"],
                     },
                     "evidence_summary": item["evidenceSummary"],

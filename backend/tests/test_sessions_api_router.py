@@ -426,8 +426,100 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_includes_fork_relationships_and_summaries(self) -> None:
         repo = _FakeFullSessionRepo()
         project = types.SimpleNamespace(id="project-1")
+        usage_payload = {
+            "usageEvents": [
+                {
+                    "id": "evt-1",
+                    "projectId": "project-1",
+                    "sessionId": "S-main",
+                    "rootSessionId": "S-main",
+                    "linkedSessionId": "",
+                    "sourceLogId": "log-1",
+                    "capturedAt": "2026-02-16T00:00:00Z",
+                    "eventKind": "message",
+                    "model": "claude-sonnet",
+                    "toolName": "",
+                    "agentName": "planner",
+                    "tokenFamily": "model_input",
+                    "deltaTokens": 2,
+                    "costUsdModelIO": 0.0,
+                    "metadata": {},
+                }
+            ],
+            "usageAttributions": [
+                {
+                    "eventId": "evt-1",
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "attributionRole": "primary",
+                    "weight": 1.0,
+                    "method": "explicit_skill_invocation",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ],
+            "usageAttributionSummary": {
+                "generatedAt": "2026-02-16T00:00:01Z",
+                "total": 1,
+                "offset": 0,
+                "limit": 1,
+                "rows": [
+                    {
+                        "entityType": "skill",
+                        "entityId": "symbols",
+                        "entityLabel": "symbols",
+                        "exclusiveTokens": 2,
+                        "supportingTokens": 0,
+                        "exclusiveModelIOTokens": 2,
+                        "exclusiveCacheInputTokens": 0,
+                        "supportingModelIOTokens": 0,
+                        "supportingCacheInputTokens": 0,
+                        "exclusiveCostUsdModelIO": 0.0,
+                        "supportingCostUsdModelIO": 0.0,
+                        "eventCount": 1,
+                        "primaryEventCount": 1,
+                        "supportingEventCount": 0,
+                        "sessionCount": 1,
+                        "averageConfidence": 1.0,
+                        "methods": [],
+                    }
+                ],
+                "summary": {
+                    "entityCount": 1,
+                    "sessionCount": 1,
+                    "eventCount": 1,
+                    "totalExclusiveTokens": 2,
+                    "totalSupportingTokens": 0,
+                    "totalExclusiveModelIOTokens": 2,
+                    "totalExclusiveCacheInputTokens": 0,
+                    "totalExclusiveCostUsdModelIO": 0.0,
+                    "averageConfidence": 1.0,
+                },
+            },
+            "usageAttributionCalibration": {
+                "projectId": "project-1",
+                "sessionCount": 1,
+                "eventCount": 1,
+                "attributedEventCount": 1,
+                "primaryAttributedEventCount": 1,
+                "ambiguousEventCount": 0,
+                "unattributedEventCount": 0,
+                "primaryCoverage": 1.0,
+                "supportingCoverage": 1.0,
+                "sessionModelIOTokens": 2,
+                "exclusiveModelIOTokens": 2,
+                "modelIOGap": 0,
+                "sessionCacheInputTokens": 8,
+                "exclusiveCacheInputTokens": 0,
+                "cacheGap": 8,
+                "averageConfidence": 1.0,
+                "confidenceBands": [],
+                "methodMix": [],
+                "generatedAt": "2026-02-16T00:00:01Z",
+            },
+        }
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "get_session_usage_attribution_details", return_value=usage_payload):
             response = await api_router.get_session("S-main")
 
         self.assertEqual(response.id, "S-main")
@@ -443,6 +535,9 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.cacheInputTokens, 8)
         self.assertEqual(response.observedTokens, 10)
         self.assertEqual(response.toolReportedTokens, 13)
+        self.assertEqual(len(response.usageEvents or []), 1)
+        self.assertEqual((response.usageAttributionSummary or api_router.SessionUsageAggregateResponse()).summary.totalExclusiveTokens, 2)
+        self.assertEqual((response.usageAttributionCalibration or api_router.SessionUsageCalibrationSummary()).modelIOGap, 0)
         self.assertEqual(response.toolResultInputTokens, 21)
         self.assertEqual(response.toolResultOutputTokens, 34)
         self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
