@@ -528,6 +528,7 @@ class PostgresSessionRepository:
 
                 records.append((
                     session_id, i,
+                    log.get("id", f"log-{i}"),
                     log.get("timestamp", ""),
                     log.get("speaker", ""),
                     log.get("type", ""),
@@ -539,10 +540,10 @@ class PostgresSessionRepository:
 
             await self.db.executemany(
                 """INSERT INTO session_logs
-                    (session_id, log_index, timestamp, speaker, type, content,
+                    (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
                      linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)""",
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)""",
                 records
             )
 

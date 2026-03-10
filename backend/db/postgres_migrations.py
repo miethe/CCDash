@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS session_logs (
     id             SERIAL PRIMARY KEY,
     session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     log_index      INTEGER NOT NULL,
+    source_log_id  TEXT DEFAULT '',
     timestamp      TEXT NOT NULL,
     speaker        TEXT NOT NULL,
     type           TEXT NOT NULL,
@@ -158,6 +159,10 @@ CREATE TABLE IF NOT EXISTS session_logs (
 
 CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id, log_index);
 CREATE INDEX IF NOT EXISTS idx_logs_tool    ON session_logs(tool_name) WHERE tool_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_logs_source_log_id ON session_logs(session_id, source_log_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_log_unique
+    ON session_logs(session_id, source_log_id)
+    WHERE source_log_id != '';
 
 -- Tool usage summary per session
 CREATE TABLE IF NOT EXISTS session_tool_usage (
@@ -201,6 +206,53 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
     source_log_id TEXT,
     source_tool_name TEXT
 );
+
+CREATE TABLE IF NOT EXISTS session_usage_events (
+    id                 TEXT PRIMARY KEY,
+    project_id         TEXT NOT NULL,
+    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    root_session_id    TEXT NOT NULL,
+    linked_session_id  TEXT DEFAULT '',
+    source_log_id      TEXT DEFAULT '',
+    captured_at        TEXT NOT NULL,
+    event_kind         TEXT NOT NULL,
+    model              TEXT DEFAULT '',
+    tool_name          TEXT DEFAULT '',
+    agent_name         TEXT DEFAULT '',
+    token_family       TEXT NOT NULL,
+    delta_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (delta_tokens >= 0),
+    cost_usd_model_io  DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (cost_usd_model_io >= 0),
+    metadata_json      TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_usage_events_project
+    ON session_usage_events(project_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_usage_events_session
+    ON session_usage_events(session_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_usage_events_source
+    ON session_usage_events(session_id, source_log_id);
+CREATE INDEX IF NOT EXISTS idx_session_usage_events_entity_dims
+    ON session_usage_events(project_id, token_family, event_kind);
+
+CREATE TABLE IF NOT EXISTS session_usage_attributions (
+    event_id            TEXT NOT NULL REFERENCES session_usage_events(id) ON DELETE CASCADE,
+    entity_type         TEXT NOT NULL,
+    entity_id           TEXT NOT NULL,
+    attribution_role    TEXT NOT NULL,
+    weight              DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (weight >= 0),
+    method              TEXT NOT NULL,
+    confidence          DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (confidence >= 0 AND confidence <= 1),
+    metadata_json       TEXT DEFAULT '{}',
+    PRIMARY KEY (event_id, entity_type, entity_id, attribution_role, method)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_usage_attributions_entity
+    ON session_usage_attributions(entity_type, entity_id, attribution_role);
+CREATE INDEX IF NOT EXISTS idx_session_usage_attributions_method
+    ON session_usage_attributions(method, attribution_role);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_usage_attributions_primary
+    ON session_usage_attributions(event_id)
+    WHERE attribution_role = 'primary';
 
 -- Session lineage relationships (fork/subagent and future kinds)
 CREATE TABLE IF NOT EXISTS session_relationships (
@@ -971,7 +1023,19 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "session_logs", "tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "related_tool_call_id", "TEXT")
     await _ensure_column(db, "session_logs", "linked_session_id", "TEXT")
+    await _ensure_column(db, "session_logs", "source_log_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "session_logs", "metadata_json", "TEXT")
+    await db.execute(
+        """
+        UPDATE session_logs
+        SET source_log_id = 'log-' || CAST(log_index AS TEXT)
+        WHERE COALESCE(source_log_id, '') = ''
+        """
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_logs_source_log_id ON session_logs(session_id, source_log_id)")
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_log_unique ON session_logs(session_id, source_log_id) WHERE source_log_id != ''"
+    )
     await _ensure_column(db, "session_tool_usage", "total_ms", "INTEGER DEFAULT 0")
 
     await _ensure_column(db, "session_file_updates", "source_log_id", "TEXT")
@@ -985,6 +1049,63 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_usage_events (
+            id                 TEXT PRIMARY KEY,
+            project_id         TEXT NOT NULL,
+            session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            root_session_id    TEXT NOT NULL,
+            linked_session_id  TEXT DEFAULT '',
+            source_log_id      TEXT DEFAULT '',
+            captured_at        TEXT NOT NULL,
+            event_kind         TEXT NOT NULL,
+            model              TEXT DEFAULT '',
+            tool_name          TEXT DEFAULT '',
+            agent_name         TEXT DEFAULT '',
+            token_family       TEXT NOT NULL,
+            delta_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (delta_tokens >= 0),
+            cost_usd_model_io  DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (cost_usd_model_io >= 0),
+            metadata_json      TEXT DEFAULT '{}'
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_usage_attributions (
+            event_id            TEXT NOT NULL REFERENCES session_usage_events(id) ON DELETE CASCADE,
+            entity_type         TEXT NOT NULL,
+            entity_id           TEXT NOT NULL,
+            attribution_role    TEXT NOT NULL,
+            weight              DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (weight >= 0),
+            method              TEXT NOT NULL,
+            confidence          DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (confidence >= 0 AND confidence <= 1),
+            metadata_json       TEXT DEFAULT '{}',
+            PRIMARY KEY (event_id, entity_type, entity_id, attribution_role, method)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_events_project ON session_usage_events(project_id, captured_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_events_session ON session_usage_events(session_id, captured_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_events_source ON session_usage_events(session_id, source_log_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_events_entity_dims ON session_usage_events(project_id, token_family, event_kind)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_attributions_entity ON session_usage_attributions(entity_type, entity_id, attribution_role)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_usage_attributions_method ON session_usage_attributions(method, attribution_role)"
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_usage_attributions_primary ON session_usage_attributions(event_id) WHERE attribution_role = 'primary'"
+    )
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS session_relationships (

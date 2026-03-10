@@ -151,6 +151,20 @@ class AnalyticsRepository(Protocol):
 
 
 @runtime_checkable
+class SessionUsageRepository(Protocol):
+    async def replace_session_usage(
+        self,
+        project_id: str,
+        session_id: str,
+        events: list[dict[str, Any]],
+        attributions: list[dict[str, Any]],
+    ) -> None: ...
+    async def get_session_usage_events(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def get_session_usage_attributions(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def count_usage_events(self, project_id: str) -> int: ...
+
+
+@runtime_checkable
 class AgenticIntelligenceRepository(Protocol):
     async def upsert_definition_source(self, source_data: dict, project_id: str | None = None) -> dict: ...
     async def get_definition_source(self, project_id: str, source_kind: str = "skillmeat") -> dict | None: ...

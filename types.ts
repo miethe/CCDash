@@ -260,6 +260,90 @@ export interface AgentSession {
   timeline?: TimelineEvent[];
 }
 
+export type SessionUsageTokenFamily =
+  | 'model_input'
+  | 'model_output'
+  | 'cache_creation_input'
+  | 'cache_read_input'
+  | 'tool_result_input'
+  | 'tool_result_output'
+  | 'tool_result_cache_creation_input'
+  | 'tool_result_cache_read_input'
+  | 'tool_reported_total'
+  | 'relay_mirror_input'
+  | 'relay_mirror_output'
+  | 'relay_mirror_cache_creation_input'
+  | 'relay_mirror_cache_read_input';
+
+export type SessionUsageEntityType =
+  | 'skill'
+  | 'agent'
+  | 'subthread'
+  | 'command'
+  | 'artifact'
+  | 'workflow'
+  | 'feature';
+
+export type SessionUsageAttributionRole = 'primary' | 'supporting';
+
+export type SessionUsageAttributionMethod =
+  | 'explicit_skill_invocation'
+  | 'explicit_subthread_ownership'
+  | 'explicit_agent_ownership'
+  | 'explicit_command_context'
+  | 'explicit_artifact_link'
+  | 'skill_window'
+  | 'artifact_window'
+  | 'workflow_membership'
+  | 'feature_inheritance';
+
+export interface SessionUsageEvent {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  rootSessionId: string;
+  linkedSessionId: string;
+  sourceLogId: string;
+  capturedAt: string;
+  eventKind: string;
+  model: string;
+  toolName: string;
+  agentName: string;
+  tokenFamily: SessionUsageTokenFamily;
+  deltaTokens: number;
+  costUsdModelIO: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageAttribution {
+  eventId: string;
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  attributionRole: SessionUsageAttributionRole;
+  weight: number;
+  method: SessionUsageAttributionMethod;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageAggregateRow {
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  exclusiveTokens: number;
+  supportingTokens: number;
+  exclusiveCostUsdModelIO: number;
+  eventCount: number;
+  primaryEventCount: number;
+  supportingEventCount: number;
+  averageConfidence: number;
+  methods: Array<Record<string, unknown>>;
+}
+
+export interface SessionUsageAggregateResponse {
+  generatedAt: string;
+  rows: SessionUsageAggregateRow[];
+}
+
 export type MotionPresetKey = 'listInsertTop' | 'messageFlyIn' | 'typingPulse';
 
 export interface LiveAgentActivity {

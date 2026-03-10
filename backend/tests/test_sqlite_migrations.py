@@ -51,6 +51,17 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("cache_input_tokens", columns)
         self.assertIn("tool_reported_tokens", columns)
 
+        async with db.execute("PRAGMA table_info(session_logs)") as cur:
+            log_rows = await cur.fetchall()
+        log_columns = {row[1] for row in log_rows}
+        self.assertIn("source_log_id", log_columns)
+
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_usage_attributions')"
+        ) as cur:
+            tables = {row[0] for row in await cur.fetchall()}
+        self.assertEqual(tables, {"session_usage_events", "session_usage_attributions"})
+
         async with db.execute("SELECT MAX(version) FROM schema_version") as cur:
             row = await cur.fetchone()
         self.assertEqual(row[0], sqlite_migrations.SCHEMA_VERSION)

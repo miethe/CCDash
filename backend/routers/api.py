@@ -775,7 +775,7 @@ async def get_session(session_id: str):
                 tc["name"] = metadata["toolLabel"].strip()
             
         session_logs.append({
-            "id": f"log-{l['log_index']}", # verify if we store the ID string or format it
+            "id": l.get("source_log_id") or f"log-{l['log_index']}",
             "timestamp": l["timestamp"],
             "speaker": l["speaker"],
             "type": l["type"],

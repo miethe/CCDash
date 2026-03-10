@@ -499,12 +499,13 @@ class SqliteSessionRepository:
 
             await self.db.execute(
                 """INSERT INTO session_logs
-                    (session_id, log_index, timestamp, speaker, type, content,
+                    (session_id, log_index, source_log_id, timestamp, speaker, type, content,
                      agent_name, tool_name, tool_call_id, related_tool_call_id,
                      linked_session_id, tool_args, tool_output, tool_status, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id, i,
+                    log.get("id", f"log-{i}"),
                     log.get("timestamp", ""),
                     log.get("speaker", ""),
                     log.get("type", ""),

@@ -220,6 +220,84 @@ class AgentSession(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
+SessionUsageTokenFamily = Literal[
+    "model_input",
+    "model_output",
+    "cache_creation_input",
+    "cache_read_input",
+    "tool_result_input",
+    "tool_result_output",
+    "tool_result_cache_creation_input",
+    "tool_result_cache_read_input",
+    "tool_reported_total",
+    "relay_mirror_input",
+    "relay_mirror_output",
+    "relay_mirror_cache_creation_input",
+    "relay_mirror_cache_read_input",
+]
+
+SessionUsageEntityType = Literal["skill", "agent", "subthread", "command", "artifact", "workflow", "feature"]
+SessionUsageAttributionRole = Literal["primary", "supporting"]
+SessionUsageAttributionMethod = Literal[
+    "explicit_skill_invocation",
+    "explicit_subthread_ownership",
+    "explicit_agent_ownership",
+    "explicit_command_context",
+    "explicit_artifact_link",
+    "skill_window",
+    "artifact_window",
+    "workflow_membership",
+    "feature_inheritance",
+]
+
+
+class SessionUsageEvent(BaseModel):
+    id: str
+    projectId: str
+    sessionId: str
+    rootSessionId: str
+    linkedSessionId: str = ""
+    sourceLogId: str = ""
+    capturedAt: str
+    eventKind: str
+    model: str = ""
+    toolName: str = ""
+    agentName: str = ""
+    tokenFamily: SessionUsageTokenFamily
+    deltaTokens: int = 0
+    costUsdModelIO: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageAttribution(BaseModel):
+    eventId: str
+    entityType: SessionUsageEntityType
+    entityId: str
+    attributionRole: SessionUsageAttributionRole
+    weight: float = 1.0
+    method: SessionUsageAttributionMethod
+    confidence: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageAggregateRow(BaseModel):
+    entityType: SessionUsageEntityType
+    entityId: str
+    exclusiveTokens: int = 0
+    supportingTokens: int = 0
+    exclusiveCostUsdModelIO: float = 0.0
+    eventCount: int = 0
+    primaryEventCount: int = 0
+    supportingEventCount: int = 0
+    averageConfidence: float = 0.0
+    methods: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionUsageAggregateResponse(BaseModel):
+    generatedAt: str = ""
+    rows: list[SessionUsageAggregateRow] = Field(default_factory=list)
+
+
 # ── Document-related models ────────────────────────────────────────
 
 class DocumentFrontmatter(BaseModel):

@@ -13,6 +13,7 @@ from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.tasks import SqliteTaskRepository
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
+from backend.db.repositories.usage_attribution import SqliteSessionUsageRepository
 from backend.db.repositories.test_runs import SqliteTestRunRepository
 from backend.db.repositories.test_definitions import SqliteTestDefinitionRepository
 from backend.db.repositories.test_results import SqliteTestResultRepository
@@ -51,6 +52,12 @@ def get_analytics_repository(db: Any):
         return SqliteAnalyticsRepository(db)
     from backend.db.repositories.postgres.analytics import PostgresAnalyticsRepository
     return PostgresAnalyticsRepository(db)
+
+def get_session_usage_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteSessionUsageRepository(db)
+    from backend.db.repositories.postgres.usage_attribution import PostgresSessionUsageRepository
+    return PostgresSessionUsageRepository(db)
 
 def get_entity_link_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
