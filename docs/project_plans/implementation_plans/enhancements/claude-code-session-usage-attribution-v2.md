@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Claude Code Session Usage Attribution V2'
 description: Add immutable usage events, attribution links, and rollups so CCDash
@@ -46,7 +46,12 @@ related:
 plan_ref: claude-code-session-usage-attribution-v2
 linked_sessions: []
 request_log_id: ''
-commits: []
+commits:
+- 0e40a00
+- 6045ab3
+- 3c41590
+- 5e32c03
+- 0e778e1
 prs: []
 owner: platform-engineering
 owners:
@@ -270,6 +275,18 @@ Acceptance criteria:
 1. Attribution caveats are documented clearly.
 2. Rollout can be controlled without schema rework.
 3. Future optimization work can consume V2 outputs as stable inputs.
+
+### Completion Notes
+
+1. User-facing attribution semantics and caveats are documented in `docs/session-usage-attribution-user-guide.md`.
+2. Developer-facing contracts, rollout controls, and API details are documented in `docs/session-usage-attribution-developer-reference.md`.
+3. Rollout control is available through:
+   - global env gate `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED`
+   - project-scoped `usageAttributionEnabled` toggle in Settings
+4. V2 outputs now feed future recommendation layers without contract changes through:
+   - attribution rollups
+   - calibration summaries
+   - workflow-effectiveness attribution fields
 
 ## Risks
 

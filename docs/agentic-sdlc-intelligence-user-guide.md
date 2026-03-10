@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence User Guide
 
-Last updated: 2026-03-09
+Last updated: 2026-03-10
 
 Use the agentic SDLC intelligence surfaces to understand which workflow stacks are working, why they work, and where failure patterns are repeating.
 
@@ -12,8 +12,11 @@ Use the agentic SDLC intelligence surfaces to understand which workflow stacks a
 - `/analytics?tab=workflow_intelligence`
   - cross-project workflow, agent, skill, context, and stack leaderboard
   - ranked failure-pattern list with representative session evidence
+  - attributed token, cost, coverage, and cache-share summaries when usage attribution is enabled
+- `/analytics?tab=attribution`
+  - direct entity-level attribution leaderboard and calibration view
 - `Settings > Projects > SkillMeat Integration`
-  - per-project toggles for `Recommended Stack UI` and `Workflow Effectiveness`
+  - per-project toggles for `Recommended Stack UI`, `Usage Attribution`, and `Workflow Effectiveness`
 
 ## Recommended Stack card
 
@@ -50,8 +53,15 @@ The workflow intelligence surface helps compare what has historically performed 
   - queue waste
   - repeated debug loops
   - weak validation paths
+- attribution overlays:
+  - attributed tokens
+  - attributed cost
+  - attribution coverage
+  - attribution cache share
 
 Use the feature-level embedded view in `/execution` when deciding what to do next for one feature. Use the full `/analytics` tab when you want to compare patterns across the active project.
+
+Use `/analytics?tab=attribution` when you want entity-first token ownership rather than outcome-first workflow ranking.
 
 ## Disabled states
 
@@ -60,6 +70,7 @@ If a project disables one of the intelligence surfaces:
 - `/execution` keeps command recommendations and run controls available.
 - `/analytics` keeps the rest of the analytics dashboard available.
 - the disabled surface shows an inline notice instead of a blank or broken panel.
+- Session Inspector keeps the rest of the analytics surface available when usage attribution is disabled.
 
 ## SkillMeat settings modes
 
@@ -83,7 +94,7 @@ Use `Settings > Projects > SkillMeat Integration`.
 1. Enable SkillMeat integration and enter the base URL plus the SkillMeat project filesystem path.
 2. Leave `AAA enabled` off for local SkillMeat or enable it and provide an API key for protected instances.
 3. Confirm the connection, project mapping, and auth indicators in Settings.
-4. Leave `Recommended Stack UI` and `Workflow Effectiveness` enabled for the pilot project.
+4. Leave `Recommended Stack UI`, `Usage Attribution`, and `Workflow Effectiveness` enabled for the pilot project.
 5. Ask an operator to run:
    - `python backend/scripts/agentic_intelligence_rollout.py --project <project-id> --fail-on-warning`
 6. Open `/execution` for a feature with linked docs or linked sessions.
@@ -92,4 +103,5 @@ Use `Settings > Projects > SkillMeat Integration`.
    - the context coverage / curated bundle / execution awareness insight panels
    - the similar-work evidence
 8. If SkillMeat is temporarily unavailable, continue using cached recommendations and previously computed rollups until the source comes back.
-9. Review `/analytics?tab=workflow_intelligence` after a few sessions to spot patterns that should be standardized or retired.
+9. Review `/analytics?tab=attribution` to validate entity ownership and confidence before making workflow changes.
+10. Review `/analytics?tab=workflow_intelligence` after a few sessions to spot patterns that should be standardized or retired.

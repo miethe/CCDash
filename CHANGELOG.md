@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-03-10
+
+### Added
+
+- Claude Code session usage attribution rollout controls:
+  - global env gate `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED`
+  - project-scoped `usageAttributionEnabled` flag in Project Settings
+- User and developer attribution references:
+  - `docs/session-usage-attribution-user-guide.md`
+  - `docs/session-usage-attribution-developer-reference.md`
+- Regression coverage for:
+  - attribution feature-flag defaults and overrides
+  - attribution-disabled analytics/session behavior
+  - workflow-effectiveness rollups carrying attributed token/cost metrics
+
+### Changed
+
+- `/analytics?tab=attribution`, Session Inspector attribution sections, and related session payloads now respect rollout gating instead of assuming attribution is always on.
+- Workflow intelligence documentation and rollout notes now treat attribution metrics as additive signals that can be disabled independently from the rest of workflow effectiveness.
+- Implementation and PRD tracking for Claude Code session usage attribution V2 now reflect completed delivery status and committed rollout checkpoints.
+
+### Docs
+
+- Added:
+  - `docs/session-usage-attribution-user-guide.md`
+  - `docs/session-usage-attribution-developer-reference.md`
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
+  - `docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-attribution-v2.md`
+  - `docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md`
+
 ## 2026-03-09
 
 ### Added

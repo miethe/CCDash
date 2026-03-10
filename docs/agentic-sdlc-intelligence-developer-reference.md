@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence Developer Reference
 
-Last updated: 2026-03-09
+Last updated: 2026-03-10
 
 This reference covers the rollout script, feature-flag model, API surfaces, and primary implementation files for the Agentic SDLC Intelligence foundation.
 
@@ -47,6 +47,7 @@ Stored under `Project.skillMeat.featureFlags`:
 
 - `stackRecommendationsEnabled`
 - `workflowAnalyticsEnabled`
+- `usageAttributionEnabled`
 
 The frontend uses these flags to hide or replace surfaces with disabled-state notices. The backend uses them to skip expensive work and return consistent `503 feature_disabled` responses where appropriate.
 
@@ -131,6 +132,18 @@ Use `--fail-on-warning` when you want rollout to act like a stricter operator ga
 
 - `GET /api/analytics/workflow-effectiveness`
 - `GET /api/analytics/failure-patterns`
+- `GET /api/analytics/usage-attribution`
+- `GET /api/analytics/usage-attribution/drilldown`
+- `GET /api/analytics/usage-attribution/calibration`
+
+Workflow effectiveness rows may now carry attribution-derived metrics when usage attribution is enabled:
+
+- `attributedTokens`
+- `supportingAttributionTokens`
+- `attributedCostUsdModelIO`
+- `averageAttributionConfidence`
+- `attributionCoverage`
+- `attributionCacheShare`
 
 ## Verification
 
@@ -139,6 +152,7 @@ Targeted checks used for this rollout:
 ```bash
 python3 -m pytest backend/tests/test_agentic_intelligence_flags.py backend/tests/test_integrations_router.py backend/tests/test_features_execution_context_router.py backend/tests/test_analytics_router.py -q
 python3 -m pytest backend/tests/test_stack_recommendations.py -q
+python3 -m pytest backend/tests/test_session_usage_analytics.py backend/tests/test_sessions_api_router.py backend/tests/test_workflow_effectiveness.py -q
 npm test -- --run services/__tests__/agenticIntelligence.test.ts
 npm run build
 ```
