@@ -3,7 +3,7 @@ import { TrendChart } from './TrendChart';
 import { analyticsService } from '../../services/analytics';
 import { useModelColors } from '../../contexts/ModelColorsContext';
 import { useData } from '../../contexts/DataContext';
-import { isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
+import { isUsageAttributionEnabled, isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
 import {
     AnalyticsArtifactsResponse,
     AnalyticsCorrelationItem,
@@ -122,6 +122,7 @@ export const AnalyticsDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
+    const usageAttributionAvailable = isUsageAttributionEnabled(activeProject);
 
     const openSession = useCallback((sessionId: string) => {
         if (!sessionId) return;
@@ -136,24 +137,36 @@ export const AnalyticsDashboard: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const [overviewData, notificationData, artifactData, correlationData, usageData, calibrationData] = await Promise.all([
+            const usagePayloadPromise = usageAttributionAvailable
+                ? analyticsService.getUsageAttribution({ limit: 24 }).then(data => ({ data, error: null as string | null }))
+                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution analytics.' }))
+                : Promise.resolve({ data: null, error: null as string | null });
+            const calibrationPayloadPromise = usageAttributionAvailable
+                ? analyticsService.getUsageAttributionCalibration().then(data => ({ data, error: null as string | null }))
+                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution calibration.' }))
+                : Promise.resolve({ data: null, error: null as string | null });
+
+            const [overviewData, notificationData, artifactData, correlationData, usagePayload, calibrationPayload] = await Promise.all([
                 analyticsService.getOverview(),
                 analyticsService.getNotifications(),
                 analyticsService.getArtifacts({ limit: 200 }),
                 analyticsService.getCorrelation(),
-                analyticsService.getUsageAttribution({ limit: 24 }),
-                analyticsService.getUsageAttributionCalibration(),
+                usagePayloadPromise,
+                calibrationPayloadPromise,
             ]);
             setOverview(overviewData);
             setNotifications(notificationData);
             setArtifacts(artifactData);
             setCorrelation(correlationData.items || []);
-            setUsageAttribution(usageData);
-            setUsageCalibration(calibrationData);
-            const firstRow = (usageData.rows || [])[0];
+            setUsageAttribution(usagePayload.data);
+            setUsageCalibration(calibrationPayload.data);
+            const firstRow = (usagePayload.data?.rows || [])[0];
             setSelectedUsageEntity(firstRow?.entityType && firstRow?.entityId
                 ? { entityType: firstRow.entityType, entityId: firstRow.entityId }
                 : null);
+            if (usagePayload.error || calibrationPayload.error) {
+                console.warn('Usage attribution analytics unavailable', usagePayload.error || calibrationPayload.error);
+            }
         } catch (e) {
             console.error('Failed to load analytics dashboard payloads', e);
             setError('Failed to load analytics data.');
@@ -459,6 +472,7 @@ export const AnalyticsDashboard: React.FC = () => {
             )}
 
             {!loading && !error && activeTab === 'attribution' && (
+                usageAttributionAvailable && usageAttribution && usageCalibration ? (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                         <MetricCard
@@ -618,6 +632,16 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+                ) : (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                        <p className="font-semibold">{usageAttributionAvailable ? 'Usage Attribution Unavailable' : 'Usage Attribution Disabled'}</p>
+                        <p className="mt-1 text-amber-100/80">
+                            {usageAttributionAvailable
+                                ? 'The attribution endpoints are currently unavailable. Check the global rollout gate or backend status.'
+                                : 'Enable Usage Attribution in Project Settings to show attribution rollups, calibration, and drill-down views.'}
+                        </p>
+                    </div>
+                )
             )}
 
             {!loading && !error && activeTab === 'workflow_intelligence' && (

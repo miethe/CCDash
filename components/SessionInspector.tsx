@@ -16,6 +16,7 @@ import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { isUsageAttributionEnabled } from '../services/agenticIntelligence';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -4460,7 +4461,8 @@ const AnalyticsView: React.FC<{
     threadSessions: AgentSession[];
     threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
-}> = ({ session, threadSessions, threadSessionDetails, goToTranscript }) => {
+    usageAttributionEnabled: boolean;
+}> = ({ session, threadSessions, threadSessionDetails, goToTranscript, usageAttributionEnabled }) => {
     const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
@@ -4731,6 +4733,7 @@ const AnalyticsView: React.FC<{
             </div>
 
             {/* COST SUMMARY */}
+            {usageAttributionEnabled && session.usageAttributionSummary ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
@@ -4788,6 +4791,13 @@ const AnalyticsView: React.FC<{
                     </table>
                 </div>
             </div>
+            ) : (
+                <div className="bg-slate-900 border border-amber-500/25 rounded-xl p-6 mb-6 text-sm text-amber-100">
+                    {usageAttributionEnabled
+                        ? 'Usage attribution is currently unavailable for this session. Check the backend rollout gate or refresh after re-enabling attribution APIs.'
+                        : 'Usage attribution is disabled for this project. Re-enable it in Project Settings to restore event-level attribution summaries for this session.'}
+                </div>
+            )}
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h3 className="text-sm font-bold text-slate-300 mb-2">Cost Analysis</h3>
@@ -7561,6 +7571,7 @@ const SessionDetail: React.FC<{
                         threadSessions={threadSessions}
                         threadSessionDetails={threadSessionDetails}
                         goToTranscript={handleJumpToTranscript}
+                        usageAttributionEnabled={isUsageAttributionEnabled(activeProject)}
                     />
                 )}
                 {activeTab === 'agents' && (

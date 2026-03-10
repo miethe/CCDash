@@ -1225,6 +1225,9 @@ export const OpsPanel: React.FC = () => {
                   <p className="mt-1 text-sm text-slate-100">
                     Workflow: {skillMeatConfig.featureFlags.workflowAnalyticsEnabled ? 'on' : 'off'}
                   </p>
+                  <p className="mt-1 text-sm text-slate-100">
+                    Attribution: {skillMeatConfig.featureFlags.usageAttributionEnabled ? 'on' : 'off'}
+                  </p>
                 </div>
               </div>
             </section>

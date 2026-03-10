@@ -11,6 +11,7 @@ from backend import config
 DEFAULT_PROJECT_FEATURE_FLAGS = {
     "stackRecommendationsEnabled": True,
     "workflowAnalyticsEnabled": True,
+    "usageAttributionEnabled": True,
 }
 
 
@@ -49,6 +50,14 @@ def workflow_analytics_enabled(project: Any | None) -> bool:
     return _project_feature_flags(project)["workflowAnalyticsEnabled"]
 
 
+def usage_attribution_enabled(project: Any | None) -> bool:
+    if not config.CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED:
+        return False
+    if project is None:
+        return True
+    return _project_feature_flags(project)["usageAttributionEnabled"]
+
+
 def require_skillmeat_integration_enabled() -> None:
     if skillmeat_integration_enabled():
         return
@@ -76,6 +85,25 @@ def require_workflow_analytics_enabled(project: Any | None) -> None:
         detail={
             "error": "feature_disabled",
             "message": "Workflow effectiveness analytics are disabled for this project.",
+            "hint": hint,
+        },
+    )
+
+
+def require_usage_attribution_enabled(project: Any | None) -> None:
+    if usage_attribution_enabled(project):
+        return
+
+    if not config.CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED:
+        hint = "Set CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED=true in environment."
+    else:
+        hint = "Enable Usage Attribution in Project Settings > SkillMeat Integration."
+
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "error": "feature_disabled",
+            "message": "Session usage attribution is disabled for this project.",
             "hint": hint,
         },
     )

@@ -1157,6 +1157,7 @@ export interface ProjectTestConfig {
 export interface SkillMeatFeatureFlags {
   stackRecommendationsEnabled: boolean;
   workflowAnalyticsEnabled: boolean;
+  usageAttributionEnabled: boolean;
 }
 
 export interface SkillMeatProjectConfig {

@@ -38,6 +38,7 @@ from backend.document_linking import (
     normalize_ref_path,
 )
 from backend.date_utils import make_date_value
+from backend.services.agentic_intelligence_flags import usage_attribution_enabled
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
@@ -834,7 +835,7 @@ async def get_session(session_id: str):
             project_id=project.id,
             session_id=session_id,
         )
-        if project
+        if project and usage_attribution_enabled(project)
         else {
             "usageEvents": [],
             "usageAttributions": [],

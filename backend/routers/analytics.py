@@ -33,6 +33,7 @@ from backend.db.factory import (
     get_task_repository,
 )
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
+from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
 from backend.services.session_usage_analytics import (
     get_usage_attribution_calibration,
     get_usage_attribution_drilldown,
@@ -1835,6 +1836,7 @@ async def get_usage_attribution(
     project = project_manager.get_active_project()
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
     db = await connection.get_connection()
     payload = await get_usage_attribution_rollup(
         db,
@@ -1861,6 +1863,7 @@ async def get_usage_attribution_drilldown_view(
     project = project_manager.get_active_project()
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
     db = await connection.get_connection()
     payload = await get_usage_attribution_drilldown(
         db,
@@ -1883,6 +1886,7 @@ async def get_usage_attribution_calibration_view(
     project = project_manager.get_active_project()
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
     db = await connection.get_connection()
     payload = await get_usage_attribution_calibration(
         db,

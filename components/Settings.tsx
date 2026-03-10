@@ -876,7 +876,7 @@ const ProjectsTab: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
                   <div>
                     <span className="block text-sm text-slate-200">Recommended Stack UI</span>
@@ -891,6 +891,25 @@ const ProjectsTab: React.FC = () => {
                         ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
                         ...(prev.featureFlags || {}),
                         stackRecommendationsEnabled: e.target.checked,
+                      },
+                    }))}
+                    className="h-4 w-4"
+                  />
+                </label>
+                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <div>
+                    <span className="block text-sm text-slate-200">Usage Attribution</span>
+                    <span className="block text-xs text-slate-500">Enable attribution views in `/analytics` and session analytics drill-downs.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={editData.skillMeat?.featureFlags?.usageAttributionEnabled ?? true}
+                    onChange={e => updateSkillMeatConfig(prev => ({
+                      ...prev,
+                      featureFlags: {
+                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
+                        ...(prev.featureFlags || {}),
+                        usageAttributionEnabled: e.target.checked,
                       },
                     }))}
                     className="h-4 w-4"

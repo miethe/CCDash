@@ -684,6 +684,7 @@ class ProjectTestConfig(BaseModel):
 class SkillMeatFeatureFlags(BaseModel):
     stackRecommendationsEnabled: bool = True
     workflowAnalyticsEnabled: bool = True
+    usageAttributionEnabled: bool = True
 
 
 class SkillMeatProjectConfig(BaseModel):

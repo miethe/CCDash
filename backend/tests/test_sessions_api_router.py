@@ -538,6 +538,18 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(response.usageEvents or []), 1)
         self.assertEqual((response.usageAttributionSummary or api_router.SessionUsageAggregateResponse()).summary.totalExclusiveTokens, 2)
         self.assertEqual((response.usageAttributionCalibration or api_router.SessionUsageCalibrationSummary()).modelIOGap, 0)
+
+    async def test_get_session_omits_usage_attribution_when_disabled(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
+            response = await api_router.get_session("S-main")
+
+        self.assertEqual(response.usageEvents, [])
+        self.assertEqual(response.usageAttributions, [])
+        self.assertIsNone(response.usageAttributionSummary)
+        self.assertIsNone(response.usageAttributionCalibration)
         self.assertEqual(response.toolResultInputTokens, 21)
         self.assertEqual(response.toolResultOutputTokens, 34)
         self.assertEqual(response.toolResultCacheCreationInputTokens, 55)

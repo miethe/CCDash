@@ -3,6 +3,7 @@ import { Project, SkillMeatFeatureFlags } from '../types';
 export const DEFAULT_SKILLMEAT_FEATURE_FLAGS: SkillMeatFeatureFlags = {
   stackRecommendationsEnabled: true,
   workflowAnalyticsEnabled: true,
+  usageAttributionEnabled: true,
 };
 
 export const defaultSkillMeatConfig = () => ({
@@ -41,4 +42,8 @@ export const isStackRecommendationsEnabled = (project?: Pick<Project, 'skillMeat
 
 export const isWorkflowAnalyticsEnabled = (project?: Pick<Project, 'skillMeat'> | null): boolean => (
   getSkillMeatFeatureFlags(project).workflowAnalyticsEnabled
+);
+
+export const isUsageAttributionEnabled = (project?: Pick<Project, 'skillMeat'> | null): boolean => (
+  getSkillMeatFeatureFlags(project).usageAttributionEnabled
 );

@@ -13,6 +13,7 @@ class AgenticIntelligenceFlagsTests(unittest.TestCase):
 
         self.assertTrue(agentic_intelligence_flags.stack_recommendations_enabled(project))
         self.assertTrue(agentic_intelligence_flags.workflow_analytics_enabled(project))
+        self.assertTrue(agentic_intelligence_flags.usage_attribution_enabled(project))
 
     def test_project_flags_respect_overrides(self) -> None:
         project = types.SimpleNamespace(
@@ -20,12 +21,14 @@ class AgenticIntelligenceFlagsTests(unittest.TestCase):
                 featureFlags={
                     "stackRecommendationsEnabled": False,
                     "workflowAnalyticsEnabled": False,
+                    "usageAttributionEnabled": False,
                 }
             )
         )
 
         self.assertFalse(agentic_intelligence_flags.stack_recommendations_enabled(project))
         self.assertFalse(agentic_intelligence_flags.workflow_analytics_enabled(project))
+        self.assertFalse(agentic_intelligence_flags.usage_attribution_enabled(project))
 
     def test_require_skillmeat_integration_enabled_raises_when_env_disabled(self) -> None:
         with patch.object(agentic_intelligence_flags.config, "CCDASH_SKILLMEAT_INTEGRATION_ENABLED", False):
@@ -39,3 +42,9 @@ class AgenticIntelligenceFlagsTests(unittest.TestCase):
 
         with patch.object(agentic_intelligence_flags.config, "CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED", False):
             self.assertFalse(agentic_intelligence_flags.workflow_analytics_enabled(project))
+
+    def test_usage_attribution_respects_global_flag(self) -> None:
+        project = types.SimpleNamespace(skillMeat=types.SimpleNamespace(featureFlags={}))
+
+        with patch.object(agentic_intelligence_flags.config, "CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED", False):
+            self.assertFalse(agentic_intelligence_flags.usage_attribution_enabled(project))

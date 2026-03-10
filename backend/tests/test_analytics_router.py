@@ -654,6 +654,18 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.eventCount, 3)
         self.assertEqual(response.modelIOGap, 0)
 
+    async def test_usage_attribution_endpoint_returns_503_when_disabled(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router, "require_usage_attribution_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.get_usage_attribution(limit=10, offset=0)
+
+        self.assertEqual(ctx.exception.status_code, 503)
+
     def test_build_artifact_payload_agent_model_falls_back_to_main_agent_speaker(self) -> None:
         payload = analytics_router._build_artifact_analytics_payload(
             artifact_rows=[
