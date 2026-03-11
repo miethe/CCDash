@@ -87,6 +87,18 @@ interface PaginatedResponse<T> {
     limit: number;
 }
 
+export const hasSessionDetail = (session: AgentSession | null | undefined): boolean => (
+    Boolean(session && Array.isArray(session.logs) && session.logs.length > 0)
+);
+
+export const mergeSessionDetail = (sessions: AgentSession[], fetched: AgentSession): AgentSession[] => {
+    const idx = sessions.findIndex(session => session.id === fetched.id);
+    if (idx === -1) return sessions;
+    const next = [...sessions];
+    next[idx] = fetched;
+    return next;
+};
+
 async function fetchJson<T>(path: string): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`);
     if (!res.ok) {
@@ -156,9 +168,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [error, setError] = useState<string | null>(null);
     const [isTestsRoute, setIsTestsRoute] = useState<boolean>(isTestsHashRoute);
     const sessionsCountRef = useRef(0);
+    const sessionsRef = useRef<AgentSession[]>([]);
     const hasLoadedOnceRef = useRef(false);
     const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
     const refreshFeaturesInFlightRef = useRef<Promise<void> | null>(null);
+    const sessionDetailRequestsRef = useRef<Map<string, Promise<AgentSession | null>>>(new Map());
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -188,8 +202,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [pendingFeatureStatusById]);
 
     useEffect(() => {
+        sessionsRef.current = sessions;
         sessionsCountRef.current = sessions.length;
-    }, [sessions.length]);
+    }, [sessions]);
 
     const refreshSessions = useCallback(async (reset = true) => {
         try {
@@ -255,31 +270,38 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
         const forceFetch = Boolean(options?.force);
+        const cachedSessions = sessionsRef.current;
         // First check if we already have it in state
-        const existing = sessions.find(s => s.id === sessionId);
+        const existing = cachedSessions.find(s => s.id === sessionId);
 
         // Only return cached if it has logs (meaning it's a full detail object, not a list item)
         // List items have empty logs arrays usually.
-        if (!forceFetch && existing && existing.logs && existing.logs.length > 0) {
+        if (!forceFetch && hasSessionDetail(existing)) {
             return existing;
         }
 
-        // If not, fetch it
-        try {
-            const fetched = await fetchJson<AgentSession>(`/sessions/${sessionId}`);
-            setSessions(prev => {
-                const idx = prev.findIndex(s => s.id === sessionId);
-                if (idx === -1) return prev;
-                const next = [...prev];
-                next[idx] = fetched;
-                return next;
-            });
-            return fetched;
-        } catch (e) {
-            console.error(`Failed to fetch session ${sessionId}:`, e);
-            return null;
+        const inFlight = sessionDetailRequestsRef.current.get(sessionId);
+        if (inFlight) {
+            return inFlight;
         }
-    }, [sessions]);
+
+        // If not, fetch it
+        const request = (async () => {
+            try {
+                const fetched = await fetchJson<AgentSession>(`/sessions/${sessionId}`);
+                setSessions(prev => mergeSessionDetail(prev, fetched));
+                return fetched;
+            } catch (e) {
+                console.error(`Failed to fetch session ${sessionId}:`, e);
+                return null;
+            } finally {
+                sessionDetailRequestsRef.current.delete(sessionId);
+            }
+        })();
+
+        sessionDetailRequestsRef.current.set(sessionId, request);
+        return request;
+    }, []);
 
     const refreshDocuments = useCallback(async () => {
         try {

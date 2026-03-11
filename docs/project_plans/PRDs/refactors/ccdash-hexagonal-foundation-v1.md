@@ -41,7 +41,7 @@ context_files:
   - backend/routers/api.py
   - backend/routers/analytics.py
   - contexts/DataContext.tsx
-implementation_plan_ref: ""
+implementation_plan_ref: docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
 ---
 
 # PRD: CCDash Hexagonal Foundation V1
