@@ -1956,7 +1956,11 @@ async def get_artifacts(
 @analytics_router.get("/workflow-effectiveness", response_model=WorkflowEffectivenessResponse)
 async def workflow_effectiveness(
     period: str = Query("all", pattern="^(all|daily|weekly)$"),
-    scope_type: str | None = Query(None, alias="scopeType", pattern="^(workflow|agent|skill|context_module|stack)$"),
+    scope_type: str | None = Query(
+        None,
+        alias="scopeType",
+        pattern="^(workflow|effective_workflow|agent|skill|context_module|bundle|stack)$",
+    ),
     scope_id: str | None = Query(None, alias="scopeId"),
     feature_id: str | None = Query(None, alias="featureId"),
     start: str | None = None,
@@ -1996,7 +2000,11 @@ async def workflow_effectiveness(
 
 @analytics_router.get("/failure-patterns", response_model=FailurePatternResponse)
 async def failure_patterns(
-    scope_type: str | None = Query(None, alias="scopeType", pattern="^(workflow|agent|skill|context_module|stack)$"),
+    scope_type: str | None = Query(
+        None,
+        alias="scopeType",
+        pattern="^(workflow|effective_workflow|agent|skill|context_module|bundle|stack)$",
+    ),
     scope_id: str | None = Query(None, alias="scopeId"),
     feature_id: str | None = Query(None, alias="featureId"),
     start: str | None = None,

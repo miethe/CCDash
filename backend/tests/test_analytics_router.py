@@ -276,6 +276,29 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].patternType, "queue_waste")
         self.assertEqual(response.items[0].scopeId, "debug-loop")
 
+    def test_scope_validation_patterns_include_effective_workflow_and_bundle(self) -> None:
+        workflow_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/workflow-effectiveness"
+        )
+        failure_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/failure-patterns"
+        )
+
+        workflow_scope_param = next(param for param in workflow_route.dependant.query_params if param.alias == "scopeType")
+        failure_scope_param = next(param for param in failure_route.dependant.query_params if param.alias == "scopeType")
+
+        workflow_pattern = workflow_scope_param.field_info.metadata[0].pattern
+        failure_pattern = failure_scope_param.field_info.metadata[0].pattern
+
+        self.assertIn("effective_workflow", workflow_pattern)
+        self.assertIn("bundle", workflow_pattern)
+        self.assertIn("effective_workflow", failure_pattern)
+        self.assertIn("bundle", failure_pattern)
+
     async def test_workflow_effectiveness_endpoint_returns_503_when_disabled(self) -> None:
         project = types.SimpleNamespace(id="project-1")
 

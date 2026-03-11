@@ -897,10 +897,29 @@ async def _column_exists(db: aiosqlite.Connection, table: str, column: str) -> b
     return any(row[1] == column for row in rows)
 
 
+async def _table_exists(db: aiosqlite.Connection, table: str) -> bool:
+    async with db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table,),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
 async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, definition: str) -> None:
     if await _column_exists(db, table, column):
         return
     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+async def _ensure_column_if_table_exists(
+    db: aiosqlite.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    if not await _table_exists(db, table):
+        return
+    await _ensure_column(db, table, column, definition)
 
 
 async def _ensure_index(db: aiosqlite.Connection, ddl: str) -> None:
@@ -911,6 +930,12 @@ async def _ensure_test_visualizer_tables(db: aiosqlite.Connection) -> None:
     if not config.CCDASH_TEST_VISUALIZER_ENABLED:
         return
     await db.executescript(_TEST_VISUALIZER_TABLES)
+
+
+async def _prepare_legacy_tables_for_bootstrap(db: aiosqlite.Connection) -> None:
+    # Legacy v18 databases can have session_logs without source_log_id, but the
+    # main bootstrap script now creates indexes that depend on that column.
+    await _ensure_column_if_table_exists(db, "session_logs", "source_log_id", "TEXT DEFAULT ''")
 
 
 async def run_migrations(db: aiosqlite.Connection) -> None:
@@ -926,6 +951,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     should_record_version = current_version < SCHEMA_VERSION
     if should_record_version:
         logger.info(f"Running migrations: {current_version} → {SCHEMA_VERSION}")
+        await _prepare_legacy_tables_for_bootstrap(db)
         # Execute all CREATE TABLE statements
         await db.executescript(_TABLES)
     else:

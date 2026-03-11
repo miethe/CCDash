@@ -6,6 +6,7 @@ import aiosqlite
 from backend import config
 from backend.db.factory import (
     get_agentic_intelligence_repository,
+    get_entity_link_repository,
     get_session_repository,
     get_session_usage_repository,
     get_test_integrity_repository,
@@ -34,6 +35,7 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         self.session_repo = get_session_repository(self.db)
         self.usage_repo = get_session_usage_repository(self.db)
         self.intelligence_repo = get_agentic_intelligence_repository(self.db)
+        self.link_repo = get_entity_link_repository(self.db)
         self.test_run_repo = get_test_run_repository(self.db)
         self.integrity_repo = get_test_integrity_repository(self.db)
         source = await self.intelligence_repo.upsert_definition_source(
@@ -368,6 +370,35 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(effective_payload["items"][0]["scopeId"], "wf_project")
         self.assertEqual(bundle_payload["items"][0]["scopeId"], "bundle_python")
+
+    async def test_feature_scoped_rollups_include_feature_linked_sessions(self) -> None:
+        await self.link_repo.upsert(
+            {
+                "source_type": "feature",
+                "source_id": "execution-feature",
+                "target_type": "session",
+                "target_id": "session-1",
+                "link_type": "related",
+                "origin": "auto",
+                "confidence": 0.95,
+                "metadata_json": "{}",
+            }
+        )
+
+        payload = await get_workflow_effectiveness(
+            self.db,
+            self.project,
+            period="all",
+            scope_type="workflow",
+            feature_id="execution-feature",
+            recompute=True,
+            limit=20,
+            offset=0,
+        )
+
+        by_scope = {(item["scopeType"], item["scopeId"]): item for item in payload["items"]}
+        self.assertIn(("workflow", "phase-execution"), by_scope)
+        self.assertEqual(by_scope[("workflow", "phase-execution")]["sampleSize"], 1)
 
 
 if __name__ == "__main__":

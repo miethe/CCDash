@@ -8,6 +8,7 @@ from typing import Any
 
 from backend.db.factory import (
     get_agentic_intelligence_repository,
+    get_entity_link_repository,
     get_session_repository,
     get_test_integrity_repository,
     get_test_run_repository,
@@ -448,10 +449,9 @@ def _hydrate_rollup(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _load_hydrated_observations(repo: Any, project_id: str, feature_id: str | None) -> list[dict[str, Any]]:
+async def _load_hydrated_observations(repo: Any, project_id: str) -> list[dict[str, Any]]:
     observations = await repo.list_stack_observations(
         project_id,
-        feature_id=feature_id,
         limit=_MAX_SESSION_SCAN,
         offset=0,
     )
@@ -464,6 +464,22 @@ async def _load_hydrated_observations(repo: Any, project_id: str, feature_id: st
         if full_observation:
             hydrated.append(full_observation)
     return hydrated
+
+
+async def _feature_linked_session_ids(db: Any, feature_id: str) -> set[str]:
+    link_repo = get_entity_link_repository(db)
+    links = await link_repo.get_links_for("feature", feature_id, "related")
+    session_ids: set[str] = set()
+    for link in links:
+        source_type = str(link.get("source_type") or "").strip()
+        source_id = str(link.get("source_id") or "").strip()
+        target_type = str(link.get("target_type") or "").strip()
+        target_id = str(link.get("target_id") or "").strip()
+        if source_type == "session" and source_id:
+            session_ids.add(source_id)
+        if target_type == "session" and target_id:
+            session_ids.add(target_id)
+    return session_ids
 
 
 async def _collect_effectiveness_dataset(
@@ -505,7 +521,8 @@ async def _collect_effectiveness_dataset(
         "desc",
         session_filters,
     )
-    observations = await _load_hydrated_observations(intelligence_repo, project_id, feature_id)
+    linked_session_ids = await _feature_linked_session_ids(db, feature_id) if feature_id else set()
+    observations = await _load_hydrated_observations(intelligence_repo, project_id)
     observation_by_session = {
         str(observation.get("session_id") or ""): observation
         for observation in observations
@@ -517,8 +534,15 @@ async def _collect_effectiveness_dataset(
         session_id = str(row.get("id") or "")
         if not session_id or session_id not in observation_by_session:
             continue
-        if feature_id and str(row.get("task_id") or observation_by_session[session_id].get("feature_id") or "") != feature_id:
-            continue
+        if feature_id:
+            session_feature_id = str(row.get("task_id") or "").strip()
+            observation_feature_id = str(observation_by_session[session_id].get("feature_id") or "").strip()
+            if (
+                session_id not in linked_session_ids
+                and session_feature_id != feature_id
+                and observation_feature_id != feature_id
+            ):
+                continue
         filtered_sessions.append(row)
 
     filtered_session_ids = {str(row.get("id") or "") for row in filtered_sessions}
