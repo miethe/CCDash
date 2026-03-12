@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from backend import config
 from backend.models import (
-    AgentSession, PlanDocument, ProjectTask,
+    AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference,
     PaginatedResponse,
 )
 from backend.project_manager import project_manager
@@ -39,10 +42,14 @@ from backend.document_linking import (
 )
 from backend.date_utils import make_date_value
 from backend.services.agentic_intelligence_flags import usage_attribution_enabled
+from backend.services.integrations.github_settings_store import GitHubSettingsStore
+from backend.services.repo_workspaces.cache import RepoWorkspaceCache
+from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
+logger = logging.getLogger("ccdash.api")
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -1210,6 +1217,49 @@ async def delete_session_linked_feature(session_id: str, feature_id: str):
 documents_router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
+class DocumentUpdateRequest(BaseModel):
+    content: str
+    commitMessage: str = ""
+
+
+class DocumentUpdateResponse(BaseModel):
+    document: PlanDocument
+    writeMode: Literal["local", "github_repo"] = "local"
+    commitHash: str = ""
+    message: str = ""
+
+
+def _plan_docs_write_reference(project: Project) -> ProjectPathReference | None:
+    plan_docs = project.pathConfig.planDocs
+    root = project.pathConfig.root
+    if plan_docs.sourceKind == "github_repo" and plan_docs.repoRef is not None:
+        return plan_docs
+    if plan_docs.sourceKind == "project_root" and root.sourceKind == "github_repo" and root.repoRef is not None:
+        return root
+    return None
+
+
+async def _sync_changed_document_file(
+    request: Request,
+    project_id: str,
+    file_path: Path,
+    sessions_dir: Path,
+    docs_dir: Path,
+    progress_dir: Path,
+) -> None:
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine is None:
+        logger.warning("Sync engine not available in app state; relying on file watcher")
+        return
+    await sync_engine.sync_changed_files(
+        project_id,
+        [("modified", file_path)],
+        sessions_dir,
+        docs_dir,
+        progress_dir,
+    )
+
+
 def _map_document_row_to_model(row: dict, include_content: bool = False, link_counts: dict | None = None) -> PlanDocument:
     fm = _safe_json(row.get("frontmatter_json"))
     metadata = _safe_json(row.get("metadata_json"))
@@ -1632,6 +1682,111 @@ async def get_document(doc_id: str):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
     return _map_document_row_to_model(row, include_content=True, link_counts=None)
+
+
+@documents_router.put("/{doc_id}", response_model=DocumentUpdateResponse)
+async def update_document(doc_id: str, req: DocumentUpdateRequest, request: Request):
+    """Update a plan document through the local path or managed GitHub workspace."""
+    active_project = project_manager.get_active_project()
+    if not active_project:
+        raise HTTPException(status_code=404, detail="No active project")
+
+    db = await connection.get_connection()
+    repo = get_document_repository(db)
+
+    row = await repo.get_by_id(doc_id)
+    if not row:
+        row = await repo.get_by_path(active_project.id, doc_id)
+    if not row and doc_id.startswith("DOC-"):
+        legacy_hint = doc_id[4:]
+        candidate_path = normalize_ref_path(legacy_hint.replace("-", "/"))
+        if candidate_path:
+            row = await repo.get_by_path(active_project.id, candidate_path)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    root_kind = str(row.get("root_kind") or "document")
+    if root_kind != "project_plans":
+        raise HTTPException(status_code=400, detail="Only plan documents can be updated in this flow.")
+
+    source_file = Path(str(row.get("source_file") or "")).expanduser()
+    if not str(source_file):
+        raise HTTPException(status_code=400, detail="The document does not have a writable source file.")
+
+    bundle = project_manager.get_active_path_bundle()
+    source_file = source_file.resolve(strict=False)
+    try:
+        source_file.relative_to(bundle.plan_docs.path.resolve(strict=False))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="The document source file is outside the resolved plan-docs path.") from exc
+
+    content = str(req.content or "").replace("\r\n", "\n")
+    write_mode: Literal["local", "github_repo"] = "local"
+    commit_hash = ""
+    message = "Document saved locally."
+
+    repo_reference = _plan_docs_write_reference(active_project)
+    if repo_reference is not None:
+        settings = GitHubSettingsStore().load()
+        repo_ref = repo_reference.repoRef
+        token_configured = bool(str(settings.token or "").strip())
+        if repo_ref is None:
+            raise HTTPException(status_code=400, detail="GitHub-backed plan docs require a repository reference.")
+        if not settings.enabled:
+            raise HTTPException(status_code=403, detail="GitHub integration is disabled.")
+        if not settings.writeEnabled:
+            raise HTTPException(status_code=403, detail="GitHub write support is disabled in integration settings.")
+        if not repo_ref.writeEnabled:
+            raise HTTPException(status_code=403, detail="GitHub writes are disabled for this project path.")
+        if not token_configured:
+            raise HTTPException(status_code=403, detail="A GitHub token is required for write-backed plan documents.")
+
+        manager = RepoWorkspaceManager(RepoWorkspaceCache(Path(settings.cacheRoot or config.REPO_WORKSPACE_CACHE_DIR).expanduser()))
+        try:
+            workspace_root = manager.ensure_workspace(repo_ref, settings, refresh=False)
+            repo_relative_path = str(source_file.relative_to(workspace_root.resolve(strict=False))).replace("\\", "/")
+            commit_hash = manager.write_file_and_push(
+                repo_ref,
+                settings,
+                workspace_relative_path=repo_relative_path,
+                content=content,
+                commit_message=str(req.commitMessage or "").strip() or f"ccdash: update plan document {row.get('file_path') or doc_id}",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="The plan document is not inside the managed repository workspace.") from exc
+        except RepoWorkspaceError as exc:
+            status_code = 403 if exc.code in {"auth_failure", "write_not_allowed"} else 400
+            raise HTTPException(status_code=status_code, detail=exc.detail) from exc
+
+        write_mode = "github_repo"
+        message = "Document saved and pushed via managed GitHub workspace."
+    else:
+        source_file.write_text(content, encoding="utf-8")
+
+    await _sync_changed_document_file(
+        request,
+        active_project.id,
+        source_file,
+        bundle.sessions.path,
+        bundle.plan_docs.path,
+        bundle.progress.path,
+    )
+
+    refreshed_row = await repo.get_by_id(str(row.get("id") or doc_id))
+    document = (
+        _map_document_row_to_model(refreshed_row, include_content=True, link_counts=None)
+        if refreshed_row
+        else _map_document_row_to_model({**dict(row), "content": content}, include_content=True, link_counts=None)
+    )
+    if document.content != content:
+        document = document.model_copy(update={"content": content})
+
+    return DocumentUpdateResponse(
+        document=document,
+        writeMode=write_mode,
+        commitHash=commit_hash,
+        message=message,
+    )
 
 
 # ── Tasks router ────────────────────────────────────────────────────
