@@ -8,17 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/claude-code-session-context-and-c
 plan_ref: /docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md
 phase: 2
 title: "Context signal capture and historical enrichment"
-status: "pending"
-started: ""
-completed: ""
-commit_refs: []
+status: "completed"
+started: "2026-03-12"
+completed: "2026-03-12"
+commit_refs: ["bc5ccaf"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "pending"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "CCO-2.1"
     description: "Capture hook-provided context_window and cumulative cost data from Claude session sidecars when present."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: []
     estimated_effort: "2pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "CCO-2.2"
     description: "Add transcript fallback logic that derives latest live context occupancy from assistant usage records."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["CCO-2.1"]
     estimated_effort: "2pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "CCO-2.3"
     description: "Persist context source and measurement timestamp through parser and sync-engine backfills."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-2.1", "CCO-2.2"]
     estimated_effort: "2pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "CCO-2.4"
     description: "Add idempotent historical backfill coverage for context observability fields."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: ["CCO-2.3"]
     estimated_effort: "2pt"

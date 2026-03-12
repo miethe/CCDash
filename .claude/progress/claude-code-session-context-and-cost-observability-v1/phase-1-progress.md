@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/enhancements/claude-code-session-context-and-c
 plan_ref: /docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md
 phase: 1
 title: "Persistence contract and type updates"
-status: "in_progress"
+status: "completed"
 started: "2026-03-12"
-completed: ""
-commit_refs: []
+completed: "2026-03-12"
+commit_refs: ["07b33b5"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "in progress"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 5
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 5
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "CCO-1.1"
     description: "Add session context and cost provenance columns in SQLite and PostgreSQL migrations."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: []
     estimated_effort: "2pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "CCO-1.2"
     description: "Add a project-scoped pricing catalog table with query-friendly indexes and sync metadata."
-    status: "pending"
+    status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: []
     estimated_effort: "2pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "CCO-1.3"
     description: "Extend backend models and repository protocols for the new session observability and pricing catalog fields."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-1.1", "CCO-1.2"]
     estimated_effort: "2pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "CCO-1.4"
     description: "Round-trip the new fields through SQLite and PostgreSQL repositories."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-1.1", "CCO-1.2", "CCO-1.3"]
     estimated_effort: "2pt"
@@ -61,7 +61,7 @@ tasks:
 
   - id: "CCO-1.5"
     description: "Add migration and repository coverage for the new schema contract."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-1.4"]
     estimated_effort: "2pt"
