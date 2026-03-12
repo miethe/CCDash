@@ -747,6 +747,18 @@ export interface PlanDocument {
   timeline?: TimelineEvent[];
 }
 
+export interface DocumentUpdateRequest {
+  content: string;
+  commitMessage?: string;
+}
+
+export interface DocumentUpdateResponse {
+  document: PlanDocument;
+  writeMode: 'local' | 'github_repo';
+  commitHash: string;
+  message: string;
+}
+
 export interface LinkedFeatureRef {
   feature: string;
   type?: string;
