@@ -62,6 +62,25 @@ def _serialize_entry(entry: dict[str, Any], project_id: str) -> dict[str, Any]:
     }
 
 
+def _should_apply_fast_multiplier(session_payload: dict[str, Any]) -> bool:
+    forensics = session_payload.get("sessionForensics") or session_payload.get("session_forensics_json") or {}
+    if not isinstance(forensics, dict):
+        return False
+    usage_summary = forensics.get("usageSummary") or {}
+    if not isinstance(usage_summary, dict):
+        return False
+    speed_counts = usage_summary.get("speedCounts") or {}
+    if not isinstance(speed_counts, dict):
+        return False
+    normalized = {
+        str(key or "").strip().lower(): _normalize_int(value) or 0
+        for key, value in speed_counts.items()
+    }
+    fast_count = int(normalized.get("fast") or 0)
+    non_fast_count = sum(count for key, count in normalized.items() if key and key != "fast")
+    return fast_count > 0 and non_fast_count == 0
+
+
 def _bundled_claude_code_entries() -> list[dict[str, Any]]:
     entries = [
         {
@@ -304,6 +323,7 @@ class PricingCatalogService:
             output_rate = _normalize_float(pricing_entry.get("outputCostPerMillion"))
             cache_creation_rate = _normalize_float(pricing_entry.get("cacheCreationCostPerMillion"))
             cache_read_rate = _normalize_float(pricing_entry.get("cacheReadCostPerMillion"))
+            speed_multiplier_fast = _normalize_float(pricing_entry.get("speedMultiplierFast")) or 1.0
             input_tokens = int(session_payload.get("tokensIn") or session_payload.get("tokens_in") or 0)
             output_tokens = int(session_payload.get("tokensOut") or session_payload.get("tokens_out") or 0)
             cache_creation_tokens = int(
@@ -322,11 +342,14 @@ class PricingCatalogService:
                 or (cache_read_tokens > 0 and cache_read_rate is None)
             )
             if not missing_required_rates and not missing_cache_rates:
+                multiplier = speed_multiplier_fast if _should_apply_fast_multiplier(session_payload) else 1.0
                 recalculated_cost_usd = round(
-                    (input_tokens / 1_000_000.0) * float(input_rate or 0.0)
-                    + (output_tokens / 1_000_000.0) * float(output_rate or 0.0)
-                    + (cache_creation_tokens / 1_000_000.0) * float(cache_creation_rate or 0.0)
-                    + (cache_read_tokens / 1_000_000.0) * float(cache_read_rate or 0.0),
+                    (
+                        (input_tokens / 1_000_000.0) * float(input_rate or 0.0)
+                        + (output_tokens / 1_000_000.0) * float(output_rate or 0.0)
+                        + (cache_creation_tokens / 1_000_000.0) * float(cache_creation_rate or 0.0)
+                        + (cache_read_tokens / 1_000_000.0) * float(cache_read_rate or 0.0)
+                    ) * multiplier,
                     6,
                 )
 

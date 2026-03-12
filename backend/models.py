@@ -438,6 +438,52 @@ class PricingCatalogSyncResponse(BaseModel):
     entries: list[PricingCatalogEntry] = Field(default_factory=list)
 
 
+class SessionCostCalibrationProvenanceCount(BaseModel):
+    provenance: str = "unknown"
+    count: int = 0
+    displayCostUsd: float = 0.0
+
+
+class SessionCostCalibrationMismatchBand(BaseModel):
+    band: str = "unknown"
+    count: int = 0
+
+
+class SessionCostCalibrationGroup(BaseModel):
+    label: str = ""
+    sessionCount: int = 0
+    comparableSessionCount: int = 0
+    avgMismatchPct: float = 0.0
+    maxMismatchPct: float = 0.0
+    avgConfidence: float = 0.0
+    displayCostUsd: float = 0.0
+    reportedCostUsd: float = 0.0
+    recalculatedCostUsd: float = 0.0
+    provenanceCounts: list[SessionCostCalibrationProvenanceCount] = Field(default_factory=list)
+
+
+class SessionCostCalibrationSummary(BaseModel):
+    projectId: str = ""
+    sessionCount: int = 0
+    comparableSessionCount: int = 0
+    reportedSessionCount: int = 0
+    recalculatedSessionCount: int = 0
+    mismatchSessionCount: int = 0
+    comparableCoveragePct: float = 0.0
+    avgCostConfidence: float = 0.0
+    avgMismatchPct: float = 0.0
+    maxMismatchPct: float = 0.0
+    totalDisplayCostUsd: float = 0.0
+    totalReportedCostUsd: float = 0.0
+    totalRecalculatedCostUsd: float = 0.0
+    provenanceCounts: list[SessionCostCalibrationProvenanceCount] = Field(default_factory=list)
+    mismatchBands: list[SessionCostCalibrationMismatchBand] = Field(default_factory=list)
+    byModel: list[SessionCostCalibrationGroup] = Field(default_factory=list)
+    byModelVersion: list[SessionCostCalibrationGroup] = Field(default_factory=list)
+    byPlatformVersion: list[SessionCostCalibrationGroup] = Field(default_factory=list)
+    generatedAt: str = ""
+
+
 # ── Document-related models ────────────────────────────────────────
 
 class DocumentFrontmatter(BaseModel):
