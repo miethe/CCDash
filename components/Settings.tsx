@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette } from 'lucide-react';
+import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette, Bot } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
 import { AlertConfig, PricingCatalogEntry, PricingCatalogUpsertRequest, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
@@ -11,7 +11,7 @@ import { getTestSourcesStatus, syncTestSources } from '../services/testVisualize
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
 
-type SettingsTab = 'general' | 'projects' | 'alerts';
+type SettingsTab = 'general' | 'projects' | 'ai-platforms' | 'alerts';
 
 const SKILLMEAT_SETUP_COMMANDS: string[] = [
   'pytest -v --junitxml test-results/pytest-junit.xml --cov=skillmeat --cov-report=xml --cov-report=json',
@@ -47,6 +47,7 @@ const SkillMeatStatusBadge: React.FC<{
 };
 
 const DEFAULT_PRICING_PLATFORM = 'Claude Code';
+const PRICING_PLATFORMS = ['Claude Code', 'Codex'] as const;
 
 const parseOptionalNumber = (value: string): number | null => {
   const trimmed = value.trim();
@@ -59,6 +60,9 @@ const createPricingDraft = (platformType = DEFAULT_PRICING_PLATFORM): PricingCat
   projectId: '',
   platformType,
   modelId: '',
+  displayLabel: '',
+  entryKind: 'model',
+  familyId: '',
   contextWindowSize: null,
   inputCostPerMillion: null,
   outputCostPerMillion: null,
@@ -70,9 +74,40 @@ const createPricingDraft = (platformType = DEFAULT_PRICING_PLATFORM): PricingCat
   overrideLocked: false,
   syncStatus: 'manual',
   syncError: '',
+  derivedFrom: '',
+  isPersisted: false,
+  isDetected: false,
+  isRequiredDefault: false,
+  canDelete: false,
   createdAt: '',
   updatedAt: '',
 });
+
+const formatPricingTimestamp = (value: string): string => {
+  if (!value) return 'unknown';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+};
+
+const pricingEntryTitle = (entry: PricingCatalogEntry): string => {
+  if (entry.displayLabel?.trim()) return entry.displayLabel;
+  if (entry.modelId?.trim()) return entry.modelId;
+  return 'Platform Default';
+};
+
+const pricingEntryMeta = (entry: PricingCatalogEntry): string => {
+  const parts = [
+    entry.entryKind.replace(/_/g, ' '),
+    entry.sourceType || 'manual',
+    entry.syncStatus || 'manual',
+    `updated ${formatPricingTimestamp(entry.sourceUpdatedAt)}`,
+  ];
+  if (entry.isDetected && entry.derivedFrom) {
+    parts.push(`derived from ${entry.derivedFrom}`);
+  }
+  return parts.join(' · ');
+};
 
 // ── Tab Button ─────────────────────────────────────────────────────
 
@@ -337,10 +372,449 @@ const GeneralTab: React.FC = () => {
   );
 };
 
+const PricingEntryCard: React.FC<{
+  entry: PricingCatalogEntry;
+  index: number;
+  saving: boolean;
+  onChange: (index: number, updater: (entry: PricingCatalogEntry) => PricingCatalogEntry) => void;
+  onSave: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+  onReset: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+  onDelete: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+}> = ({ entry, index, saving, onChange, onSave, onReset, onDelete }) => {
+  const allowModelIdEdit = !entry.isPersisted && !entry.isDetected && !entry.isRequiredDefault;
+  const canRemoveDraft = !entry.isPersisted && !entry.isDetected && !entry.isRequiredDefault;
+  const showDelete = entry.canDelete || canRemoveDraft;
+  const showReset = entry.isPersisted;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-200">{pricingEntryTitle(entry)}</div>
+          <div className="text-xs text-slate-500">{pricingEntryMeta(entry)}</div>
+        </div>
+        <label className="inline-flex items-center gap-2 text-xs text-slate-300">
+          <input
+            type="checkbox"
+            checked={Boolean(entry.overrideLocked)}
+            onChange={e => onChange(index, current => ({ ...current, overrideLocked: e.target.checked }))}
+            className="h-4 w-4"
+          />
+          Lock Override
+        </label>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Model ID / Scope</span>
+          <input
+            type="text"
+            value={entry.modelId || ''}
+            readOnly={!allowModelIdEdit}
+            onChange={e => onChange(index, current => ({ ...current, modelId: e.target.value, displayLabel: '' }))}
+            className={`w-full rounded-lg border px-3 py-2 text-sm font-mono ${allowModelIdEdit ? 'bg-slate-950 border-slate-700 text-slate-200 focus:outline-none focus:border-indigo-500' : 'bg-slate-900/70 border-slate-800 text-slate-400 cursor-not-allowed'}`}
+            placeholder={entry.entryKind === 'platform_default' ? '(platform default)' : 'claude-sonnet-4-6'}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Context Window</span>
+          <input
+            type="number"
+            value={entry.contextWindowSize ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, contextWindowSize: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Input / 1M</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={entry.inputCostPerMillion ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, inputCostPerMillion: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Output / 1M</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={entry.outputCostPerMillion ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, outputCostPerMillion: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Cache Create / 1M</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={entry.cacheCreationCostPerMillion ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, cacheCreationCostPerMillion: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Cache Read / 1M</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={entry.cacheReadCostPerMillion ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, cacheReadCostPerMillion: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-slate-400">Fast Multiplier</span>
+          <input
+            type="number"
+            step="0.01"
+            value={entry.speedMultiplierFast ?? ''}
+            onChange={e => onChange(index, current => ({ ...current, speedMultiplierFast: parseOptionalNumber(e.target.value) }))}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          />
+        </label>
+      </div>
+
+      {entry.syncError && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          {entry.syncError}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {showDelete && (
+          <button
+            type="button"
+            onClick={() => void onDelete(entry, index)}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-200 disabled:opacity-50"
+          >
+            <Trash2 size={12} />
+            {entry.canDelete ? 'Delete Override' : 'Remove Draft'}
+          </button>
+        )}
+        {showReset && (
+          <button
+            type="button"
+            onClick={() => void onReset(entry, index)}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 disabled:opacity-50"
+          >
+            Reset
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void onSave(entry, index)}
+          disabled={saving}
+          className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-50"
+        >
+          <Save size={12} />
+          {saving ? 'Saving...' : entry.isPersisted ? 'Save Override' : 'Save Pricing'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const PricingSection: React.FC<{
+  title: string;
+  description: string;
+  entries: Array<{ entry: PricingCatalogEntry; rowIndex: number }>;
+  pricingSavingKey: string;
+  onChange: (index: number, updater: (entry: PricingCatalogEntry) => PricingCatalogEntry) => void;
+  onSave: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+  onReset: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+  onDelete: (entry: PricingCatalogEntry, index: number) => Promise<void>;
+  emptyText: string;
+}> = ({ title, description, entries, pricingSavingKey, onChange, onSave, onReset, onDelete, emptyText }) => (
+  <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+    <div>
+      <h4 className="text-sm font-semibold text-slate-200">{title}</h4>
+      <p className="text-xs text-slate-500 mt-1">{description}</p>
+    </div>
+
+    {entries.length === 0 ? (
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-500">
+        {emptyText}
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {entries.map(({ entry, rowIndex }) => {
+          const rowKey = `${entry.modelId || 'platform-default'}:${rowIndex}`;
+          return (
+            <PricingEntryCard
+              key={`${title}:${rowKey}`}
+              entry={entry}
+              index={rowIndex}
+              saving={pricingSavingKey === rowKey}
+              onChange={onChange}
+              onSave={onSave}
+              onReset={onReset}
+              onDelete={onDelete}
+            />
+          );
+        })}
+      </div>
+    )}
+  </div>
+);
+
+const AIPlatformsTab: React.FC = () => {
+  const { projects } = useData();
+  const [pricingPlatform, setPricingPlatform] = useState(DEFAULT_PRICING_PLATFORM);
+  const [pricingEntries, setPricingEntries] = useState<PricingCatalogEntry[]>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [pricingMessage, setPricingMessage] = useState<string | null>(null);
+  const [pricingSavingKey, setPricingSavingKey] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPricing = async () => {
+      setPricingLoading(true);
+      setPricingError(null);
+      try {
+        const entries = await pricingService.getPricingCatalog(pricingPlatform);
+        if (!cancelled) setPricingEntries(entries);
+      } catch (e: any) {
+        if (!cancelled) setPricingError(e?.message || 'Failed to load pricing catalog');
+      } finally {
+        if (!cancelled) setPricingLoading(false);
+      }
+    };
+    void loadPricing();
+    return () => {
+      cancelled = true;
+    };
+  }, [pricingPlatform]);
+
+  const updatePricingEntry = (index: number, updater: (entry: PricingCatalogEntry) => PricingCatalogEntry) => {
+    setPricingEntries(prev => prev.map((entry, idx) => (idx === index ? updater(entry) : entry)));
+    setPricingMessage(null);
+    setPricingError(null);
+  };
+
+  const upsertPayloadFromEntry = (entry: PricingCatalogEntry): PricingCatalogUpsertRequest => ({
+    platformType: entry.platformType || pricingPlatform,
+    modelId: entry.modelId || '',
+    contextWindowSize: entry.contextWindowSize ?? null,
+    inputCostPerMillion: entry.inputCostPerMillion ?? null,
+    outputCostPerMillion: entry.outputCostPerMillion ?? null,
+    cacheCreationCostPerMillion: entry.cacheCreationCostPerMillion ?? null,
+    cacheReadCostPerMillion: entry.cacheReadCostPerMillion ?? null,
+    speedMultiplierFast: entry.speedMultiplierFast ?? null,
+    sourceType: 'manual',
+    sourceUpdatedAt: '',
+    overrideLocked: entry.overrideLocked,
+    syncStatus: 'manual',
+    syncError: '',
+  });
+
+  const reloadPricingCatalog = async () => {
+    const entries = await pricingService.getPricingCatalog(pricingPlatform);
+    setPricingEntries(entries);
+  };
+
+  const handleSavePricingEntry = async (entry: PricingCatalogEntry, index: number) => {
+    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+    setPricingSavingKey(rowKey);
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      await pricingService.upsertPricingCatalogEntry(upsertPayloadFromEntry(entry));
+      await reloadPricingCatalog();
+      setPricingMessage(`Saved pricing override for ${entry.modelId || 'platform default'}.`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to save pricing entry');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const handleResetPricingEntry = async (entry: PricingCatalogEntry, index: number) => {
+    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+    setPricingSavingKey(rowKey);
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      await pricingService.resetPricingCatalogEntry(entry.platformType || pricingPlatform, entry.modelId || '');
+      await reloadPricingCatalog();
+      setPricingMessage(`Reset pricing for ${entry.modelId || 'platform default'}.`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to reset pricing entry');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const handleDeletePricingEntry = async (entry: PricingCatalogEntry, index: number) => {
+    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+    setPricingSavingKey(rowKey);
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      if (entry.canDelete) {
+        await pricingService.deletePricingCatalogEntry(entry.platformType || pricingPlatform, entry.modelId || '');
+        await reloadPricingCatalog();
+        setPricingMessage(`Deleted pricing override for ${entry.modelId}.`);
+      } else {
+        setPricingEntries(prev => prev.filter((_, currentIndex) => currentIndex !== index));
+      }
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to delete pricing entry');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const handleSyncPricing = async () => {
+    setPricingSavingKey('sync');
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      const response = await pricingService.syncPricingCatalog(pricingPlatform);
+      setPricingEntries(response.entries || []);
+      setPricingMessage(`Synced ${response.updatedEntries} pricing rows.${response.warnings.length ? ` ${response.warnings.join(' ')}` : ''}`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to sync pricing catalog');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const indexedEntries = pricingEntries.map((entry, rowIndex) => ({ entry, rowIndex }));
+  const platformDefaults = indexedEntries.filter(({ entry }) => entry.entryKind === 'platform_default');
+  const familyDefaults = indexedEntries.filter(({ entry }) => entry.entryKind === 'family_default');
+  const exactEntries = indexedEntries.filter(({ entry }) => entry.entryKind === 'model');
+  const detectedEntries = exactEntries.filter(({ entry }) => entry.isDetected && !entry.isPersisted);
+  const exactOverrideEntries = exactEntries.filter(({ entry }) => !entry.isDetected);
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="bg-cyan-500/10 p-2 rounded-lg text-cyan-300">
+            <Bot size={20} />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-100">AI Platforms</h3>
+            <p className="text-sm text-slate-400">
+              Manage platform defaults, family pricing, detected exact models, and manual overrides across all configured projects.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">
+          Detected rows are synthesized from synced sessions across {projects.length} configured project{projects.length === 1 ? '' : 's'}. Sync uses provider pricing when available and falls back to bundled defaults so catalog edits stay offline-safe.
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs text-slate-400">Platform</span>
+            <select
+              value={pricingPlatform}
+              onChange={e => setPricingPlatform(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              {PRICING_PLATFORMS.map(platform => (
+                <option key={platform} value={platform}>{platform}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={handleSyncPricing}
+            disabled={pricingSavingKey === 'sync'}
+            className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={pricingSavingKey === 'sync' ? 'animate-spin' : ''} />
+            {pricingSavingKey === 'sync' ? 'Syncing...' : 'Sync Provider Prices'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPricingEntries(prev => [...prev, createPricingDraft(pricingPlatform)])}
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200"
+          >
+            <Plus size={12} />
+            Add Model Override
+          </button>
+        </div>
+
+        {pricingMessage && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+            {pricingMessage}
+          </div>
+        )}
+        {pricingError && (
+          <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+            {pricingError}
+          </div>
+        )}
+      </div>
+
+      {pricingLoading ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-400">
+          Loading pricing catalog...
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <PricingSection
+            title="Platform Defaults"
+            description="Fallback rows used when no exact model or family-specific pricing is available."
+            entries={platformDefaults}
+            pricingSavingKey={pricingSavingKey}
+            onChange={updatePricingEntry}
+            onSave={handleSavePricingEntry}
+            onReset={handleResetPricingEntry}
+            onDelete={handleDeletePricingEntry}
+            emptyText="No platform defaults are available for this platform."
+          />
+          <PricingSection
+            title="Model Families"
+            description="Shared pricing for families like Sonnet, Opus, Haiku, and Codex."
+            entries={familyDefaults}
+            pricingSavingKey={pricingSavingKey}
+            onChange={updatePricingEntry}
+            onSave={handleSavePricingEntry}
+            onReset={handleResetPricingEntry}
+            onDelete={handleDeletePricingEntry}
+            emptyText="No family defaults are available for this platform."
+          />
+          <PricingSection
+            title="Detected Models"
+            description="Auto-created exact models discovered in synced sessions. Save a row to pin an exact override."
+            entries={detectedEntries}
+            pricingSavingKey={pricingSavingKey}
+            onChange={updatePricingEntry}
+            onSave={handleSavePricingEntry}
+            onReset={handleResetPricingEntry}
+            onDelete={handleDeletePricingEntry}
+            emptyText="No detected models yet. Run a session sync for projects that use this platform."
+          />
+          <PricingSection
+            title="Exact Entries And Overrides"
+            description="Persisted exact-version rows from provider sync and manual overrides. New drafts appear here until you save or remove them."
+            entries={exactOverrideEntries}
+            pricingSavingKey={pricingSavingKey}
+            onChange={updatePricingEntry}
+            onSave={handleSavePricingEntry}
+            onReset={handleResetPricingEntry}
+            onDelete={handleDeletePricingEntry}
+            emptyText="No exact-version entries or overrides for this platform."
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Projects Tab ───────────────────────────────────────────────────
 
 const ProjectsTab: React.FC = () => {
-  const { projects, activeProject, updateProject, switchProject } = useData();
+  const { projects, activeProject, updateProject } = useData();
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
   const [editData, setEditData] = useState<Project | null>(null);
   const [saving, setSaving] = useState(false);
@@ -360,12 +834,6 @@ const ProjectsTab: React.FC = () => {
   const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
   const [skillMeatRefreshMessage, setSkillMeatRefreshMessage] = useState<string | null>(null);
   const [skillMeatRefreshError, setSkillMeatRefreshError] = useState<string | null>(null);
-  const [pricingPlatform, setPricingPlatform] = useState(DEFAULT_PRICING_PLATFORM);
-  const [pricingEntries, setPricingEntries] = useState<PricingCatalogEntry[]>([]);
-  const [pricingLoading, setPricingLoading] = useState(false);
-  const [pricingError, setPricingError] = useState<string | null>(null);
-  const [pricingMessage, setPricingMessage] = useState<string | null>(null);
-  const [pricingSavingKey, setPricingSavingKey] = useState<string>('');
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -401,37 +869,10 @@ const ProjectsTab: React.FC = () => {
       setSkillMeatValidationError(null);
       setSkillMeatRefreshMessage(null);
       setSkillMeatRefreshError(null);
-      setPricingError(null);
-      setPricingMessage(null);
     }
   }, [selectedProjectId, projects]);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
-  const pricingEnabled = Boolean(activeProject && selectedProjectId === activeProject.id);
-
-  useEffect(() => {
-    if (!pricingEnabled) {
-      setPricingEntries([]);
-      return;
-    }
-    let cancelled = false;
-    const loadPricing = async () => {
-      setPricingLoading(true);
-      setPricingError(null);
-      try {
-        const entries = await pricingService.getPricingCatalog(pricingPlatform);
-        if (!cancelled) setPricingEntries(entries);
-      } catch (e: any) {
-        if (!cancelled) setPricingError(e?.message || 'Failed to load pricing catalog');
-      } finally {
-        if (!cancelled) setPricingLoading(false);
-      }
-    };
-    void loadPricing();
-    return () => {
-      cancelled = true;
-    };
-  }, [pricingEnabled, pricingPlatform]);
 
   const handleFieldChange = (field: keyof Project, value: string) => {
     if (!editData) return;
@@ -604,80 +1045,6 @@ const ProjectsTab: React.FC = () => {
     }
   };
 
-  const updatePricingEntry = (index: number, updater: (entry: PricingCatalogEntry) => PricingCatalogEntry) => {
-    setPricingEntries(prev => prev.map((entry, idx) => (idx === index ? updater(entry) : entry)));
-    setPricingMessage(null);
-    setPricingError(null);
-  };
-
-  const upsertPayloadFromEntry = (entry: PricingCatalogEntry): PricingCatalogUpsertRequest => ({
-    platformType: entry.platformType || pricingPlatform,
-    modelId: entry.modelId || '',
-    contextWindowSize: entry.contextWindowSize ?? null,
-    inputCostPerMillion: entry.inputCostPerMillion ?? null,
-    outputCostPerMillion: entry.outputCostPerMillion ?? null,
-    cacheCreationCostPerMillion: entry.cacheCreationCostPerMillion ?? null,
-    cacheReadCostPerMillion: entry.cacheReadCostPerMillion ?? null,
-    speedMultiplierFast: entry.speedMultiplierFast ?? null,
-    sourceType: entry.sourceType || 'manual',
-    sourceUpdatedAt: entry.sourceUpdatedAt || '',
-    overrideLocked: entry.overrideLocked,
-    syncStatus: entry.syncStatus || 'manual',
-    syncError: entry.syncError || '',
-  });
-
-  const reloadPricingCatalog = async () => {
-    const entries = await pricingService.getPricingCatalog(pricingPlatform);
-    setPricingEntries(entries);
-  };
-
-  const handleSavePricingEntry = async (entry: PricingCatalogEntry, index: number) => {
-    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
-    setPricingSavingKey(rowKey);
-    setPricingError(null);
-    setPricingMessage(null);
-    try {
-      await pricingService.upsertPricingCatalogEntry(upsertPayloadFromEntry(entry));
-      await reloadPricingCatalog();
-      setPricingMessage(`Saved pricing for ${entry.modelId || 'platform default'}.`);
-    } catch (e: any) {
-      setPricingError(e?.message || 'Failed to save pricing entry');
-    } finally {
-      setPricingSavingKey('');
-    }
-  };
-
-  const handleResetPricingEntry = async (entry: PricingCatalogEntry, index: number) => {
-    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
-    setPricingSavingKey(rowKey);
-    setPricingError(null);
-    setPricingMessage(null);
-    try {
-      await pricingService.resetPricingCatalogEntry(entry.platformType || pricingPlatform, entry.modelId || '');
-      await reloadPricingCatalog();
-      setPricingMessage(`Reset pricing for ${entry.modelId || 'platform default'}.`);
-    } catch (e: any) {
-      setPricingError(e?.message || 'Failed to reset pricing entry');
-    } finally {
-      setPricingSavingKey('');
-    }
-  };
-
-  const handleSyncPricing = async () => {
-    setPricingSavingKey('sync');
-    setPricingError(null);
-    setPricingMessage(null);
-    try {
-      const response = await pricingService.syncPricingCatalog(pricingPlatform);
-      setPricingEntries(response.entries || []);
-      setPricingMessage(`Synced ${response.updatedEntries} pricing rows.${response.warnings.length ? ` ${response.warnings.join(' ')}` : ''}`);
-    } catch (e: any) {
-      setPricingError(e?.message || 'Failed to sync pricing catalog');
-    } finally {
-      setPricingSavingKey('');
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Project Selector */}
@@ -814,207 +1181,6 @@ const ProjectsTab: React.FC = () => {
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">LOCKED</span>
               </div>
               <p className="text-xs text-slate-500 mt-1">Only Claude Code is supported at this time.</p>
-            </div>
-
-            <div className="border-t border-slate-800 pt-5 space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-1">Pricing Catalog</h4>
-                  <p className="text-xs text-slate-500">
-                    Configure project-scoped platform defaults, model overrides, sync state, and freshness metadata for display-cost recalculation.
-                  </p>
-                </div>
-                {!pricingEnabled && activeProject && selectedProjectId !== activeProject.id && (
-                  <button
-                    type="button"
-                    onClick={() => void switchProject(selectedProjectId)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200"
-                  >
-                    <RefreshCw size={12} />
-                    Switch Active Project
-                  </button>
-                )}
-              </div>
-
-              {!pricingEnabled ? (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  Pricing catalog edits are scoped to the active project. Select the active project above or switch it before editing pricing.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="block">
-                      <span className="mb-1 block text-xs text-slate-400">Platform</span>
-                      <select
-                        value={pricingPlatform}
-                        onChange={e => setPricingPlatform(e.target.value)}
-                        className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value={DEFAULT_PRICING_PLATFORM}>{DEFAULT_PRICING_PLATFORM}</option>
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleSyncPricing}
-                      disabled={pricingSavingKey === 'sync'}
-                      className="mt-5 inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
-                    >
-                      <RefreshCw size={12} className={pricingSavingKey === 'sync' ? 'animate-spin' : ''} />
-                      {pricingSavingKey === 'sync' ? 'Syncing...' : 'Sync Platform Prices'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPricingEntries(prev => [...prev, createPricingDraft(pricingPlatform)])}
-                      className="mt-5 inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200"
-                    >
-                      <Plus size={12} />
-                      Add Model Override
-                    </button>
-                  </div>
-
-                  {pricingMessage && (
-                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                      {pricingMessage}
-                    </div>
-                  )}
-                  {pricingError && (
-                    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                      {pricingError}
-                    </div>
-                  )}
-                  {pricingLoading ? (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-400">
-                      Loading pricing catalog...
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {pricingEntries.map((entry, index) => {
-                        const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
-                        const savingRow = pricingSavingKey === rowKey;
-                        return (
-                          <div key={rowKey} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <div className="text-sm font-medium text-slate-200">{entry.modelId || 'Platform Default'}</div>
-                                <div className="text-xs text-slate-500">
-                                  {entry.sourceType || 'manual'} · {entry.syncStatus || 'manual'} · updated {entry.sourceUpdatedAt || 'unknown'}
-                                </div>
-                              </div>
-                              <label className="inline-flex items-center gap-2 text-xs text-slate-300">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(entry.overrideLocked)}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, overrideLocked: e.target.checked }))}
-                                  className="h-4 w-4"
-                                />
-                                Lock Override
-                              </label>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Model ID</span>
-                                <input
-                                  type="text"
-                                  value={entry.modelId || ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, modelId: e.target.value }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                                  placeholder="claude-sonnet-4-5"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Context Window</span>
-                                <input
-                                  type="number"
-                                  value={entry.contextWindowSize ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, contextWindowSize: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Input / 1M</span>
-                                <input
-                                  type="number"
-                                  step="0.0001"
-                                  value={entry.inputCostPerMillion ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, inputCostPerMillion: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Output / 1M</span>
-                                <input
-                                  type="number"
-                                  step="0.0001"
-                                  value={entry.outputCostPerMillion ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, outputCostPerMillion: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Cache Create / 1M</span>
-                                <input
-                                  type="number"
-                                  step="0.0001"
-                                  value={entry.cacheCreationCostPerMillion ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, cacheCreationCostPerMillion: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Cache Read / 1M</span>
-                                <input
-                                  type="number"
-                                  step="0.0001"
-                                  value={entry.cacheReadCostPerMillion ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, cacheReadCostPerMillion: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs text-slate-400">Fast Multiplier</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={entry.speedMultiplierFast ?? ''}
-                                  onChange={e => updatePricingEntry(index, current => ({ ...current, speedMultiplierFast: parseOptionalNumber(e.target.value) }))}
-                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                                />
-                              </label>
-                            </div>
-
-                            {entry.syncError && (
-                              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                                {entry.syncError}
-                              </div>
-                            )}
-
-                            <div className="flex flex-wrap items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void handleResetPricingEntry(entry, index)}
-                                disabled={savingRow}
-                                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 disabled:opacity-50"
-                              >
-                                Reset
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleSavePricingEntry(entry, index)}
-                                disabled={savingRow}
-                                className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-50"
-                              >
-                                <Save size={12} />
-                                {savingRow ? 'Saving...' : 'Save Pricing'}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             <div className="border-t border-slate-800 pt-5">
@@ -1695,19 +1861,21 @@ export const Settings: React.FC = () => {
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
         <h2 className="text-3xl font-bold text-slate-100">Settings</h2>
-        <p className="text-slate-400 mt-2">Manage projects, alerts, and application preferences.</p>
+        <p className="text-slate-400 mt-2">Manage projects, AI platforms, alerts, and application preferences.</p>
       </div>
 
       {/* Tab Bar */}
       <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-slate-800 rounded-xl">
         <TabButton tab="general" activeTab={activeTab} icon={SettingsIcon} label="General" onClick={setActiveTab} />
         <TabButton tab="projects" activeTab={activeTab} icon={FolderOpen} label="Projects" onClick={setActiveTab} />
+        <TabButton tab="ai-platforms" activeTab={activeTab} icon={Bot} label="AI Platforms" onClick={setActiveTab} />
         <TabButton tab="alerts" activeTab={activeTab} icon={Bell} label="Alerts" onClick={setActiveTab} />
       </div>
 
       {/* Tab Content */}
       {activeTab === 'general' && <GeneralTab />}
       {activeTab === 'projects' && <ProjectsTab />}
+      {activeTab === 'ai-platforms' && <AIPlatformsTab />}
       {activeTab === 'alerts' && <AlertsTab />}
     </div>
   );

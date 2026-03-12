@@ -1296,6 +1296,9 @@ export interface PricingCatalogEntry {
   projectId: string;
   platformType: string;
   modelId: string;
+  displayLabel: string;
+  entryKind: string;
+  familyId: string;
   contextWindowSize?: number | null;
   inputCostPerMillion?: number | null;
   outputCostPerMillion?: number | null;
@@ -1307,6 +1310,11 @@ export interface PricingCatalogEntry {
   overrideLocked: boolean;
   syncStatus: string;
   syncError: string;
+  derivedFrom: string;
+  isPersisted: boolean;
+  isDetected: boolean;
+  isRequiredDefault: boolean;
+  canDelete: boolean;
   createdAt: string;
   updatedAt: string;
 }

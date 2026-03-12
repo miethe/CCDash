@@ -52,4 +52,13 @@ export const pricingService = {
       },
     );
   },
+
+  async deletePricingCatalogEntry(platformType: string, modelId: string): Promise<{ status: string }> {
+    return fetchJson<{ status: string }>(
+      `${API_BASE}/catalog/entry${buildQuery({ platformType, modelId })}`,
+      {
+        method: 'DELETE',
+      },
+    );
+  },
 };
