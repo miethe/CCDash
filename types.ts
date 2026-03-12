@@ -778,6 +778,8 @@ export interface AnalyticsOverview {
     cacheInputTokens?: number;
     observedTokens?: number;
     toolReportedTokens?: number;
+    contextSessionCount?: number;
+    avgContextUtilizationPct?: number;
     taskVelocity: number;
     taskCompletionPct: number;
     featureProgress: number;
@@ -809,12 +811,14 @@ export interface AnalyticsCorrelationItem {
   model: string;
   modelRaw?: string;
   modelFamily?: string;
+  modelVersion?: string;
   status: string;
   startedAt: string;
   endedAt: string;
   rootSessionId?: string;
   parentSessionId?: string;
   sessionType?: string;
+  platformVersion?: string;
   durationSeconds?: number;
   tokenInput?: number;
   tokenOutput?: number;
@@ -824,12 +828,70 @@ export interface AnalyticsCorrelationItem {
   cacheInputTokens?: number;
   observedTokens?: number;
   toolReportedTokens?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   cacheShare?: number;
   outputShare?: number;
   totalTokens?: number;
   totalCost?: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   linkedFeatureCount?: number;
   isSubagent?: boolean;
+}
+
+export interface SessionCostCalibrationProvenanceCount {
+  provenance: string;
+  count: number;
+  displayCostUsd: number;
+}
+
+export interface SessionCostCalibrationMismatchBand {
+  band: string;
+  count: number;
+}
+
+export interface SessionCostCalibrationGroup {
+  label: string;
+  sessionCount: number;
+  comparableSessionCount: number;
+  avgMismatchPct: number;
+  maxMismatchPct: number;
+  avgConfidence: number;
+  displayCostUsd: number;
+  reportedCostUsd: number;
+  recalculatedCostUsd: number;
+  provenanceCounts: SessionCostCalibrationProvenanceCount[];
+}
+
+export interface SessionCostCalibrationSummary {
+  projectId: string;
+  sessionCount: number;
+  comparableSessionCount: number;
+  reportedSessionCount: number;
+  recalculatedSessionCount: number;
+  mismatchSessionCount: number;
+  comparableCoveragePct: number;
+  avgCostConfidence: number;
+  avgMismatchPct: number;
+  maxMismatchPct: number;
+  totalDisplayCostUsd: number;
+  totalReportedCostUsd: number;
+  totalRecalculatedCostUsd: number;
+  provenanceCounts: SessionCostCalibrationProvenanceCount[];
+  mismatchBands: SessionCostCalibrationMismatchBand[];
+  byModel: SessionCostCalibrationGroup[];
+  byModelVersion: SessionCostCalibrationGroup[];
+  byPlatformVersion: SessionCostCalibrationGroup[];
+  generatedAt: string;
 }
 
 export interface AnalyticsArtifactTypePoint {
@@ -1527,8 +1589,20 @@ export interface FeatureExecutionSessionLink {
   cacheInputTokens?: number;
   observedTokens?: number;
   toolReportedTokens?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   cacheShare?: number;
   outputShare?: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;

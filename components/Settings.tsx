@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
-import { AlertConfig, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
+import { AlertConfig, PricingCatalogEntry, PricingCatalogUpsertRequest, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
 import { analyticsService } from '../services/analytics';
 import { DEFAULT_SKILLMEAT_FEATURE_FLAGS, defaultSkillMeatConfig, normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { pricingService } from '../services/pricing';
 import { refreshSkillMeatCache, validateSkillMeatConfig } from '../services/skillmeat';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
@@ -44,6 +45,34 @@ const SkillMeatStatusBadge: React.FC<{
     </span>
   );
 };
+
+const DEFAULT_PRICING_PLATFORM = 'Claude Code';
+
+const parseOptionalNumber = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const createPricingDraft = (platformType = DEFAULT_PRICING_PLATFORM): PricingCatalogEntry => ({
+  projectId: '',
+  platformType,
+  modelId: '',
+  contextWindowSize: null,
+  inputCostPerMillion: null,
+  outputCostPerMillion: null,
+  cacheCreationCostPerMillion: null,
+  cacheReadCostPerMillion: null,
+  speedMultiplierFast: null,
+  sourceType: 'manual',
+  sourceUpdatedAt: '',
+  overrideLocked: false,
+  syncStatus: 'manual',
+  syncError: '',
+  createdAt: '',
+  updatedAt: '',
+});
 
 // ── Tab Button ─────────────────────────────────────────────────────
 
@@ -311,7 +340,7 @@ const GeneralTab: React.FC = () => {
 // ── Projects Tab ───────────────────────────────────────────────────
 
 const ProjectsTab: React.FC = () => {
-  const { projects, activeProject, updateProject } = useData();
+  const { projects, activeProject, updateProject, switchProject } = useData();
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
   const [editData, setEditData] = useState<Project | null>(null);
   const [saving, setSaving] = useState(false);
@@ -331,6 +360,12 @@ const ProjectsTab: React.FC = () => {
   const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
   const [skillMeatRefreshMessage, setSkillMeatRefreshMessage] = useState<string | null>(null);
   const [skillMeatRefreshError, setSkillMeatRefreshError] = useState<string | null>(null);
+  const [pricingPlatform, setPricingPlatform] = useState(DEFAULT_PRICING_PLATFORM);
+  const [pricingEntries, setPricingEntries] = useState<PricingCatalogEntry[]>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [pricingMessage, setPricingMessage] = useState<string | null>(null);
+  const [pricingSavingKey, setPricingSavingKey] = useState<string>('');
   const savingRef = React.useRef(false);
 
   // Initialize selection
@@ -366,10 +401,37 @@ const ProjectsTab: React.FC = () => {
       setSkillMeatValidationError(null);
       setSkillMeatRefreshMessage(null);
       setSkillMeatRefreshError(null);
+      setPricingError(null);
+      setPricingMessage(null);
     }
   }, [selectedProjectId, projects]);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
+  const pricingEnabled = Boolean(activeProject && selectedProjectId === activeProject.id);
+
+  useEffect(() => {
+    if (!pricingEnabled) {
+      setPricingEntries([]);
+      return;
+    }
+    let cancelled = false;
+    const loadPricing = async () => {
+      setPricingLoading(true);
+      setPricingError(null);
+      try {
+        const entries = await pricingService.getPricingCatalog(pricingPlatform);
+        if (!cancelled) setPricingEntries(entries);
+      } catch (e: any) {
+        if (!cancelled) setPricingError(e?.message || 'Failed to load pricing catalog');
+      } finally {
+        if (!cancelled) setPricingLoading(false);
+      }
+    };
+    void loadPricing();
+    return () => {
+      cancelled = true;
+    };
+  }, [pricingEnabled, pricingPlatform]);
 
   const handleFieldChange = (field: keyof Project, value: string) => {
     if (!editData) return;
@@ -542,6 +604,80 @@ const ProjectsTab: React.FC = () => {
     }
   };
 
+  const updatePricingEntry = (index: number, updater: (entry: PricingCatalogEntry) => PricingCatalogEntry) => {
+    setPricingEntries(prev => prev.map((entry, idx) => (idx === index ? updater(entry) : entry)));
+    setPricingMessage(null);
+    setPricingError(null);
+  };
+
+  const upsertPayloadFromEntry = (entry: PricingCatalogEntry): PricingCatalogUpsertRequest => ({
+    platformType: entry.platformType || pricingPlatform,
+    modelId: entry.modelId || '',
+    contextWindowSize: entry.contextWindowSize ?? null,
+    inputCostPerMillion: entry.inputCostPerMillion ?? null,
+    outputCostPerMillion: entry.outputCostPerMillion ?? null,
+    cacheCreationCostPerMillion: entry.cacheCreationCostPerMillion ?? null,
+    cacheReadCostPerMillion: entry.cacheReadCostPerMillion ?? null,
+    speedMultiplierFast: entry.speedMultiplierFast ?? null,
+    sourceType: entry.sourceType || 'manual',
+    sourceUpdatedAt: entry.sourceUpdatedAt || '',
+    overrideLocked: entry.overrideLocked,
+    syncStatus: entry.syncStatus || 'manual',
+    syncError: entry.syncError || '',
+  });
+
+  const reloadPricingCatalog = async () => {
+    const entries = await pricingService.getPricingCatalog(pricingPlatform);
+    setPricingEntries(entries);
+  };
+
+  const handleSavePricingEntry = async (entry: PricingCatalogEntry, index: number) => {
+    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+    setPricingSavingKey(rowKey);
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      await pricingService.upsertPricingCatalogEntry(upsertPayloadFromEntry(entry));
+      await reloadPricingCatalog();
+      setPricingMessage(`Saved pricing for ${entry.modelId || 'platform default'}.`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to save pricing entry');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const handleResetPricingEntry = async (entry: PricingCatalogEntry, index: number) => {
+    const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+    setPricingSavingKey(rowKey);
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      await pricingService.resetPricingCatalogEntry(entry.platformType || pricingPlatform, entry.modelId || '');
+      await reloadPricingCatalog();
+      setPricingMessage(`Reset pricing for ${entry.modelId || 'platform default'}.`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to reset pricing entry');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
+  const handleSyncPricing = async () => {
+    setPricingSavingKey('sync');
+    setPricingError(null);
+    setPricingMessage(null);
+    try {
+      const response = await pricingService.syncPricingCatalog(pricingPlatform);
+      setPricingEntries(response.entries || []);
+      setPricingMessage(`Synced ${response.updatedEntries} pricing rows.${response.warnings.length ? ` ${response.warnings.join(' ')}` : ''}`);
+    } catch (e: any) {
+      setPricingError(e?.message || 'Failed to sync pricing catalog');
+    } finally {
+      setPricingSavingKey('');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Project Selector */}
@@ -678,6 +814,207 @@ const ProjectsTab: React.FC = () => {
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">LOCKED</span>
               </div>
               <p className="text-xs text-slate-500 mt-1">Only Claude Code is supported at this time.</p>
+            </div>
+
+            <div className="border-t border-slate-800 pt-5 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1">Pricing Catalog</h4>
+                  <p className="text-xs text-slate-500">
+                    Configure project-scoped platform defaults, model overrides, sync state, and freshness metadata for display-cost recalculation.
+                  </p>
+                </div>
+                {!pricingEnabled && activeProject && selectedProjectId !== activeProject.id && (
+                  <button
+                    type="button"
+                    onClick={() => void switchProject(selectedProjectId)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200"
+                  >
+                    <RefreshCw size={12} />
+                    Switch Active Project
+                  </button>
+                )}
+              </div>
+
+              {!pricingEnabled ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  Pricing catalog edits are scoped to the active project. Select the active project above or switch it before editing pricing.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-400">Platform</span>
+                      <select
+                        value={pricingPlatform}
+                        onChange={e => setPricingPlatform(e.target.value)}
+                        className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value={DEFAULT_PRICING_PLATFORM}>{DEFAULT_PRICING_PLATFORM}</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleSyncPricing}
+                      disabled={pricingSavingKey === 'sync'}
+                      className="mt-5 inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={pricingSavingKey === 'sync' ? 'animate-spin' : ''} />
+                      {pricingSavingKey === 'sync' ? 'Syncing...' : 'Sync Platform Prices'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPricingEntries(prev => [...prev, createPricingDraft(pricingPlatform)])}
+                      className="mt-5 inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200"
+                    >
+                      <Plus size={12} />
+                      Add Model Override
+                    </button>
+                  </div>
+
+                  {pricingMessage && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                      {pricingMessage}
+                    </div>
+                  )}
+                  {pricingError && (
+                    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                      {pricingError}
+                    </div>
+                  )}
+                  {pricingLoading ? (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-400">
+                      Loading pricing catalog...
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {pricingEntries.map((entry, index) => {
+                        const rowKey = `${entry.modelId || 'platform-default'}:${index}`;
+                        const savingRow = pricingSavingKey === rowKey;
+                        return (
+                          <div key={rowKey} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-medium text-slate-200">{entry.modelId || 'Platform Default'}</div>
+                                <div className="text-xs text-slate-500">
+                                  {entry.sourceType || 'manual'} · {entry.syncStatus || 'manual'} · updated {entry.sourceUpdatedAt || 'unknown'}
+                                </div>
+                              </div>
+                              <label className="inline-flex items-center gap-2 text-xs text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(entry.overrideLocked)}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, overrideLocked: e.target.checked }))}
+                                  className="h-4 w-4"
+                                />
+                                Lock Override
+                              </label>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Model ID</span>
+                                <input
+                                  type="text"
+                                  value={entry.modelId || ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, modelId: e.target.value }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                                  placeholder="claude-sonnet-4-5"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Context Window</span>
+                                <input
+                                  type="number"
+                                  value={entry.contextWindowSize ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, contextWindowSize: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Input / 1M</span>
+                                <input
+                                  type="number"
+                                  step="0.0001"
+                                  value={entry.inputCostPerMillion ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, inputCostPerMillion: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Output / 1M</span>
+                                <input
+                                  type="number"
+                                  step="0.0001"
+                                  value={entry.outputCostPerMillion ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, outputCostPerMillion: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Cache Create / 1M</span>
+                                <input
+                                  type="number"
+                                  step="0.0001"
+                                  value={entry.cacheCreationCostPerMillion ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, cacheCreationCostPerMillion: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Cache Read / 1M</span>
+                                <input
+                                  type="number"
+                                  step="0.0001"
+                                  value={entry.cacheReadCostPerMillion ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, cacheReadCostPerMillion: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-xs text-slate-400">Fast Multiplier</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={entry.speedMultiplierFast ?? ''}
+                                  onChange={e => updatePricingEntry(index, current => ({ ...current, speedMultiplierFast: parseOptionalNumber(e.target.value) }))}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                />
+                              </label>
+                            </div>
+
+                            {entry.syncError && (
+                              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                                {entry.syncError}
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleResetPricingEntry(entry, index)}
+                                disabled={savingRow}
+                                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 disabled:opacity-50"
+                              >
+                                Reset
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleSavePricingEntry(entry, index)}
+                                disabled={savingRow}
+                                className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-50"
+                              >
+                                <Save size={12} />
+                                {savingRow ? 'Saving...' : 'Save Pricing'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="border-t border-slate-800 pt-5">

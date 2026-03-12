@@ -62,6 +62,7 @@ import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { resolveDisplayCost } from '../lib/sessionSemantics';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -1486,7 +1487,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       cacheInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheInputTokens || 0), 0),
       observedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.observedTokens || 0), 0),
       toolReportedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.toolReportedTokens || 0), 0),
-      totalCost: artifactSourceSessions.reduce((sum, session) => sum + Number(session.totalCost || 0), 0),
+      totalCost: artifactSourceSessions.reduce((sum, session) => sum + resolveDisplayCost(session), 0),
       startedAt: earliestStartedAt,
       endedAt: latestEndedAt || undefined,
       updatedAt: latestUpdatedAt || undefined,
@@ -1611,6 +1612,11 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 Cache {formatPercent(sessionTokenMetrics.cacheShare, 0)}
               </span>
             )}
+            {session.currentContextTokens && session.contextWindowSize ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-500/25 text-sky-200 bg-sky-500/10">
+                Context {Number(session.contextUtilizationPct || 0).toFixed(1)}%
+              </span>
+            ) : null}
           </div>
         )}
         headerRight={(
@@ -1621,7 +1627,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
             </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
-              <div className="text-xs font-mono text-emerald-400">${Number(session.totalCost || 0).toFixed(2)}</div>
+              <div className="text-xs font-mono text-emerald-400">${resolveDisplayCost(session).toFixed(2)}</div>
             </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Duration</div>
@@ -2430,9 +2436,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       </p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
+                      <p className="text-[11px] text-slate-500 uppercase">Display Spend</p>
                       <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
-                      <p className="text-xs text-slate-500 mt-1">{formatTokenCount(executionWorkload.modelIOTokens)} model IO tokens</p>
+                      <p className="text-xs text-slate-500 mt-1">reported &gt; recalculated &gt; estimated</p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>

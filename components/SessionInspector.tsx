@@ -16,6 +16,7 @@ import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { isUsageAttributionEnabled } from '../services/agenticIntelligence';
 
 const MAIN_SESSION_AGENT = 'Main Session';
@@ -2421,15 +2422,31 @@ const TranscriptView: React.FC<{
                             <span className="text-xs font-mono text-slate-200">{session.durationSeconds}s</span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Workload</div>
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Observed Workload</div>
                             <span className="text-xs font-mono text-slate-200">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
                         </div>
+                        {session.currentContextTokens && session.contextWindowSize ? (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Layers size={14} /> Current Context</div>
+                                <span className="text-xs font-mono text-cyan-300">{contextSummaryLabel(session)}</span>
+                            </div>
+                        ) : null}
                         {resolveTokenMetrics(session).cacheInputTokens > 0 && (
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-xs text-slate-500"><Zap size={14} /> Cache Input</div>
                                 <span className="text-xs font-mono text-cyan-300">
                                     {formatTokenCount(resolveTokenMetrics(session).cacheInputTokens)} ({formatPercent(resolveTokenMetrics(session).cacheShare, 0)})
                                 </span>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Activity size={14} /> Cost Source</div>
+                            <span className="text-[10px] text-slate-300">{costSummaryLabel(session)}</span>
+                        </div>
+                        {session.currentContextTokens && (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-500"><RefreshCw size={14} /> Context Signal</div>
+                                <span className="text-[10px] text-slate-400">{formatContextMeasurementSource(session.contextMeasurementSource)}</span>
                             </div>
                         )}
                         <div className="flex items-center justify-between">
@@ -4503,7 +4520,7 @@ const AnalyticsView: React.FC<{
                 acc.workloadTokens += resolvedTokens.workloadTokens;
                 acc.toolFallbackTokens += resolvedTokens.usedToolFallback ? resolvedTokens.workloadTokens : 0;
                 acc.toolFallbackCount += resolvedTokens.usedToolFallback ? 1 : 0;
-                acc.totalCost += Number(scopeSession.totalCost || 0);
+                acc.totalCost += resolveDisplayCost(scopeSession);
                 acc.logCount += (scopeSession.logs || []).length;
                 return acc;
             },
@@ -7426,7 +7443,8 @@ const SessionDetail: React.FC<{
                     <div className="flex items-center gap-6 shrink-0">
                         <div className="text-right">
                             <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
+                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(resolveDisplayCost(session), 2)}</div>
+                            <div className="text-[10px] text-slate-500 mt-1">{costSummaryLabel(session)}</div>
                         </div>
                     </div>
                 </div>
@@ -8076,7 +8094,7 @@ const SessionSummaryCard: React.FC<{
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
                 <div className="text-right">
-                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(session.totalCost, 2)}</div>
+                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(resolveDisplayCost(session), 2)}</div>
                 </div>
             )}
             infoBadges={(
@@ -8093,6 +8111,11 @@ const SessionSummaryCard: React.FC<{
                     <span className="text-[10px] text-slate-500 font-mono">
                         {session.logs.length} logs
                     </span>
+                    {session.currentContextTokens && session.contextWindowSize ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/30 text-cyan-200 bg-cyan-500/10">
+                            Context {Number(session.contextUtilizationPct || 0).toFixed(1)}%
+                        </span>
+                    ) : null}
                 </div>
             )}
         >
