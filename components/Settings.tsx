@@ -1,17 +1,54 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette, Bot } from 'lucide-react';
+import { Bell, Trash2, Plus, AlertCircle, Save, Settings as SettingsIcon, FolderOpen, ChevronDown, Check, RefreshCw, Monitor, Copy, Download, Palette, Bot, GitBranch } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
-import { AlertConfig, PricingCatalogEntry, PricingCatalogUpsertRequest, Project, ProjectTestPlatformConfig, SkillMeatConfigValidationResponse, SkillMeatProbeResult, TestSourceStatus } from '../types';
+import {
+  AlertConfig,
+  GitHubCredentialValidationResponse,
+  GitHubIntegrationSettingsUpdateRequest,
+  GitHubPathValidationResponse,
+  GitHubProbeResult,
+  GitHubWriteCapabilityResponse,
+  PricingCatalogEntry,
+  PricingCatalogUpsertRequest,
+  Project,
+  ProjectPathReference,
+  ProjectResolvedPathsDTO,
+  ProjectTestPlatformConfig,
+  SkillMeatConfigValidationResponse,
+  SkillMeatProbeResult,
+  TestSourceStatus,
+} from '../types';
 import { analyticsService } from '../services/analytics';
 import { DEFAULT_SKILLMEAT_FEATURE_FLAGS, defaultSkillMeatConfig, normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import {
+  checkGitHubWriteCapability,
+  getGitHubSettings,
+  getProjectResolvedPaths,
+  refreshGitHubWorkspace,
+  updateGitHubSettings,
+  validateGitHubCredential,
+  validateGitHubPath,
+} from '../services/githubIntegrations';
 import { pricingService } from '../services/pricing';
+import {
+  applyProjectPathConfigToLegacyFields,
+  deriveProjectPathPreview,
+  getProjectPathInputValue,
+  normalizeProjectPathConfig,
+  pathReferenceUsesGitHub,
+  PROJECT_PATH_FIELDS,
+  ProjectPathConfigKey,
+  setProjectPathSourceKind,
+  updateProjectPathReference,
+} from '../services/projectPaths';
 import { refreshSkillMeatCache, validateSkillMeatConfig } from '../services/skillmeat';
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
 
-type SettingsTab = 'general' | 'projects' | 'ai-platforms' | 'alerts';
+type SettingsTab = 'general' | 'projects' | 'integrations' | 'ai-platforms' | 'alerts';
+type IntegrationsSubtab = 'skillmeat' | 'github';
 
 const SKILLMEAT_SETUP_COMMANDS: string[] = [
   'pytest -v --junitxml test-results/pytest-junit.xml --cov=skillmeat --cov-report=xml --cov-report=json',
@@ -33,6 +70,13 @@ const SKILLMEAT_STATUS_STYLES: Record<SkillMeatProbeResult['state'], string> = {
   error: 'border-rose-500/30 text-rose-300 bg-rose-500/10',
 };
 
+const GITHUB_STATUS_STYLES: Record<GitHubProbeResult['state'], string> = {
+  idle: 'border-slate-700 text-slate-400 bg-slate-900',
+  success: 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10',
+  warning: 'border-amber-500/30 text-amber-300 bg-amber-500/10',
+  error: 'border-rose-500/30 text-rose-300 bg-rose-500/10',
+};
+
 const SkillMeatStatusBadge: React.FC<{
   result?: SkillMeatProbeResult | null;
   fallback: string;
@@ -45,6 +89,247 @@ const SkillMeatStatusBadge: React.FC<{
     </span>
   );
 };
+
+const GitHubStatusBadge: React.FC<{
+  result?: GitHubProbeResult | null;
+  fallback: string;
+}> = ({ result, fallback }) => {
+  const label = result?.message || fallback;
+  const state = result?.state || 'idle';
+  return (
+    <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-1 text-[11px] leading-none ${GITHUB_STATUS_STYLES[state]}`}>
+      <span className="truncate">{label}</span>
+    </span>
+  );
+};
+
+const SubtabButton: React.FC<{
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}> = ({ active, label, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${active
+      ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
+      : 'border border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+      }`}
+  >
+    {label}
+  </button>
+);
+
+const ProjectPicker: React.FC<{
+  projects: Project[];
+  selectedProjectId: string;
+  dropdownOpen: boolean;
+  onToggleDropdown: () => void;
+  onSelect: (projectId: string) => void;
+}> = ({ projects, selectedProjectId, dropdownOpen, onToggleDropdown, onSelect }) => {
+  const selectedProject = projects.find(project => project.id === selectedProjectId);
+  return (
+    <div className="relative">
+      <label className="block text-sm font-medium text-slate-400 mb-2">Select Project</label>
+      <button
+        type="button"
+        onClick={onToggleDropdown}
+        className="w-full flex items-center justify-between bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-left hover:border-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm font-medium text-slate-200 truncate">
+            {selectedProject?.name || 'Select a project...'}
+          </span>
+          {selectedProject && (
+            <span className="text-xs text-slate-500 mt-0.5 font-mono truncate">
+              {selectedProject.path}
+            </span>
+          )}
+        </div>
+        <ChevronDown size={16} className={`text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {dropdownOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={onToggleDropdown} />
+          <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl border border-slate-700 z-50 overflow-hidden max-h-72 overflow-y-auto">
+            {projects.map(project => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => onSelect(project.id)}
+                className="w-full text-left px-4 py-3 hover:bg-slate-700 flex items-center justify-between transition-colors border-b border-slate-700/50 last:border-0"
+              >
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm text-slate-200 font-medium truncate">{project.name}</span>
+                  <span className="text-xs text-slate-500 font-mono truncate">{project.path}</span>
+                </div>
+                {selectedProjectId === project.id && (
+                  <Check size={14} className="text-indigo-400 shrink-0 ml-2" />
+                )}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+const PathEditorCard: React.FC<{
+  fieldKey: ProjectPathConfigKey;
+  reference: ProjectPathReference;
+  previewPath: string;
+  validation?: GitHubPathValidationResponse | null;
+  validationBusy: boolean;
+  onSourceKindChange: (fieldKey: ProjectPathConfigKey, sourceKind: ProjectPathReference['sourceKind']) => void;
+  onInputChange: (fieldKey: ProjectPathConfigKey, value: string) => void;
+  onRepoFieldChange: (fieldKey: ProjectPathConfigKey, field: 'repoUrl' | 'branch' | 'repoSubpath', value: string) => void;
+  onRepoWriteToggle: (fieldKey: ProjectPathConfigKey, enabled: boolean) => void;
+  onValidate: (fieldKey: ProjectPathConfigKey) => void;
+}> = ({
+  fieldKey,
+  reference,
+  previewPath,
+  validation,
+  validationBusy,
+  onSourceKindChange,
+  onInputChange,
+  onRepoFieldChange,
+  onRepoWriteToggle,
+  onValidate,
+}) => {
+  const definition = PROJECT_PATH_FIELDS.find(field => field.key === fieldKey);
+  if (!definition) return null;
+
+  const allowProjectRoot = fieldKey !== 'root';
+  const inputValue = getProjectPathInputValue(reference);
+  const canValidateGitHub = pathReferenceUsesGitHub(reference) && Boolean(reference.repoRef?.repoUrl?.trim());
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h5 className="text-sm font-semibold text-slate-100">{definition.label}</h5>
+          <p className="text-xs text-slate-500 mt-1">{definition.description}</p>
+        </div>
+        {pathReferenceUsesGitHub(reference) ? (
+          <GitHubStatusBadge result={validation?.status} fallback="Not validated" />
+        ) : (
+          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-400">
+            Local path
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[180px,minmax(0,1fr)] gap-4">
+        <label className="block">
+          <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Source</span>
+          <select
+            value={reference.sourceKind}
+            onChange={event => onSourceKindChange(fieldKey, event.target.value as ProjectPathReference['sourceKind'])}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+          >
+            {allowProjectRoot && <option value="project_root">Project root</option>}
+            <option value="filesystem">Filesystem</option>
+            <option value="github_repo">GitHub repo</option>
+          </select>
+        </label>
+
+        <div className="space-y-3">
+          {reference.sourceKind !== 'github_repo' ? (
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">
+                {reference.sourceKind === 'project_root' ? 'Relative path' : 'Filesystem path'}
+              </span>
+              <input
+                type="text"
+                value={inputValue}
+                onChange={event => onInputChange(fieldKey, event.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                placeholder={reference.sourceKind === 'project_root' ? definition.helperText : '/absolute/path'}
+              />
+              <p className="mt-1 text-xs text-slate-500">{definition.helperText}</p>
+            </label>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="block md:col-span-2">
+                <span className="mb-2 flex items-center justify-between gap-2 text-xs uppercase tracking-wide text-slate-500">
+                  <span>Repository URL</span>
+                  <button
+                    type="button"
+                    disabled={!canValidateGitHub || validationBusy}
+                    onClick={() => onValidate(fieldKey)}
+                    className="inline-flex items-center gap-1 rounded border border-cyan-500/35 bg-cyan-500/10 px-2 py-1 text-[11px] font-semibold text-cyan-200 disabled:opacity-50"
+                  >
+                    <RefreshCw size={11} className={validationBusy ? 'animate-spin' : ''} />
+                    {validationBusy ? 'Checking' : 'Validate'}
+                  </button>
+                </span>
+                <input
+                  type="url"
+                  value={inputValue}
+                  onChange={event => onInputChange(fieldKey, event.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="https://github.com/org/repo or .../tree/branch/path"
+                />
+                <p className="mt-1 text-xs text-slate-500">Paste a repo or tree URL. CCDash will normalize branch and subpath during validation.</p>
+              </label>
+              <label className="block">
+                <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Branch override</span>
+                <input
+                  type="text"
+                  value={reference.repoRef?.branch || ''}
+                  onChange={event => onRepoFieldChange(fieldKey, 'branch', event.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="main"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Repo subpath</span>
+                <input
+                  type="text"
+                  value={reference.repoRef?.repoSubpath || ''}
+                  onChange={event => onRepoFieldChange(fieldKey, 'repoSubpath', event.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="packages/app"
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 md:col-span-2">
+                <div>
+                  <span className="block text-sm text-slate-200">Enable writes for this repo path</span>
+                  <span className="block text-xs text-slate-500">Phase 6 gates plan-document write-back behind both project and integration toggles.</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(reference.repoRef?.writeEnabled)}
+                  onChange={event => onRepoWriteToggle(fieldKey, event.target.checked)}
+                  className="h-4 w-4"
+                />
+              </label>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Effective local path</p>
+            <p className="text-xs text-slate-200 font-mono break-all">{previewPath || 'Not resolved yet'}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const buildEditableProject = (project: Project): Project => (
+  applyProjectPathConfigToLegacyFields(
+    {
+      ...project,
+      testConfig: ensureProjectTestConfig(project.testConfig),
+      skillMeat: normalizeSkillMeatConfig(project),
+    },
+    normalizeProjectPathConfig(project),
+  )
+);
 
 const DEFAULT_PRICING_PLATFORM = 'Claude Code';
 const PRICING_PLATFORMS = ['Claude Code', 'Codex'] as const;
@@ -822,6 +1107,9 @@ const ProjectsTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dirtyPaths, setDirtyPaths] = useState(false);
+  const [resolvedPaths, setResolvedPaths] = useState<ProjectResolvedPathsDTO | null>(null);
+  const [pathValidation, setPathValidation] = useState<Partial<Record<ProjectPathConfigKey, GitHubPathValidationResponse>>>({});
+  const [pathValidationBusy, setPathValidationBusy] = useState<Partial<Record<ProjectPathConfigKey, boolean>>>({});
   const [sourceStatus, setSourceStatus] = useState<TestSourceStatus[]>([]);
   const [testingActionError, setTestingActionError] = useState<string | null>(null);
   const [testingActionInfo, setTestingActionInfo] = useState<string | null>(null);
@@ -829,92 +1117,140 @@ const ProjectsTab: React.FC = () => {
   const [generatedScript, setGeneratedScript] = useState('');
   const [generatedScriptName, setGeneratedScriptName] = useState('');
   const [scriptCopied, setScriptCopied] = useState(false);
-  const [skillMeatValidation, setSkillMeatValidation] = useState<SkillMeatConfigValidationResponse | null>(null);
-  const [skillMeatValidationBusy, setSkillMeatValidationBusy] = useState(false);
-  const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
-  const [skillMeatRefreshMessage, setSkillMeatRefreshMessage] = useState<string | null>(null);
-  const [skillMeatRefreshError, setSkillMeatRefreshError] = useState<string | null>(null);
   const savingRef = React.useRef(false);
 
-  // Initialize selection
   useEffect(() => {
     if (!selectedProjectId && activeProject) {
       setSelectedProjectId(activeProject.id);
     }
   }, [activeProject, selectedProjectId]);
 
-  // Load project data when selection changes
   useEffect(() => {
-    // Skip resetting state if we're in the middle of a save
-    // (updateProject triggers refreshProjects which updates the projects array)
     if (savingRef.current) return;
+    const project = projects.find(candidate => candidate.id === selectedProjectId);
+    if (!project) return;
 
-    const project = projects.find(p => p.id === selectedProjectId);
-    if (project) {
-      setEditData({
-        ...project,
-        testConfig: ensureProjectTestConfig(project.testConfig),
-        skillMeat: normalizeSkillMeatConfig(project),
-      });
-      setDirtyPaths(false);
-      setSaved(false);
-      setError(null);
-      setSourceStatus([]);
-      setTestingActionError(null);
-      setTestingActionInfo(null);
-      setGeneratedScript('');
-      setGeneratedScriptName('');
-      setScriptCopied(false);
-      setSkillMeatValidation(null);
-      setSkillMeatValidationError(null);
-      setSkillMeatRefreshMessage(null);
-      setSkillMeatRefreshError(null);
-    }
-  }, [selectedProjectId, projects]);
+    setEditData(buildEditableProject(project));
+    setSaved(false);
+    setError(null);
+    setDirtyPaths(false);
+    setPathValidation({});
+    setSourceStatus([]);
+    setTestingActionError(null);
+    setTestingActionInfo(null);
+    setGeneratedScript('');
+    setGeneratedScriptName('');
+    setScriptCopied(false);
 
-  const selectedProject = projects.find(p => p.id === selectedProjectId);
+    void getProjectResolvedPaths(project.id)
+      .then(setResolvedPaths)
+      .catch(() => setResolvedPaths(null));
+  }, [projects, selectedProjectId]);
+
+  const selectedProject = projects.find(project => project.id === selectedProjectId);
+
+  const updateProjectDraft = (updater: (project: Project) => Project) => {
+    setEditData(current => {
+      if (!current) return current;
+      return updater(current);
+    });
+    setSaved(false);
+  };
 
   const handleFieldChange = (field: keyof Project, value: string) => {
-    if (!editData) return;
-    setEditData({ ...editData, [field]: value });
-    setSaved(false);
-    // Track if directory paths changed
-    if (['path', 'planDocsPath', 'sessionsPath', 'progressPath'].includes(field)) {
-      const orig = selectedProject;
-      if (orig && value !== (orig as any)[field]) {
+    updateProjectDraft(project => ({ ...project, [field]: value }));
+  };
+
+  const updatePathConfig = (updater: (project: Project) => Project) => {
+    updateProjectDraft(project => {
+      const next = updater(project);
+      const original = selectedProject ? buildEditableProject(selectedProject) : null;
+      if (original) {
+        setDirtyPaths(JSON.stringify(original.pathConfig) !== JSON.stringify(next.pathConfig));
+      } else {
         setDirtyPaths(true);
       }
+      return next;
+    });
+  };
+
+  const handlePathSourceKindChange = (fieldKey: ProjectPathConfigKey, sourceKind: ProjectPathReference['sourceKind']) => {
+    updatePathConfig(project => applyProjectPathConfigToLegacyFields(
+      project,
+      setProjectPathSourceKind(project.pathConfig, fieldKey, sourceKind),
+    ));
+    setPathValidation(current => ({ ...current, [fieldKey]: undefined }));
+  };
+
+  const handlePathInputChange = (fieldKey: ProjectPathConfigKey, value: string) => {
+    updatePathConfig(project => applyProjectPathConfigToLegacyFields(
+      project,
+      updateProjectPathReference(project.pathConfig, fieldKey, reference => {
+        if (reference.sourceKind === 'project_root') {
+          return { ...reference, relativePath: value, displayValue: value };
+        }
+        if (reference.sourceKind === 'filesystem') {
+          return { ...reference, filesystemPath: value, displayValue: value };
+        }
+        return {
+          ...reference,
+          displayValue: value,
+          repoRef: {
+            provider: 'github',
+            repoUrl: value,
+            repoSlug: reference.repoRef?.repoSlug || '',
+            branch: reference.repoRef?.branch || '',
+            repoSubpath: reference.repoRef?.repoSubpath || '',
+            writeEnabled: Boolean(reference.repoRef?.writeEnabled),
+          },
+        };
+      }),
+    ));
+    if (fieldKey === 'root') {
+      setPathValidation(current => ({ ...current, root: undefined, planDocs: undefined, progress: undefined }));
+    } else {
+      setPathValidation(current => ({ ...current, [fieldKey]: undefined }));
     }
+  };
+
+  const handleRepoFieldChange = (fieldKey: ProjectPathConfigKey, repoField: 'repoUrl' | 'branch' | 'repoSubpath', value: string) => {
+    updatePathConfig(project => applyProjectPathConfigToLegacyFields(
+      project,
+      updateProjectPathReference(project.pathConfig, fieldKey, reference => ({
+        ...reference,
+        repoRef: {
+          provider: 'github',
+          repoUrl: reference.repoRef?.repoUrl || '',
+          repoSlug: reference.repoRef?.repoSlug || '',
+          branch: reference.repoRef?.branch || '',
+          repoSubpath: reference.repoRef?.repoSubpath || '',
+          writeEnabled: Boolean(reference.repoRef?.writeEnabled),
+          [repoField]: value,
+        },
+      })),
+    ));
+    setPathValidation(current => ({ ...current, [fieldKey]: undefined }));
+  };
+
+  const handleRepoWriteToggle = (fieldKey: ProjectPathConfigKey, enabled: boolean) => {
+    updatePathConfig(project => applyProjectPathConfigToLegacyFields(
+      project,
+      updateProjectPathReference(project.pathConfig, fieldKey, reference => ({
+        ...reference,
+        repoRef: {
+          provider: 'github',
+          repoUrl: reference.repoRef?.repoUrl || '',
+          repoSlug: reference.repoRef?.repoSlug || '',
+          branch: reference.repoRef?.branch || '',
+          repoSubpath: reference.repoRef?.repoSubpath || '',
+          writeEnabled: enabled,
+        },
+      })),
+    ));
   };
 
   const updateTestConfig = (updater: (prev: Project['testConfig']) => Project['testConfig']) => {
-    if (!editData) return;
-    const nextConfig = updater(ensureProjectTestConfig(editData.testConfig));
-    setEditData({ ...editData, testConfig: nextConfig });
-    setSaved(false);
-  };
-
-  const updateSkillMeatConfig = (updater: (prev: Project['skillMeat']) => Project['skillMeat']) => {
-    if (!editData) return;
-    const nextConfig = updater(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
-    setEditData({ ...editData, skillMeat: nextConfig });
-    setSaved(false);
-    setSkillMeatValidation(null);
-    setSkillMeatValidationError(null);
-  };
-
-  const handleValidateSkillMeat = async () => {
-    if (!editData) return;
-    setSkillMeatValidationBusy(true);
-    setSkillMeatValidationError(null);
-    try {
-      const response = await validateSkillMeatConfig(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
-      setSkillMeatValidation(response);
-    } catch (e: any) {
-      setSkillMeatValidationError(e?.message || 'Failed to validate SkillMeat configuration');
-    } finally {
-      setSkillMeatValidationBusy(false);
-    }
+    updateProjectDraft(project => ({ ...project, testConfig: updater(ensureProjectTestConfig(project.testConfig)) }));
   };
 
   const updateFlag = (key: keyof Project['testConfig']['flags'], value: boolean) => {
@@ -932,6 +1268,35 @@ const ProjectsTab: React.FC = () => {
       ...prev,
       platforms: prev.platforms.map(platform => platform.id === platformId ? updater(platform) : platform),
     }));
+  };
+
+  const handleValidateGitHubPath = async (fieldKey: ProjectPathConfigKey) => {
+    if (!editData) return;
+    setPathValidationBusy(current => ({ ...current, [fieldKey]: true }));
+    try {
+      const payload = await validateGitHubPath({
+        projectId: editData.id,
+        reference: editData.pathConfig[fieldKey],
+        rootReference: fieldKey === 'root' ? undefined : editData.pathConfig.root,
+      });
+      setPathValidation(current => ({ ...current, [fieldKey]: payload }));
+    } catch (validationError: any) {
+      setPathValidation(current => ({
+        ...current,
+        [fieldKey]: {
+          reference: editData.pathConfig[fieldKey],
+          status: {
+            state: 'error',
+            message: validationError?.message || 'Validation failed',
+            checkedAt: new Date().toISOString(),
+            path: '',
+          },
+          resolvedLocalPath: '',
+        },
+      }));
+    } finally {
+      setPathValidationBusy(current => ({ ...current, [fieldKey]: false }));
+    }
   };
 
   const handleValidatePaths = async () => {
@@ -1015,27 +1380,14 @@ const ProjectsTab: React.FC = () => {
     setSaving(true);
     savingRef.current = true;
     setError(null);
-    setSkillMeatRefreshMessage(null);
-    setSkillMeatRefreshError(null);
     try {
-      // updateProject already refreshes projects + sessions/documents/tasks/features
       await updateProject(editData.id, editData);
       setSaved(true);
       setDirtyPaths(false);
-
-      const skillMeatConfig = normalizeSkillMeatConfig(editData);
-      if (skillMeatConfig.enabled && skillMeatConfig.baseUrl.trim()) {
-        try {
-          const refreshResult = await refreshSkillMeatCache(editData.id);
-          const syncResult = refreshResult.sync;
-          const backfillResult = refreshResult.backfill;
-          const warningCount = (syncResult.warnings?.length || 0) + (backfillResult?.warnings?.length || 0);
-          setSkillMeatRefreshMessage(
-            `SkillMeat refresh complete: ${syncResult.totalDefinitions} definitions synced, ${backfillResult?.observationsStored ?? 0} observations rebuilt${warningCount > 0 ? `, ${warningCount} warning${warningCount === 1 ? '' : 's'}` : ''}.`,
-          );
-        } catch (skillMeatError: any) {
-          setSkillMeatRefreshError(skillMeatError?.message || 'Project saved, but SkillMeat refresh failed.');
-        }
+      try {
+        setResolvedPaths(await getProjectResolvedPaths(editData.id));
+      } catch {
+        setResolvedPaths(null);
       }
     } catch (e: any) {
       setError(e.message || 'Failed to save project');
@@ -1047,7 +1399,6 @@ const ProjectsTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Project Selector */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -1056,123 +1407,73 @@ const ProjectsTab: React.FC = () => {
             </div>
             <div>
               <h3 className="font-semibold text-slate-100">Project Configuration</h3>
-              <p className="text-sm text-slate-400">Select a project to view and edit its settings.</p>
+              <p className="text-sm text-slate-400">Edit project metadata, typed path sources, and test sync defaults.</p>
             </div>
           </div>
-
           {dirtyPaths && (
             <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-500/10 px-3 py-1.5 rounded-lg border border-amber-500/20">
               <RefreshCw size={12} />
-              Directory changes will trigger a rescan on save
+              Path changes will trigger a rescan on save
             </div>
           )}
         </div>
 
-        {/* Custom Dropdown */}
-        <div className="relative mb-6">
-          <label className="block text-sm font-medium text-slate-400 mb-2">Select Project</label>
-          <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="w-full flex items-center justify-between bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-left hover:border-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
-          >
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-slate-200">
-                {selectedProject?.name || 'Select a project...'}
-              </span>
-              {selectedProject && (
-                <span className="text-xs text-slate-500 mt-0.5 font-mono truncate">
-                  {selectedProject.path}
-                </span>
-              )}
-            </div>
-            <ChevronDown size={16} className={`text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-          </button>
-
-          {dropdownOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
-              <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl border border-slate-700 z-50 overflow-hidden max-h-72 overflow-y-auto">
-                {projects.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      setSelectedProjectId(p.id);
-                      setDropdownOpen(false);
-                    }}
-                    className="w-full text-left px-4 py-3 hover:bg-slate-700 flex items-center justify-between transition-colors border-b border-slate-700/50 last:border-0"
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-sm text-slate-200 font-medium">{p.name}</span>
-                      <span className="text-xs text-slate-500 font-mono truncate">{p.path}</span>
-                    </div>
-                    {selectedProjectId === p.id && (
-                      <Check size={14} className="text-indigo-400 shrink-0 ml-2" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <ProjectPicker
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          dropdownOpen={dropdownOpen}
+          onToggleDropdown={() => setDropdownOpen(current => !current)}
+          onSelect={(projectId) => {
+            setSelectedProjectId(projectId);
+            setDropdownOpen(false);
+          }}
+        />
 
         {error && (
-          <div className="mb-4 p-3 bg-red-900/30 border border-red-700/50 text-red-300 rounded-lg text-sm">
+          <div className="mt-4 rounded-lg border border-rose-700/50 bg-rose-900/30 px-3 py-2 text-sm text-rose-200">
             {error}
           </div>
         )}
 
         {saved && !error && (
-          <div className="mb-4 p-3 bg-emerald-900/30 border border-emerald-700/50 text-emerald-300 rounded-lg text-sm flex items-center gap-2">
+          <div className="mt-4 rounded-lg border border-emerald-700/50 bg-emerald-900/30 px-3 py-2 text-sm text-emerald-200 flex items-center gap-2">
             <Check size={14} />
-            Project saved successfully{dirtyPaths ? ' — data rescanned' : ''}.
+            Project saved successfully.
           </div>
         )}
 
-        {skillMeatRefreshMessage && !error && (
-          <div className="mb-4 p-3 bg-sky-900/30 border border-sky-700/50 text-sky-200 rounded-lg text-sm">
-            {skillMeatRefreshMessage}
-          </div>
-        )}
-
-        {skillMeatRefreshError && !error && (
-          <div className="mb-4 p-3 bg-amber-900/30 border border-amber-700/50 text-amber-200 rounded-lg text-sm">
-            {skillMeatRefreshError}
-          </div>
-        )}
-
-        {/* Edit Form */}
         {editData && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Project Name</label>
+          <div className="mt-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-400 mb-2">Project Name</span>
                 <input
                   type="text"
                   value={editData.name}
-                  onChange={e => handleFieldChange('name', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                  onChange={event => handleFieldChange('name', event.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Repository URL</label>
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-400 mb-2">Repository URL</span>
                 <input
                   type="url"
                   value={editData.repoUrl}
-                  onChange={e => handleFieldChange('repoUrl', e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
-                  placeholder="https://github.com/..."
+                  onChange={event => handleFieldChange('repoUrl', event.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  placeholder="https://github.com/org/repo"
                 />
-              </div>
+              </label>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Description</label>
+            <label className="block">
+              <span className="block text-sm font-medium text-slate-400 mb-2">Description</span>
               <textarea
                 value={editData.description}
-                onChange={e => handleFieldChange('description', e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors h-20 resize-none"
+                onChange={event => handleFieldChange('description', event.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 h-20 resize-none"
               />
-            </div>
+            </label>
 
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Agent Platform</label>
@@ -1183,279 +1484,46 @@ const ProjectsTab: React.FC = () => {
               <p className="text-xs text-slate-500 mt-1">Only Claude Code is supported at this time.</p>
             </div>
 
-            <div className="border-t border-slate-800 pt-5">
-              <h4 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
-                <FolderOpen size={14} className="text-indigo-400" />
-                Directory Paths
-              </h4>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Project Root Path</label>
-                  <input
-                    type="text"
-                    value={editData.path}
-                    onChange={e => handleFieldChange('path', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Plan Documents Path</label>
-                  <input
-                    type="text"
-                    value={editData.planDocsPath}
-                    onChange={e => handleFieldChange('planDocsPath', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-                    placeholder="docs/project_plans/"
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Relative to project root</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">
-                    Sessions Path
-                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-normal">CLAUDE</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={editData.sessionsPath}
-                    onChange={e => handleFieldChange('sessionsPath', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-                    placeholder="~/.claude/projects/<hash>/"
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Absolute path to the directory containing Claude session JSONL files. Leave empty to use default (~/.claude/sessions).</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-2">Progress/Tasks Path</label>
-                  <input
-                    type="text"
-                    value={editData.progressPath}
-                    onChange={e => handleFieldChange('progressPath', e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-                    placeholder="progress"
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Relative to project root</p>
-                </div>
-              </div>
-            </div>
-
             <div className="border-t border-slate-800 pt-5 space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Integration</h4>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1 flex items-center gap-2">
+                    <GitBranch size={14} className="text-indigo-400" />
+                    Path Sources
+                  </h4>
                   <p className="text-xs text-slate-500">
-                    Configure the read-only SkillMeat source for artifacts, workflows, context modules, and bundle metadata.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleValidateSkillMeat}
-                  disabled={skillMeatValidationBusy}
-                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
-                >
-                  <RefreshCw size={12} className={skillMeatValidationBusy ? 'animate-spin' : ''} />
-                  {skillMeatValidationBusy ? 'Checking...' : 'Check Connection'}
-                </button>
-              </div>
-
-              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                <span className="text-sm text-slate-200">Enable SkillMeat integration</span>
-                <input
-                  type="checkbox"
-                  checked={Boolean(editData.skillMeat?.enabled)}
-                  onChange={e => updateSkillMeatConfig(prev => ({ ...prev, enabled: e.target.checked }))}
-                  className="h-4 w-4"
-                />
-              </label>
-
-              {skillMeatValidationError && (
-                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                  {skillMeatValidationError}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <label className="block">
-                  <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
-                    <span>Base URL</span>
-                    <SkillMeatStatusBadge
-                      result={skillMeatValidation?.baseUrl}
-                      fallback="Unchecked"
-                    />
-                  </span>
-                  <input
-                    type="url"
-                    value={editData.skillMeat?.baseUrl || ''}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                    placeholder="http://127.0.0.1:8080"
-                  />
-                </label>
-                <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">Request Timeout (seconds)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={120}
-                    step={0.5}
-                    value={editData.skillMeat?.requestTimeoutSeconds ?? 5}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, requestTimeoutSeconds: Number(e.target.value || 5) }))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
-                    <span>SkillMeat Project ID</span>
-                    <SkillMeatStatusBadge
-                      result={skillMeatValidation?.projectMapping}
-                      fallback="Unchecked"
-                    />
-                  </span>
-                  <input
-                    type="text"
-                    value={editData.skillMeat?.projectId || ''}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, projectId: e.target.value }))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                    placeholder="project UUID from SkillMeat"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">Use the exact SkillMeat project ID, typically the UUID shown in the project details URL. Project names and local filesystem paths are not used here.</p>
-                </label>
-                <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">Collection ID (optional)</span>
-                  <input
-                    type="text"
-                    value={editData.skillMeat?.collectionId || ''}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, collectionId: e.target.value }))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                    placeholder="default"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">Use this when bundle or artifact context should be scoped to a specific collection.</p>
-                </label>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <div>
-                    <span className="block text-sm text-slate-200">AAA enabled</span>
-                    <span className="block text-xs text-slate-500">Turn this on for auth-protected SkillMeat instances.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(editData.skillMeat?.aaaEnabled)}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, aaaEnabled: e.target.checked }))}
-                    className="h-4 w-4"
-                  />
-                </label>
-                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
-                    <span>Auth Status</span>
-                    <SkillMeatStatusBadge
-                      result={skillMeatValidation?.auth}
-                      fallback="Unchecked"
-                    />
-                  </span>
-                  <p className="text-xs text-slate-500">
-                    Local development usually runs without auth. AAA mode sends `Authorization: Bearer &lt;token&gt;`.
+                    Each field can resolve from the project root, a filesystem path, or a managed GitHub workspace.
                   </p>
                 </div>
               </div>
-
-              {editData.skillMeat?.aaaEnabled ? (
-                <label className="block">
-                  <span className="block text-xs text-slate-400 mb-1">API Key / Bearer Token</span>
-                  <input
-                    type="password"
-                    value={editData.skillMeat?.apiKey || ''}
-                    onChange={e => updateSkillMeatConfig(prev => ({ ...prev, apiKey: e.target.value }))}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
-                    placeholder="sm_pat_..."
-                  />
-                </label>
-              ) : (
-                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-500">
-                  Local mode is selected, so CCDash will not send a credential until AAA is enabled.
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <div>
-                    <span className="block text-sm text-slate-200">Recommended Stack UI</span>
-                    <span className="block text-xs text-slate-500">Show evidence-backed stack suggestions in `/execution`.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={editData.skillMeat?.featureFlags?.stackRecommendationsEnabled ?? true}
-                    onChange={e => updateSkillMeatConfig(prev => ({
-                      ...prev,
-                      featureFlags: {
-                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
-                        ...(prev.featureFlags || {}),
-                        stackRecommendationsEnabled: e.target.checked,
-                      },
-                    }))}
-                    className="h-4 w-4"
-                  />
-                </label>
-                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <div>
-                    <span className="block text-sm text-slate-200">Usage Attribution</span>
-                    <span className="block text-xs text-slate-500">Enable attribution views in `/analytics` and session analytics drill-downs.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={editData.skillMeat?.featureFlags?.usageAttributionEnabled ?? true}
-                    onChange={e => updateSkillMeatConfig(prev => ({
-                      ...prev,
-                      featureFlags: {
-                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
-                        ...(prev.featureFlags || {}),
-                        usageAttributionEnabled: e.target.checked,
-                      },
-                    }))}
-                    className="h-4 w-4"
-                  />
-                </label>
-                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <div>
-                    <span className="block text-sm text-slate-200">Session Block Insights</span>
-                    <span className="block text-xs text-slate-500">Enable long-session burn-rate and billing-block views in Session Inspector analytics.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={editData.skillMeat?.featureFlags?.sessionBlockInsightsEnabled ?? true}
-                    onChange={e => updateSkillMeatConfig(prev => ({
-                      ...prev,
-                      featureFlags: {
-                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
-                        ...(prev.featureFlags || {}),
-                        sessionBlockInsightsEnabled: e.target.checked,
-                      },
-                    }))}
-                    className="h-4 w-4"
-                  />
-                </label>
-                <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-                  <div>
-                    <span className="block text-sm text-slate-200">Workflow Effectiveness</span>
-                    <span className="block text-xs text-slate-500">Enable workflow intelligence analytics in `/analytics` and `/execution`.</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={editData.skillMeat?.featureFlags?.workflowAnalyticsEnabled ?? true}
-                    onChange={e => updateSkillMeatConfig(prev => ({
-                      ...prev,
-                      featureFlags: {
-                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
-                        ...(prev.featureFlags || {}),
-                        workflowAnalyticsEnabled: e.target.checked,
-                      },
-                    }))}
-                    className="h-4 w-4"
-                  />
-                </label>
+              <div className="space-y-4">
+                {PROJECT_PATH_FIELDS.map(field => {
+                  const rootPreviewPath = pathValidation.root?.resolvedLocalPath
+                    || resolvedPaths?.root.path
+                    || deriveProjectPathPreview(editData.pathConfig, 'root', '', pathValidation.root?.resolvedLocalPath);
+                  const resolvedPreview = field.key === 'root'
+                    ? rootPreviewPath
+                    : pathValidation[field.key]?.resolvedLocalPath
+                      || (field.key === 'planDocs' ? resolvedPaths?.planDocs.path
+                        : field.key === 'sessions' ? resolvedPaths?.sessions.path
+                          : resolvedPaths?.progress.path)
+                      || deriveProjectPathPreview(editData.pathConfig, field.key, rootPreviewPath, pathValidation[field.key]?.resolvedLocalPath);
+                  return (
+                    <PathEditorCard
+                      key={field.key}
+                      fieldKey={field.key}
+                      reference={editData.pathConfig[field.key]}
+                      previewPath={resolvedPreview}
+                      validation={pathValidation[field.key]}
+                      validationBusy={Boolean(pathValidationBusy[field.key])}
+                      onSourceKindChange={handlePathSourceKindChange}
+                      onInputChange={handlePathInputChange}
+                      onRepoFieldChange={handleRepoFieldChange}
+                      onRepoWriteToggle={handleRepoWriteToggle}
+                      onValidate={handleValidateGitHubPath}
+                    />
+                  );
+                })}
               </div>
             </div>
 
@@ -1465,7 +1533,7 @@ const ProjectsTab: React.FC = () => {
                 Configure test platforms, result directories, and feature flags for this project.
               </p>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   ['testVisualizerEnabled', 'Test Visualizer'],
                   ['integritySignalsEnabled', 'Integrity Signals'],
@@ -1477,20 +1545,20 @@ const ProjectsTab: React.FC = () => {
                     <input
                       type="checkbox"
                       checked={(editData.testConfig?.flags as any)?.[key] ?? false}
-                      onChange={e => updateFlag(key as keyof Project['testConfig']['flags'], e.target.checked)}
+                      onChange={event => updateFlag(key as keyof Project['testConfig']['flags'], event.target.checked)}
                       className="h-4 w-4"
                     />
                   </label>
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label className="block">
                   <span className="block text-xs text-slate-400 mb-1">Auto Sync on Startup</span>
                   <input
                     type="checkbox"
                     checked={Boolean(editData.testConfig?.autoSyncOnStartup)}
-                    onChange={e => updateTestConfig(prev => ({ ...prev, autoSyncOnStartup: e.target.checked }))}
+                    onChange={event => updateTestConfig(prev => ({ ...prev, autoSyncOnStartup: event.target.checked }))}
                     className="h-4 w-4"
                   />
                 </label>
@@ -1501,7 +1569,7 @@ const ProjectsTab: React.FC = () => {
                     min={10}
                     max={5000}
                     value={editData.testConfig?.maxFilesPerScan ?? 500}
-                    onChange={e => updateTestConfig(prev => ({ ...prev, maxFilesPerScan: Number(e.target.value || 500) }))}
+                    onChange={event => updateTestConfig(prev => ({ ...prev, maxFilesPerScan: Number(event.target.value || 500) }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                   />
                 </label>
@@ -1512,7 +1580,7 @@ const ProjectsTab: React.FC = () => {
                     min={1}
                     max={64}
                     value={editData.testConfig?.maxParseConcurrency ?? 4}
-                    onChange={e => updateTestConfig(prev => ({ ...prev, maxParseConcurrency: Number(e.target.value || 4) }))}
+                    onChange={event => updateTestConfig(prev => ({ ...prev, maxParseConcurrency: Number(event.target.value || 4) }))}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                   />
                 </label>
@@ -1532,7 +1600,7 @@ const ProjectsTab: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={platform.enabled}
-                            onChange={e => updatePlatform(platform.id, prev => ({ ...prev, enabled: e.target.checked }))}
+                            onChange={event => updatePlatform(platform.id, prev => ({ ...prev, enabled: event.target.checked }))}
                             className="h-4 w-4"
                           />
                         </label>
@@ -1541,19 +1609,19 @@ const ProjectsTab: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={platform.watch}
-                            onChange={e => updatePlatform(platform.id, prev => ({ ...prev, watch: e.target.checked }))}
+                            onChange={event => updatePlatform(platform.id, prev => ({ ...prev, watch: event.target.checked }))}
                             className="h-4 w-4"
                           />
                         </label>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <label>
                         <span className="block text-xs text-slate-400 mb-1">Results Dir</span>
                         <input
                           type="text"
                           value={platform.resultsDir}
-                          onChange={e => updatePlatform(platform.id, prev => ({ ...prev, resultsDir: e.target.value }))}
+                          onChange={event => updatePlatform(platform.id, prev => ({ ...prev, resultsDir: event.target.value }))}
                           className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
                         />
                       </label>
@@ -1562,9 +1630,9 @@ const ProjectsTab: React.FC = () => {
                         <input
                           type="text"
                           value={platform.patterns.join(', ')}
-                          onChange={e => updatePlatform(platform.id, prev => ({
+                          onChange={event => updatePlatform(platform.id, prev => ({
                             ...prev,
-                            patterns: e.target.value.split(',').map(item => item.trim()).filter(Boolean),
+                            patterns: event.target.value.split(',').map(item => item.trim()).filter(Boolean),
                           }))}
                           className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
                         />
@@ -1574,7 +1642,7 @@ const ProjectsTab: React.FC = () => {
                 ))}
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   disabled={testingBusy}
@@ -1662,23 +1730,11 @@ const ProjectsTab: React.FC = () => {
                   </p>
                 </div>
               )}
-
-              <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
-                <p className="text-xs font-semibold text-slate-300 mb-2">SkillMeat Setup Instructions</p>
-                <p className="text-xs text-slate-500 mb-2">
-                  Configure your SkillMeat project to emit machine-readable test artifacts:
-                </p>
-                <div className="space-y-1.5">
-                  {SKILLMEAT_SETUP_COMMANDS.map(cmd => (
-                    <code key={cmd} className="block rounded bg-slate-900 px-2 py-1 text-[11px] text-indigo-200 overflow-x-auto">{cmd}</code>
-                  ))}
-                </div>
-              </div>
             </div>
 
-            {/* Save Button */}
             <div className="flex justify-end pt-4 border-t border-slate-800">
               <button
+                type="button"
                 onClick={handleSave}
                 disabled={saving}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1694,6 +1750,590 @@ const ProjectsTab: React.FC = () => {
                     Save Project
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const IntegrationsTab: React.FC = () => {
+  const { projects, activeProject, updateProject } = useData();
+  const [subtab, setSubtab] = useState<IntegrationsSubtab>('skillmeat');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [editData, setEditData] = useState<Project | null>(null);
+  const [skillMeatValidation, setSkillMeatValidation] = useState<SkillMeatConfigValidationResponse | null>(null);
+  const [skillMeatValidationBusy, setSkillMeatValidationBusy] = useState(false);
+  const [skillMeatValidationError, setSkillMeatValidationError] = useState<string | null>(null);
+  const [skillMeatSaving, setSkillMeatSaving] = useState(false);
+  const [skillMeatMessage, setSkillMeatMessage] = useState<string | null>(null);
+  const [skillMeatError, setSkillMeatError] = useState<string | null>(null);
+  const [githubSettings, setGitHubSettings] = useState<GitHubIntegrationSettingsUpdateRequest>({
+    enabled: false,
+    baseUrl: 'https://github.com',
+    username: 'git',
+    token: '',
+    cacheRoot: '',
+    writeEnabled: false,
+  });
+  const [maskedToken, setMaskedToken] = useState('');
+  const [tokenConfigured, setTokenConfigured] = useState(false);
+  const [githubMessage, setGitHubMessage] = useState<string | null>(null);
+  const [githubError, setGitHubError] = useState<string | null>(null);
+  const [githubSaving, setGitHubSaving] = useState(false);
+  const [credentialValidation, setCredentialValidation] = useState<GitHubCredentialValidationResponse | null>(null);
+  const [writeCapability, setWriteCapability] = useState<GitHubWriteCapabilityResponse | null>(null);
+  const [githubBusy, setGitHubBusy] = useState(false);
+
+  useEffect(() => {
+    if (!selectedProjectId && activeProject) {
+      setSelectedProjectId(activeProject.id);
+    }
+  }, [activeProject, selectedProjectId]);
+
+  useEffect(() => {
+    const project = projects.find(candidate => candidate.id === selectedProjectId);
+    if (!project) return;
+    setEditData(buildEditableProject(project));
+    setSkillMeatValidation(null);
+    setSkillMeatValidationError(null);
+    setSkillMeatMessage(null);
+    setSkillMeatError(null);
+    setCredentialValidation(null);
+    setWriteCapability(null);
+  }, [projects, selectedProjectId]);
+
+  useEffect(() => {
+    void getGitHubSettings()
+      .then(response => {
+        setGitHubSettings({
+          enabled: response.enabled,
+          baseUrl: response.baseUrl,
+          username: response.username,
+          token: '',
+          cacheRoot: response.cacheRoot,
+          writeEnabled: response.writeEnabled,
+        });
+        setMaskedToken(response.maskedToken);
+        setTokenConfigured(response.tokenConfigured);
+      })
+      .catch((loadError: any) => {
+        setGitHubError(loadError?.message || 'Failed to load GitHub integration settings');
+      });
+  }, []);
+
+  const updateSkillMeatConfig = (updater: (prev: Project['skillMeat']) => Project['skillMeat']) => {
+    setEditData(current => {
+      if (!current) return current;
+      return { ...current, skillMeat: updater(current.skillMeat || DEFAULT_SKILLMEAT_CONFIG) };
+    });
+    setSkillMeatValidation(null);
+    setSkillMeatValidationError(null);
+    setSkillMeatMessage(null);
+    setSkillMeatError(null);
+  };
+
+  const handleValidateSkillMeat = async () => {
+    if (!editData) return;
+    setSkillMeatValidationBusy(true);
+    setSkillMeatValidationError(null);
+    try {
+      const response = await validateSkillMeatConfig(editData.skillMeat || DEFAULT_SKILLMEAT_CONFIG);
+      setSkillMeatValidation(response);
+    } catch (validationError: any) {
+      setSkillMeatValidationError(validationError?.message || 'Failed to validate SkillMeat configuration');
+    } finally {
+      setSkillMeatValidationBusy(false);
+    }
+  };
+
+  const handleSaveSkillMeat = async () => {
+    if (!editData) return;
+    setSkillMeatSaving(true);
+    setSkillMeatMessage(null);
+    setSkillMeatError(null);
+    try {
+      await updateProject(editData.id, editData);
+      const skillMeatConfig = normalizeSkillMeatConfig(editData);
+      if (skillMeatConfig.enabled && skillMeatConfig.baseUrl.trim()) {
+        const refreshResult = await refreshSkillMeatCache(editData.id);
+        const syncResult = refreshResult.sync;
+        const backfillResult = refreshResult.backfill;
+        const warningCount = (syncResult.warnings?.length || 0) + (backfillResult?.warnings?.length || 0);
+        setSkillMeatMessage(
+          `SkillMeat refresh complete: ${syncResult.totalDefinitions} definitions synced, ${backfillResult?.observationsStored ?? 0} observations rebuilt${warningCount > 0 ? `, ${warningCount} warning${warningCount === 1 ? '' : 's'}` : ''}.`,
+        );
+      } else {
+        setSkillMeatMessage('SkillMeat settings saved.');
+      }
+    } catch (saveError: any) {
+      setSkillMeatError(saveError?.message || 'Failed to save SkillMeat settings');
+    } finally {
+      setSkillMeatSaving(false);
+    }
+  };
+
+  const handleSaveGitHubSettings = async () => {
+    setGitHubSaving(true);
+    setGitHubMessage(null);
+    setGitHubError(null);
+    try {
+      const response = await updateGitHubSettings(githubSettings);
+      setGitHubSettings({
+        enabled: response.enabled,
+        baseUrl: response.baseUrl,
+        username: response.username,
+        token: '',
+        cacheRoot: response.cacheRoot,
+        writeEnabled: response.writeEnabled,
+      });
+      setMaskedToken(response.maskedToken);
+      setTokenConfigured(response.tokenConfigured);
+      setGitHubMessage('GitHub integration settings saved.');
+    } catch (saveError: any) {
+      setGitHubError(saveError?.message || 'Failed to save GitHub settings');
+    } finally {
+      setGitHubSaving(false);
+    }
+  };
+
+  const handleValidateGitHubCredential = async () => {
+    if (!selectedProjectId) return;
+    setGitHubBusy(true);
+    setGitHubError(null);
+    setGitHubMessage(null);
+    try {
+      const response = await validateGitHubCredential({
+        projectId: selectedProjectId,
+        settings: githubSettings,
+      });
+      setCredentialValidation(response);
+      setGitHubMessage('GitHub validation completed.');
+    } catch (validationError: any) {
+      setGitHubError(validationError?.message || 'Failed to validate GitHub access');
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
+
+  const handleCheckWriteCapability = async () => {
+    if (!editData) return;
+    setGitHubBusy(true);
+    setGitHubError(null);
+    try {
+      const response = await checkGitHubWriteCapability({
+        projectId: editData.id,
+        reference: editData.pathConfig.root,
+      });
+      setWriteCapability(response);
+    } catch (capabilityError: any) {
+      setGitHubError(capabilityError?.message || 'Failed to evaluate write capability');
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
+
+  const handleRefreshWorkspace = async () => {
+    if (!editData) return;
+    setGitHubBusy(true);
+    setGitHubError(null);
+    try {
+      const response = await refreshGitHubWorkspace({
+        projectId: editData.id,
+        reference: editData.pathConfig.root,
+        force: true,
+      });
+      setGitHubMessage(response.status.message);
+    } catch (refreshError: any) {
+      setGitHubError(refreshError?.message || 'Failed to refresh GitHub workspace');
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="bg-indigo-500/10 p-2 rounded-lg text-indigo-400">
+            <GitBranch size={20} />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-100">Integrations</h3>
+            <p className="text-sm text-slate-400">SkillMeat remains project-scoped. GitHub credentials and workspace policy are app-scoped.</p>
+          </div>
+        </div>
+
+        <ProjectPicker
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          dropdownOpen={dropdownOpen}
+          onToggleDropdown={() => setDropdownOpen(current => !current)}
+          onSelect={(projectId) => {
+            setSelectedProjectId(projectId);
+            setDropdownOpen(false);
+          }}
+        />
+
+        <div className="mt-6 flex items-center gap-2">
+          <SubtabButton active={subtab === 'skillmeat'} label="SkillMeat" onClick={() => setSubtab('skillmeat')} />
+          <SubtabButton active={subtab === 'github'} label="GitHub" onClick={() => setSubtab('github')} />
+        </div>
+
+        {subtab === 'skillmeat' && editData && (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-300 mb-1">SkillMeat Integration</h4>
+                <p className="text-xs text-slate-500">
+                  Configure the read-only SkillMeat source for artifacts, workflows, context modules, and bundle metadata.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleValidateSkillMeat}
+                disabled={skillMeatValidationBusy}
+                className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={skillMeatValidationBusy ? 'animate-spin' : ''} />
+                {skillMeatValidationBusy ? 'Checking...' : 'Check Connection'}
+              </button>
+            </div>
+
+            {skillMeatValidationError && (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                {skillMeatValidationError}
+              </div>
+            )}
+            {skillMeatMessage && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                {skillMeatMessage}
+              </div>
+            )}
+            {skillMeatError && (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                {skillMeatError}
+              </div>
+            )}
+
+            <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+              <span className="text-sm text-slate-200">Enable SkillMeat integration</span>
+              <input
+                type="checkbox"
+                checked={Boolean(editData.skillMeat?.enabled)}
+                onChange={event => updateSkillMeatConfig(prev => ({ ...prev, enabled: event.target.checked }))}
+                className="h-4 w-4"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="block">
+                <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>Base URL</span>
+                  <SkillMeatStatusBadge result={skillMeatValidation?.baseUrl} fallback="Unchecked" />
+                </span>
+                <input
+                  type="url"
+                  value={editData.skillMeat?.baseUrl || ''}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, baseUrl: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  placeholder="http://127.0.0.1:8080"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Request Timeout (seconds)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  step={0.5}
+                  value={editData.skillMeat?.requestTimeoutSeconds ?? 5}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, requestTimeoutSeconds: Number(event.target.value || 5) }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>SkillMeat Project ID</span>
+                  <SkillMeatStatusBadge result={skillMeatValidation?.projectMapping} fallback="Unchecked" />
+                </span>
+                <input
+                  type="text"
+                  value={editData.skillMeat?.projectId || ''}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, projectId: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="project UUID from SkillMeat"
+                />
+                <p className="mt-1 text-xs text-slate-500">Use the exact SkillMeat project ID from the SkillMeat UI.</p>
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Collection ID (optional)</span>
+                <input
+                  type="text"
+                  value={editData.skillMeat?.collectionId || ''}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, collectionId: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="default"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <div>
+                  <span className="block text-sm text-slate-200">AAA enabled</span>
+                  <span className="block text-xs text-slate-500">Turn this on for auth-protected SkillMeat instances.</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(editData.skillMeat?.aaaEnabled)}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, aaaEnabled: event.target.checked }))}
+                  className="h-4 w-4"
+                />
+              </label>
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>Auth Status</span>
+                  <SkillMeatStatusBadge result={skillMeatValidation?.auth} fallback="Unchecked" />
+                </span>
+                <p className="text-xs text-slate-500">
+                  Local development usually runs without auth. AAA mode sends `Authorization: Bearer &lt;token&gt;`.
+                </p>
+              </div>
+            </div>
+
+            {editData.skillMeat?.aaaEnabled ? (
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">API Key / Bearer Token</span>
+                <input
+                  type="password"
+                  value={editData.skillMeat?.apiKey || ''}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, apiKey: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="sm_pat_..."
+                />
+              </label>
+            ) : (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-500">
+                Local mode is selected, so CCDash will not send a credential until AAA is enabled.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {[
+                ['stackRecommendationsEnabled', 'Recommended Stack UI', 'Show evidence-backed stack suggestions in /execution.'],
+                ['usageAttributionEnabled', 'Usage Attribution', 'Enable attribution views in /analytics and drill-downs.'],
+                ['sessionBlockInsightsEnabled', 'Session Block Insights', 'Enable billing-block views in Session Inspector.'],
+                ['workflowAnalyticsEnabled', 'Workflow Effectiveness', 'Enable workflow intelligence analytics in /analytics and /execution.'],
+              ].map(([key, label, description]) => (
+                <label key={key} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <div>
+                    <span className="block text-sm text-slate-200">{label}</span>
+                    <span className="block text-xs text-slate-500">{description}</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={(editData.skillMeat?.featureFlags as any)?.[key] ?? true}
+                    onChange={event => updateSkillMeatConfig(prev => ({
+                      ...prev,
+                      featureFlags: {
+                        ...DEFAULT_SKILLMEAT_FEATURE_FLAGS,
+                        ...(prev.featureFlags || {}),
+                        [key]: event.target.checked,
+                      },
+                    }))}
+                    className="h-4 w-4"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+              <p className="text-xs font-semibold text-slate-300 mb-2">SkillMeat Setup Instructions</p>
+              <div className="space-y-1.5">
+                {SKILLMEAT_SETUP_COMMANDS.map(cmd => (
+                  <code key={cmd} className="block rounded bg-slate-900 px-2 py-1 text-[11px] text-indigo-200 overflow-x-auto">{cmd}</code>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={handleSaveSkillMeat}
+                disabled={skillMeatSaving}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {skillMeatSaving ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={14} />
+                    Save SkillMeat Settings
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {subtab === 'github' && (
+          <div className="mt-6 space-y-4">
+            {githubError && (
+              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                {githubError}
+              </div>
+            )}
+            {githubMessage && !githubError && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                {githubMessage}
+              </div>
+            )}
+
+            <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+              <div>
+                <span className="block text-sm text-slate-200">Enable GitHub integration</span>
+                <span className="block text-xs text-slate-500">Managed workspaces stay disabled until this is turned on.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={githubSettings.enabled}
+                onChange={event => setGitHubSettings(current => ({ ...current, enabled: event.target.checked }))}
+                className="h-4 w-4"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">GitHub Base URL</span>
+                <input
+                  type="url"
+                  value={githubSettings.baseUrl}
+                  onChange={event => setGitHubSettings(current => ({ ...current, baseUrl: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Username</span>
+                <input
+                  type="text"
+                  value={githubSettings.username}
+                  onChange={event => setGitHubSettings(current => ({ ...current, username: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Token</span>
+                <input
+                  type="password"
+                  value={githubSettings.token}
+                  onChange={event => setGitHubSettings(current => ({ ...current, token: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder={tokenConfigured ? 'Leave blank to keep existing token' : 'ghp_...'}
+                />
+                {tokenConfigured && (
+                  <p className="mt-1 text-xs text-slate-500">Stored token: {maskedToken || 'configured'}</p>
+                )}
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Workspace Cache Root</span>
+                <input
+                  type="text"
+                  value={githubSettings.cacheRoot}
+                  onChange={event => setGitHubSettings(current => ({ ...current, cacheRoot: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </label>
+            </div>
+
+            <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+              <div>
+                <span className="block text-sm text-slate-200">Enable repo writes</span>
+                <span className="block text-xs text-slate-500">Plan-document write-back still also requires the project root or target ref to allow writes.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={githubSettings.writeEnabled}
+                onChange={event => setGitHubSettings(current => ({ ...current, writeEnabled: event.target.checked }))}
+                className="h-4 w-4"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>Auth</span>
+                  <GitHubStatusBadge result={credentialValidation?.auth} fallback="Unchecked" />
+                </span>
+                <p className="text-xs text-slate-500">Checks stored credentials and disabled-state handling.</p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>Repo Access</span>
+                  <GitHubStatusBadge result={credentialValidation?.repoAccess} fallback="Unchecked" />
+                </span>
+                <p className="text-xs text-slate-500">Uses the selected project root when it is GitHub-backed.</p>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <span className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>Write Capability</span>
+                  <GitHubStatusBadge result={writeCapability?.status} fallback="Unchecked" />
+                </span>
+                <p className="text-xs text-slate-500">Confirms phase 6 gating before document write-back is enabled.</p>
+              </div>
+            </div>
+
+            {editData && (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                <h4 className="text-sm font-semibold text-slate-200 mb-1">Selected project root</h4>
+                <p className="text-xs text-slate-500 mb-3">
+                  Path-source selection lives in the Projects tab. GitHub validation here uses the current root reference.
+                </p>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                  <p className="text-xs text-slate-200 font-mono break-all">{getProjectPathInputValue(editData.pathConfig.root) || 'No root configured'}</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Source: {editData.pathConfig.root.sourceKind}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSaveGitHubSettings}
+                disabled={githubSaving}
+                className="rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50"
+              >
+                {githubSaving ? 'Saving...' : 'Save GitHub Settings'}
+              </button>
+              <button
+                type="button"
+                onClick={handleValidateGitHubCredential}
+                disabled={githubBusy}
+                className="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
+              >
+                {githubBusy ? 'Working...' : 'Validate Access'}
+              </button>
+              <button
+                type="button"
+                onClick={handleRefreshWorkspace}
+                disabled={githubBusy || !editData || editData.pathConfig.root.sourceKind !== 'github_repo'}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600 disabled:opacity-50"
+              >
+                Refresh Workspace
+              </button>
+              <button
+                type="button"
+                onClick={handleCheckWriteCapability}
+                disabled={githubBusy || !editData}
+                className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+              >
+                Check Write Capability
               </button>
             </div>
           </div>
@@ -1868,6 +2508,7 @@ export const Settings: React.FC = () => {
       <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-slate-800 rounded-xl">
         <TabButton tab="general" activeTab={activeTab} icon={SettingsIcon} label="General" onClick={setActiveTab} />
         <TabButton tab="projects" activeTab={activeTab} icon={FolderOpen} label="Projects" onClick={setActiveTab} />
+        <TabButton tab="integrations" activeTab={activeTab} icon={GitBranch} label="Integrations" onClick={setActiveTab} />
         <TabButton tab="ai-platforms" activeTab={activeTab} icon={Bot} label="AI Platforms" onClick={setActiveTab} />
         <TabButton tab="alerts" activeTab={activeTab} icon={Bell} label="Alerts" onClick={setActiveTab} />
       </div>
@@ -1875,6 +2516,7 @@ export const Settings: React.FC = () => {
       {/* Tab Content */}
       {activeTab === 'general' && <GeneralTab />}
       {activeTab === 'projects' && <ProjectsTab />}
+      {activeTab === 'integrations' && <IntegrationsTab />}
       {activeTab === 'ai-platforms' && <AIPlatformsTab />}
       {activeTab === 'alerts' && <AlertsTab />}
     </div>

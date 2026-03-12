@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { Project } from '../types';
 import { defaultSkillMeatConfig } from '../services/agenticIntelligence';
+import { createDefaultPathConfig } from '../services/projectPaths';
 import { defaultTestConfig } from '../services/testConfigDefaults';
 
 interface AddProjectModalProps {
@@ -42,6 +43,41 @@ export const AddProjectModal: React.FC<AddProjectModalProps> = ({ isOpen, onClos
                 planDocsPath,
                 sessionsPath,
                 progressPath,
+                pathConfig: {
+                    ...createDefaultPathConfig(),
+                    root: {
+                        field: 'root',
+                        sourceKind: 'filesystem',
+                        displayValue: path,
+                        filesystemPath: path,
+                        relativePath: '',
+                        repoRef: null,
+                    },
+                    planDocs: {
+                        field: 'plan_docs',
+                        sourceKind: 'project_root',
+                        displayValue: planDocsPath,
+                        filesystemPath: '',
+                        relativePath: planDocsPath,
+                        repoRef: null,
+                    },
+                    sessions: {
+                        field: 'sessions',
+                        sourceKind: 'filesystem',
+                        displayValue: sessionsPath,
+                        filesystemPath: sessionsPath,
+                        relativePath: '',
+                        repoRef: null,
+                    },
+                    progress: {
+                        field: 'progress',
+                        sourceKind: 'project_root',
+                        displayValue: progressPath,
+                        filesystemPath: '',
+                        relativePath: progressPath,
+                        repoRef: null,
+                    },
+                },
                 testConfig: defaultTestConfig(),
                 skillMeat: defaultSkillMeatConfig(),
             };
