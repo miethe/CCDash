@@ -85,7 +85,7 @@ parallelization:
 blockers: []
 
 success_criteria:
-  - "Settings can edit, reset, and sync pricing rows for the active project."
+  - "Settings can edit, reset, sync, and delete pricing rows from a dedicated AI Platforms tab."
   - "Session Inspector surfaces current context separately from observed workload and shows cost provenance."
   - "Feature Workbench, Project Board, Dashboard, and Analytics use the same normalized display-cost semantics."
   - "Shared frontend helpers keep current context, workload totals, and spend semantics distinct."
@@ -93,6 +93,6 @@ success_criteria:
 
 Completed the cross-surface adoption pass for context and cost observability.
 
-- Added frontend pricing APIs plus a project-scoped pricing catalog editor in Settings.
+- Added frontend pricing APIs plus a dedicated `Settings > AI Platforms` catalog editor with global platform defaults, family pricing, detected exact models, and manual override deletion.
 - Extended feature-linked session contracts with current-context and cost-provenance fields.
 - Updated Session Inspector, Workbench, Project Board, Dashboard, and Analytics to surface normalized semantics and calibration summaries.

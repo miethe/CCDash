@@ -16,6 +16,12 @@
 
 - Session Inspector analytics now exposes main-session-only block views without altering canonical workload or cost totals.
 - Project Settings now lets operators disable session block insights independently from other analytics surfaces.
+- Pricing configuration moved from `Projects` into a dedicated `Settings > AI Platforms` tab with:
+  - global platform/family defaults for `Claude Code` and `Codex`
+  - detected exact-model rows synthesized from synced sessions across configured projects
+  - best-effort provider sync against Anthropic/OpenAI pricing pages with bundled fallback
+  - delete support for manual exact-model overrides while protecting required defaults
+- Claude/Codex pricing defaults and parser-side fallback estimates were refreshed to current model families and exact-version references.
 - Claude Code session context and cost observability tracking now records phase 6 as completed and marks the overall plan set complete.
 
 ### Docs
