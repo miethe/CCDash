@@ -398,6 +398,9 @@ class PricingCatalogEntry(BaseModel):
     projectId: str = ""
     platformType: str = ""
     modelId: str = ""
+    displayLabel: str = ""
+    entryKind: str = "model"
+    familyId: str = ""
     contextWindowSize: Optional[int] = None
     inputCostPerMillion: Optional[float] = None
     outputCostPerMillion: Optional[float] = None
@@ -409,6 +412,11 @@ class PricingCatalogEntry(BaseModel):
     overrideLocked: bool = False
     syncStatus: str = "never"
     syncError: str = ""
+    derivedFrom: str = ""
+    isPersisted: bool = False
+    isDetected: bool = False
+    isRequiredDefault: bool = False
+    canDelete: bool = False
     createdAt: str = ""
     updatedAt: str = ""
 

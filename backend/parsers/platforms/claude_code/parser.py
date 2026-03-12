@@ -980,13 +980,22 @@ def _make_id(path: Path) -> str:
 def _estimate_cost(tokens_in: int, tokens_out: int, model: str) -> float:
     """Rough cost estimate based on model pricing."""
     rates = {
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-sonnet-4-5": (3.0, 15.0),
+        "claude-sonnet-4": (3.0, 15.0),
         "claude-3-5-sonnet": (3.0, 15.0),
         "claude-3-7-sonnet": (3.0, 15.0),
         "claude-sonnet": (3.0, 15.0),
+        "claude-opus-4-6": (5.0, 25.0),
+        "claude-opus-4-5": (5.0, 25.0),
+        "claude-opus-4-1": (15.0, 75.0),
+        "claude-opus-4": (15.0, 75.0),
         "claude-3-opus": (15.0, 75.0),
-        "claude-opus": (15.0, 75.0),
+        "claude-opus": (5.0, 25.0),
+        "claude-haiku-4-5": (1.0, 5.0),
+        "claude-haiku-3-5": (0.8, 4.0),
         "claude-3-haiku": (0.25, 1.25),
-        "claude-haiku": (0.25, 1.25),
+        "claude-haiku": (1.0, 5.0),
     }
     model_lower = model.lower()
     in_rate, out_rate = 3.0, 15.0
