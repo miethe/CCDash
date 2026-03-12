@@ -157,7 +157,8 @@ The core debugging loop for AI interactions.
     *   dedicated `AI Platforms` tab for global pricing management instead of project-scoped editing
     *   platform defaults plus family defaults for `Claude Code` and `Codex`
     *   detected exact-model rows synthesized from synced sessions across configured projects
-    *   best-effort provider sync for Anthropic and OpenAI pricing pages with bundled fallback
+    *   best-effort live provider sync for Anthropic and OpenAI pricing pages with bundled fallback
+    *   provider refresh can be triggered from the UI or automated through `POST /api/pricing/catalog/sync?platformType=...`
     *   manual exact-model overrides can be added, saved, reset, and deleted without removing required platform/family defaults
 *   **SkillMeat Intelligence Controls**: Per-project SkillMeat settings now include rollout controls for:
     *   read-only definition sync

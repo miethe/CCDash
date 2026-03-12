@@ -27,6 +27,7 @@
 ### Docs
 
 - Added:
+  - `docs/ai-platforms-pricing-user-guide.md`
   - `docs/session-block-insights-user-guide.md`
   - `docs/session-block-insights-developer-reference.md`
 - Updated:
