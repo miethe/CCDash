@@ -103,11 +103,23 @@ CREATE TABLE IF NOT EXISTS sessions (
     cache_read_input_tokens INTEGER DEFAULT 0,
     cache_input_tokens INTEGER DEFAULT 0,
     observed_tokens  INTEGER DEFAULT 0,
+    current_context_tokens INTEGER DEFAULT 0,
+    context_window_size INTEGER DEFAULT 0,
+    context_utilization_pct REAL DEFAULT 0.0,
+    context_measurement_source TEXT DEFAULT '',
+    context_measured_at TEXT DEFAULT '',
     tool_reported_tokens INTEGER DEFAULT 0,
     tool_result_input_tokens INTEGER DEFAULT 0,
     tool_result_output_tokens INTEGER DEFAULT 0,
     tool_result_cache_creation_input_tokens INTEGER DEFAULT 0,
     tool_result_cache_read_input_tokens INTEGER DEFAULT 0,
+    reported_cost_usd REAL,
+    recalculated_cost_usd REAL,
+    display_cost_usd REAL,
+    cost_provenance TEXT DEFAULT 'unknown',
+    cost_confidence REAL DEFAULT 0.0,
+    cost_mismatch_pct REAL,
+    pricing_model_source TEXT DEFAULT '',
     total_cost       REAL DEFAULT 0.0,
     quality_rating   INTEGER DEFAULT 0,
     friction_rating  INTEGER DEFAULT 0,
@@ -585,6 +597,32 @@ CREATE INDEX IF NOT EXISTS idx_external_definitions_source
 CREATE INDEX IF NOT EXISTS idx_external_definitions_name
     ON external_definitions(project_id, display_name);
 
+CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id         TEXT NOT NULL,
+    platform_type      TEXT NOT NULL,
+    model_id           TEXT NOT NULL DEFAULT '',
+    context_window_size INTEGER,
+    input_cost_per_million REAL,
+    output_cost_per_million REAL,
+    cache_creation_cost_per_million REAL,
+    cache_read_cost_per_million REAL,
+    speed_multiplier_fast REAL,
+    source_type        TEXT NOT NULL DEFAULT 'bundled',
+    source_updated_at  TEXT DEFAULT '',
+    override_locked    INTEGER NOT NULL DEFAULT 0,
+    sync_status        TEXT NOT NULL DEFAULT 'never',
+    sync_error         TEXT DEFAULT '',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, platform_type, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pricing_catalog_project_platform
+    ON pricing_catalog_entries(project_id, platform_type, model_id);
+CREATE INDEX IF NOT EXISTS idx_pricing_catalog_source
+    ON pricing_catalog_entries(project_id, source_type, sync_status);
+
 CREATE TABLE IF NOT EXISTS session_stack_observations (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id         TEXT NOT NULL,
@@ -973,11 +1011,23 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "sessions", "cache_read_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "cache_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "observed_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "current_context_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "context_window_size", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "context_utilization_pct", "REAL DEFAULT 0.0")
+    await _ensure_column(db, "sessions", "context_measurement_source", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "context_measured_at", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "tool_reported_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_output_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_cache_creation_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_cache_read_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "reported_cost_usd", "REAL")
+    await _ensure_column(db, "sessions", "recalculated_cost_usd", "REAL")
+    await _ensure_column(db, "sessions", "display_cost_usd", "REAL")
+    await _ensure_column(db, "sessions", "cost_provenance", "TEXT DEFAULT 'unknown'")
+    await _ensure_column(db, "sessions", "cost_confidence", "REAL DEFAULT 0.0")
+    await _ensure_column(db, "sessions", "cost_mismatch_pct", "REAL")
+    await _ensure_column(db, "sessions", "pricing_model_source", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
     await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
@@ -1025,6 +1075,39 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id         TEXT NOT NULL,
+            platform_type      TEXT NOT NULL,
+            model_id           TEXT NOT NULL DEFAULT '',
+            context_window_size INTEGER,
+            input_cost_per_million REAL,
+            output_cost_per_million REAL,
+            cache_creation_cost_per_million REAL,
+            cache_read_cost_per_million REAL,
+            speed_multiplier_fast REAL,
+            source_type        TEXT NOT NULL DEFAULT 'bundled',
+            source_updated_at  TEXT DEFAULT '',
+            override_locked    INTEGER NOT NULL DEFAULT 0,
+            sync_status        TEXT NOT NULL DEFAULT 'never',
+            sync_error         TEXT DEFAULT '',
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, platform_type, model_id)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_pricing_catalog_project_platform ON pricing_catalog_entries(project_id, platform_type, model_id)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_pricing_catalog_source ON pricing_catalog_entries(project_id, source_type, sync_status)",
+    )
     await _ensure_index(
         db,
         """

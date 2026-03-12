@@ -28,6 +28,7 @@ from backend.db.repositories.links import (
     SqliteSyncStateRepository,
     SqliteAlertConfigRepository,
 )
+from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 
 def get_session_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
@@ -90,6 +91,13 @@ def get_alert_config_repository(db: Any):
         return SqliteAlertConfigRepository(db)
     from backend.db.repositories.postgres.links import PostgresAlertConfigRepository
     return PostgresAlertConfigRepository(db)
+
+
+def get_pricing_catalog_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqlitePricingCatalogRepository(db)
+    from backend.db.repositories.postgres.pricing import PostgresPricingCatalogRepository
+    return PostgresPricingCatalogRepository(db)
 
 
 def get_test_run_repository(db: Any):

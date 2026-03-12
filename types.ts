@@ -234,7 +234,19 @@ export interface AgentSession {
   toolResultCacheReadInputTokens?: number;
   cacheShare?: number;
   outputShare?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   totalCost: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   startedAt: string;
   endedAt?: string;
   createdAt?: string;
@@ -1215,6 +1227,50 @@ export interface SkillMeatRefreshResponse {
   projectId: string;
   sync: SkillMeatDefinitionSyncResponse;
   backfill: SkillMeatObservationBackfillResponse | null;
+}
+
+export interface PricingCatalogEntry {
+  projectId: string;
+  platformType: string;
+  modelId: string;
+  contextWindowSize?: number | null;
+  inputCostPerMillion?: number | null;
+  outputCostPerMillion?: number | null;
+  cacheCreationCostPerMillion?: number | null;
+  cacheReadCostPerMillion?: number | null;
+  speedMultiplierFast?: number | null;
+  sourceType: string;
+  sourceUpdatedAt: string;
+  overrideLocked: boolean;
+  syncStatus: string;
+  syncError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PricingCatalogUpsertRequest {
+  platformType: string;
+  modelId?: string;
+  contextWindowSize?: number | null;
+  inputCostPerMillion?: number | null;
+  outputCostPerMillion?: number | null;
+  cacheCreationCostPerMillion?: number | null;
+  cacheReadCostPerMillion?: number | null;
+  speedMultiplierFast?: number | null;
+  sourceType?: string;
+  sourceUpdatedAt?: string;
+  overrideLocked?: boolean;
+  syncStatus?: string;
+  syncError?: string;
+}
+
+export interface PricingCatalogSyncResponse {
+  projectId: string;
+  platformType: string;
+  syncedAt: string;
+  updatedEntries: number;
+  warnings: string[];
+  entries: PricingCatalogEntry[];
 }
 
 export interface Project {

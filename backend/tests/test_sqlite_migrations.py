@@ -120,6 +120,11 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("observed_tokens", columns)
         self.assertIn("cache_input_tokens", columns)
         self.assertIn("tool_reported_tokens", columns)
+        self.assertIn("current_context_tokens", columns)
+        self.assertIn("context_window_size", columns)
+        self.assertIn("reported_cost_usd", columns)
+        self.assertIn("display_cost_usd", columns)
+        self.assertIn("cost_provenance", columns)
 
         async with db.execute("PRAGMA table_info(session_logs)") as cur:
             log_rows = await cur.fetchall()
@@ -127,10 +132,10 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_log_id", log_columns)
 
         async with db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_usage_attributions')"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_usage_attributions', 'pricing_catalog_entries')"
         ) as cur:
             tables = {row[0] for row in await cur.fetchall()}
-        self.assertEqual(tables, {"session_usage_events", "session_usage_attributions"})
+        self.assertEqual(tables, {"session_usage_events", "session_usage_attributions", "pricing_catalog_entries"})
 
         async with db.execute("SELECT MAX(version) FROM schema_version") as cur:
             row = await cur.fetchone()

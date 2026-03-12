@@ -99,6 +99,11 @@ def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
         "cacheReadInputTokens": cache_read_input_tokens,
         "cacheInputTokens": cache_input_tokens,
         "observedTokens": observed_tokens,
+        "currentContextTokens": int(row.get("current_context_tokens") or 0),
+        "contextWindowSize": int(row.get("context_window_size") or 0),
+        "contextUtilizationPct": round(float(row.get("context_utilization_pct") or 0.0), 2),
+        "contextMeasurementSource": str(row.get("context_measurement_source") or ""),
+        "contextMeasuredAt": str(row.get("context_measured_at") or ""),
         "toolReportedTokens": tool_reported_tokens,
         "toolResultInputTokens": tool_result_input_tokens,
         "toolResultOutputTokens": tool_result_output_tokens,
@@ -106,6 +111,13 @@ def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
         "toolResultCacheReadInputTokens": tool_result_cache_read_input_tokens,
         "cacheShare": _usage_ratio(cache_input_tokens, observed_tokens),
         "outputShare": _usage_ratio(row.get("tokens_out") or 0, model_io_tokens),
+        "reportedCostUsd": row.get("reported_cost_usd"),
+        "recalculatedCostUsd": row.get("recalculated_cost_usd"),
+        "displayCostUsd": row.get("display_cost_usd"),
+        "costProvenance": str(row.get("cost_provenance") or "unknown"),
+        "costConfidence": round(float(row.get("cost_confidence") or 0.0), 4),
+        "costMismatchPct": row.get("cost_mismatch_pct"),
+        "pricingModelSource": str(row.get("pricing_model_source") or ""),
     }
 
 

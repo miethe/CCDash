@@ -194,7 +194,19 @@ class AgentSession(BaseModel):
     toolResultCacheReadInputTokens: int = 0
     cacheShare: float = 0.0
     outputShare: float = 0.0
+    currentContextTokens: int = 0
+    contextWindowSize: int = 0
+    contextUtilizationPct: float = 0.0
+    contextMeasurementSource: str = ""
+    contextMeasuredAt: str = ""
     totalCost: float = 0.0
+    reportedCostUsd: Optional[float] = None
+    recalculatedCostUsd: Optional[float] = None
+    displayCostUsd: Optional[float] = None
+    costProvenance: Literal["reported", "recalculated", "estimated", "unknown"] = "unknown"
+    costConfidence: float = 0.0
+    costMismatchPct: Optional[float] = None
+    pricingModelSource: str = ""
     startedAt: str = ""
     endedAt: str = ""
     createdAt: str = ""
@@ -380,6 +392,50 @@ class SessionUsageCalibrationSummary(BaseModel):
     confidenceBands: list[dict[str, Any]] = Field(default_factory=list)
     methodMix: list[dict[str, Any]] = Field(default_factory=list)
     generatedAt: str = ""
+
+
+class PricingCatalogEntry(BaseModel):
+    projectId: str = ""
+    platformType: str = ""
+    modelId: str = ""
+    contextWindowSize: Optional[int] = None
+    inputCostPerMillion: Optional[float] = None
+    outputCostPerMillion: Optional[float] = None
+    cacheCreationCostPerMillion: Optional[float] = None
+    cacheReadCostPerMillion: Optional[float] = None
+    speedMultiplierFast: Optional[float] = None
+    sourceType: str = "bundled"
+    sourceUpdatedAt: str = ""
+    overrideLocked: bool = False
+    syncStatus: str = "never"
+    syncError: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class PricingCatalogUpsertRequest(BaseModel):
+    platformType: str
+    modelId: str = ""
+    contextWindowSize: Optional[int] = None
+    inputCostPerMillion: Optional[float] = None
+    outputCostPerMillion: Optional[float] = None
+    cacheCreationCostPerMillion: Optional[float] = None
+    cacheReadCostPerMillion: Optional[float] = None
+    speedMultiplierFast: Optional[float] = None
+    sourceType: str = "manual"
+    sourceUpdatedAt: str = ""
+    overrideLocked: bool = False
+    syncStatus: str = "manual"
+    syncError: str = ""
+
+
+class PricingCatalogSyncResponse(BaseModel):
+    projectId: str = ""
+    platformType: str = ""
+    syncedAt: str = ""
+    updatedEntries: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    entries: list[PricingCatalogEntry] = Field(default_factory=list)
 
 
 # ── Document-related models ────────────────────────────────────────
