@@ -3,18 +3,21 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
-status: draft
+status: in-progress
 category: enhancements
-title: "Implementation Plan: Project Path Sources and GitHub Integration V1"
-description: "Implement typed path references, managed GitHub repo workspaces, and a dedicated Integrations settings surface."
-summary: "Refactor project path handling behind a resolver/provider layer, add GitHub integration services, migrate the Settings UI, and optionally enable plan-document write-back."
+title: 'Implementation Plan: Project Path Sources and GitHub Integration V1'
+description: Implement typed path references, managed GitHub repo workspaces, and
+  a dedicated Integrations settings surface.
+summary: Refactor project path handling behind a resolver/provider layer, add GitHub
+  integration services, migrate the Settings UI, and optionally enable plan-document
+  write-back.
 created: 2026-03-12
-updated: 2026-03-12
+updated: '2026-03-12'
 priority: high
 risk_level: high
 complexity: High
 track: Settings / Integrations
-timeline_estimate: "3-5 weeks across 7 phases"
+timeline_estimate: 3-5 weeks across 7 phases
 feature_slug: project-path-sources-and-github-integration-v1
 feature_family: project-configuration-and-integrations
 feature_version: v1
@@ -23,23 +26,36 @@ lineage_parent: null
 lineage_children: []
 lineage_type: enhancement
 owner: fullstack-engineering
-owners: [fullstack-engineering, platform-engineering, integrations]
-contributors: [ai-agents]
-audience: [ai-agents, developers, engineering-leads]
-tags: [implementation, settings, github, integrations, repositories, project-paths]
+owners:
+- fullstack-engineering
+- platform-engineering
+- integrations
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- engineering-leads
+tags:
+- implementation
+- settings
+- github
+- integrations
+- repositories
+- project-paths
 prd: docs/project_plans/PRDs/enhancements/project-path-sources-and-github-integration-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/project-path-sources-and-github-integration-v1.md
 related:
-  - backend/models.py
-  - backend/project_manager.py
-  - backend/routers/projects.py
-  - backend/routers/integrations.py
-  - backend/db/sqlite_migrations.py
-  - backend/db/postgres_migrations.py
-  - components/Settings.tsx
-  - components/AddProjectModal.tsx
-  - contexts/DataContext.tsx
-  - types.ts
+- backend/models.py
+- backend/project_manager.py
+- backend/routers/projects.py
+- backend/routers/integrations.py
+- backend/db/sqlite_migrations.py
+- backend/db/postgres_migrations.py
+- components/Settings.tsx
+- components/AddProjectModal.tsx
+- contexts/DataContext.tsx
+- types.ts
 plan_ref: project-path-sources-and-github-integration-v1
 linked_sessions: []
 ---

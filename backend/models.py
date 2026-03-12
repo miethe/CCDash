@@ -822,6 +822,170 @@ class SkillMeatProjectConfig(BaseModel):
         return migrated
 
 
+PathSourceKind = Literal["project_root", "github_repo", "filesystem"]
+ProjectPathField = Literal["root", "plan_docs", "sessions", "progress"]
+
+
+class GitRepoRef(BaseModel):
+    provider: Literal["github"] = "github"
+    repoUrl: str = ""
+    repoSlug: str = ""
+    branch: str = ""
+    repoSubpath: str = ""
+    writeEnabled: bool = False
+
+
+class ProjectPathReference(BaseModel):
+    field: ProjectPathField
+    sourceKind: PathSourceKind = "filesystem"
+    displayValue: str = ""
+    filesystemPath: str = ""
+    relativePath: str = ""
+    repoRef: Optional[GitRepoRef] = None
+
+    @model_validator(mode="after")
+    def _validate_source_shape(self) -> "ProjectPathReference":
+        if self.field == "root" and self.sourceKind == "project_root":
+            raise ValueError("The root path cannot inherit from project_root.")
+
+        if self.sourceKind == "project_root":
+            if self.repoRef is not None:
+                raise ValueError("project_root references cannot include repoRef.")
+            if self.filesystemPath.strip():
+                raise ValueError("project_root references cannot include filesystemPath.")
+            if self.field != "root" and not self.relativePath.strip():
+                raise ValueError("project_root references require relativePath.")
+        elif self.sourceKind == "filesystem":
+            if self.repoRef is not None:
+                raise ValueError("filesystem references cannot include repoRef.")
+        elif self.sourceKind == "github_repo":
+            if self.repoRef is None:
+                raise ValueError("github_repo references require repoRef.")
+            if self.filesystemPath.strip():
+                raise ValueError("github_repo references cannot include filesystemPath.")
+
+        return self
+
+
+class ProjectPathConfig(BaseModel):
+    root: ProjectPathReference = Field(
+        default_factory=lambda: ProjectPathReference(field="root", sourceKind="filesystem")
+    )
+    planDocs: ProjectPathReference = Field(
+        default_factory=lambda: ProjectPathReference(
+            field="plan_docs",
+            sourceKind="project_root",
+            relativePath="docs/project_plans/",
+            displayValue="docs/project_plans/",
+        )
+    )
+    sessions: ProjectPathReference = Field(
+        default_factory=lambda: ProjectPathReference(field="sessions", sourceKind="filesystem")
+    )
+    progress: ProjectPathReference = Field(
+        default_factory=lambda: ProjectPathReference(
+            field="progress",
+            sourceKind="project_root",
+            relativePath="progress",
+            displayValue="progress",
+        )
+    )
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> "ProjectPathConfig":
+        if self.root.field != "root":
+            raise ValueError("pathConfig.root must target the root field.")
+        if self.planDocs.field != "plan_docs":
+            raise ValueError("pathConfig.planDocs must target the plan_docs field.")
+        if self.sessions.field != "sessions":
+            raise ValueError("pathConfig.sessions must target the sessions field.")
+        if self.progress.field != "progress":
+            raise ValueError("pathConfig.progress must target the progress field.")
+        return self
+
+
+class GitHubIntegrationSettings(BaseModel):
+    enabled: bool = False
+    provider: Literal["github"] = "github"
+    baseUrl: str = "https://github.com"
+    username: str = "git"
+    token: str = ""
+    cacheRoot: str = ""
+    writeEnabled: bool = False
+
+
+class GitHubIntegrationSettingsUpdateRequest(BaseModel):
+    enabled: bool = False
+    baseUrl: str = "https://github.com"
+    username: str = "git"
+    token: str = ""
+    cacheRoot: str = ""
+    writeEnabled: bool = False
+
+
+class GitHubIntegrationSettingsResponse(BaseModel):
+    enabled: bool = False
+    provider: Literal["github"] = "github"
+    baseUrl: str = "https://github.com"
+    username: str = "git"
+    tokenConfigured: bool = False
+    maskedToken: str = ""
+    cacheRoot: str = ""
+    writeEnabled: bool = False
+
+
+class GitHubProbeResult(BaseModel):
+    state: Literal["idle", "success", "warning", "error"] = "idle"
+    message: str = ""
+    checkedAt: str = ""
+    path: str = ""
+
+
+class GitHubCredentialValidationRequest(BaseModel):
+    projectId: str = ""
+    settings: Optional[GitHubIntegrationSettingsUpdateRequest] = None
+
+
+class GitHubCredentialValidationResponse(BaseModel):
+    auth: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
+    repoAccess: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
+
+
+class GitHubPathValidationRequest(BaseModel):
+    projectId: str = ""
+    reference: ProjectPathReference
+    rootReference: Optional[ProjectPathReference] = None
+
+
+class GitHubPathValidationResponse(BaseModel):
+    reference: ProjectPathReference
+    status: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
+    resolvedLocalPath: str = ""
+
+
+class GitHubWorkspaceRefreshRequest(BaseModel):
+    projectId: str = ""
+    reference: Optional[ProjectPathReference] = None
+    force: bool = False
+
+
+class GitHubWorkspaceRefreshResponse(BaseModel):
+    projectId: str = ""
+    status: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
+    resolvedLocalPath: str = ""
+
+
+class GitHubWriteCapabilityRequest(BaseModel):
+    projectId: str = ""
+    reference: Optional[ProjectPathReference] = None
+
+
+class GitHubWriteCapabilityResponse(BaseModel):
+    projectId: str = ""
+    canWrite: bool = False
+    status: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):
@@ -834,8 +998,87 @@ class Project(BaseModel):
     planDocsPath: str = "docs/project_plans/"
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
     progressPath: str = "progress"  # relative to project root
+    pathConfig: ProjectPathConfig = Field(default_factory=ProjectPathConfig)
     testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
     skillMeat: SkillMeatProjectConfig = Field(default_factory=SkillMeatProjectConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_path_config(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        migrated = dict(value)
+        if isinstance(migrated.get("pathConfig"), dict):
+            return migrated
+
+        root_path = str(migrated.get("path") or "").strip()
+        plan_docs_path = str(migrated.get("planDocsPath") or "docs/project_plans/").strip() or "docs/project_plans/"
+        sessions_path = str(migrated.get("sessionsPath") or "").strip()
+        progress_path = str(migrated.get("progressPath") or "progress").strip() or "progress"
+
+        migrated["pathConfig"] = {
+            "root": {
+                "field": "root",
+                "sourceKind": "filesystem",
+                "displayValue": root_path,
+                "filesystemPath": root_path,
+            },
+            "planDocs": {
+                "field": "plan_docs",
+                "sourceKind": "project_root",
+                "displayValue": plan_docs_path,
+                "relativePath": plan_docs_path,
+            },
+            "sessions": {
+                "field": "sessions",
+                "sourceKind": "filesystem",
+                "displayValue": sessions_path,
+                "filesystemPath": sessions_path,
+            },
+            "progress": {
+                "field": "progress",
+                "sourceKind": "project_root",
+                "displayValue": progress_path,
+                "relativePath": progress_path,
+            },
+        }
+        return migrated
+
+    @model_validator(mode="after")
+    def _derive_legacy_fields(self) -> "Project":
+        root_ref = self.pathConfig.root
+        if root_ref.sourceKind == "filesystem" and root_ref.filesystemPath.strip():
+            self.path = root_ref.filesystemPath.strip()
+        elif not self.path.strip():
+            self.path = root_ref.displayValue.strip() or self.path
+
+        self.planDocsPath = self._derive_legacy_path(
+            self.pathConfig.planDocs,
+            fallback=self.planDocsPath,
+        )
+        self.sessionsPath = self._derive_legacy_path(
+            self.pathConfig.sessions,
+            fallback=self.sessionsPath,
+        )
+        self.progressPath = self._derive_legacy_path(
+            self.pathConfig.progress,
+            fallback=self.progressPath,
+        )
+        return self
+
+    @staticmethod
+    def _derive_legacy_path(reference: ProjectPathReference, *, fallback: str) -> str:
+        if reference.sourceKind == "project_root":
+            value = reference.relativePath.strip()
+            return value or fallback
+        if reference.sourceKind == "filesystem":
+            value = reference.filesystemPath.strip() or reference.displayValue.strip()
+            return value or fallback
+        repo_ref = reference.repoRef
+        if repo_ref is not None:
+            return repo_ref.repoUrl.strip() or reference.displayValue.strip() or fallback
+        return reference.displayValue.strip() or fallback
 
 
 # ── Feature models ─────────────────────────────────────────────────

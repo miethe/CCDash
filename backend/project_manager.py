@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +51,8 @@ class ProjectManager:
                 try:
                     if isinstance(p_data, dict):
                         if "skillMeat" not in p_data:
+                            migrated = True
+                        if "pathConfig" not in p_data:
                             migrated = True
                         skillmeat = p_data.get("skillMeat")
                         if isinstance(skillmeat, dict) and "workspaceId" in skillmeat and "collectionId" not in skillmeat:

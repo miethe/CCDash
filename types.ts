@@ -1354,8 +1354,119 @@ export interface Project {
   planDocsPath: string;
   sessionsPath: string;
   progressPath: string;
+  pathConfig: ProjectPathConfig;
   testConfig: ProjectTestConfig;
   skillMeat: SkillMeatProjectConfig;
+}
+
+export type PathSourceKind = 'project_root' | 'github_repo' | 'filesystem';
+export type ProjectPathField = 'root' | 'plan_docs' | 'sessions' | 'progress';
+
+export interface GitRepoRef {
+  provider: 'github';
+  repoUrl: string;
+  repoSlug: string;
+  branch: string;
+  repoSubpath: string;
+  writeEnabled: boolean;
+}
+
+export interface ProjectPathReference {
+  field: ProjectPathField;
+  sourceKind: PathSourceKind;
+  displayValue: string;
+  filesystemPath: string;
+  relativePath: string;
+  repoRef?: GitRepoRef | null;
+}
+
+export interface ProjectPathConfig {
+  root: ProjectPathReference;
+  planDocs: ProjectPathReference;
+  sessions: ProjectPathReference;
+  progress: ProjectPathReference;
+}
+
+export interface GitHubIntegrationSettings {
+  enabled: boolean;
+  provider: 'github';
+  baseUrl: string;
+  username: string;
+  token: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubIntegrationSettingsUpdateRequest {
+  enabled: boolean;
+  baseUrl: string;
+  username: string;
+  token: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubIntegrationSettingsResponse {
+  enabled: boolean;
+  provider: 'github';
+  baseUrl: string;
+  username: string;
+  tokenConfigured: boolean;
+  maskedToken: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubProbeResult {
+  state: 'idle' | 'success' | 'warning' | 'error';
+  message: string;
+  checkedAt: string;
+  path: string;
+}
+
+export interface GitHubCredentialValidationRequest {
+  projectId: string;
+  settings?: GitHubIntegrationSettingsUpdateRequest | null;
+}
+
+export interface GitHubCredentialValidationResponse {
+  auth: GitHubProbeResult;
+  repoAccess: GitHubProbeResult;
+}
+
+export interface GitHubPathValidationRequest {
+  projectId: string;
+  reference: ProjectPathReference;
+  rootReference?: ProjectPathReference | null;
+}
+
+export interface GitHubPathValidationResponse {
+  reference: ProjectPathReference;
+  status: GitHubProbeResult;
+  resolvedLocalPath: string;
+}
+
+export interface GitHubWorkspaceRefreshRequest {
+  projectId: string;
+  reference?: ProjectPathReference | null;
+  force: boolean;
+}
+
+export interface GitHubWorkspaceRefreshResponse {
+  projectId: string;
+  status: GitHubProbeResult;
+  resolvedLocalPath: string;
+}
+
+export interface GitHubWriteCapabilityRequest {
+  projectId: string;
+  reference?: ProjectPathReference | null;
+}
+
+export interface GitHubWriteCapabilityResponse {
+  projectId: string;
+  canWrite: boolean;
+  status: GitHubProbeResult;
 }
 
 export interface LinkedDocument {
