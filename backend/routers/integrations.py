@@ -2,13 +2,29 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from backend import config
 from backend.db import connection
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.models import (
+    GitHubCredentialValidationRequest,
+    GitHubCredentialValidationResponse,
+    GitHubIntegrationSettings,
+    GitHubIntegrationSettingsResponse,
+    GitHubIntegrationSettingsUpdateRequest,
+    GitHubPathValidationRequest,
+    GitHubPathValidationResponse,
+    GitHubProbeResult,
+    GitHubWorkspaceRefreshRequest,
+    GitHubWorkspaceRefreshResponse,
+    GitHubWriteCapabilityRequest,
+    GitHubWriteCapabilityResponse,
+    Project,
+    ProjectPathReference,
     SessionStackComponent,
     SessionStackObservation,
     SkillMeatConfigValidationRequest,
@@ -27,6 +43,12 @@ from backend.models import (
 )
 from backend.project_manager import project_manager
 from backend.services.agentic_intelligence_flags import require_skillmeat_integration_enabled
+from backend.services.integrations.github_settings_store import GitHubSettingsStore
+from backend.services.project_paths.providers.base import PathResolutionError
+from backend.services.project_paths.providers.filesystem import FilesystemProjectPathProvider
+from backend.services.project_paths.resolver import _normalize_relative_path
+from backend.services.repo_workspaces.cache import RepoWorkspaceCache
+from backend.services.repo_workspaces.manager import RepoWorkspaceManager, RepoWorkspaceError
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
@@ -34,6 +56,8 @@ from backend.services.stack_observations import backfill_session_stack_observati
 
 
 integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["integrations"])
+github_integrations_router = APIRouter(prefix="/api/integrations/github", tags=["integrations"])
+github_settings_store = GitHubSettingsStore()
 
 
 def _now_iso() -> str:
@@ -136,6 +160,92 @@ def _probe_result(state: str, message: str, *, http_status: int | None = None) -
         checkedAt=_now_iso(),
         httpStatus=http_status,
     )
+
+
+def _github_probe(state: str, message: str, *, path: str = "") -> GitHubProbeResult:
+    return GitHubProbeResult(
+        state=state,
+        message=message,
+        checkedAt=_now_iso(),
+        path=path,
+    )
+
+
+def _github_settings_from_request(
+    request_settings: GitHubIntegrationSettingsUpdateRequest | None = None,
+) -> GitHubIntegrationSettings:
+    current = github_settings_store.load()
+    if request_settings is None:
+        return current
+    return GitHubIntegrationSettings(
+        enabled=bool(request_settings.enabled),
+        provider="github",
+        baseUrl=str(request_settings.baseUrl or current.baseUrl or "https://github.com").strip() or "https://github.com",
+        username=str(request_settings.username or current.username or "git").strip() or "git",
+        token=str(request_settings.token or "").strip() or current.token,
+        cacheRoot=str(request_settings.cacheRoot or current.cacheRoot or config.REPO_WORKSPACE_CACHE_DIR).strip(),
+        writeEnabled=bool(request_settings.writeEnabled),
+    )
+
+
+def _workspace_manager_for_settings(settings: GitHubIntegrationSettings) -> RepoWorkspaceManager:
+    cache_root = Path(settings.cacheRoot or config.REPO_WORKSPACE_CACHE_DIR).expanduser()
+    return RepoWorkspaceManager(RepoWorkspaceCache(cache_root))
+
+
+def _validation_project(project: Project | None = None) -> Project:
+    if project is not None:
+        return project
+    return Project(
+        id="validation",
+        name="Validation",
+        path=str(config.PROJECT_ROOT),
+        planDocsPath="docs/project_plans/",
+        sessionsPath=str(Path.home() / ".claude" / "sessions"),
+        progressPath=".claude/progress",
+    )
+
+
+def _resolve_reference_with_settings(
+    reference: ProjectPathReference,
+    *,
+    settings: GitHubIntegrationSettings,
+    project: Project | None = None,
+    root_reference: ProjectPathReference | None = None,
+    refresh: bool = False,
+) -> Path:
+    project_model = _validation_project(project)
+    if reference.sourceKind == "filesystem":
+        provider = FilesystemProjectPathProvider()
+        return provider.resolve(reference, project=project_model).path
+    if reference.sourceKind == "github_repo":
+        repo_ref = reference.repoRef
+        if repo_ref is None:
+            raise PathResolutionError("invalid_github_url", "GitHub references require repoRef.")
+        workspace_root = _workspace_manager_for_settings(settings).ensure_workspace(repo_ref, settings, refresh=refresh)
+        repo_subpath = str(repo_ref.repoSubpath or "").strip().strip("/")
+        candidate = (workspace_root / repo_subpath).resolve(strict=False) if repo_subpath else workspace_root.resolve(strict=False)
+        if repo_subpath and not candidate.exists():
+            raise PathResolutionError("missing_subpath", f"Subpath '{repo_subpath}' was not found in the GitHub workspace.")
+        return candidate
+    if reference.sourceKind == "project_root":
+        base_reference = root_reference or (project.pathConfig.root if project is not None else None)
+        if base_reference is None:
+            raise PathResolutionError("missing_root", "A project_root reference needs a root reference.")
+        base_path = _resolve_reference_with_settings(
+            base_reference,
+            settings=settings,
+            project=project_model,
+            refresh=refresh,
+        )
+        relative_path = _normalize_relative_path(reference.relativePath)
+        candidate = (base_path / relative_path).resolve(strict=False)
+        try:
+            candidate.relative_to(base_path.resolve(strict=False))
+        except ValueError as exc:
+            raise PathResolutionError("invalid_relative_path", "Resolved path escapes the project root.") from exc
+        return candidate
+    raise PathResolutionError("unsupported_source_kind", f"Unsupported source kind '{reference.sourceKind}'.")
 
 
 @integrations_router.post("/validate-config", response_model=SkillMeatConfigValidationResponse)
@@ -337,3 +447,139 @@ async def list_skillmeat_observations(
         if observation:
             hydrated.append(_to_observation_dto(observation))
     return hydrated
+
+
+@github_integrations_router.get("/settings", response_model=GitHubIntegrationSettingsResponse)
+async def get_github_settings():
+    return github_settings_store.to_response()
+
+
+@github_integrations_router.put("/settings", response_model=GitHubIntegrationSettingsResponse)
+async def update_github_settings(req: GitHubIntegrationSettingsUpdateRequest):
+    settings = github_settings_store.save(req)
+    return github_settings_store.to_response(settings)
+
+
+@github_integrations_router.post("/validate-credential", response_model=GitHubCredentialValidationResponse)
+async def validate_github_credential(req: GitHubCredentialValidationRequest):
+    settings = _github_settings_from_request(req.settings)
+    if not settings.enabled:
+        return GitHubCredentialValidationResponse(
+            auth=_github_probe("warning", "GitHub integration is disabled."),
+            repoAccess=_github_probe("idle", "Enable GitHub integration to validate repository access."),
+        )
+
+    auth = _github_probe(
+        "success" if str(settings.token or "").strip() else "warning",
+        "GitHub token configured for managed workspace operations."
+        if str(settings.token or "").strip()
+        else "No token configured. Public repositories can still be resolved.",
+    )
+
+    repo_access = _github_probe("idle", "No GitHub-backed project root selected for validation.")
+    project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
+    root_reference = project.pathConfig.root if project is not None else None
+    if root_reference is not None and root_reference.sourceKind == "github_repo":
+        try:
+            resolved = _resolve_reference_with_settings(
+                root_reference,
+                settings=settings,
+                project=project,
+                refresh=False,
+            )
+            repo_access = _github_probe("success", "Repository access validated via managed workspace bootstrap.", path=str(resolved))
+        except PathResolutionError as exc:
+            state = "warning" if exc.code in {"auth_failure", "missing_branch"} else "error"
+            repo_access = _github_probe(state, exc.message)
+        except RepoWorkspaceError as exc:
+            state = "warning" if exc.code in {"auth_failure", "missing_branch"} else "error"
+            repo_access = _github_probe(state, exc.detail)
+
+    return GitHubCredentialValidationResponse(auth=auth, repoAccess=repo_access)
+
+
+@github_integrations_router.post("/validate-path", response_model=GitHubPathValidationResponse)
+async def validate_github_path(req: GitHubPathValidationRequest):
+    settings = github_settings_store.load()
+    project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
+    try:
+        resolved = _resolve_reference_with_settings(
+            req.reference,
+            settings=settings,
+            project=project,
+            root_reference=req.rootReference,
+            refresh=False,
+        )
+        return GitHubPathValidationResponse(
+            reference=req.reference,
+            status=_github_probe("success", "Path reference resolved successfully.", path=str(resolved)),
+            resolvedLocalPath=str(resolved),
+        )
+    except PathResolutionError as exc:
+        state = "warning" if exc.code in {"missing_branch", "missing_subpath"} else "error"
+        return GitHubPathValidationResponse(
+            reference=req.reference,
+            status=_github_probe(state, exc.message),
+            resolvedLocalPath="",
+        )
+
+
+@github_integrations_router.post("/refresh-workspace", response_model=GitHubWorkspaceRefreshResponse)
+async def refresh_github_workspace(req: GitHubWorkspaceRefreshRequest):
+    settings = github_settings_store.load()
+    project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
+    reference = req.reference or (project.pathConfig.root if project is not None else None)
+    if reference is None:
+        return GitHubWorkspaceRefreshResponse(
+            projectId=str(getattr(project, "id", "")),
+            status=_github_probe("idle", "Choose a GitHub-backed path reference to refresh."),
+            resolvedLocalPath="",
+        )
+
+    try:
+        resolved = _resolve_reference_with_settings(
+            reference,
+            settings=settings,
+            project=project,
+            refresh=bool(req.force),
+        )
+        return GitHubWorkspaceRefreshResponse(
+            projectId=str(getattr(project, "id", "")),
+            status=_github_probe("success", "GitHub workspace refreshed successfully.", path=str(resolved)),
+            resolvedLocalPath=str(resolved),
+        )
+    except PathResolutionError as exc:
+        state = "warning" if exc.code in {"missing_branch", "missing_subpath"} else "error"
+        return GitHubWorkspaceRefreshResponse(
+            projectId=str(getattr(project, "id", "")),
+            status=_github_probe(state, exc.message),
+            resolvedLocalPath="",
+        )
+
+
+@github_integrations_router.post("/check-write-capability", response_model=GitHubWriteCapabilityResponse)
+async def check_github_write_capability(req: GitHubWriteCapabilityRequest):
+    settings = github_settings_store.load()
+    project = _project_for_request_or_active(req.projectId) if str(req.projectId or "").strip() else None
+    reference = req.reference or (project.pathConfig.root if project is not None else None)
+    repo_ref = reference.repoRef if reference is not None else None
+
+    if repo_ref is None or reference.sourceKind != "github_repo":
+        return GitHubWriteCapabilityResponse(
+            projectId=str(getattr(project, "id", "")),
+            canWrite=False,
+            status=_github_probe("idle", "Select a GitHub-backed reference to evaluate write capability."),
+        )
+
+    token_configured = bool(str(settings.token or "").strip())
+    can_write = bool(settings.writeEnabled and repo_ref.writeEnabled and token_configured)
+    message = (
+        "GitHub writes are enabled for this workspace."
+        if can_write
+        else "GitHub writes remain read-only until integration writes, repo writes, and a token are configured."
+    )
+    return GitHubWriteCapabilityResponse(
+        projectId=str(getattr(project, "id", "")),
+        canWrite=can_write,
+        status=_github_probe("success" if can_write else "warning", message),
+    )

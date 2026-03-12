@@ -26,8 +26,9 @@ async def get_codebase_tree(
     search: str = Query("", description="Substring filter for names and paths"),
 ):
     project = _get_active_project()
+    project_root = project_manager.get_project_root(project)
     db = await connection.get_connection()
-    service = CodebaseExplorerService(db, project)
+    service = CodebaseExplorerService(db, project, project_root=project_root)
     try:
         return await service.get_tree(
             prefix=prefix,
@@ -52,8 +53,9 @@ async def get_codebase_files(
     limit: int = Query(200, ge=1, le=500),
 ):
     project = _get_active_project()
+    project_root = project_manager.get_project_root(project)
     db = await connection.get_connection()
-    service = CodebaseExplorerService(db, project)
+    service = CodebaseExplorerService(db, project, project_root=project_root)
     try:
         return await service.list_files(
             prefix=prefix,
@@ -76,12 +78,12 @@ async def get_codebase_file_detail(
     activity_limit: int = Query(100, ge=1, le=500),
 ):
     project = _get_active_project()
+    project_root = project_manager.get_project_root(project)
     db = await connection.get_connection()
-    service = CodebaseExplorerService(db, project)
+    service = CodebaseExplorerService(db, project, project_root=project_root)
     try:
         return await service.get_file_detail(file_path=file_path, activity_limit=activity_limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-

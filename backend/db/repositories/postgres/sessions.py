@@ -500,6 +500,41 @@ class PostgresSessionRepository:
             session_id,
         )
 
+    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, Any]) -> None:
+        await self.db.execute(
+            """
+            UPDATE sessions
+            SET current_context_tokens = $1,
+                context_window_size = $2,
+                context_utilization_pct = $3,
+                context_measurement_source = $4,
+                context_measured_at = $5,
+                reported_cost_usd = $6,
+                recalculated_cost_usd = $7,
+                display_cost_usd = $8,
+                cost_provenance = $9,
+                cost_confidence = $10,
+                cost_mismatch_pct = $11,
+                pricing_model_source = $12,
+                total_cost = $13
+            WHERE id = $14
+            """,
+            int(observability_fields.get("current_context_tokens", 0) or 0),
+            int(observability_fields.get("context_window_size", 0) or 0),
+            float(observability_fields.get("context_utilization_pct", 0.0) or 0.0),
+            str(observability_fields.get("context_measurement_source", "") or ""),
+            str(observability_fields.get("context_measured_at", "") or ""),
+            observability_fields.get("reported_cost_usd"),
+            observability_fields.get("recalculated_cost_usd"),
+            observability_fields.get("display_cost_usd"),
+            str(observability_fields.get("cost_provenance", "unknown") or "unknown"),
+            float(observability_fields.get("cost_confidence", 0.0) or 0.0),
+            observability_fields.get("cost_mismatch_pct"),
+            str(observability_fields.get("pricing_model_source", "") or ""),
+            float(observability_fields.get("total_cost", 0.0) or 0.0),
+            session_id,
+        )
+
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:

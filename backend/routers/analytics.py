@@ -15,13 +15,17 @@ from backend.models import (
     AlertConfig,
     AnalyticsMetric,
     FailurePatternResponse,
+    SessionCostCalibrationGroup,
+    SessionCostCalibrationMismatchBand,
+    SessionCostCalibrationProvenanceCount,
+    SessionCostCalibrationSummary,
     SessionUsageAggregateResponse,
     SessionUsageCalibrationSummary,
     SessionUsageDrilldownResponse,
     Notification,
     WorkflowEffectivenessResponse,
 )
-from backend.model_identity import canonical_model_name, model_family_name
+from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
 from backend.project_manager import project_manager
 from backend.db import connection
 from backend.db.factory import (
@@ -120,6 +124,15 @@ def _coerce_float(value: Any) -> float:
         return 0.0
 
 
+def _maybe_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _session_usage_metrics(row: dict[str, Any]) -> dict[str, float | int]:
     token_input = _coerce_int(row.get("tokens_in") or row.get("tokensIn"))
     token_output = _coerce_int(row.get("tokens_out") or row.get("tokensOut"))
@@ -156,6 +169,126 @@ def _session_usage_metrics(row: dict[str, Any]) -> dict[str, float | int]:
         "outputShare": output_share,
         "totalTokens": observed_tokens,
     }
+
+
+def _session_cost_metrics(row: dict[str, Any]) -> dict[str, Any]:
+    reported_cost_usd = _maybe_float(row.get("reported_cost_usd") or row.get("reportedCostUsd"))
+    recalculated_cost_usd = _maybe_float(row.get("recalculated_cost_usd") or row.get("recalculatedCostUsd"))
+    display_cost_usd = _maybe_float(row.get("display_cost_usd") or row.get("displayCostUsd"))
+    if display_cost_usd is None:
+        display_cost_usd = _maybe_float(row.get("total_cost") or row.get("totalCost"))
+    cost_confidence = _coerce_float(row.get("cost_confidence") or row.get("costConfidence"))
+    cost_mismatch_pct = _maybe_float(row.get("cost_mismatch_pct") or row.get("costMismatchPct"))
+    if cost_mismatch_pct is None and reported_cost_usd is not None and recalculated_cost_usd is not None:
+        baseline = max(abs(reported_cost_usd), abs(recalculated_cost_usd), 1e-9)
+        cost_mismatch_pct = round(abs(reported_cost_usd - recalculated_cost_usd) / baseline, 4)
+    return {
+        "reportedCostUsd": reported_cost_usd,
+        "recalculatedCostUsd": recalculated_cost_usd,
+        "displayCostUsd": display_cost_usd,
+        "costProvenance": str(row.get("cost_provenance") or row.get("costProvenance") or "unknown"),
+        "costConfidence": cost_confidence,
+        "costMismatchPct": cost_mismatch_pct,
+        "pricingModelSource": str(row.get("pricing_model_source") or row.get("pricingModelSource") or ""),
+    }
+
+
+def _session_context_metrics(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "currentContextTokens": _coerce_int(row.get("current_context_tokens") or row.get("currentContextTokens")),
+        "contextWindowSize": _coerce_int(row.get("context_window_size") or row.get("contextWindowSize")),
+        "contextUtilizationPct": round(
+            _coerce_float(row.get("context_utilization_pct") or row.get("contextUtilizationPct")),
+            2,
+        ),
+        "contextMeasurementSource": str(row.get("context_measurement_source") or row.get("contextMeasurementSource") or ""),
+        "contextMeasuredAt": str(row.get("context_measured_at") or row.get("contextMeasuredAt") or ""),
+    }
+
+
+def _cost_mismatch_band(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value < 0.01:
+        return "<1%"
+    if value < 0.05:
+        return "1-5%"
+    if value < 0.1:
+        return "5-10%"
+    return "10%+"
+
+
+def _serialize_provenance_counts(counts: dict[str, dict[str, Any]]) -> list[SessionCostCalibrationProvenanceCount]:
+    rows = [
+        SessionCostCalibrationProvenanceCount(
+            provenance=provenance,
+            count=int(values.get("count") or 0),
+            displayCostUsd=round(_coerce_float(values.get("displayCostUsd")), 4),
+        )
+        for provenance, values in counts.items()
+    ]
+    return sorted(rows, key=lambda row: (-row.count, row.provenance))
+
+
+def _build_cost_calibration_groups(
+    rows: list[dict[str, Any]],
+    labeler,
+) -> list[SessionCostCalibrationGroup]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = str(labeler(row) or "unknown").strip() or "unknown"
+        cost = _session_cost_metrics(row)
+        current = groups.setdefault(
+            label,
+            {
+                "sessionCount": 0,
+                "comparableSessionCount": 0,
+                "mismatchSum": 0.0,
+                "maxMismatchPct": 0.0,
+                "confidenceSum": 0.0,
+                "displayCostUsd": 0.0,
+                "reportedCostUsd": 0.0,
+                "recalculatedCostUsd": 0.0,
+                "provenanceCounts": defaultdict(lambda: {"count": 0, "displayCostUsd": 0.0}),
+            },
+        )
+        current["sessionCount"] += 1
+        current["confidenceSum"] += _coerce_float(cost["costConfidence"])
+        if cost["displayCostUsd"] is not None:
+            current["displayCostUsd"] += float(cost["displayCostUsd"])
+        if cost["reportedCostUsd"] is not None:
+            current["reportedCostUsd"] += float(cost["reportedCostUsd"])
+        if cost["recalculatedCostUsd"] is not None:
+            current["recalculatedCostUsd"] += float(cost["recalculatedCostUsd"])
+        provenance = str(cost["costProvenance"] or "unknown")
+        current["provenanceCounts"][provenance]["count"] += 1
+        current["provenanceCounts"][provenance]["displayCostUsd"] += _coerce_float(cost["displayCostUsd"])
+        if cost["reportedCostUsd"] is not None and cost["recalculatedCostUsd"] is not None and cost["costMismatchPct"] is not None:
+            current["comparableSessionCount"] += 1
+            current["mismatchSum"] += float(cost["costMismatchPct"])
+            current["maxMismatchPct"] = max(current["maxMismatchPct"], float(cost["costMismatchPct"]))
+
+    results: list[SessionCostCalibrationGroup] = []
+    for label, values in groups.items():
+        session_count = int(values["sessionCount"])
+        comparable_session_count = int(values["comparableSessionCount"])
+        avg_confidence = round(values["confidenceSum"] / max(session_count, 1), 4)
+        avg_mismatch_pct = round(values["mismatchSum"] / comparable_session_count, 4) if comparable_session_count > 0 else 0.0
+        results.append(
+            SessionCostCalibrationGroup(
+                label=label,
+                sessionCount=session_count,
+                comparableSessionCount=comparable_session_count,
+                avgMismatchPct=avg_mismatch_pct,
+                maxMismatchPct=round(_coerce_float(values["maxMismatchPct"]), 4),
+                avgConfidence=avg_confidence,
+                displayCostUsd=round(_coerce_float(values["displayCostUsd"]), 4),
+                reportedCostUsd=round(_coerce_float(values["reportedCostUsd"]), 4),
+                recalculatedCostUsd=round(_coerce_float(values["recalculatedCostUsd"]), 4),
+                provenanceCounts=_serialize_provenance_counts(values["provenanceCounts"]),
+            )
+        )
+    return sorted(results, key=lambda row: (-row.comparableSessionCount, -row.sessionCount, row.label))
 
 
 def _normalize_artifact_type(value: Any) -> str:
@@ -1446,6 +1579,11 @@ async def get_overview(
         {"name": name, "usage": count}
         for name, count in sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:8]
     ]
+    context_rows = [row for row in recent_sessions if _coerce_int(row.get("current_context_tokens")) > 0]
+    avg_context_utilization_pct = round(
+        sum(_coerce_float(row.get("context_utilization_pct")) for row in context_rows) / len(context_rows),
+        2,
+    ) if context_rows else 0.0
 
     return {
         "kpis": {
@@ -1457,6 +1595,8 @@ async def get_overview(
             "cacheInputTokens": sum(_session_usage_metrics(row)["cacheInputTokens"] for row in recent_sessions),
             "observedTokens": sum(_session_usage_metrics(row)["observedTokens"] for row in recent_sessions),
             "toolReportedTokens": sum(_session_usage_metrics(row)["toolReportedTokens"] for row in recent_sessions),
+            "contextSessionCount": len(context_rows),
+            "avgContextUtilizationPct": avg_context_utilization_pct,
             "taskVelocity": int(latest.get("task_velocity", task_stats.get("completed", 0))),
             "taskCompletionPct": float(latest.get("task_completion_pct", task_stats.get("completion_pct", 0.0))),
             "featureProgress": float(latest.get("feature_progress", 0.0)),
@@ -1781,21 +1921,28 @@ async def get_correlation(
         model_dims = _model_dimensions(row.get("model"))
         session_type = str(row.get("session_type") or "")
         usage = _session_usage_metrics(row)
+        context = _session_context_metrics(row)
+        cost = _session_cost_metrics(row)
+        model_identity = derive_model_identity(row.get("model"))
         base_payload = {
             "sessionId": session_id,
             "commitHash": row.get("git_commit_hash") or "",
             "model": model_dims["canonical"],
             "modelRaw": model_dims["raw"],
             "modelFamily": model_dims["family"],
+            "modelVersion": model_identity["modelVersion"],
             "status": row.get("status") or "",
             "startedAt": row.get("started_at") or "",
             "endedAt": row.get("ended_at") or "",
             "rootSessionId": row.get("root_session_id") or "",
             "parentSessionId": row.get("parent_session_id") or "",
             "sessionType": session_type or "",
+            "platformVersion": str(row.get("platform_version") or ""),
             "durationSeconds": int(row.get("duration_seconds") or 0),
             **usage,
-            "totalCost": float(row.get("total_cost") or 0.0),
+            **context,
+            **cost,
+            "totalCost": float(cost["displayCostUsd"] if cost["displayCostUsd"] is not None else row.get("total_cost") or 0.0),
             "linkedFeatureCount": len(feature_links),
             "isSubagent": session_type == "subagent",
         }
@@ -1822,6 +1969,102 @@ async def get_correlation(
 
     total = len(items)
     return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
+
+
+@analytics_router.get("/session-cost-calibration", response_model=SessionCostCalibrationSummary)
+async def get_session_cost_calibration(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return SessionCostCalibrationSummary(generatedAt=datetime.now(timezone.utc).isoformat())
+
+    db = await connection.get_connection()
+    session_repo = get_session_repository(db)
+    filters: dict[str, Any] = {"include_subagents": True}
+    if start:
+        filters["start_date"] = start
+    if end:
+        filters["end_date"] = end
+    sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
+
+    provenance_counts: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "displayCostUsd": 0.0})
+    mismatch_band_counts: dict[str, int] = defaultdict(int)
+    comparable_rows: list[dict[str, Any]] = []
+    total_display_cost = 0.0
+    total_reported_cost = 0.0
+    total_recalculated_cost = 0.0
+    confidence_sum = 0.0
+    reported_session_count = 0
+    recalculated_session_count = 0
+    mismatch_session_count = 0
+    max_mismatch_pct = 0.0
+
+    for row in sessions:
+        cost = _session_cost_metrics(row)
+        confidence_sum += _coerce_float(cost["costConfidence"])
+        provenance = str(cost["costProvenance"] or "unknown")
+        provenance_counts[provenance]["count"] += 1
+        provenance_counts[provenance]["displayCostUsd"] += _coerce_float(cost["displayCostUsd"])
+        if cost["displayCostUsd"] is not None:
+            total_display_cost += float(cost["displayCostUsd"])
+        if cost["reportedCostUsd"] is not None:
+            reported_session_count += 1
+            total_reported_cost += float(cost["reportedCostUsd"])
+        if cost["recalculatedCostUsd"] is not None:
+            recalculated_session_count += 1
+            total_recalculated_cost += float(cost["recalculatedCostUsd"])
+        if cost["reportedCostUsd"] is not None and cost["recalculatedCostUsd"] is not None and cost["costMismatchPct"] is not None:
+            comparable_rows.append(row)
+            mismatch_session_count += 1
+            mismatch_value = float(cost["costMismatchPct"])
+            max_mismatch_pct = max(max_mismatch_pct, mismatch_value)
+            mismatch_band_counts[_cost_mismatch_band(mismatch_value)] += 1
+        else:
+            mismatch_band_counts[_cost_mismatch_band(None)] += 1
+
+    session_count = len(sessions)
+    comparable_session_count = len(comparable_rows)
+    avg_cost_confidence = round(confidence_sum / max(session_count, 1), 4)
+    avg_mismatch_pct = round(
+        sum(_coerce_float(_session_cost_metrics(row)["costMismatchPct"]) for row in comparable_rows) / comparable_session_count,
+        4,
+    ) if comparable_session_count > 0 else 0.0
+
+    return SessionCostCalibrationSummary(
+        projectId=project.id,
+        sessionCount=session_count,
+        comparableSessionCount=comparable_session_count,
+        reportedSessionCount=reported_session_count,
+        recalculatedSessionCount=recalculated_session_count,
+        mismatchSessionCount=mismatch_session_count,
+        comparableCoveragePct=round(comparable_session_count / max(session_count, 1), 4),
+        avgCostConfidence=avg_cost_confidence,
+        avgMismatchPct=avg_mismatch_pct,
+        maxMismatchPct=round(max_mismatch_pct, 4),
+        totalDisplayCostUsd=round(total_display_cost, 4),
+        totalReportedCostUsd=round(total_reported_cost, 4),
+        totalRecalculatedCostUsd=round(total_recalculated_cost, 4),
+        provenanceCounts=_serialize_provenance_counts(provenance_counts),
+        mismatchBands=[
+            SessionCostCalibrationMismatchBand(band=band, count=count)
+            for band, count in sorted(mismatch_band_counts.items(), key=lambda item: item[0])
+        ],
+        byModel=_build_cost_calibration_groups(
+            sessions,
+            lambda row: canonical_model_name(str(row.get("model") or "").strip()) or "unknown",
+        ),
+        byModelVersion=_build_cost_calibration_groups(
+            sessions,
+            lambda row: derive_model_identity(str(row.get("model") or "")).get("modelVersion") or "unknown",
+        ),
+        byPlatformVersion=_build_cost_calibration_groups(
+            sessions,
+            lambda row: str(row.get("platform_version") or "unknown"),
+        ),
+        generatedAt=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @analytics_router.get("/usage-attribution", response_model=SessionUsageAggregateResponse)

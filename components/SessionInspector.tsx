@@ -16,7 +16,9 @@ import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
-import { isUsageAttributionEnabled } from '../services/agenticIntelligence';
+import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
+import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
+import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -103,6 +105,15 @@ const formatTimeAgo = (timestamp?: string): string => {
     if (days < 7) return `${days}d ago`;
 
     return new Date(epoch).toLocaleDateString();
+};
+
+const formatBlockWindow = (startAt: string, endAt: string): string => {
+    const start = toEpoch(startAt);
+    const end = toEpoch(endAt);
+    if (start <= 0 || end <= 0) return 'Unknown window';
+    const startLabel = new Date(start).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const endLabel = new Date(end).toLocaleString([], { hour: 'numeric', minute: '2-digit' });
+    return `${startLabel} - ${endLabel}`;
 };
 
 const sessionLastActivityEpoch = (session: AgentSession): number => {
@@ -2421,15 +2432,31 @@ const TranscriptView: React.FC<{
                             <span className="text-xs font-mono text-slate-200">{session.durationSeconds}s</span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Workload</div>
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Observed Workload</div>
                             <span className="text-xs font-mono text-slate-200">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
                         </div>
+                        {session.currentContextTokens && session.contextWindowSize ? (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-400"><Layers size={14} /> Current Context</div>
+                                <span className="text-xs font-mono text-cyan-300">{contextSummaryLabel(session)}</span>
+                            </div>
+                        ) : null}
                         {resolveTokenMetrics(session).cacheInputTokens > 0 && (
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-xs text-slate-500"><Zap size={14} /> Cache Input</div>
                                 <span className="text-xs font-mono text-cyan-300">
                                     {formatTokenCount(resolveTokenMetrics(session).cacheInputTokens)} ({formatPercent(resolveTokenMetrics(session).cacheShare, 0)})
                                 </span>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Activity size={14} /> Cost Source</div>
+                            <span className="text-[10px] text-slate-300">{costSummaryLabel(session)}</span>
+                        </div>
+                        {session.currentContextTokens && (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-500"><RefreshCw size={14} /> Context Signal</div>
+                                <span className="text-[10px] text-slate-400">{formatContextMeasurementSource(session.contextMeasurementSource)}</span>
                             </div>
                         )}
                         <div className="flex items-center justify-between">
@@ -4462,13 +4489,16 @@ const AnalyticsView: React.FC<{
     threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
     usageAttributionEnabled: boolean;
-}> = ({ session, threadSessions, threadSessionDetails, goToTranscript, usageAttributionEnabled }) => {
+    sessionBlockInsightsEnabled: boolean;
+}> = ({ session, threadSessions, threadSessionDetails, goToTranscript, usageAttributionEnabled, sessionBlockInsightsEnabled }) => {
     const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
     const [scopeMode, setScopeMode] = useState<'thread_family' | 'main'>('thread_family');
+    const [blockDurationHours, setBlockDurationHours] = useState<1 | 3 | 5 | 8>(5);
 
     const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+    const blockDurationOptions: Array<1 | 3 | 5 | 8> = [1, 3, 5, 8];
 
     const sessionsInScope = useMemo(
         () => (
@@ -4503,7 +4533,7 @@ const AnalyticsView: React.FC<{
                 acc.workloadTokens += resolvedTokens.workloadTokens;
                 acc.toolFallbackTokens += resolvedTokens.usedToolFallback ? resolvedTokens.workloadTokens : 0;
                 acc.toolFallbackCount += resolvedTokens.usedToolFallback ? 1 : 0;
-                acc.totalCost += Number(scopeSession.totalCost || 0);
+                acc.totalCost += resolveDisplayCost(scopeSession);
                 acc.logCount += (scopeSession.logs || []).length;
                 return acc;
             },
@@ -4526,6 +4556,11 @@ const AnalyticsView: React.FC<{
         [session.usageAttributionSummary]
     );
     const attributionCalibration = session.usageAttributionCalibration || null;
+    const blockInsights = useMemo(
+        () => buildSessionBlockInsights(session, { blockDurationHours }),
+        [blockDurationHours, session]
+    );
+    const latestBlock = blockInsights.activeBlock || blockInsights.latestBlock;
 
     const toolData = useMemo(() => {
         const byTool = new Map<string, { name: string; value: number; tokens: number; type: 'tool'; toolCount: number }>();
@@ -4733,6 +4768,126 @@ const AnalyticsView: React.FC<{
             </div>
 
             {/* COST SUMMARY */}
+            {sessionBlockInsightsEnabled && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-300">Session Block Insights</h3>
+                            <p className="mt-1 text-xs text-slate-500">
+                                Rolling workload and spend blocks for the main session only. These views are additive and never rewrite canonical workload or display-cost totals.
+                            </p>
+                        </div>
+                        <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                            {blockDurationOptions.map(option => (
+                                <button
+                                    key={`session-block-duration-${option}`}
+                                    onClick={() => setBlockDurationHours(option)}
+                                    className={`px-2.5 py-1 text-[10px] font-bold rounded ${blockDurationHours === option ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                                >
+                                    {option}h
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {blockInsights.dataSource === 'none' ? (
+                        <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                            CCDash could not derive per-block workload events for this session yet. Refresh the session detail after sync if usage metadata becomes available.
+                        </div>
+                    ) : !blockInsights.isLongSession ? (
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+                            Session runtime is {blockInsights.sessionDurationHours.toFixed(1)}h, which is shorter than the current {blockDurationHours}h block window.
+                        </div>
+                    ) : latestBlock ? (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Latest Block</div>
+                                    <div className="mt-2 text-lg font-mono text-slate-100">{latestBlock.label}</div>
+                                    <div className="mt-1 text-xs text-slate-400">{formatBlockWindow(latestBlock.startAt, latestBlock.actualEndAt)}</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Block Workload</div>
+                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.workloadTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-400">{latestBlock.status} • {Math.round(latestBlock.progressPct)}% window</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Burn Rate</div>
+                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.tokenBurnRatePerHour)}/h</div>
+                                    <div className="mt-1 text-xs text-slate-400">${formatUsd(latestBlock.costBurnRatePerHour, 4)}/h</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Projected End</div>
+                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.projectedWorkloadTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-400">${formatUsd(latestBlock.projectedCostUsd, 4)} projected block cost</div>
+                                </div>
+                            </div>
+
+                            <div className="h-72 mb-4">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={blockInsights.blocks}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                                        <XAxis dataKey="label" stroke="#475569" tick={{ fontSize: 12 }} />
+                                        <YAxis yAxisId="left" stroke="#475569" tick={{ fontSize: 12 }} />
+                                        <YAxis
+                                            yAxisId="right"
+                                            orientation="right"
+                                            stroke="#64748b"
+                                            tick={{ fontSize: 12 }}
+                                            tickFormatter={(value: number) => `$${Number(value || 0).toFixed(2)}`}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                                            formatter={(value: number, name: string) => {
+                                                if (name.toLowerCase().includes('cost')) return [`$${Number(value || 0).toFixed(4)}`, name];
+                                                return [formatTokenCount(value), name];
+                                            }}
+                                            labelFormatter={(_, payload) => {
+                                                const row = payload?.[0]?.payload;
+                                                return row ? `${row.label} • ${formatBlockWindow(row.startAt, row.actualEndAt)}` : '';
+                                            }}
+                                        />
+                                        <Bar yAxisId="left" dataKey="workloadTokens" name="Observed workload" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                                        <Line yAxisId="left" type="monotone" dataKey="projectedWorkloadTokens" name="Projected block total" stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={2} dot={false} />
+                                        <Line yAxisId="right" type="monotone" dataKey="costUsd" name="Display cost" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {blockInsights.blocks.slice(-3).map(block => (
+                                    <div key={`session-block-summary-${block.index}`} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-sm font-semibold text-slate-100">{block.label}</span>
+                                            <span className="text-[10px] uppercase tracking-wide text-slate-500">{block.status}</span>
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">{formatBlockWindow(block.startAt, block.actualEndAt)}</div>
+                                        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
+                                                <div className="text-slate-500">Model IO</div>
+                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.modelInputTokens + block.modelOutputTokens)}</div>
+                                            </div>
+                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
+                                                <div className="text-slate-500">Cache Input</div>
+                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.cacheCreationInputTokens + block.cacheReadInputTokens)}</div>
+                                            </div>
+                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
+                                                <div className="text-slate-500">Cost</div>
+                                                <div className="mt-1 font-mono text-slate-200">${formatUsd(block.costUsd, 4)}</div>
+                                            </div>
+                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
+                                                <div className="text-slate-500">Token Rate</div>
+                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.tokenBurnRatePerHour)}/h</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    ) : null}
+                </div>
+            )}
+
             {usageAttributionEnabled && session.usageAttributionSummary ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -7426,7 +7581,8 @@ const SessionDetail: React.FC<{
                     <div className="flex items-center gap-6 shrink-0">
                         <div className="text-right">
                             <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
-                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(session.totalCost, 2)}</div>
+                            <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(resolveDisplayCost(session), 2)}</div>
+                            <div className="text-[10px] text-slate-500 mt-1">{costSummaryLabel(session)}</div>
                         </div>
                     </div>
                 </div>
@@ -7572,6 +7728,7 @@ const SessionDetail: React.FC<{
                         threadSessionDetails={threadSessionDetails}
                         goToTranscript={handleJumpToTranscript}
                         usageAttributionEnabled={isUsageAttributionEnabled(activeProject)}
+                        sessionBlockInsightsEnabled={isSessionBlockInsightsEnabled(activeProject)}
                     />
                 )}
                 {activeTab === 'agents' && (
@@ -8076,7 +8233,7 @@ const SessionSummaryCard: React.FC<{
             className={`group p-6 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/5 relative overflow-hidden ${className || ''}`}
             headerRight={(
                 <div className="text-right">
-                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(session.totalCost, 2)}</div>
+                    <div className="text-emerald-400 font-mono font-bold text-sm">${formatUsd(resolveDisplayCost(session), 2)}</div>
                 </div>
             )}
             infoBadges={(
@@ -8093,6 +8250,11 @@ const SessionSummaryCard: React.FC<{
                     <span className="text-[10px] text-slate-500 font-mono">
                         {session.logs.length} logs
                     </span>
+                    {session.currentContextTokens && session.contextWindowSize ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/30 text-cyan-200 bg-cyan-500/10">
+                            Context {Number(session.contextUtilizationPct || 0).toFixed(1)}%
+                        </span>
+                    ) : null}
                 </div>
             )}
         >

@@ -338,6 +338,18 @@ class FeatureSessionLink(BaseModel):
     toolReportedTokens: int = 0
     cacheShare: float = 0.0
     outputShare: float = 0.0
+    currentContextTokens: int = 0
+    contextWindowSize: int = 0
+    contextUtilizationPct: float = 0.0
+    contextMeasurementSource: str = ""
+    contextMeasuredAt: str = ""
+    reportedCostUsd: float | None = None
+    recalculatedCostUsd: float | None = None
+    displayCostUsd: float | None = None
+    costProvenance: str = "unknown"
+    costConfidence: float = 0.0
+    costMismatchPct: float | None = None
+    pricingModelSource: str = ""
     gitCommitHash: str | None = None
     gitCommitHashes: list[str] = Field(default_factory=list)
     gitBranch: str | None = None
@@ -1461,6 +1473,18 @@ async def get_feature_linked_sessions(feature_id: str):
             toolReportedTokens=_safe_int(session_row.get("tool_reported_tokens"), 0),
             cacheShare=float(session_row.get("cache_share") or 0.0),
             outputShare=float(session_row.get("output_share") or 0.0),
+            currentContextTokens=_safe_int(session_row.get("current_context_tokens"), 0),
+            contextWindowSize=_safe_int(session_row.get("context_window_size"), 0),
+            contextUtilizationPct=float(session_row.get("context_utilization_pct") or 0.0),
+            contextMeasurementSource=str(session_row.get("context_measurement_source") or ""),
+            contextMeasuredAt=str(session_row.get("context_measured_at") or ""),
+            reportedCostUsd=float(session_row.get("reported_cost_usd")) if session_row.get("reported_cost_usd") is not None else None,
+            recalculatedCostUsd=float(session_row.get("recalculated_cost_usd")) if session_row.get("recalculated_cost_usd") is not None else None,
+            displayCostUsd=float(session_row.get("display_cost_usd")) if session_row.get("display_cost_usd") is not None else None,
+            costProvenance=str(session_row.get("cost_provenance") or "unknown"),
+            costConfidence=float(session_row.get("cost_confidence") or 0.0),
+            costMismatchPct=float(session_row.get("cost_mismatch_pct")) if session_row.get("cost_mismatch_pct") is not None else None,
+            pricingModelSource=str(session_row.get("pricing_model_source") or ""),
             gitCommitHash=session_row.get("git_commit_hash"),
             gitCommitHashes=merged_hashes,
             gitBranch=session_row.get("git_branch"),

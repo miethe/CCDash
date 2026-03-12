@@ -3,6 +3,7 @@ import {
     AnalyticsTrendPoint,
     AlertConfig,
     Notification,
+    SessionCostCalibrationSummary,
     AnalyticsOverview,
     AnalyticsBreakdownItem,
     AnalyticsCorrelationItem,
@@ -213,6 +214,16 @@ export const analyticsService = {
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/usage-attribution/calibration${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw new Error('Failed to fetch usage attribution calibration');
+        return res.json();
+    },
+
+    async getSessionCostCalibration(start?: string, end?: string): Promise<SessionCostCalibrationSummary> {
+        const search = new URLSearchParams();
+        if (start) search.append('start', start);
+        if (end) search.append('end', end);
+        const qs = search.toString();
+        const res = await fetch(`${API_BASE}/session-cost-calibration${qs ? `?${qs}` : ''}`);
+        if (!res.ok) throw new Error('Failed to fetch session cost calibration');
         return res.json();
     },
 

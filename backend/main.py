@@ -25,7 +25,8 @@ from backend.routers.session_mappings import session_mappings_router
 from backend.routers.codebase import codebase_router
 from backend.routers.test_visualizer import test_visualizer_router
 from backend.routers.execution import execution_router
-from backend.routers.integrations import integrations_router
+from backend.routers.integrations import github_integrations_router, integrations_router
+from backend.routers.pricing import pricing_router
 
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
@@ -56,9 +57,18 @@ async def lifespan(app: FastAPI):
     
     # 4. Initial Sync (background task)
     logger.info("Starting initial project sync...")
-    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
     active_project = project_manager.get_active_project()
-    test_sources = resolve_test_sources(active_project) if active_project else []
+    active_bundle = project_manager.get_active_path_bundle() if active_project else None
+    sessions_dir, docs_dir, progress_dir = active_bundle.as_tuple() if active_bundle else (
+        config.SESSIONS_DIR,
+        config.DOCUMENTS_DIR,
+        config.PROGRESS_DIR,
+    )
+    test_sources = (
+        resolve_test_sources(active_project, project_root=active_bundle.root.path)
+        if active_project and active_bundle is not None
+        else []
+    )
     flags = effective_test_flags(active_project)
     test_results_dir: Optional[Path] = test_sources[0].resolved_dir if test_sources else None
     
@@ -213,6 +223,8 @@ app.include_router(codebase_router)
 app.include_router(test_visualizer_router)
 app.include_router(execution_router)
 app.include_router(integrations_router)
+app.include_router(github_integrations_router)
+app.include_router(pricing_router)
 
 
 @app.get("/api/health")

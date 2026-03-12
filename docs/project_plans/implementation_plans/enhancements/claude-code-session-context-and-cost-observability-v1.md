@@ -1,52 +1,72 @@
 ---
 doc_type: implementation_plan
-status: draft
+status: completed
 category: enhancements
-title: "Implementation Plan: Claude Code Session Context And Cost Observability V1"
-description: "Persist live context metrics, add cost provenance and calibration, and expose clearer token and cost semantics across CCDash session forensics and analytics."
+title: 'Implementation Plan: Claude Code Session Context And Cost Observability V1'
+description: Persist live context metrics, add cost provenance and calibration, and
+  expose clearer token and cost semantics across CCDash session forensics and analytics.
 author: codex
-audience: [ai-agents, developers, engineering-leads]
+audience:
+- ai-agents
+- developers
+- engineering-leads
 created: 2026-03-11
-updated: 2026-03-11
-tags: [implementation, claude-code, sessions, context, cost, pricing, analytics, frontend, backend]
+updated: '2026-03-12'
+tags:
+- implementation
+- claude-code
+- sessions
+- context
+- cost
+- pricing
+- analytics
+- frontend
+- backend
 feature_slug: claude-code-session-context-and-cost-observability-v1
 feature_family: claude-code-session-context-and-cost-observability
 lineage_family: claude-code-session-context-and-cost-observability
-lineage_parent: ""
+lineage_parent: ''
 lineage_children: []
 lineage_type: iteration
-linked_features: [claude-code-session-context-and-cost-observability-v1]
+linked_features:
+- claude-code-session-context-and-cost-observability-v1
 related:
-  - docs/project_plans/PRDs/enhancements/claude-code-session-context-and-cost-observability-v1.md
-  - docs/project_plans/reports/session-token-context-gap-and-ccusage-review-2026-03-11.md
-  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
-  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md
-  - backend/parsers/platforms/claude_code/parser.py
-  - backend/models.py
-  - backend/db/sqlite_migrations.py
-  - backend/db/postgres_migrations.py
-  - backend/db/repositories/sessions.py
-  - backend/db/repositories/postgres/sessions.py
-  - backend/db/sync_engine.py
-  - backend/routers/api.py
-  - backend/routers/analytics.py
-  - components/SessionInspector.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/ProjectBoard.tsx
-  - components/Dashboard.tsx
-  - components/Analytics/AnalyticsDashboard.tsx
-  - lib/tokenMetrics.ts
+- docs/project_plans/PRDs/enhancements/claude-code-session-context-and-cost-observability-v1.md
+- docs/project_plans/reports/session-token-context-gap-and-ccusage-review-2026-03-11.md
+- docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
+- docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md
+- backend/parsers/platforms/claude_code/parser.py
+- backend/models.py
+- backend/db/sqlite_migrations.py
+- backend/db/postgres_migrations.py
+- backend/db/repositories/sessions.py
+- backend/db/repositories/postgres/sessions.py
+- backend/db/sync_engine.py
+- backend/routers/api.py
+- backend/routers/analytics.py
+- components/SessionInspector.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/ProjectBoard.tsx
+- components/Dashboard.tsx
+- components/Analytics/AnalyticsDashboard.tsx
+- lib/tokenMetrics.ts
 plan_ref: claude-code-session-context-and-cost-observability-v1
 linked_sessions: []
-request_log_id: ""
-commits: []
+request_log_id: ''
+commits:
+- 6e63f3a
+- 09bce8b
 prs: []
 owner: platform-engineering
-owners: [platform-engineering, data-platform, fullstack-engineering]
-contributors: [ai-agents]
+owners:
+- platform-engineering
+- data-platform
+- fullstack-engineering
+contributors:
+- ai-agents
 complexity: High
 track: Standard
-timeline_estimate: "2-4 weeks across 6 phases"
+timeline_estimate: 2-4 weeks across 6 phases
 ---
 
 # Implementation Plan: Claude Code Session Context And Cost Observability V1

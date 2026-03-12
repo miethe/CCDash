@@ -234,7 +234,19 @@ export interface AgentSession {
   toolResultCacheReadInputTokens?: number;
   cacheShare?: number;
   outputShare?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   totalCost: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   startedAt: string;
   endedAt?: string;
   createdAt?: string;
@@ -735,6 +747,18 @@ export interface PlanDocument {
   timeline?: TimelineEvent[];
 }
 
+export interface DocumentUpdateRequest {
+  content: string;
+  commitMessage?: string;
+}
+
+export interface DocumentUpdateResponse {
+  document: PlanDocument;
+  writeMode: 'local' | 'github_repo';
+  commitHash: string;
+  message: string;
+}
+
 export interface LinkedFeatureRef {
   feature: string;
   type?: string;
@@ -766,6 +790,8 @@ export interface AnalyticsOverview {
     cacheInputTokens?: number;
     observedTokens?: number;
     toolReportedTokens?: number;
+    contextSessionCount?: number;
+    avgContextUtilizationPct?: number;
     taskVelocity: number;
     taskCompletionPct: number;
     featureProgress: number;
@@ -797,12 +823,14 @@ export interface AnalyticsCorrelationItem {
   model: string;
   modelRaw?: string;
   modelFamily?: string;
+  modelVersion?: string;
   status: string;
   startedAt: string;
   endedAt: string;
   rootSessionId?: string;
   parentSessionId?: string;
   sessionType?: string;
+  platformVersion?: string;
   durationSeconds?: number;
   tokenInput?: number;
   tokenOutput?: number;
@@ -812,12 +840,70 @@ export interface AnalyticsCorrelationItem {
   cacheInputTokens?: number;
   observedTokens?: number;
   toolReportedTokens?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   cacheShare?: number;
   outputShare?: number;
   totalTokens?: number;
   totalCost?: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   linkedFeatureCount?: number;
   isSubagent?: boolean;
+}
+
+export interface SessionCostCalibrationProvenanceCount {
+  provenance: string;
+  count: number;
+  displayCostUsd: number;
+}
+
+export interface SessionCostCalibrationMismatchBand {
+  band: string;
+  count: number;
+}
+
+export interface SessionCostCalibrationGroup {
+  label: string;
+  sessionCount: number;
+  comparableSessionCount: number;
+  avgMismatchPct: number;
+  maxMismatchPct: number;
+  avgConfidence: number;
+  displayCostUsd: number;
+  reportedCostUsd: number;
+  recalculatedCostUsd: number;
+  provenanceCounts: SessionCostCalibrationProvenanceCount[];
+}
+
+export interface SessionCostCalibrationSummary {
+  projectId: string;
+  sessionCount: number;
+  comparableSessionCount: number;
+  reportedSessionCount: number;
+  recalculatedSessionCount: number;
+  mismatchSessionCount: number;
+  comparableCoveragePct: number;
+  avgCostConfidence: number;
+  avgMismatchPct: number;
+  maxMismatchPct: number;
+  totalDisplayCostUsd: number;
+  totalReportedCostUsd: number;
+  totalRecalculatedCostUsd: number;
+  provenanceCounts: SessionCostCalibrationProvenanceCount[];
+  mismatchBands: SessionCostCalibrationMismatchBand[];
+  byModel: SessionCostCalibrationGroup[];
+  byModelVersion: SessionCostCalibrationGroup[];
+  byPlatformVersion: SessionCostCalibrationGroup[];
+  generatedAt: string;
 }
 
 export interface AnalyticsArtifactTypePoint {
@@ -1158,6 +1244,7 @@ export interface SkillMeatFeatureFlags {
   stackRecommendationsEnabled: boolean;
   workflowAnalyticsEnabled: boolean;
   usageAttributionEnabled: boolean;
+  sessionBlockInsightsEnabled: boolean;
 }
 
 export interface SkillMeatProjectConfig {
@@ -1217,6 +1304,58 @@ export interface SkillMeatRefreshResponse {
   backfill: SkillMeatObservationBackfillResponse | null;
 }
 
+export interface PricingCatalogEntry {
+  projectId: string;
+  platformType: string;
+  modelId: string;
+  displayLabel: string;
+  entryKind: string;
+  familyId: string;
+  contextWindowSize?: number | null;
+  inputCostPerMillion?: number | null;
+  outputCostPerMillion?: number | null;
+  cacheCreationCostPerMillion?: number | null;
+  cacheReadCostPerMillion?: number | null;
+  speedMultiplierFast?: number | null;
+  sourceType: string;
+  sourceUpdatedAt: string;
+  overrideLocked: boolean;
+  syncStatus: string;
+  syncError: string;
+  derivedFrom: string;
+  isPersisted: boolean;
+  isDetected: boolean;
+  isRequiredDefault: boolean;
+  canDelete: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PricingCatalogUpsertRequest {
+  platformType: string;
+  modelId?: string;
+  contextWindowSize?: number | null;
+  inputCostPerMillion?: number | null;
+  outputCostPerMillion?: number | null;
+  cacheCreationCostPerMillion?: number | null;
+  cacheReadCostPerMillion?: number | null;
+  speedMultiplierFast?: number | null;
+  sourceType?: string;
+  sourceUpdatedAt?: string;
+  overrideLocked?: boolean;
+  syncStatus?: string;
+  syncError?: string;
+}
+
+export interface PricingCatalogSyncResponse {
+  projectId: string;
+  platformType: string;
+  syncedAt: string;
+  updatedEntries: number;
+  warnings: string[];
+  entries: PricingCatalogEntry[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -1227,8 +1366,134 @@ export interface Project {
   planDocsPath: string;
   sessionsPath: string;
   progressPath: string;
+  pathConfig: ProjectPathConfig;
   testConfig: ProjectTestConfig;
   skillMeat: SkillMeatProjectConfig;
+}
+
+export type PathSourceKind = 'project_root' | 'github_repo' | 'filesystem';
+export type ProjectPathField = 'root' | 'plan_docs' | 'sessions' | 'progress';
+
+export interface GitRepoRef {
+  provider: 'github';
+  repoUrl: string;
+  repoSlug: string;
+  branch: string;
+  repoSubpath: string;
+  writeEnabled: boolean;
+}
+
+export interface ProjectPathReference {
+  field: ProjectPathField;
+  sourceKind: PathSourceKind;
+  displayValue: string;
+  filesystemPath: string;
+  relativePath: string;
+  repoRef?: GitRepoRef | null;
+}
+
+export interface ProjectPathConfig {
+  root: ProjectPathReference;
+  planDocs: ProjectPathReference;
+  sessions: ProjectPathReference;
+  progress: ProjectPathReference;
+}
+
+export interface GitHubIntegrationSettings {
+  enabled: boolean;
+  provider: 'github';
+  baseUrl: string;
+  username: string;
+  token: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubIntegrationSettingsUpdateRequest {
+  enabled: boolean;
+  baseUrl: string;
+  username: string;
+  token: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubIntegrationSettingsResponse {
+  enabled: boolean;
+  provider: 'github';
+  baseUrl: string;
+  username: string;
+  tokenConfigured: boolean;
+  maskedToken: string;
+  cacheRoot: string;
+  writeEnabled: boolean;
+}
+
+export interface GitHubProbeResult {
+  state: 'idle' | 'success' | 'warning' | 'error';
+  message: string;
+  checkedAt: string;
+  path: string;
+}
+
+export interface GitHubCredentialValidationRequest {
+  projectId: string;
+  settings?: GitHubIntegrationSettingsUpdateRequest | null;
+}
+
+export interface GitHubCredentialValidationResponse {
+  auth: GitHubProbeResult;
+  repoAccess: GitHubProbeResult;
+}
+
+export interface GitHubPathValidationRequest {
+  projectId: string;
+  reference: ProjectPathReference;
+  rootReference?: ProjectPathReference | null;
+}
+
+export interface GitHubPathValidationResponse {
+  reference: ProjectPathReference;
+  status: GitHubProbeResult;
+  resolvedLocalPath: string;
+}
+
+export interface GitHubWorkspaceRefreshRequest {
+  projectId: string;
+  reference?: ProjectPathReference | null;
+  force: boolean;
+}
+
+export interface GitHubWorkspaceRefreshResponse {
+  projectId: string;
+  status: GitHubProbeResult;
+  resolvedLocalPath: string;
+}
+
+export interface GitHubWriteCapabilityRequest {
+  projectId: string;
+  reference?: ProjectPathReference | null;
+}
+
+export interface GitHubWriteCapabilityResponse {
+  projectId: string;
+  canWrite: boolean;
+  status: GitHubProbeResult;
+}
+
+export interface ProjectResolvedPathDTO {
+  field: ProjectPathField;
+  sourceKind: PathSourceKind;
+  path: string;
+  diagnostic: string;
+}
+
+export interface ProjectResolvedPathsDTO {
+  projectId: string;
+  root: ProjectResolvedPathDTO;
+  planDocs: ProjectResolvedPathDTO;
+  sessions: ProjectResolvedPathDTO;
+  progress: ProjectResolvedPathDTO;
 }
 
 export interface LinkedDocument {
@@ -1471,8 +1736,20 @@ export interface FeatureExecutionSessionLink {
   cacheInputTokens?: number;
   observedTokens?: number;
   toolReportedTokens?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
+  contextMeasurementSource?: string;
+  contextMeasuredAt?: string;
   cacheShare?: number;
   outputShare?: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;

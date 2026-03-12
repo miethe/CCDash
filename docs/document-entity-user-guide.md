@@ -1,6 +1,6 @@
 # Document Entity User Guide
 
-Last updated: 2026-03-06
+Last updated: 2026-03-12
 
 This guide explains what changed in the Documents experience (`/plans`), what data is available, and how to use the new filters and views.
 
@@ -92,6 +92,15 @@ Across these tabs it shows:
 - Request IDs, commit refs, PR refs, and linked entities
 
 Linked entities are sourced from normalized entity links, not from ad-hoc assumptions on frontmatter fields.
+
+## Editing and save behavior
+
+- Plan documents (`rootKind = project_plans`) can be edited directly from the modal `Content` view.
+- Progress documents remain view-only in this flow.
+- Local plan docs write back to the underlying file immediately when saved.
+- GitHub-backed plan docs require an enabled GitHub integration plus project/repo write access before save is allowed.
+- When GitHub write-back is available, CCDash writes through the managed repo workspace, creates a commit, pushes it to the configured branch, and refreshes document state in the UI.
+- Operators can provide an optional commit message during save; otherwise CCDash uses the default managed write-back message.
 
 ## Linked Data Behavior
 

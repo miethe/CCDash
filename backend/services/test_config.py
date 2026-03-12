@@ -111,12 +111,13 @@ def effective_test_flags(project: Project | None) -> EffectiveTestFlagsDTO:
     )
 
 
-def _resolve_dir(project: Project, configured_dir: str) -> Path:
+def _resolve_dir(project: Project, configured_dir: str, *, project_root: Path | None = None) -> Path:
     value = str(configured_dir or "").strip() or "."
     candidate = Path(value)
     if candidate.is_absolute():
         return candidate
-    return (Path(project.path) / candidate).resolve()
+    base = project_root or Path(project.path)
+    return (base / candidate).resolve()
 
 
 def resolve_test_sources(
@@ -124,6 +125,7 @@ def resolve_test_sources(
     *,
     include_disabled: bool = False,
     platform_filter: Iterable[str] | None = None,
+    project_root: Path | None = None,
 ) -> list[ResolvedTestSource]:
     cfg = normalize_project_test_config(project, legacy_test_results_dir=config.TEST_RESULTS_DIR)
     allowed = {str(item).strip() for item in (platform_filter or []) if str(item).strip()}
@@ -140,7 +142,7 @@ def resolve_test_sources(
                 enabled=bool(item.enabled),
                 watch=bool(item.watch),
                 results_dir=item.resultsDir,
-                resolved_dir=_resolve_dir(project, item.resultsDir),
+                resolved_dir=_resolve_dir(project, item.resultsDir, project_root=project_root),
                 patterns=[str(pattern).strip() for pattern in item.patterns if str(pattern).strip()],
             )
         )

@@ -473,6 +473,44 @@ class SqliteSessionRepository:
         )
         await self.db.commit()
 
+    async def update_observability_fields(self, session_id: str, observability_fields: dict[str, object]) -> None:
+        await self.db.execute(
+            """
+            UPDATE sessions
+            SET current_context_tokens = ?,
+                context_window_size = ?,
+                context_utilization_pct = ?,
+                context_measurement_source = ?,
+                context_measured_at = ?,
+                reported_cost_usd = ?,
+                recalculated_cost_usd = ?,
+                display_cost_usd = ?,
+                cost_provenance = ?,
+                cost_confidence = ?,
+                cost_mismatch_pct = ?,
+                pricing_model_source = ?,
+                total_cost = ?
+            WHERE id = ?
+            """,
+            (
+                int(observability_fields.get("current_context_tokens", 0) or 0),
+                int(observability_fields.get("context_window_size", 0) or 0),
+                float(observability_fields.get("context_utilization_pct", 0.0) or 0.0),
+                str(observability_fields.get("context_measurement_source", "") or ""),
+                str(observability_fields.get("context_measured_at", "") or ""),
+                observability_fields.get("reported_cost_usd"),
+                observability_fields.get("recalculated_cost_usd"),
+                observability_fields.get("display_cost_usd"),
+                str(observability_fields.get("cost_provenance", "unknown") or "unknown"),
+                float(observability_fields.get("cost_confidence", 0.0) or 0.0),
+                observability_fields.get("cost_mismatch_pct"),
+                str(observability_fields.get("pricing_model_source", "") or ""),
+                float(observability_fields.get("total_cost", 0.0) or 0.0),
+                session_id,
+            ),
+        )
+        await self.db.commit()
+
     # ── Detail tables ───────────────────────────────────────────────
 
     async def upsert_logs(self, session_id: str, logs: list[dict]) -> None:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getSkillMeatFeatureFlags, isStackRecommendationsEnabled, isUsageAttributionEnabled, isWorkflowAnalyticsEnabled } from '../agenticIntelligence';
+import { getSkillMeatFeatureFlags, isSessionBlockInsightsEnabled, isStackRecommendationsEnabled, isUsageAttributionEnabled, isWorkflowAnalyticsEnabled } from '../agenticIntelligence';
 
 describe('agentic intelligence feature flags', () => {
   it('defaults both intelligence surfaces to enabled', () => {
@@ -8,6 +8,7 @@ describe('agentic intelligence feature flags', () => {
       stackRecommendationsEnabled: true,
       workflowAnalyticsEnabled: true,
       usageAttributionEnabled: true,
+      sessionBlockInsightsEnabled: true,
     });
   });
 
@@ -18,6 +19,7 @@ describe('agentic intelligence feature flags', () => {
           stackRecommendationsEnabled: false,
           workflowAnalyticsEnabled: true,
           usageAttributionEnabled: false,
+          sessionBlockInsightsEnabled: true,
         },
       },
     };
@@ -25,5 +27,6 @@ describe('agentic intelligence feature flags', () => {
     expect(isStackRecommendationsEnabled(project as any)).toBe(false);
     expect(isWorkflowAnalyticsEnabled(project as any)).toBe(true);
     expect(isUsageAttributionEnabled(project as any)).toBe(false);
+    expect(isSessionBlockInsightsEnabled(project as any)).toBe(true);
   });
 });

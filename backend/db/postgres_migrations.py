@@ -97,11 +97,23 @@ CREATE TABLE IF NOT EXISTS sessions (
     cache_read_input_tokens INTEGER DEFAULT 0,
     cache_input_tokens INTEGER DEFAULT 0,
     observed_tokens  INTEGER DEFAULT 0,
+    current_context_tokens INTEGER DEFAULT 0,
+    context_window_size INTEGER DEFAULT 0,
+    context_utilization_pct DOUBLE PRECISION DEFAULT 0.0,
+    context_measurement_source TEXT DEFAULT '',
+    context_measured_at TEXT DEFAULT '',
     tool_reported_tokens INTEGER DEFAULT 0,
     tool_result_input_tokens INTEGER DEFAULT 0,
     tool_result_output_tokens INTEGER DEFAULT 0,
     tool_result_cache_creation_input_tokens INTEGER DEFAULT 0,
     tool_result_cache_read_input_tokens INTEGER DEFAULT 0,
+    reported_cost_usd DOUBLE PRECISION,
+    recalculated_cost_usd DOUBLE PRECISION,
+    display_cost_usd DOUBLE PRECISION,
+    cost_provenance TEXT DEFAULT 'unknown',
+    cost_confidence DOUBLE PRECISION DEFAULT 0.0,
+    cost_mismatch_pct DOUBLE PRECISION,
+    pricing_model_source TEXT DEFAULT '',
     total_cost       DOUBLE PRECISION DEFAULT 0.0,
     quality_rating   INTEGER DEFAULT 0,
     friction_rating  INTEGER DEFAULT 0,
@@ -583,6 +595,32 @@ CREATE INDEX IF NOT EXISTS idx_external_definitions_name
 CREATE INDEX IF NOT EXISTS idx_external_definitions_raw_snapshot
     ON external_definitions USING GIN (raw_snapshot_json);
 
+CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
+    id                  BIGSERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL,
+    platform_type       TEXT NOT NULL,
+    model_id            TEXT NOT NULL DEFAULT '',
+    context_window_size INTEGER,
+    input_cost_per_million DOUBLE PRECISION,
+    output_cost_per_million DOUBLE PRECISION,
+    cache_creation_cost_per_million DOUBLE PRECISION,
+    cache_read_cost_per_million DOUBLE PRECISION,
+    speed_multiplier_fast DOUBLE PRECISION,
+    source_type         TEXT NOT NULL DEFAULT 'bundled',
+    source_updated_at   TEXT DEFAULT '',
+    override_locked     BOOLEAN NOT NULL DEFAULT FALSE,
+    sync_status         TEXT NOT NULL DEFAULT 'never',
+    sync_error          TEXT DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, platform_type, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pricing_catalog_project_platform
+    ON pricing_catalog_entries(project_id, platform_type, model_id);
+CREATE INDEX IF NOT EXISTS idx_pricing_catalog_source
+    ON pricing_catalog_entries(project_id, source_type, sync_status);
+
 CREATE TABLE IF NOT EXISTS session_stack_observations (
     id                  SERIAL PRIMARY KEY,
     project_id          TEXT NOT NULL,
@@ -998,11 +1036,23 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "sessions", "cache_read_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "cache_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "observed_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "current_context_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "context_window_size", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "context_utilization_pct", "DOUBLE PRECISION DEFAULT 0.0")
+    await _ensure_column(db, "sessions", "context_measurement_source", "TEXT DEFAULT ''")
+    await _ensure_column(db, "sessions", "context_measured_at", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "tool_reported_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_output_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_cache_creation_input_tokens", "INTEGER DEFAULT 0")
     await _ensure_column(db, "sessions", "tool_result_cache_read_input_tokens", "INTEGER DEFAULT 0")
+    await _ensure_column(db, "sessions", "reported_cost_usd", "DOUBLE PRECISION")
+    await _ensure_column(db, "sessions", "recalculated_cost_usd", "DOUBLE PRECISION")
+    await _ensure_column(db, "sessions", "display_cost_usd", "DOUBLE PRECISION")
+    await _ensure_column(db, "sessions", "cost_provenance", "TEXT DEFAULT 'unknown'")
+    await _ensure_column(db, "sessions", "cost_confidence", "DOUBLE PRECISION DEFAULT 0.0")
+    await _ensure_column(db, "sessions", "cost_mismatch_pct", "DOUBLE PRECISION")
+    await _ensure_column(db, "sessions", "pricing_model_source", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_type", "TEXT DEFAULT 'Claude Code'")
     await _ensure_column(db, "sessions", "platform_version", "TEXT DEFAULT ''")
     await _ensure_column(db, "sessions", "platform_versions_json", "TEXT DEFAULT '[]'")
@@ -1049,6 +1099,36 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     await _ensure_column(db, "session_artifacts", "url", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_log_id", "TEXT")
     await _ensure_column(db, "session_artifacts", "source_tool_name", "TEXT")
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pricing_catalog_entries (
+            id                  BIGSERIAL PRIMARY KEY,
+            project_id          TEXT NOT NULL,
+            platform_type       TEXT NOT NULL,
+            model_id            TEXT NOT NULL DEFAULT '',
+            context_window_size INTEGER,
+            input_cost_per_million DOUBLE PRECISION,
+            output_cost_per_million DOUBLE PRECISION,
+            cache_creation_cost_per_million DOUBLE PRECISION,
+            cache_read_cost_per_million DOUBLE PRECISION,
+            speed_multiplier_fast DOUBLE PRECISION,
+            source_type         TEXT NOT NULL DEFAULT 'bundled',
+            source_updated_at   TEXT DEFAULT '',
+            override_locked     BOOLEAN NOT NULL DEFAULT FALSE,
+            sync_status         TEXT NOT NULL DEFAULT 'never',
+            sync_error          TEXT DEFAULT '',
+            created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, platform_type, model_id)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pricing_catalog_project_platform ON pricing_catalog_entries(project_id, platform_type, model_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pricing_catalog_source ON pricing_catalog_entries(project_id, source_type, sync_status)"
+    )
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS session_usage_events (

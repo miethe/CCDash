@@ -4,6 +4,7 @@ export const DEFAULT_SKILLMEAT_FEATURE_FLAGS: SkillMeatFeatureFlags = {
   stackRecommendationsEnabled: true,
   workflowAnalyticsEnabled: true,
   usageAttributionEnabled: true,
+  sessionBlockInsightsEnabled: true,
 };
 
 export const defaultSkillMeatConfig = () => ({
@@ -46,4 +47,8 @@ export const isWorkflowAnalyticsEnabled = (project?: Pick<Project, 'skillMeat'> 
 
 export const isUsageAttributionEnabled = (project?: Pick<Project, 'skillMeat'> | null): boolean => (
   getSkillMeatFeatureFlags(project).usageAttributionEnabled
+);
+
+export const isSessionBlockInsightsEnabled = (project?: Pick<Project, 'skillMeat'> | null): boolean => (
+  getSkillMeatFeatureFlags(project).sessionBlockInsightsEnabled
 );

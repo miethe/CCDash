@@ -176,6 +176,8 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "cache_input_tokens": 80,
                         "observed_tokens": 380,
                         "tool_reported_tokens": 500,
+                        "current_context_tokens": 200,
+                        "context_utilization_pct": 0.1,
                         "started_at": "2026-03-03T09:00:00Z",
                     },
                     {
@@ -187,6 +189,8 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "cache_input_tokens": 10,
                         "observed_tokens": 60,
                         "tool_reported_tokens": 0,
+                        "current_context_tokens": 0,
+                        "context_utilization_pct": 0.0,
                         "started_at": "2026-03-03T09:01:00Z",
                     },
                 ]
@@ -199,6 +203,8 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["kpis"]["cacheInputTokens"], 90)
         self.assertEqual(response["kpis"]["observedTokens"], 440)
         self.assertEqual(response["kpis"]["toolReportedTokens"], 500)
+        self.assertEqual(response["kpis"]["contextSessionCount"], 1)
+        self.assertEqual(response["kpis"]["avgContextUtilizationPct"], 0.1)
 
     async def test_workflow_effectiveness_endpoint_wraps_service_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")
@@ -476,6 +482,19 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "cache_input_tokens": 80,
                         "observed_tokens": 380,
                         "tool_reported_tokens": 500,
+                        "current_context_tokens": 120,
+                        "context_window_size": 200000,
+                        "context_utilization_pct": 0.06,
+                        "context_measurement_source": "hook_context_window",
+                        "context_measured_at": "2026-03-03T09:04:00Z",
+                        "reported_cost_usd": 1.5,
+                        "recalculated_cost_usd": 1.35,
+                        "display_cost_usd": 1.5,
+                        "cost_provenance": "reported",
+                        "cost_confidence": 0.98,
+                        "cost_mismatch_pct": 0.1,
+                        "pricing_model_source": "claude-opus-4-5",
+                        "platform_version": "2.1.52",
                         "total_cost": 1.5,
                     },
                     {
@@ -497,6 +516,19 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "cache_input_tokens": 40,
                         "observed_tokens": 90,
                         "tool_reported_tokens": 140,
+                        "current_context_tokens": 0,
+                        "context_window_size": 0,
+                        "context_utilization_pct": 0.0,
+                        "context_measurement_source": "",
+                        "context_measured_at": "",
+                        "reported_cost_usd": None,
+                        "recalculated_cost_usd": None,
+                        "display_cost_usd": 0.2,
+                        "cost_provenance": "estimated",
+                        "cost_confidence": 0.45,
+                        "cost_mismatch_pct": None,
+                        "pricing_model_source": "",
+                        "platform_version": "1.0.0",
                         "total_cost": 0.2,
                     },
                 ]
@@ -536,6 +568,16 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked_row["observedTokens"], 380)
         self.assertEqual(linked_row["toolReportedTokens"], 500)
         self.assertEqual(linked_row["totalTokens"], 380)
+        self.assertEqual(linked_row["currentContextTokens"], 120)
+        self.assertEqual(linked_row["contextWindowSize"], 200000)
+        self.assertEqual(linked_row["contextUtilizationPct"], 0.06)
+        self.assertEqual(linked_row["costProvenance"], "reported")
+        self.assertEqual(linked_row["reportedCostUsd"], 1.5)
+        self.assertEqual(linked_row["recalculatedCostUsd"], 1.35)
+        self.assertEqual(linked_row["displayCostUsd"], 1.5)
+        self.assertEqual(linked_row["costMismatchPct"], 0.1)
+        self.assertEqual(linked_row["pricingModelSource"], "claude-opus-4-5")
+        self.assertEqual(linked_row["platformVersion"], "2.1.52")
         self.assertEqual(linked_row["durationSeconds"], 300)
         self.assertFalse(linked_row["isSubagent"])
 
@@ -545,7 +587,60 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unlinked_row["rootSessionId"], "S-1")
         self.assertEqual(unlinked_row["parentSessionId"], "S-1")
         self.assertEqual(unlinked_row["observedTokens"], 90)
+        self.assertEqual(unlinked_row["costProvenance"], "estimated")
         self.assertTrue(unlinked_row["isSubagent"])
+
+    async def test_session_cost_calibration_aggregates_comparable_sessions(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        class _SessionRepo:
+            async def list_paginated(self, *args, **kwargs):
+                return [
+                    {
+                        "id": "S-1",
+                        "model": "claude-sonnet-4-5-20260101",
+                        "platform_version": "2.1.52",
+                        "display_cost_usd": 1.2,
+                        "reported_cost_usd": 1.2,
+                        "recalculated_cost_usd": 1.1,
+                        "cost_provenance": "reported",
+                        "cost_confidence": 0.98,
+                        "cost_mismatch_pct": 0.0833,
+                    },
+                    {
+                        "id": "S-2",
+                        "model": "claude-sonnet-4-5-20260101",
+                        "platform_version": "2.1.52",
+                        "display_cost_usd": 0.5,
+                        "reported_cost_usd": None,
+                        "recalculated_cost_usd": 0.5,
+                        "cost_provenance": "recalculated",
+                        "cost_confidence": 0.9,
+                        "cost_mismatch_pct": None,
+                    },
+                    {
+                        "id": "S-3",
+                        "model": "gpt-5",
+                        "platform_version": "1.0.0",
+                        "display_cost_usd": 0.25,
+                        "reported_cost_usd": None,
+                        "recalculated_cost_usd": None,
+                        "cost_provenance": "estimated",
+                        "cost_confidence": 0.45,
+                        "cost_mismatch_pct": None,
+                    },
+                ]
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
+            payload = await analytics_router.get_session_cost_calibration()
+
+        self.assertEqual(payload.sessionCount, 3)
+        self.assertEqual(payload.comparableSessionCount, 1)
+        self.assertEqual(payload.reportedSessionCount, 1)
+        self.assertEqual(payload.recalculatedSessionCount, 2)
+        self.assertAlmostEqual(payload.avgMismatchPct, 0.0833)
+        self.assertEqual(payload.byModel[0].label, "claude-sonnet-4-5")
+        self.assertEqual(payload.byPlatformVersion[0].label, "2.1.52")
 
     async def test_usage_attribution_endpoint_wraps_rollup_service(self) -> None:
         project = types.SimpleNamespace(id="project-1")

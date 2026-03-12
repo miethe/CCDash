@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-import os
 from pathlib import Path
 from typing import Optional
 
 from backend import config
 from backend.models import Project
+from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
+from backend.services.project_paths.resolver import ProjectPathResolver
 from backend.services.test_config import normalize_project_test_config
 
 logger = logging.getLogger("ccdash")
@@ -18,10 +18,11 @@ logger = logging.getLogger("ccdash")
 class ProjectManager:
     """Manages project configurations and active context."""
 
-    def __init__(self, storage_path: Path):
+    def __init__(self, storage_path: Path, *, path_resolver: ProjectPathResolver | None = None):
         self.storage_path = storage_path
         self._projects: dict[str, Project] = {}
         self._active_project_id: Optional[str] = None
+        self._path_resolver = path_resolver or ProjectPathResolver()
         migrated = self._load()
 
         # Ensure at least one default project exists if empty
@@ -53,6 +54,8 @@ class ProjectManager:
                 try:
                     if isinstance(p_data, dict):
                         if "skillMeat" not in p_data:
+                            migrated = True
+                        if "pathConfig" not in p_data:
                             migrated = True
                         skillmeat = p_data.get("skillMeat")
                         if isinstance(skillmeat, dict) and "workspaceId" in skillmeat and "collectionId" not in skillmeat:
@@ -123,33 +126,65 @@ class ProjectManager:
             return self._projects.get(self._active_project_id)
         return None
 
+    def resolve_project_paths(self, project: Project, *, refresh: bool = False) -> ResolvedProjectPaths:
+        if project.id == "default-skillmeat":
+            root = ResolvedProjectPath(
+                field="root",
+                source_kind="filesystem",
+                requested=project.pathConfig.root,
+                path=config.DATA_DIR.resolve(strict=False),
+                diagnostic="Resolved from the bundled example workspace.",
+            )
+            return ResolvedProjectPaths(
+                project_id=project.id,
+                root=root,
+                plan_docs=ResolvedProjectPath(
+                    field="plan_docs",
+                    source_kind="project_root",
+                    requested=project.pathConfig.planDocs,
+                    path=config.DOCUMENTS_DIR.resolve(strict=False),
+                    diagnostic="Resolved from the bundled example workspace.",
+                ),
+                sessions=ResolvedProjectPath(
+                    field="sessions",
+                    source_kind="filesystem",
+                    requested=project.pathConfig.sessions,
+                    path=config.SESSIONS_DIR.resolve(strict=False),
+                    diagnostic="Resolved from the bundled example workspace.",
+                ),
+                progress=ResolvedProjectPath(
+                    field="progress",
+                    source_kind="project_root",
+                    requested=project.pathConfig.progress,
+                    path=config.PROGRESS_DIR.resolve(strict=False),
+                    diagnostic="Resolved from the bundled example workspace.",
+                ),
+            )
+        return self._path_resolver.resolve_project(project, refresh=refresh)
+
+    def get_active_path_bundle(self, *, refresh: bool = False) -> ResolvedProjectPaths:
+        project = self.get_active_project()
+        if not project:
+            fallback = Project(
+                id="config-fallback",
+                name="Config Fallback",
+                path=str(config.DATA_DIR),
+                planDocsPath=str(config.DOCUMENTS_DIR.relative_to(config.DATA_DIR)),
+                sessionsPath=str(config.SESSIONS_DIR),
+                progressPath=str(config.PROGRESS_DIR.relative_to(config.DATA_DIR)),
+            )
+            return self._path_resolver.resolve_project(fallback, refresh=refresh)
+        return self.resolve_project_paths(project, refresh=refresh)
+
+    def get_project_root(self, project: Project, *, refresh: bool = False) -> Path:
+        if not hasattr(project, "pathConfig"):
+            return Path(getattr(project, "path", config.DATA_DIR)).expanduser().resolve(strict=False)
+        return self.resolve_project_paths(project, refresh=refresh).root.path
+
     def get_active_paths(self) -> tuple[Path, Path, Path]:
         """Return (sessions_dir, documents_dir, progress_dir) for the active project."""
-        project = self.get_active_project()
-        
-        # Fallback to default config if no project is active (shouldn't happen)
-        if not project:
-            return config.SESSIONS_DIR, config.DOCUMENTS_DIR, config.PROGRESS_DIR
-
-        # Use SkillMeat example paths explicitly for the default project
-        if project.id == "default-skillmeat":
-            return config.SESSIONS_DIR, config.DOCUMENTS_DIR, config.PROGRESS_DIR
-
-        project_root = Path(project.path)
-
-        # 1. Sessions — use project.sessionsPath if set, otherwise fall back to ~/.claude/sessions
-        if project.sessionsPath and project.sessionsPath.strip():
-            sessions_path = Path(project.sessionsPath)
-        else:
-            sessions_path = Path.home() / ".claude" / "sessions"
-
-        # 2. Documents — relative to project root
-        docs_path = project_root / project.planDocsPath
-
-        # 3. Progress — use project.progressPath (relative to project root)
-        progress_path = project_root / (project.progressPath or "progress")
-
-        return sessions_path, docs_path, progress_path
+        bundle = self.get_active_path_bundle()
+        return bundle.as_tuple()
 
 
 # Global instance initialized with projects.json in backend root

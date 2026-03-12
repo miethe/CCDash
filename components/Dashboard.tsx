@@ -4,7 +4,7 @@ import { useData } from '../contexts/DataContext';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
-import { type AnalyticsOverview } from '../types';
+import { type AnalyticsOverview, type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 const StatCard = ({ label, value, sub, icon: Icon, color }: any) => (
@@ -27,6 +27,7 @@ export const Dashboard: React.FC = () => {
   const [insight, setInsight] = useState<string | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
+  const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
   const [chartData, setChartData] = useState<Array<{ date: string; cost: number; velocity: number }>>([]);
   const [modelData, setModelData] = useState<Array<{ name: string; usage: number }>>([]);
 
@@ -56,13 +57,15 @@ export const Dashboard: React.FC = () => {
     let mounted = true;
     const loadAnalytics = async () => {
       try {
-        const [ov, costSeries, velocitySeries] = await Promise.all([
+        const [ov, calibration, costSeries, velocitySeries] = await Promise.all([
           analyticsService.getOverview(),
+          analyticsService.getSessionCostCalibration(),
           analyticsService.getSeries({ metric: 'session_cost', period: 'daily', limit: 120 }),
           analyticsService.getSeries({ metric: 'task_velocity', period: 'daily', limit: 120 }),
         ]);
         if (!mounted) return;
         setOverview(ov);
+        setCostCalibration(calibration);
         setModelData((ov.topModels || []).slice(0, 6));
 
         const byDate = new Map<string, { date: string; cost: number; velocity: number }>();
@@ -143,7 +146,7 @@ export const Dashboard: React.FC = () => {
         <StatCard
           label="Total Spend (30d)"
           value={`$${Number(overview?.kpis?.sessionCost || 0).toFixed(2)}`}
-          sub={`${formatTokenCount(workloadMetrics.modelIOTokens)} model IO tokens`}
+          sub={`${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
           icon={DollarSign}
           color="emerald"
         />
@@ -171,7 +174,11 @@ export const Dashboard: React.FC = () => {
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
-        Observed workload includes cache-read and cache-creation input. Estimated cost remains model-IO-derived in V1.
+        Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overview?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overview?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+        Calibration coverage: {Number(costCalibration?.comparableSessionCount || 0).toLocaleString()} comparable sessions, average mismatch {(Number(costCalibration?.avgMismatchPct || 0) * 100).toFixed(1)}%, average cost confidence {(Number(costCalibration?.avgCostConfidence || 0) * 100).toFixed(0)}%.
       </div>
 
       {/* Main Chart Section */}

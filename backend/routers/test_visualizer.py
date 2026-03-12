@@ -162,7 +162,8 @@ def _discover_source_files(base_dir: Path, patterns: list[str], max_scan: int = 
 
 
 def _source_status_rows(project: Any, request: Request | None = None) -> list[TestSourceStatusDTO]:
-    sources = resolve_test_sources(project, include_disabled=True)
+    project_root = project_manager.get_project_root(project)
+    sources = resolve_test_sources(project, include_disabled=True, project_root=project_root)
     sync = getattr(request.app.state, "sync_engine", None) if request else None
     rows: list[TestSourceStatusDTO] = []
     for source in sources:
@@ -886,7 +887,8 @@ async def sync_test_sources_endpoint(request: Request, body: SyncTestsRequest) -
         from backend.db.sync_engine import SyncEngine
         sync = SyncEngine(db)
     selected = set(body.platforms or [])
-    sources = resolve_test_sources(project, platform_filter=selected or None)
+    project_root = project_manager.get_project_root(project)
+    sources = resolve_test_sources(project, platform_filter=selected or None, project_root=project_root)
     stats = await sync.sync_test_sources(
         project.id,
         sources,

@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence User Guide
 
-Last updated: 2026-03-10
+Last updated: 2026-03-12
 
 Use the agentic SDLC intelligence surfaces to understand which workflow stacks are working, why they work, and where failure patterns are repeating.
 
@@ -15,7 +15,7 @@ Use the agentic SDLC intelligence surfaces to understand which workflow stacks a
   - attributed token, cost, coverage, and cache-share summaries when usage attribution is enabled
 - `/analytics?tab=attribution`
   - direct entity-level attribution leaderboard and calibration view
-- `Settings > Projects > SkillMeat Integration`
+- `Settings > Integrations > SkillMeat`
   - per-project toggles for `Recommended Stack UI`, `Usage Attribution`, and `Workflow Effectiveness`
 
 ## Recommended Stack card
@@ -74,12 +74,12 @@ If a project disables one of the intelligence surfaces:
 
 ## SkillMeat settings modes
 
-Use `Settings > Projects > SkillMeat Integration`.
+Use `Settings > Integrations > SkillMeat`.
 
 - Local mode:
   - leave `AAA enabled` off
   - leave the API key empty
-  - set `Project Path` to the SkillMeat filesystem `project_id`
+  - set `Project ID` to the SkillMeat project identifier
   - use `Collection ID` only when artifact/bundle scope needs it
 - AAA-enabled mode:
   - enable `AAA enabled`
@@ -87,11 +87,11 @@ Use `Settings > Projects > SkillMeat Integration`.
   - wait for the connection, project mapping, and auth indicators to confirm the config
 - Compatibility note:
   - legacy `workspaceId` values are deprecated and are not the primary mapping key in V2
-  - CCDash now treats the SkillMeat project filesystem path as canonical
+  - CCDash now treats the SkillMeat `projectId` as the canonical mapping value
 
 ## Recommended pilot workflow
 
-1. Enable SkillMeat integration and enter the base URL plus the SkillMeat project filesystem path.
+1. Enable SkillMeat integration and enter the base URL plus the SkillMeat project ID.
 2. Leave `AAA enabled` off for local SkillMeat or enable it and provide an API key for protected instances.
 3. Confirm the connection, project mapping, and auth indicators in Settings.
 4. Leave `Recommended Stack UI`, `Usage Attribution`, and `Workflow Effectiveness` enabled for the pilot project.

@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence Developer Reference
 
-Last updated: 2026-03-10
+Last updated: 2026-03-12
 
 This reference covers the rollout script, feature-flag model, API surfaces, and primary implementation files for the Agentic SDLC Intelligence foundation.
 
@@ -54,7 +54,7 @@ The frontend uses these flags to hide or replace surfaces with disabled-state no
 ## SkillMeat settings contract
 
 - `Project.skillMeat.projectId`
-  - stores the SkillMeat filesystem-path `project_id`
+  - stores the canonical SkillMeat `project_id`
   - this is the canonical project mapping in V2
 - `Project.skillMeat.collectionId`
   - optional collection scoping for artifact and bundle lookups
@@ -65,6 +65,8 @@ The frontend uses these flags to hide or replace surfaces with disabled-state no
 - Legacy compatibility:
   - `workspaceId` is deprecated and should not be used for active mapping logic
   - existing saved configs are interpreted safely so older projects still load
+
+The frontend now edits these values from `Settings > Integrations > SkillMeat`. The `Projects` tab remains responsible for typed project path sources and testing configuration, while app-scoped GitHub integration settings live under `Settings > Integrations > GitHub`.
 
 ## Rollout script
 
@@ -118,6 +120,11 @@ Use `--fail-on-warning` when you want rollout to act like a stricter operator ga
 - `GET /api/integrations/skillmeat/definitions`
 - `POST /api/integrations/skillmeat/observations/backfill`
 - `GET /api/integrations/skillmeat/observations`
+- `GET /api/integrations/github/settings`
+- `PUT /api/integrations/github/settings`
+- `POST /api/integrations/github/validate`
+- `POST /api/integrations/github/refresh-workspace`
+- `POST /api/integrations/github/check-write`
 
 ### Feature execution
 

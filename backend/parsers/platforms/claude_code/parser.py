@@ -7,7 +7,7 @@ import re
 import shlex
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -23,6 +23,7 @@ from backend.models import (
     ToolUsage,
 )
 from backend.date_utils import file_metadata_dates, make_date_value
+from backend.services.session_observability import derive_context_observability
 from backend.parsers.platforms.test_runs import (
     aggregate_test_runs,
     enrich_test_run_with_output,
@@ -758,20 +759,48 @@ def _collect_session_env_sidecar(
     schema: dict[str, Any],
 ) -> dict[str, Any]:
     if not claude_root or not raw_session_id:
-        return {"directory": "", "exists": False, "fileCount": 0, "files": []}
+        return {
+            "directory": "",
+            "exists": False,
+            "fileCount": 0,
+            "files": [],
+            "statuslineSnapshots": [],
+            "latestStatuslineSnapshot": None,
+        }
 
     env_cfg = schema.get("sidecars", {}).get("session_env", {})
     env_dir = claude_root / str(env_cfg.get("dir") or "session-env/{session_id}").replace("{session_id}", raw_session_id)
     if not env_dir.exists():
-        return {"directory": str(env_dir), "exists": False, "fileCount": 0, "files": []}
+        return {
+            "directory": str(env_dir),
+            "exists": False,
+            "fileCount": 0,
+            "files": [],
+            "statuslineSnapshots": [],
+            "latestStatuslineSnapshot": None,
+        }
 
     file_glob = str(env_cfg.get("glob") or "*")
     files = [p for p in sorted(env_dir.glob(file_glob)) if p.is_file()]
+    statusline_snapshots = [
+        snapshot
+        for file_path in files
+        for snapshot in [_statusline_snapshot_from_file(file_path, raw_session_id)]
+        if snapshot
+    ]
+    statusline_snapshots.sort(
+        key=lambda row: (
+            _parse_iso_ts(str(row.get("capturedAt") or "")) or datetime.min.replace(tzinfo=timezone.utc),
+            str(row.get("file") or ""),
+        )
+    )
     return {
         "directory": str(env_dir),
         "exists": True,
         "fileCount": len(files),
         "files": [str(path) for path in files[:100]],
+        "statuslineSnapshots": statusline_snapshots[:20],
+        "latestStatuslineSnapshot": statusline_snapshots[-1] if statusline_snapshots else None,
     }
 
 
@@ -951,13 +980,22 @@ def _make_id(path: Path) -> str:
 def _estimate_cost(tokens_in: int, tokens_out: int, model: str) -> float:
     """Rough cost estimate based on model pricing."""
     rates = {
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-sonnet-4-5": (3.0, 15.0),
+        "claude-sonnet-4": (3.0, 15.0),
         "claude-3-5-sonnet": (3.0, 15.0),
         "claude-3-7-sonnet": (3.0, 15.0),
         "claude-sonnet": (3.0, 15.0),
+        "claude-opus-4-6": (5.0, 25.0),
+        "claude-opus-4-5": (5.0, 25.0),
+        "claude-opus-4-1": (15.0, 75.0),
+        "claude-opus-4": (15.0, 75.0),
         "claude-3-opus": (15.0, 75.0),
-        "claude-opus": (15.0, 75.0),
+        "claude-opus": (5.0, 25.0),
+        "claude-haiku-4-5": (1.0, 5.0),
+        "claude-haiku-3-5": (0.8, 4.0),
         "claude-3-haiku": (0.25, 1.25),
-        "claude-haiku": (0.25, 1.25),
+        "claude-haiku": (1.0, 5.0),
     }
     model_lower = model.lower()
     in_rate, out_rate = 3.0, 15.0
@@ -976,6 +1014,56 @@ def _parse_iso_ts(value: str) -> datetime | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+
+
+def _statusline_snapshot_from_file(path: Path, raw_session_id: str) -> dict[str, Any] | None:
+    payload = _load_json_dict(path)
+    if not payload:
+        return None
+
+    model_payload = payload.get("model")
+    if not isinstance(model_payload, dict):
+        return None
+
+    snapshot_session_id = str(payload.get("session_id") or "").strip()
+    if snapshot_session_id and snapshot_session_id not in {raw_session_id, raw_session_id.removeprefix("S-")}:
+        return None
+
+    context_window = payload.get("context_window") if isinstance(payload.get("context_window"), dict) else {}
+    cost_payload = payload.get("cost") if isinstance(payload.get("cost"), dict) else {}
+    return {
+        "file": str(path),
+        "capturedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
+        "sessionId": snapshot_session_id or raw_session_id,
+        "transcriptPath": str(payload.get("transcript_path") or ""),
+        "modelId": str(model_payload.get("id") or ""),
+        "modelDisplayName": str(model_payload.get("display_name") or ""),
+        "contextWindow": {
+            "totalInputTokens": _coerce_int(context_window.get("total_input_tokens"), 0),
+            "totalOutputTokens": _coerce_int(context_window.get("total_output_tokens"), 0),
+            "contextWindowSize": _coerce_int(context_window.get("context_window_size"), 0),
+        },
+        "totalCostUsd": (
+            round(_coerce_float(cost_payload.get("total_cost_usd"), 0.0), 6)
+            if cost_payload.get("total_cost_usd") is not None
+            else None
+        ),
+    }
+
+
+def _agent_session_context_fields(
+    logs: list[Any],
+    model: str,
+    hook_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = derive_context_observability(logs, model, hook_snapshot)
+    return {
+        "currentContextTokens": int(context.get("current_context_tokens") or 0),
+        "contextWindowSize": int(context.get("context_window_size") or 0),
+        "contextUtilizationPct": float(context.get("context_utilization_pct") or 0.0),
+        "contextMeasurementSource": str(context.get("context_measurement_source") or ""),
+        "contextMeasuredAt": str(context.get("context_measured_at") or ""),
+    }
 
 
 def _normalize_path(raw: str) -> str:
@@ -1577,6 +1665,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
     usage_speed_counts: Counter[str] = Counter()
     usage_server_tool_use_totals: Counter[str] = Counter()
     usage_iteration_count = 0
+    transcript_reported_cost_usd = 0.0
+    transcript_reported_cost_count = 0
     tool_result_reported_totals: dict[str, int] = {
         "reportedCount": 0,
         "totalTokens": 0,
@@ -2276,6 +2366,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         record_entry_context(entry)
         entry_type = entry.get("type", "")
         current_ts = entry.get("timestamp", "")
+        if entry.get("costUSD") is not None:
+            transcript_reported_cost_usd += _coerce_float(entry.get("costUSD"), 0.0)
+            transcript_reported_cost_count += 1
         current_entry_lineage_metadata = {
             "threadKind": "subagent" if is_subagent else "root",
             "isSynthetic": False,
@@ -3695,6 +3788,16 @@ def parse_session_file(path: Path) -> AgentSession | None:
     team_sidecar = _collect_team_sidecar(claude_root, raw_session_id, forensics_schema)
     session_env_sidecar = _collect_session_env_sidecar(claude_root, raw_session_id, forensics_schema)
     tool_results_sidecar = _collect_tool_results_sidecar(path, raw_session_id, is_subagent, forensics_schema)
+    latest_statusline_snapshot = session_env_sidecar.get("latestStatuslineSnapshot")
+    root_context_fields = _agent_session_context_fields(logs, model, latest_statusline_snapshot)
+    reported_cost_usd: float | None = None
+    reported_cost_source = ""
+    if isinstance(latest_statusline_snapshot, dict) and latest_statusline_snapshot.get("totalCostUsd") is not None:
+        reported_cost_usd = round(_coerce_float(latest_statusline_snapshot.get("totalCostUsd"), 0.0), 6)
+        reported_cost_source = "hook_statusline_total_cost_usd"
+    elif transcript_reported_cost_count > 0:
+        reported_cost_usd = round(transcript_reported_cost_usd, 6)
+        reported_cost_source = "transcript_sum_cost_usd"
 
     if embedded_todos:
         embedded_counts: Counter[str] = Counter(item.get("status", "unknown") for item in embedded_todos)
@@ -3910,6 +4013,22 @@ def parse_session_file(path: Path) -> AgentSession | None:
         "rawSessionId": raw_session_id,
         "sessionFile": str(path),
         "claudeRoot": str(claude_root) if claude_root else "",
+        "contextSummary": {
+            "currentContextTokens": int(root_context_fields.get("currentContextTokens") or 0),
+            "contextWindowSize": int(root_context_fields.get("contextWindowSize") or 0),
+            "contextUtilizationPct": float(root_context_fields.get("contextUtilizationPct") or 0.0),
+            "measurementSource": str(root_context_fields.get("contextMeasurementSource") or ""),
+            "measuredAt": str(root_context_fields.get("contextMeasuredAt") or ""),
+        },
+        "costSummary": {
+            "estimatedCostUsd": round(cost, 6),
+            "reportedCostUsd": reported_cost_usd,
+            "reportedCostSource": reported_cost_source,
+            "transcriptReportedCostCount": transcript_reported_cost_count,
+            "transcriptReportedCostUsd": (
+                round(transcript_reported_cost_usd, 6) if transcript_reported_cost_count > 0 else None
+            ),
+        },
         "thinking": {
             "level": thinking_level,
             "source": str(thinking_meta.get("source") or ""),
@@ -4178,6 +4297,7 @@ def parse_session_file(path: Path) -> AgentSession | None:
                 durationSeconds=_coerce_int(partition.get("durationSeconds"), 0),
                 tokensIn=_coerce_int(partition.get("tokensIn"), 0),
                 tokensOut=_coerce_int(partition.get("tokensOut"), 0),
+                **_agent_session_context_fields(partition.get("logs", []), model, None),
                 totalCost=round(
                     _estimate_cost(
                         _coerce_int(partition.get("tokensIn"), 0),
@@ -4233,7 +4353,9 @@ def parse_session_file(path: Path) -> AgentSession | None:
         durationSeconds=duration,
         tokensIn=tokens_in,
         tokensOut=tokens_out,
-        totalCost=round(cost, 4),
+        **root_context_fields,
+        totalCost=round(reported_cost_usd if reported_cost_usd is not None else cost, 4),
+        reportedCostUsd=reported_cost_usd,
         startedAt=first_ts,
         endedAt=last_ts,
         createdAt=fs_dates.get("createdAt", ""),

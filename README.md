@@ -58,8 +58,8 @@
 
 ### 4. Project Management
 *   **Dynamic Project Switching**: Easily switch between multiple local projects from the sidebar.
-*   **Project Context**: Each project maintains its own configuration for session logs, plan documentation, and progress tracking.
-*   **Project Creation**: Add new projects by specifying local paths and metadata, which are persisted for future sessions.
+*   **Project Context**: Each project maintains typed path-source configuration for session logs, plan documentation, and progress tracking, with support for local filesystem roots, project-relative roots, and GitHub-backed repo paths where applicable.
+*   **Project Creation**: Add new projects by specifying metadata and canonical path roots, which are persisted for future sessions.
 
 ### 5. Plan Catalog (Documentation)
 *   **Views**:
@@ -71,6 +71,7 @@
     *   Typed metadata from canonical schema fields (priority/risk/complexity/track, timeline/release/milestone, readiness/test impact, ownership/audience).
     *   Relationship surfaces include typed `linked_features[]` (type/source/confidence), related docs, request IDs, commit refs, and PR refs.
     *   **Raw** tab includes normalized and raw frontmatter payloads for migration/debugging parity.
+    *   Plan documents can now be edited directly in the modal; local files save in place, while eligible GitHub-backed plan docs can commit and push through the managed repo workspace flow.
 
 ### 6. Session Inspector (Agent Forensics)
 The core debugging loop for AI interactions.
@@ -108,6 +109,7 @@ The core debugging loop for AI interactions.
         *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
         *   **Token Semantics**: Session analytics now separate model IO, cache input, observed workload, and tool-reported fallback diagnostics.
         *   **Usage Attribution**: Session analytics now include per-session attribution summaries with exclusive vs supporting totals, confidence, and model-IO-derived cost context.
+        *   **Session Block Insights**: Long sessions can be broken into configurable `1h`, `3h`, `5h`, or `8h` workload/cost blocks with burn-rate and projected end-of-block summaries.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Artifacts**:
         *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
@@ -151,10 +153,24 @@ The core debugging loop for AI interactions.
 ### 8. Settings
 *   **Alert Rules Engine**: Persisted alert CRUD (`POST/PATCH/DELETE /api/analytics/alerts`) for threshold-based monitoring.
 *   **Toggle System**: Activate/Deactivate alerts with backend persistence.
-*   **Project Testing Configuration**: Per-project Testing settings to configure platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export.
-*   **SkillMeat Intelligence Controls**: Per-project SkillMeat settings now include rollout controls for:
+*   **Projects tab**:
+    *   per-project path-source editors for project root, plan docs, sessions, and progress roots
+    *   typed source selection (`project_root`, `filesystem`, `github_repo`) with effective-path previews and GitHub validation/status messaging
+    *   project-scoped Testing configuration for platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export
+*   **Integrations tab**:
+    *   dedicated `SkillMeat` and `GitHub` sub-tabs instead of mixing integration settings into `Projects`
+    *   GitHub integration controls for token/repository validation, managed workspace refresh, and write-capability checks used by plan-document write-back
+*   **AI Platforms Pricing Catalog**:
+    *   dedicated `AI Platforms` tab for global pricing management instead of project-scoped editing
+    *   platform defaults plus family defaults for `Claude Code` and `Codex`
+    *   detected exact-model rows synthesized from synced sessions across configured projects
+    *   best-effort live provider sync for Anthropic and OpenAI pricing pages with bundled fallback
+    *   provider refresh can be triggered from the UI or automated through `POST /api/pricing/catalog/sync?platformType=...`
+    *   manual exact-model overrides can be added, saved, reset, and deleted without removing required platform/family defaults
+*   **SkillMeat Intelligence Controls**: Per-project SkillMeat settings are managed from `Settings > Integrations > SkillMeat` and include rollout controls for:
     *   read-only definition sync
     *   recommended stack UI visibility in `/execution`
+    *   session block insights visibility in Session Inspector analytics
     *   usage attribution visibility in `/analytics` and Session Inspector
     *   workflow intelligence analytics visibility in `/analytics` and `/execution`
 

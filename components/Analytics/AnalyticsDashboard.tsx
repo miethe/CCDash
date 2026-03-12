@@ -9,6 +9,7 @@ import {
     AnalyticsCorrelationItem,
     AnalyticsOverview,
     Notification,
+    SessionCostCalibrationSummary,
     SessionUsageAggregateResponse,
     SessionUsageCalibrationSummary,
     SessionUsageDrilldownResponse,
@@ -39,6 +40,7 @@ import {
 } from 'recharts';
 import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
+import { costProvenanceLabel } from '../../lib/sessionSemantics';
 
 type AnalyticsTab = 'overview' | 'attribution' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
@@ -114,6 +116,7 @@ export const AnalyticsDashboard: React.FC = () => {
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
     const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
+    const [costCalibration, setCostCalibration] = useState<SessionCostCalibrationSummary | null>(null);
     const [usageAttribution, setUsageAttribution] = useState<SessionUsageAggregateResponse | null>(null);
     const [usageCalibration, setUsageCalibration] = useState<SessionUsageCalibrationSummary | null>(null);
     const [usageDrilldown, setUsageDrilldown] = useState<SessionUsageDrilldownResponse | null>(null);
@@ -146,11 +149,12 @@ export const AnalyticsDashboard: React.FC = () => {
                     .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution calibration.' }))
                 : Promise.resolve({ data: null, error: null as string | null });
 
-            const [overviewData, notificationData, artifactData, correlationData, usagePayload, calibrationPayload] = await Promise.all([
+            const [overviewData, notificationData, artifactData, correlationData, costCalibrationData, usagePayload, calibrationPayload] = await Promise.all([
                 analyticsService.getOverview(),
                 analyticsService.getNotifications(),
                 analyticsService.getArtifacts({ limit: 200 }),
                 analyticsService.getCorrelation(),
+                analyticsService.getSessionCostCalibration(),
                 usagePayloadPromise,
                 calibrationPayloadPromise,
             ]);
@@ -158,6 +162,7 @@ export const AnalyticsDashboard: React.FC = () => {
             setNotifications(notificationData);
             setArtifacts(artifactData);
             setCorrelation(correlationData.items || []);
+            setCostCalibration(costCalibrationData);
             setUsageAttribution(usagePayload.data);
             setUsageCalibration(calibrationPayload.data);
             const firstRow = (usagePayload.data?.rows || [])[0];
@@ -373,9 +378,9 @@ export const AnalyticsDashboard: React.FC = () => {
                             subtitle={`${formatTokenCount(overviewWorkload.tokenOutput)} output tokens`}
                         />
                         <MetricCard
-                            label="Estimated Cost"
+                            label="Display Spend"
                             value={formatCurrency(Number(overview?.kpis?.sessionCost || 0))}
-                            subtitle="Model-IO-derived in V1"
+                            subtitle={`${formatNumber(costCalibration?.comparableSessionCount || 0)} comparable sessions`}
                         />
                         <MetricCard
                             label="Sessions"
@@ -439,8 +444,16 @@ export const AnalyticsDashboard: React.FC = () => {
                                     <div className="mt-1">Model IO plus cache input when available.</div>
                                 </div>
                                 <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Current Context</div>
+                                    <div className="mt-1">A point-in-time occupancy snapshot, never merged into observed workload totals.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">Model IO</div>
                                     <div className="mt-1">Legacy `tokensIn` + `tokensOut`, preserved for cost and compatibility.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Display Spend</div>
+                                    <div className="mt-1">Reported cost wins when available, then recalculated pricing, then estimated fallback.</div>
                                 </div>
                                 <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">Relay Policy</div>
@@ -449,6 +462,34 @@ export const AnalyticsDashboard: React.FC = () => {
                             </div>
                         </div>
                     </div>
+
+                    {costCalibration && (
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-slate-200">Cost Calibration</h3>
+                            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Comparable Coverage</div>
+                                    <div className="mt-2 text-2xl font-semibold text-emerald-300">{formatPercent(costCalibration.comparableCoveragePct)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">{formatNumber(costCalibration.comparableSessionCount)} sessions</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Mismatch</div>
+                                    <div className="mt-2 text-2xl font-semibold text-amber-300">{formatPercent(costCalibration.avgMismatchPct)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">max {formatPercent(costCalibration.maxMismatchPct)}</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Confidence</div>
+                                    <div className="mt-2 text-2xl font-semibold text-indigo-300">{formatPercent(costCalibration.avgCostConfidence)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">all sessions</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Display Spend</div>
+                                    <div className="mt-2 text-2xl font-semibold text-slate-100">{formatCurrency(costCalibration.totalDisplayCostUsd)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">reported &gt; recalculated &gt; estimated</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                         <div className="flex items-center gap-2 mb-4">
@@ -1099,6 +1140,13 @@ export const AnalyticsDashboard: React.FC = () => {
                         <MetricCard label="Avg Confidence" value={correlationSummary.avgConfidence.toFixed(2)} subtitle="linked rows only" />
                         <MetricCard label="Observed Workload" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
                     </div>
+                    {costCalibration && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <MetricCard label="Comparable Sessions" value={formatNumber(costCalibration.comparableSessionCount)} subtitle={`${formatPercent(costCalibration.comparableCoveragePct)} coverage`} />
+                            <MetricCard label="Avg Cost Mismatch" value={formatPercent(costCalibration.avgMismatchPct)} subtitle={`max ${formatPercent(costCalibration.maxMismatchPct)}`} />
+                            <MetricCard label="Avg Cost Confidence" value={formatPercent(costCalibration.avgCostConfidence)} subtitle="display-cost rows" />
+                        </div>
+                    )}
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                             <h3 className="text-slate-200 font-semibold">Session ↔ Feature Correlation</h3>
@@ -1127,7 +1175,9 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-right py-2 pr-3">Confidence</th>
                                         <th className="text-right py-2 pr-3">Linked Features</th>
                                         <th className="text-right py-2 pr-3">Observed Tokens</th>
+                                        <th className="text-right py-2 pr-3">Current Context</th>
                                         <th className="text-right py-2 pr-3">Cost</th>
+                                        <th className="text-left py-2 pr-3">Cost Source</th>
                                         <th className="text-right py-2 pr-3">Duration</th>
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-left py-2 pr-3">Family</th>
@@ -1162,7 +1212,16 @@ export const AnalyticsDashboard: React.FC = () => {
                                             <td className="py-2 pr-3 text-right font-mono">{Number(row.confidence || 0).toFixed(2)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.linkedFeatureCount || 0))}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.totalTokens || 0))}</td>
+                                            <td className="py-2 pr-3 text-right font-mono">
+                                                {row.currentContextTokens && row.contextWindowSize
+                                                    ? `${formatNumber(Number(row.currentContextTokens || 0))} (${Number(row.contextUtilizationPct || 0).toFixed(1)}%)`
+                                                    : '-'}
+                                            </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatCurrency(Number(row.totalCost || 0))}</td>
+                                            <td className="py-2 pr-3 text-xs text-slate-400">
+                                                {costProvenanceLabel(row.costProvenance)}
+                                                {Number(row.costMismatchPct || 0) > 0 ? ` · ${(Number(row.costMismatchPct || 0) * 100).toFixed(1)}%` : ''}
+                                            </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatDurationSeconds(Number(row.durationSeconds || 0))}</td>
                                             <td className="py-2 pr-3">{row.model ? <ModelBadge model={row.model} family={row.modelFamily} /> : <span className="text-slate-500">-</span>}</td>
                                             <td className="py-2 pr-3 text-xs">

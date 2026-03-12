@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getFeatureStatusStyle } from './featureStatus';
+import { updateDocument as saveDocument } from '../services/documents';
 
 export const getFileContent = (doc: PlanDocument): string => {
    if (doc.content) return doc.content;
@@ -219,10 +220,16 @@ export const DocumentModal = ({
    zIndexClassName = 'z-50',
 }: DocumentModalProps) => {
    const navigate = useNavigate();
-   const { sessions, features } = useData();
+   const { sessions, features, refreshDocuments } = useData();
    const [activeTab, setActiveTab] = React.useState<'summary' | 'delivery' | 'relationships' | 'content' | 'timeline' | 'raw'>('summary');
    const [fullDoc, setFullDoc] = React.useState<PlanDocument>(() => normalizeDoc(initialDoc, initialDoc));
    const [links, setLinks] = React.useState<DocumentLinksResponse | null>(null);
+   const [isEditing, setIsEditing] = React.useState(false);
+   const [draftContent, setDraftContent] = React.useState(() => getFileContent(initialDoc));
+   const [commitMessage, setCommitMessage] = React.useState('');
+   const [saveBusy, setSaveBusy] = React.useState(false);
+   const [saveError, setSaveError] = React.useState<string | null>(null);
+   const [saveMessage, setSaveMessage] = React.useState<string | null>(null);
 
    React.useEffect(() => {
       let cancelled = false;
@@ -269,7 +276,62 @@ export const DocumentModal = ({
    }, [initialDoc.id]);
 
    const doc = normalizeDoc(fullDoc || initialDoc, initialDoc);
+   const canEditDocument = doc.rootKind === 'project_plans';
+   const currentContent = getFileContent(doc);
+   const hasUnsavedChanges = draftContent !== currentContent;
    const isProgressDoc = doc.rootKind === 'progress' || (doc.docSubtype || '').startsWith('progress_');
+
+   React.useEffect(() => {
+      if (isEditing) return;
+      setDraftContent(currentContent);
+   }, [currentContent, isEditing]);
+
+   React.useEffect(() => {
+      setIsEditing(false);
+      setCommitMessage('');
+      setSaveError(null);
+      setSaveMessage(null);
+   }, [doc.id]);
+
+   const handleStartEdit = React.useCallback(() => {
+      setActiveTab('content');
+      setDraftContent(currentContent);
+      setSaveError(null);
+      setSaveMessage(null);
+      setIsEditing(true);
+   }, [currentContent]);
+
+   const handleCancelEdit = React.useCallback(() => {
+      setDraftContent(currentContent);
+      setCommitMessage('');
+      setSaveError(null);
+      setIsEditing(false);
+   }, [currentContent]);
+
+   const handleSave = React.useCallback(async () => {
+      setSaveBusy(true);
+      setSaveError(null);
+      setSaveMessage(null);
+      try {
+         const response = await saveDocument(doc.id, {
+            content: draftContent,
+            commitMessage,
+         });
+         const nextDoc = normalizeDoc(response.document, doc);
+         setFullDoc(nextDoc);
+         setDraftContent(getFileContent(nextDoc));
+         setCommitMessage('');
+         setSaveMessage(response.commitHash
+            ? `${response.message} Commit ${response.commitHash}.`
+            : response.message);
+         setIsEditing(false);
+         await refreshDocuments();
+      } catch (error: any) {
+         setSaveError(error?.message || 'Failed to save document');
+      } finally {
+         setSaveBusy(false);
+      }
+   }, [commitMessage, doc, draftContent, refreshDocuments]);
    const linkedFeatures = React.useMemo(() => {
       const featureById = new Map<string, { id: string; name: string; status: string; category: string }>();
       features.forEach(feature => {
@@ -426,9 +488,40 @@ export const DocumentModal = ({
                      <p className="text-slate-400 font-mono text-xs mt-1">{doc.canonicalPath || doc.filePath}</p>
                   </div>
                </div>
-               <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
-                  <X size={24} />
-               </button>
+               <div className="flex items-center gap-2">
+                  {canEditDocument && !isEditing && (
+                     <button
+                        type="button"
+                        onClick={handleStartEdit}
+                        className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/20"
+                     >
+                        Edit Markdown
+                     </button>
+                  )}
+                  {canEditDocument && isEditing && (
+                     <>
+                        <button
+                           type="button"
+                           onClick={handleCancelEdit}
+                           disabled={saveBusy}
+                           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:border-slate-600 disabled:opacity-50"
+                        >
+                           Cancel
+                        </button>
+                        <button
+                           type="button"
+                           onClick={() => { void handleSave(); }}
+                           disabled={saveBusy || !hasUnsavedChanges}
+                           className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                           {saveBusy ? 'Saving...' : 'Save'}
+                        </button>
+                     </>
+                  )}
+                  <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
+                     <X size={24} />
+                  </button>
+               </div>
             </div>
 
             <div className="px-6 border-b border-slate-800 bg-slate-900/50 flex gap-6">
@@ -458,6 +551,17 @@ export const DocumentModal = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
+               {saveMessage && (
+                  <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                     {saveMessage}
+                  </div>
+               )}
+               {saveError && (
+                  <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                     {saveError}
+                  </div>
+               )}
+
                {activeTab === 'summary' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                      <div className="space-y-4">
@@ -618,11 +722,31 @@ export const DocumentModal = ({
 
                {activeTab === 'content' && (
                   <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
-                     <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                           {getFileContent(doc)}
-                        </ReactMarkdown>
-                     </div>
+                     {isEditing ? (
+                        <div className="space-y-4">
+                           <label className="block">
+                              <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Commit Message (optional)</span>
+                              <input
+                                 type="text"
+                                 value={commitMessage}
+                                 onChange={event => setCommitMessage(event.target.value)}
+                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                                 placeholder={`ccdash: update ${doc.title}`}
+                              />
+                           </label>
+                           <textarea
+                              value={draftContent}
+                              onChange={event => setDraftContent(event.target.value)}
+                              className="h-[52vh] w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-[13px] text-slate-200 focus:outline-none focus:border-indigo-500"
+                           />
+                        </div>
+                     ) : (
+                        <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400">
+                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {currentContent}
+                           </ReactMarkdown>
+                        </div>
+                     )}
                   </div>
                )}
 

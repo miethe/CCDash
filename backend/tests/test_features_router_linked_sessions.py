@@ -103,6 +103,18 @@ class _FakeSessionRepo:
             "cache_input_tokens": 20,
             "observed_tokens": 50,
             "tool_reported_tokens": 90,
+            "current_context_tokens": 40,
+            "context_window_size": 200000,
+            "context_utilization_pct": 0.02,
+            "context_measurement_source": "hook_context_window",
+            "context_measured_at": "2026-02-17T00:01:00Z",
+            "reported_cost_usd": 0.12,
+            "recalculated_cost_usd": 0.11,
+            "display_cost_usd": 0.12,
+            "cost_provenance": "reported",
+            "cost_confidence": 0.98,
+            "cost_mismatch_pct": 0.0833,
+            "pricing_model_source": "claude-sonnet-4-5",
             "cache_share": 0.4,
             "output_share": 0.67,
             "git_commit_hash": None,
@@ -183,6 +195,12 @@ class FeatureLinkedSessionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response[0].observedTokens, 50)
         self.assertEqual(response[0].cacheInputTokens, 20)
         self.assertEqual(response[0].toolReportedTokens, 90)
+        self.assertEqual(response[0].currentContextTokens, 40)
+        self.assertEqual(response[0].contextWindowSize, 200000)
+        self.assertEqual(response[0].contextMeasurementSource, "hook_context_window")
+        self.assertEqual(response[0].costProvenance, "reported")
+        self.assertEqual(response[0].displayCostUsd, 0.12)
+        self.assertEqual(response[0].pricingModelSource, "claude-sonnet-4-5")
 
     async def test_linked_sessions_include_inherited_subthreads_for_linked_main(self) -> None:
         feature_repo = _FakeFeatureRepo()

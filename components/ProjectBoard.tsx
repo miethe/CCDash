@@ -19,6 +19,7 @@ import {
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { resolveDisplayCost } from '../lib/sessionSemantics';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -53,8 +54,18 @@ interface FeatureSessionLink {
   cacheInputTokens?: number;
   observedTokens?: number;
   toolReportedTokens?: number;
+  currentContextTokens?: number;
+  contextWindowSize?: number;
+  contextUtilizationPct?: number;
   cacheShare?: number;
   outputShare?: number;
+  reportedCostUsd?: number | null;
+  recalculatedCostUsd?: number | null;
+  displayCostUsd?: number | null;
+  costProvenance?: 'reported' | 'recalculated' | 'estimated' | 'unknown';
+  costConfidence?: number;
+  costMismatchPct?: number | null;
+  pricingModelSource?: string;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;
@@ -1386,7 +1397,7 @@ const FeatureModal = ({
           if (task.id !== taskId) return task;
           changed = true;
           previousTaskStatus = task.status;
-          return { ...task, status: newStatus };
+          return { ...task, status: newStatus as ProjectTask['status'] };
         });
         return { ...phase, tasks: nextTasks };
       });
@@ -2189,9 +2200,16 @@ const FeatureModal = ({
         onClick={openSession}
         className="rounded-lg"
         infoBadges={(
-          <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
-            {Math.round(session.confidence * 100)}% confidence
-          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+              {Math.round(session.confidence * 100)}% confidence
+            </span>
+            {session.currentContextTokens && session.contextWindowSize ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-500/25 text-sky-200 bg-sky-500/10">
+                Context {Number(session.contextUtilizationPct || 0).toFixed(1)}%
+              </span>
+            ) : null}
+          </div>
         )}
         headerRight={(
           <div className="flex items-center gap-4 text-right">
@@ -2201,7 +2219,7 @@ const FeatureModal = ({
             </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
-              <div className="text-xs font-mono text-emerald-400">${session.totalCost.toFixed(2)}</div>
+              <div className="text-xs font-mono text-emerald-400">${resolveDisplayCost(session).toFixed(2)}</div>
             </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Duration</div>
