@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature } from '../types';
+import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature, TaskStatus } from '../types';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 
 export interface SessionFilters {
@@ -70,7 +70,7 @@ interface DataContextValue {
     // Status Update Actions
     updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
     updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
-    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: string, previousStatus?: string) => Promise<void>;
+    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: TaskStatus, previousStatus?: TaskStatus) => Promise<void>;
     getSessionById: (sessionId: string, options?: SessionFetchOptions) => Promise<AgentSession | null>;
 }
 
@@ -552,7 +552,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [upsertFeatureInState]);
 
-    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: string, previousStatus?: string) => {
+    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: TaskStatus, previousStatus?: TaskStatus) => {
         let previousFeatureSnapshot: Feature | null = null;
         setFeatures(prev => prev.map(feature => {
             if (feature.id !== featureId) return feature;
