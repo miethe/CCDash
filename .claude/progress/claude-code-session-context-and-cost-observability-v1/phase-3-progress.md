@@ -8,17 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/claude-code-session-context-and-c
 plan_ref: /docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md
 phase: 3
 title: "Pricing service, settings APIs, and cost provenance"
-status: "pending"
-started: ""
-completed: ""
-commit_refs: []
+status: "completed"
+started: "2026-03-12"
+completed: "2026-03-12"
+commit_refs: ["2d29804"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "pending"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "CCO-3.1"
     description: "Add a pricing service abstraction with bundled defaults, model matching, and optional provider sync."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: []
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "CCO-3.2"
     description: "Expose project-scoped pricing catalog list, upsert, reset, and sync APIs."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-3.1"]
     estimated_effort: "2pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "CCO-3.3"
     description: "Replace the rough parser-only estimate with recalculated cost and provenance fields during sync and backfill."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["CCO-3.1"]
     estimated_effort: "3pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "CCO-3.4"
     description: "Define reported, recalculated, estimated, and unknown display rules with explicit confidence."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: ["CCO-3.3"]
     estimated_effort: "2pt"
@@ -61,7 +61,7 @@ tasks:
 
   - id: "CCO-3.5"
     description: "Add service and API tests for pricing lookup, override precedence, and cost provenance."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["CCO-3.2", "CCO-3.3", "CCO-3.4"]
     estimated_effort: "3pt"
