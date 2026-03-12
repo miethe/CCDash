@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
 phase: 1
 title: "Runtime Composition Spine"
-status: "in_progress"
+status: "completed"
 started: "2026-03-12"
-completed:
-commit_refs: []
+completed: "2026-03-12"
+commit_refs: ["fd3699b", "291ef69", "bc42c15"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "4-5 days"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "ARC-001"
     description: "Define local, api, worker, and test runtime profiles with capability flags for watch, sync, jobs, auth, and integrations."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: []
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "ARC-002"
     description: "Add a composition container/bootstrap layer that wires repositories, services, adapters, and observability once per runtime."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["ARC-001"]
     estimated_effort: "4pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "ARC-003"
     description: "Split API startup, local convenience boot, and test boot paths so future worker startup does not depend on API lifespan."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["ARC-002"]
     estimated_effort: "3pt"
@@ -68,6 +68,20 @@ success_criteria:
 files_modified:
   - "docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md"
   - ".claude/progress/ccdash-hexagonal-foundation-v1/phase-1-progress.md"
+  - "backend/main.py"
+  - "backend/runtime/__init__.py"
+  - "backend/runtime/profiles.py"
+  - "backend/runtime/container.py"
+  - "backend/runtime/bootstrap.py"
+  - "backend/runtime/bootstrap_api.py"
+  - "backend/runtime/bootstrap_local.py"
+  - "backend/runtime/bootstrap_test.py"
+  - "backend/runtime/bootstrap_worker.py"
+  - "backend/tests/test_runtime_bootstrap.py"
+  - "components/ProjectBoard.tsx"
+  - "components/TranscriptMappedMessageCard.tsx"
+  - "constants.ts"
+  - "contexts/DataContext.tsx"
 ---
 
 # ccdash-hexagonal-foundation-v1 - Phase 1
@@ -77,3 +91,10 @@ Use CLI to update progress:
 ```bash
 python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f .claude/progress/ccdash-hexagonal-foundation-v1/phase-1-progress.md -t ARC-001 -s completed
 ```
+
+## Completion Notes
+
+- Added explicit `local`, `api`, `worker`, and `test` runtime profiles with capability flags for watch, sync, jobs, auth, and integrations.
+- Moved FastAPI app composition into `backend/runtime/` so `backend/main.py` is now only the local convenience entry point.
+- Split local, API, test, and worker bootstrap paths and added lifecycle tests that verify local startup behavior while API/test profiles avoid incidental background work.
+- Cleared unrelated frontend typecheck blockers so repo-level `pnpm typecheck` passes alongside the new backend tests.
