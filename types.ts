@@ -1232,6 +1232,7 @@ export interface SkillMeatFeatureFlags {
   stackRecommendationsEnabled: boolean;
   workflowAnalyticsEnabled: boolean;
   usageAttributionEnabled: boolean;
+  sessionBlockInsightsEnabled: boolean;
 }
 
 export interface SkillMeatProjectConfig {

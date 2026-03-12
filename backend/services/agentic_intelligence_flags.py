@@ -12,6 +12,7 @@ DEFAULT_PROJECT_FEATURE_FLAGS = {
     "stackRecommendationsEnabled": True,
     "workflowAnalyticsEnabled": True,
     "usageAttributionEnabled": True,
+    "sessionBlockInsightsEnabled": True,
 }
 
 
@@ -56,6 +57,14 @@ def usage_attribution_enabled(project: Any | None) -> bool:
     if project is None:
         return True
     return _project_feature_flags(project)["usageAttributionEnabled"]
+
+
+def session_block_insights_enabled(project: Any | None) -> bool:
+    if not config.CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED:
+        return False
+    if project is None:
+        return True
+    return _project_feature_flags(project)["sessionBlockInsightsEnabled"]
 
 
 def require_skillmeat_integration_enabled() -> None:

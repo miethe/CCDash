@@ -787,6 +787,7 @@ class SkillMeatFeatureFlags(BaseModel):
     stackRecommendationsEnabled: bool = True
     workflowAnalyticsEnabled: bool = True
     usageAttributionEnabled: bool = True
+    sessionBlockInsightsEnabled: bool = True
 
 
 class SkillMeatProjectConfig(BaseModel):
