@@ -986,6 +986,21 @@ class GitHubWriteCapabilityResponse(BaseModel):
     status: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
 
 
+class ProjectResolvedPathDTO(BaseModel):
+    field: ProjectPathField
+    sourceKind: PathSourceKind
+    path: str = ""
+    diagnostic: str = ""
+
+
+class ProjectResolvedPathsDTO(BaseModel):
+    projectId: str = ""
+    root: ProjectResolvedPathDTO
+    planDocs: ProjectResolvedPathDTO
+    sessions: ProjectResolvedPathDTO
+    progress: ProjectResolvedPathDTO
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):

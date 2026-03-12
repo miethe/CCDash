@@ -1469,6 +1469,21 @@ export interface GitHubWriteCapabilityResponse {
   status: GitHubProbeResult;
 }
 
+export interface ProjectResolvedPathDTO {
+  field: ProjectPathField;
+  sourceKind: PathSourceKind;
+  path: string;
+  diagnostic: string;
+}
+
+export interface ProjectResolvedPathsDTO {
+  projectId: string;
+  root: ProjectResolvedPathDTO;
+  planDocs: ProjectResolvedPathDTO;
+  sessions: ProjectResolvedPathDTO;
+  progress: ProjectResolvedPathDTO;
+}
+
 export interface LinkedDocument {
   id: string;
   title: string;

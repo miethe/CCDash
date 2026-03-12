@@ -354,7 +354,7 @@ async def trigger_sync_paths(
 
     sync_engine = _get_sync_engine(request)
     project, sessions_dir, docs_dir, progress_dir = _get_active_project_context()
-    project_root = Path(project.path).resolve(strict=False)
+    project_root = project_manager.get_project_root(project)
     changed_files: list[tuple[str, Path]] = []
     for item in body.paths:
         resolved = _resolve_changed_path(item.path, project_root, sessions_dir, docs_dir, progress_dir)

@@ -1,12 +1,23 @@
 import types
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
 from backend.db.sqlite_migrations import run_migrations
-from backend.models import SkillMeatConfigValidationRequest, SkillMeatProjectConfig, SkillMeatSyncRequest
+from backend.models import (
+    GitHubIntegrationSettingsUpdateRequest,
+    GitHubPathValidationRequest,
+    GitHubWriteCapabilityRequest,
+    ProjectPathReference,
+    SkillMeatConfigValidationRequest,
+    SkillMeatProjectConfig,
+    SkillMeatSyncRequest,
+)
 from backend.routers import integrations as integrations_router
+from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
 
 
@@ -273,6 +284,106 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
                 await integrations_router.sync_skillmeat(SkillMeatSyncRequest())
 
         self.assertEqual(ctx.exception.status_code, 503)
+
+    async def test_github_settings_roundtrip_masks_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GitHubSettingsStore(Path(tmpdir) / "integrations.json")
+            with patch.object(integrations_router, "github_settings_store", store):
+                payload = await integrations_router.update_github_settings(
+                    GitHubIntegrationSettingsUpdateRequest(
+                        enabled=True,
+                        baseUrl="https://github.com",
+                        username="git",
+                        token="ghp_secret_123456",
+                        cacheRoot=str(Path(tmpdir) / "cache"),
+                        writeEnabled=True,
+                    )
+                )
+                fetched = await integrations_router.get_github_settings()
+
+        self.assertTrue(payload.tokenConfigured)
+        self.assertNotIn("secret", payload.maskedToken.lower())
+        self.assertTrue(fetched.tokenConfigured)
+        self.assertEqual(fetched.cacheRoot, str(Path(tmpdir) / "cache"))
+
+    async def test_validate_github_path_uses_workspace_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GitHubSettingsStore(Path(tmpdir) / "integrations.json")
+            store.save(
+                GitHubIntegrationSettingsUpdateRequest(
+                    enabled=True,
+                    baseUrl="https://github.com",
+                    username="git",
+                    token="secret-token",
+                    cacheRoot=str(Path(tmpdir) / "cache"),
+                    writeEnabled=True,
+                )
+            )
+            workspace_root = Path(tmpdir) / "workspace"
+            (workspace_root / "plans").mkdir(parents=True)
+
+            manager = types.SimpleNamespace(ensure_workspace=lambda *args, **kwargs: workspace_root)
+            with (
+                patch.object(integrations_router, "github_settings_store", store),
+                patch.object(integrations_router, "_workspace_manager_for_settings", return_value=manager),
+            ):
+                payload = await integrations_router.validate_github_path(
+                    GitHubPathValidationRequest(
+                        reference=ProjectPathReference.model_validate(
+                            {
+                                "field": "root",
+                                "sourceKind": "github_repo",
+                                "repoRef": {
+                                    "provider": "github",
+                                    "repoUrl": "https://github.com/acme/repo",
+                                    "repoSlug": "acme/repo",
+                                    "branch": "main",
+                                    "repoSubpath": "plans",
+                                    "writeEnabled": True,
+                                },
+                            }
+                        )
+                    )
+                )
+
+        self.assertEqual(payload.status.state, "success")
+        self.assertEqual(payload.resolvedLocalPath, str((workspace_root / "plans").resolve(strict=False)))
+
+    async def test_check_github_write_capability_requires_flags_and_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GitHubSettingsStore(Path(tmpdir) / "integrations.json")
+            store.save(
+                GitHubIntegrationSettingsUpdateRequest(
+                    enabled=True,
+                    baseUrl="https://github.com",
+                    username="git",
+                    token="secret-token",
+                    cacheRoot=str(Path(tmpdir) / "cache"),
+                    writeEnabled=True,
+                )
+            )
+            with patch.object(integrations_router, "github_settings_store", store):
+                payload = await integrations_router.check_github_write_capability(
+                    GitHubWriteCapabilityRequest(
+                        reference=ProjectPathReference.model_validate(
+                            {
+                                "field": "root",
+                                "sourceKind": "github_repo",
+                                "repoRef": {
+                                    "provider": "github",
+                                    "repoUrl": "https://github.com/acme/repo",
+                                    "repoSlug": "acme/repo",
+                                    "branch": "main",
+                                    "repoSubpath": "",
+                                    "writeEnabled": True,
+                                },
+                            }
+                        )
+                    )
+                )
+
+        self.assertTrue(payload.canWrite)
+        self.assertEqual(payload.status.state, "success")
 
 
 if __name__ == "__main__":

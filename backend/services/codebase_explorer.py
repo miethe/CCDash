@@ -302,10 +302,10 @@ _CACHE: dict[tuple[str, str], _CacheEntry] = {}
 class CodebaseExplorerService:
     """Builds tree/list/detail payloads for codebase exploration."""
 
-    def __init__(self, db: Any, project: Any):
+    def __init__(self, db: Any, project: Any, *, project_root: Path | None = None):
         self.db = db
         self.project = project
-        self.project_root = Path(project.path).expanduser().resolve(strict=False)
+        self.project_root = (project_root or Path(project.path)).expanduser().resolve(strict=False)
 
     async def get_tree(
         self,
