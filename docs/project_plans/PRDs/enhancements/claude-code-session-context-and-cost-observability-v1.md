@@ -1,52 +1,70 @@
 ---
 doc_type: prd
-status: draft
+status: completed
 category: enhancements
-
-title: "PRD: Claude Code Session Context And Cost Observability V1"
-description: "Add first-class live context metrics, cost provenance, pricing calibration, and higher-order workload insights so CCDash can distinguish prompt-window pressure from accumulated workload and explain cost confidence."
+title: 'PRD: Claude Code Session Context And Cost Observability V1'
+description: Add first-class live context metrics, cost provenance, pricing calibration,
+  and higher-order workload insights so CCDash can distinguish prompt-window pressure
+  from accumulated workload and explain cost confidence.
 author: codex
-audience: [ai-agents, developers, engineering-leads, platform-engineering]
+audience:
+- ai-agents
+- developers
+- engineering-leads
+- platform-engineering
 created: 2026-03-11
-updated: 2026-03-11
-
-tags: [prd, claude-code, sessions, context, tokens, cost, analytics, forensics, pricing]
+updated: '2026-03-12'
+tags:
+- prd
+- claude-code
+- sessions
+- context
+- tokens
+- cost
+- analytics
+- forensics
+- pricing
 feature_slug: claude-code-session-context-and-cost-observability-v1
 feature_family: claude-code-session-context-and-cost-observability
 lineage_family: claude-code-session-context-and-cost-observability
-lineage_parent: ""
+lineage_parent: ''
 lineage_children: []
 lineage_type: iteration
-linked_features: [claude-code-session-context-and-cost-observability-v1]
+linked_features:
+- claude-code-session-context-and-cost-observability-v1
 related:
-  - docs/project_plans/reports/session-token-context-gap-and-ccusage-review-2026-03-11.md
-  - docs/project_plans/reports/claude-code-session-schema-and-token-audit-2026-03-08.md
-  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
-  - docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-analytics-alignment-v1.md
-  - docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md
-  - docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-attribution-v2.md
-  - backend/parsers/platforms/claude_code/parser.py
-  - backend/routers/api.py
-  - backend/routers/analytics.py
-  - backend/services/session_usage_analytics.py
-  - components/SessionInspector.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/ProjectBoard.tsx
-  - components/Dashboard.tsx
-  - components/Analytics/AnalyticsDashboard.tsx
-  - lib/tokenMetrics.ts
+- docs/project_plans/reports/session-token-context-gap-and-ccusage-review-2026-03-11.md
+- docs/project_plans/reports/claude-code-session-schema-and-token-audit-2026-03-08.md
+- docs/project_plans/PRDs/enhancements/claude-code-session-usage-analytics-alignment-v1.md
+- docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-analytics-alignment-v1.md
+- docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md
+- docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-attribution-v2.md
+- backend/parsers/platforms/claude_code/parser.py
+- backend/routers/api.py
+- backend/routers/analytics.py
+- backend/services/session_usage_analytics.py
+- components/SessionInspector.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/ProjectBoard.tsx
+- components/Dashboard.tsx
+- components/Analytics/AnalyticsDashboard.tsx
+- lib/tokenMetrics.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md
-
-request_log_id: ""
-commits: []
+request_log_id: ''
+commits:
+- 6e63f3a
+- 09bce8b
 prs: []
 owner: platform-engineering
-owners: [platform-engineering, data-platform, fullstack-engineering]
-contributors: [ai-agents]
-
+owners:
+- platform-engineering
+- data-platform
+- fullstack-engineering
+contributors:
+- ai-agents
 complexity: High
 track: Standard
-timeline_estimate: "2-4 weeks across 6 phases"
+timeline_estimate: 2-4 weeks across 6 phases
 ---
 
 # PRD: Claude Code Session Context And Cost Observability V1

@@ -108,6 +108,7 @@ The core debugging loop for AI interactions.
         *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
         *   **Token Semantics**: Session analytics now separate model IO, cache input, observed workload, and tool-reported fallback diagnostics.
         *   **Usage Attribution**: Session analytics now include per-session attribution summaries with exclusive vs supporting totals, confidence, and model-IO-derived cost context.
+        *   **Session Block Insights**: Long sessions can be broken into configurable `1h`, `3h`, `5h`, or `8h` workload/cost blocks with burn-rate and projected end-of-block summaries.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Artifacts**:
         *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
@@ -155,6 +156,7 @@ The core debugging loop for AI interactions.
 *   **SkillMeat Intelligence Controls**: Per-project SkillMeat settings now include rollout controls for:
     *   read-only definition sync
     *   recommended stack UI visibility in `/execution`
+    *   session block insights visibility in Session Inspector analytics
     *   usage attribution visibility in `/analytics` and Session Inspector
     *   workflow intelligence analytics visibility in `/analytics` and `/execution`
 

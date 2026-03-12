@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Claude Code Session Context And Cost Observability V1'
 description: Persist live context metrics, add cost provenance and calibration, and
@@ -53,7 +53,9 @@ related:
 plan_ref: claude-code-session-context-and-cost-observability-v1
 linked_sessions: []
 request_log_id: ''
-commits: []
+commits:
+- 6e63f3a
+- 09bce8b
 prs: []
 owner: platform-engineering
 owners:

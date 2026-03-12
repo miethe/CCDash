@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-03-12
+
+### Added
+
+- Session block insights for longer Claude Code sessions:
+  - configurable `1h`, `3h`, `5h`, and `8h` block windows in `Session Inspector > Analytics`
+  - per-block observed workload, display-cost totals, burn rate, and projected end-of-block summaries
+  - project-scoped `sessionBlockInsightsEnabled` rollout flag plus global env gate `CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED`
+- Documentation for block-insight rollout and interpretation:
+  - `docs/session-block-insights-user-guide.md`
+  - `docs/session-block-insights-developer-reference.md`
+
+### Changed
+
+- Session Inspector analytics now exposes main-session-only block views without altering canonical workload or cost totals.
+- Project Settings now lets operators disable session block insights independently from other analytics surfaces.
+- Claude Code session context and cost observability tracking now records phase 6 as completed and marks the overall plan set complete.
+
+### Docs
+
+- Added:
+  - `docs/session-block-insights-user-guide.md`
+  - `docs/session-block-insights-developer-reference.md`
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md`
+  - `docs/project_plans/PRDs/enhancements/claude-code-session-context-and-cost-observability-v1.md`
+
 ## 2026-03-10
 
 ### Added
