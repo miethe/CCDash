@@ -1631,6 +1631,110 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("team_inbox", artifact_types)
         self.assertIn("session_env", artifact_types)
 
+    def test_statusline_sidecar_sets_context_and_reported_cost_fields(self) -> None:
+        raw_session_id = "22222222-3333-4444-5555-666666666666"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-12T12:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-5-20260101",
+                        "usage": {"input_tokens": 10, "output_tokens": 5},
+                        "content": [{"type": "text", "text": "Working."}],
+                    },
+                }
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+        claude_root = path.parents[2]
+        session_env_dir = claude_root / "session-env" / raw_session_id
+        session_env_dir.mkdir(parents=True, exist_ok=True)
+        (session_env_dir / "statusline.json").write_text(
+            json.dumps(
+                {
+                    "session_id": raw_session_id,
+                    "transcript_path": str(path),
+                    "model": {
+                        "id": "claude-sonnet-4-5-20260101",
+                        "display_name": "Claude Sonnet 4.5",
+                    },
+                    "cost": {"total_cost_usd": 0.42},
+                    "context_window": {
+                        "total_input_tokens": 1234,
+                        "total_output_tokens": 55,
+                        "context_window_size": 200000,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.currentContextTokens, 1234)
+        self.assertEqual(session.contextWindowSize, 200000)
+        self.assertAlmostEqual(session.contextUtilizationPct, 0.62)
+        self.assertEqual(session.contextMeasurementSource, "hook_context_window")
+        self.assertEqual(session.reportedCostUsd, 0.42)
+        self.assertEqual(session.totalCost, 0.42)
+
+        sidecars = session.sessionForensics.get("sidecars", {})
+        latest_snapshot = sidecars.get("sessionEnv", {}).get("latestStatuslineSnapshot", {})
+        self.assertEqual(latest_snapshot.get("modelId"), "claude-sonnet-4-5-20260101")
+
+    def test_transcript_usage_fallback_sets_context_fields_without_sidecar(self) -> None:
+        raw_session_id = "33333333-4444-5555-6666-777777777777"
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-12T12:00:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-5-20260101",
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "cache_creation_input_tokens": 20,
+                            "cache_read_input_tokens": 30,
+                        },
+                        "content": [{"type": "text", "text": "First pass."}],
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-03-12T12:01:00Z",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet-4-5-20260101",
+                        "usage": {
+                            "input_tokens": 12,
+                            "output_tokens": 6,
+                            "cache_creation_input_tokens": 40,
+                            "cache_read_input_tokens": 50,
+                        },
+                        "content": [{"type": "text", "text": "Second pass."}],
+                    },
+                },
+            ],
+            relative_path=f".claude/projects/demo/{raw_session_id}.jsonl",
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertEqual(session.currentContextTokens, 102)
+        self.assertEqual(session.contextWindowSize, 200000)
+        self.assertAlmostEqual(session.contextUtilizationPct, 0.05)
+        self.assertEqual(session.contextMeasurementSource, "transcript_latest_assistant_usage")
+        self.assertEqual(session.contextMeasuredAt, "2026-03-12T12:01:00Z")
+        self.assertIsNone(session.reportedCostUsd)
+
     def test_extended_forensics_signals_include_resources_queue_tool_results_and_platform_telemetry(self) -> None:
         raw_session_id = "99999999-aaaa-bbbb-cccc-111111111111"
         working_directory = "/tmp/ccdash/workspace"

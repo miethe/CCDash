@@ -32,6 +32,10 @@ from backend.parsers.features import scan_features
 from backend.parsers.test_adapters import parse_test_artifact
 from backend.services.test_ingest import ingest_run as ingest_test_run
 from backend.services.test_config import ResolvedTestSource
+from backend.services.session_observability import (
+    calculate_context_utilization,
+    derive_context_observability,
+)
 from backend.services.session_usage_attribution import (
     build_session_usage_attributions,
     build_session_usage_events,
@@ -288,6 +292,28 @@ def _usage_field_snapshot(payload: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _observability_field_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "current_context_tokens": _coerce_int(payload.get("current_context_tokens") or payload.get("currentContextTokens")),
+        "context_window_size": _coerce_int(payload.get("context_window_size") or payload.get("contextWindowSize")),
+        "context_utilization_pct": _coerce_float(payload.get("context_utilization_pct") or payload.get("contextUtilizationPct")),
+        "context_measurement_source": _first_non_empty(
+            payload,
+            "context_measurement_source",
+            "contextMeasurementSource",
+        ),
+        "context_measured_at": _first_non_empty(payload, "context_measured_at", "contextMeasuredAt"),
+        "reported_cost_usd": payload.get("reported_cost_usd", payload.get("reportedCostUsd")),
+        "recalculated_cost_usd": payload.get("recalculated_cost_usd", payload.get("recalculatedCostUsd")),
+        "display_cost_usd": payload.get("display_cost_usd", payload.get("displayCostUsd")),
+        "cost_provenance": _first_non_empty(payload, "cost_provenance", "costProvenance", default="unknown") or "unknown",
+        "cost_confidence": _coerce_float(payload.get("cost_confidence") or payload.get("costConfidence")),
+        "cost_mismatch_pct": payload.get("cost_mismatch_pct", payload.get("costMismatchPct")),
+        "pricing_model_source": _first_non_empty(payload, "pricing_model_source", "pricingModelSource"),
+        "total_cost": _coerce_float(payload.get("total_cost") or payload.get("totalCost")),
+    }
+
+
 def _is_claude_code_session(payload: dict[str, Any], forensics: dict[str, Any]) -> bool:
     platform = str(
         payload.get("platformType")
@@ -351,6 +377,36 @@ def _derive_claude_usage_fields(payload: dict[str, Any]) -> dict[str, int]:
             )
         ),
     }
+
+
+def _derive_claude_observability_fields(payload: dict[str, Any], logs: list[dict[str, Any]]) -> dict[str, Any]:
+    current = _observability_field_snapshot(payload)
+    forensics = _safe_json_dict(payload.get("sessionForensics") or payload.get("session_forensics_json"))
+    if not _is_claude_code_session(payload, forensics):
+        return current
+
+    has_context_signal = any(
+        (
+            current["current_context_tokens"] > 0,
+            current["context_window_size"] > 0,
+            bool(current["context_measurement_source"]),
+            bool(current["context_measured_at"]),
+        )
+    )
+    if not has_context_signal:
+        derived_context = derive_context_observability(logs, _first_non_empty(payload, "model"))
+        current.update(derived_context)
+    elif current["current_context_tokens"] > 0 and current["context_window_size"] > 0:
+        current["context_utilization_pct"] = calculate_context_utilization(
+            int(current["current_context_tokens"] or 0),
+            int(current["context_window_size"] or 0),
+        )
+
+    cost_summary = _safe_json_dict(forensics.get("costSummary"))
+    if current["reported_cost_usd"] is None and cost_summary.get("reportedCostUsd") is not None:
+        current["reported_cost_usd"] = round(_coerce_float(cost_summary.get("reportedCostUsd")), 6)
+
+    return current
 
 
 def _apply_claude_usage_fields(payload: dict[str, Any]) -> dict[str, int]:
@@ -1756,6 +1812,51 @@ class SyncEngine:
             return {"sessions": 0}
         return await self._backfill_session_usage_fields_for_project(project_id)
 
+    async def _backfill_session_observability_fields_for_project(
+        self,
+        project_id: str,
+        batch_size: int = 200,
+    ) -> dict[str, int]:
+        offset = 0
+        sessions_updated = 0
+
+        while True:
+            sessions = await self.session_repo.list_paginated(
+                offset,
+                batch_size,
+                project_id,
+                sort_by="started_at",
+                sort_order="desc",
+                filters={"include_subagents": True},
+            )
+            if not sessions:
+                break
+            for session in sessions:
+                session_id = _first_non_empty(session, "id")
+                if not session_id:
+                    continue
+                current_fields = _observability_field_snapshot(session)
+                logs = await self.session_repo.get_logs(session_id)
+                derived_fields = _derive_claude_observability_fields(session, logs)
+                if derived_fields == current_fields:
+                    continue
+                await self.session_repo.update_observability_fields(session_id, derived_fields)
+                sessions_updated += 1
+            offset += len(sessions)
+
+        if sessions_updated > 0:
+            logger.info(
+                "Backfilled session observability fields for %s sessions in project %s",
+                sessions_updated,
+                project_id,
+            )
+        return {"sessions": sessions_updated}
+
+    async def _maybe_backfill_session_observability_fields(self, project_id: str) -> dict[str, int]:
+        if await self._session_count(project_id) == 0:
+            return {"sessions": 0}
+        return await self._backfill_session_observability_fields_for_project(project_id)
+
     async def _backfill_commit_correlations_for_project(self, project_id: str, batch_size: int = 200) -> dict[str, int]:
         offset = 0
         sessions_backfilled = 0
@@ -2298,6 +2399,7 @@ class SyncEngine:
             "sessions_synced": 0,
             "sessions_skipped": 0,
             "session_usage_backfilled": 0,
+            "session_observability_backfilled": 0,
             "usage_event_backfilled_sessions": 0,
             "usage_events_backfilled": 0,
             "usage_attributions_backfilled": 0,
@@ -2354,6 +2456,8 @@ class SyncEngine:
                 stats["sessions_skipped"] = s_stats["skipped"]
                 usage_backfill_stats = await self._maybe_backfill_session_usage_fields(project.id)
                 stats["session_usage_backfilled"] = int(usage_backfill_stats.get("sessions", 0))
+                observability_backfill_stats = await self._maybe_backfill_session_observability_fields(project.id)
+                stats["session_observability_backfilled"] = int(observability_backfill_stats.get("sessions", 0))
                 usage_event_backfill_stats = await self._maybe_backfill_session_usage_attribution(project.id)
                 stats["usage_event_backfilled_sessions"] = int(usage_event_backfill_stats.get("sessions", 0))
                 stats["usage_events_backfilled"] = int(usage_event_backfill_stats.get("events", 0))
@@ -2372,6 +2476,7 @@ class SyncEngine:
                         "sessionsSynced": stats["sessions_synced"],
                         "sessionsSkipped": stats["sessions_skipped"],
                         "sessionUsageBackfilled": stats["session_usage_backfilled"],
+                        "sessionObservabilityBackfilled": stats["session_observability_backfilled"],
                         "usageEventsBackfilled": stats["usage_events_backfilled"],
                         "usageAttributionsBackfilled": stats["usage_attributions_backfilled"],
                         "telemetryBackfilledSessions": stats["telemetry_backfilled_sessions"],
@@ -3358,6 +3463,10 @@ class SyncEngine:
                     if not isinstance(artifacts, list):
                         artifacts = []
                     await self.session_repo.upsert_artifacts(session_id, artifacts)
+                    await self.session_repo.update_observability_fields(
+                        session_id,
+                        _derive_claude_observability_fields(session_dict, logs),
+                    )
 
                     await self._replace_session_usage_attribution(
                         project_id,
