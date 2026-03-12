@@ -222,6 +222,18 @@ export interface AgentSession {
   forkCount?: number;
   tokensIn: number;
   tokensOut: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  toolResultInputTokens?: number;
+  toolResultOutputTokens?: number;
+  toolResultCacheCreationInputTokens?: number;
+  toolResultCacheReadInputTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   totalCost: number;
   startedAt: string;
   endedAt?: string;
@@ -239,6 +251,10 @@ export interface AgentSession {
   sessionForensics?: Record<string, any>;
   forks?: SessionForkSummary[];
   sessionRelationships?: SessionRelationship[];
+  usageEvents?: SessionUsageEvent[];
+  usageAttributions?: SessionUsageAttribution[];
+  usageAttributionSummary?: SessionUsageAggregateResponse | null;
+  usageAttributionCalibration?: SessionUsageCalibrationSummary | null;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];
@@ -246,6 +262,170 @@ export interface AgentSession {
   gitBranch?: string;
   dates?: EntityDates;
   timeline?: TimelineEvent[];
+}
+
+export type SessionUsageTokenFamily =
+  | 'model_input'
+  | 'model_output'
+  | 'cache_creation_input'
+  | 'cache_read_input'
+  | 'tool_result_input'
+  | 'tool_result_output'
+  | 'tool_result_cache_creation_input'
+  | 'tool_result_cache_read_input'
+  | 'tool_reported_total'
+  | 'relay_mirror_input'
+  | 'relay_mirror_output'
+  | 'relay_mirror_cache_creation_input'
+  | 'relay_mirror_cache_read_input';
+
+export type SessionUsageEntityType =
+  | 'skill'
+  | 'agent'
+  | 'subthread'
+  | 'command'
+  | 'artifact'
+  | 'workflow'
+  | 'feature';
+
+export type SessionUsageAttributionRole = 'primary' | 'supporting';
+
+export type SessionUsageAttributionMethod =
+  | 'explicit_skill_invocation'
+  | 'explicit_subthread_ownership'
+  | 'explicit_agent_ownership'
+  | 'explicit_command_context'
+  | 'explicit_artifact_link'
+  | 'skill_window'
+  | 'artifact_window'
+  | 'workflow_membership'
+  | 'feature_inheritance';
+
+export interface SessionUsageEvent {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  rootSessionId: string;
+  linkedSessionId: string;
+  sourceLogId: string;
+  capturedAt: string;
+  eventKind: string;
+  model: string;
+  toolName: string;
+  agentName: string;
+  tokenFamily: SessionUsageTokenFamily;
+  deltaTokens: number;
+  costUsdModelIO: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageAttribution {
+  eventId: string;
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  attributionRole: SessionUsageAttributionRole;
+  weight: number;
+  method: SessionUsageAttributionMethod;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageAggregateRow {
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  entityLabel?: string;
+  exclusiveTokens: number;
+  supportingTokens: number;
+  exclusiveModelIOTokens?: number;
+  exclusiveCacheInputTokens?: number;
+  supportingModelIOTokens?: number;
+  supportingCacheInputTokens?: number;
+  exclusiveCostUsdModelIO: number;
+  supportingCostUsdModelIO?: number;
+  eventCount: number;
+  primaryEventCount: number;
+  supportingEventCount: number;
+  sessionCount?: number;
+  averageConfidence: number;
+  methods: Array<Record<string, unknown>>;
+}
+
+export interface SessionUsageAggregateSummary {
+  entityCount: number;
+  sessionCount: number;
+  eventCount: number;
+  totalExclusiveTokens: number;
+  totalSupportingTokens: number;
+  totalExclusiveModelIOTokens: number;
+  totalExclusiveCacheInputTokens: number;
+  totalExclusiveCostUsdModelIO: number;
+  averageConfidence: number;
+}
+
+export interface SessionUsageAggregateResponse {
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  rows: SessionUsageAggregateRow[];
+  summary: SessionUsageAggregateSummary;
+}
+
+export interface SessionUsageDrilldownRow {
+  eventId: string;
+  sessionId: string;
+  rootSessionId?: string;
+  linkedSessionId?: string;
+  sessionType?: string;
+  parentSessionId?: string;
+  sourceLogId?: string;
+  capturedAt: string;
+  eventKind: string;
+  tokenFamily: SessionUsageTokenFamily;
+  deltaTokens: number;
+  costUsdModelIO: number;
+  model?: string;
+  toolName?: string;
+  agentName?: string;
+  entityType: SessionUsageEntityType;
+  entityId: string;
+  entityLabel?: string;
+  attributionRole: SessionUsageAttributionRole;
+  weight: number;
+  method: SessionUsageAttributionMethod;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SessionUsageDrilldownResponse {
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: SessionUsageDrilldownRow[];
+  summary: SessionUsageAggregateSummary;
+}
+
+export interface SessionUsageCalibrationSummary {
+  projectId: string;
+  sessionCount: number;
+  eventCount: number;
+  attributedEventCount: number;
+  primaryAttributedEventCount: number;
+  ambiguousEventCount: number;
+  unattributedEventCount: number;
+  primaryCoverage: number;
+  supportingCoverage: number;
+  sessionModelIOTokens: number;
+  exclusiveModelIOTokens: number;
+  modelIOGap: number;
+  sessionCacheInputTokens: number;
+  exclusiveCacheInputTokens: number;
+  cacheGap: number;
+  averageConfidence: number;
+  confidenceBands: Array<Record<string, unknown>>;
+  methodMix: Array<Record<string, unknown>>;
+  generatedAt: string;
 }
 
 export type MotionPresetKey = 'listInsertTop' | 'messageFlyIn' | 'typingPulse';
@@ -582,6 +762,10 @@ export interface AnalyticsOverview {
     sessionTokens: number;
     sessionCount: number;
     sessionDurationAvg: number;
+    modelIOTokens?: number;
+    cacheInputTokens?: number;
+    observedTokens?: number;
+    toolReportedTokens?: number;
     taskVelocity: number;
     taskCompletionPct: number;
     featureProgress: number;
@@ -622,6 +806,14 @@ export interface AnalyticsCorrelationItem {
   durationSeconds?: number;
   tokenInput?: number;
   tokenOutput?: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   totalTokens?: number;
   totalCost?: number;
   linkedFeatureCount?: number;
@@ -836,6 +1028,75 @@ export interface AnalyticsArtifactsResponse {
   detailLimit: number;
 }
 
+export type EffectivenessScopeType = 'workflow' | 'effective_workflow' | 'agent' | 'skill' | 'context_module' | 'bundle' | 'stack';
+
+export interface EffectivenessMetricDefinition {
+  id: 'successScore' | 'efficiencyScore' | 'qualityScore' | 'riskScore';
+  label: string;
+  description: string;
+  formula: string;
+  inputs: string[];
+}
+
+export interface WorkflowEffectivenessRollup {
+  id?: number | null;
+  projectId: string;
+  scopeType: EffectivenessScopeType;
+  scopeId: string;
+  scopeLabel: string;
+  period: string;
+  sampleSize: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+  attributedTokens?: number;
+  supportingAttributionTokens?: number;
+  attributedCostUsdModelIO?: number;
+  averageAttributionConfidence?: number;
+  attributionCoverage?: number;
+  attributionCacheShare?: number;
+  evidenceSummary: Record<string, unknown>;
+  generatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowEffectivenessResponse {
+  projectId: string;
+  period: string;
+  metricDefinitions: EffectivenessMetricDefinition[];
+  items: WorkflowEffectivenessRollup[];
+  total: number;
+  offset: number;
+  limit: number;
+  generatedAt: string;
+}
+
+export interface FailurePatternRecord {
+  id: string;
+  patternType: string;
+  title: string;
+  scopeType: string;
+  scopeId: string;
+  severity: 'low' | 'medium' | 'high';
+  confidence: number;
+  occurrenceCount: number;
+  averageSuccessScore: number;
+  averageRiskScore: number;
+  evidenceSummary: Record<string, unknown>;
+  sessionIds: string[];
+}
+
+export interface FailurePatternResponse {
+  projectId: string;
+  items: FailurePatternRecord[];
+  total: number;
+  offset: number;
+  limit: number;
+  generatedAt: string;
+}
+
 // Alert System
 export type AlertMetric = 'total_tokens' | 'avg_quality' | 'cost_threshold' | string;
 export type AlertOperator = '>' | '<';
@@ -893,6 +1154,69 @@ export interface ProjectTestConfig {
   instructionNotes: string;
 }
 
+export interface SkillMeatFeatureFlags {
+  stackRecommendationsEnabled: boolean;
+  workflowAnalyticsEnabled: boolean;
+  usageAttributionEnabled: boolean;
+}
+
+export interface SkillMeatProjectConfig {
+  enabled: boolean;
+  baseUrl: string;
+  projectId: string;
+  collectionId: string;
+  aaaEnabled: boolean;
+  apiKey: string;
+  requestTimeoutSeconds: number;
+  featureFlags: SkillMeatFeatureFlags;
+}
+
+export type SkillMeatProbeState = 'idle' | 'success' | 'warning' | 'error';
+
+export interface SkillMeatProbeResult {
+  state: SkillMeatProbeState;
+  message: string;
+  checkedAt: string;
+  httpStatus?: number | null;
+}
+
+export interface SkillMeatConfigValidationResponse {
+  baseUrl: SkillMeatProbeResult;
+  projectMapping: SkillMeatProbeResult;
+  auth: SkillMeatProbeResult;
+}
+
+export interface SkillMeatSyncWarning {
+  section: string;
+  message: string;
+  recoverable: boolean;
+}
+
+export interface SkillMeatDefinitionSyncResponse {
+  projectId: string;
+  totalDefinitions: number;
+  countsByType: Record<string, number>;
+  fetchedAt: string;
+  warnings: SkillMeatSyncWarning[];
+}
+
+export interface SkillMeatObservationBackfillResponse {
+  projectId: string;
+  sessionsProcessed: number;
+  observationsStored: number;
+  skippedSessions: number;
+  resolvedComponents: number;
+  unresolvedComponents: number;
+  generatedAt: string;
+  warnings: SkillMeatSyncWarning[];
+}
+
+export interface SkillMeatRefreshResponse {
+  projectId: string;
+  sync: SkillMeatDefinitionSyncResponse;
+  backfill: SkillMeatObservationBackfillResponse | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -904,6 +1228,7 @@ export interface Project {
   sessionsPath: string;
   progressPath: string;
   testConfig: ProjectTestConfig;
+  skillMeat: SkillMeatProjectConfig;
 }
 
 export interface LinkedDocument {
@@ -1044,6 +1369,75 @@ export interface FeatureExecutionAnalyticsSummary {
   modelCount: number;
 }
 
+export type DefinitionReferenceStatus = 'resolved' | 'cached' | 'unresolved';
+
+export interface RecommendedStackDefinitionRef {
+  definitionType: string;
+  externalId: string;
+  displayName: string;
+  version: string;
+  sourceUrl: string;
+  status: DefinitionReferenceStatus;
+}
+
+export interface RecommendedStackComponent {
+  componentType: 'workflow' | 'agent' | 'skill' | 'context_module' | 'command' | 'model_policy' | 'artifact';
+  componentKey: string;
+  label: string;
+  status: 'explicit' | 'inferred' | 'resolved' | 'unresolved';
+  confidence: number;
+  sourceAttribution: string;
+  payload: Record<string, unknown>;
+  definition?: RecommendedStackDefinitionRef | null;
+}
+
+export interface SimilarWorkExample {
+  sessionId: string;
+  featureId: string;
+  title: string;
+  workflowRef: string;
+  similarityScore: number;
+  reasons: string[];
+  matchedComponents: string[];
+  startedAt: string;
+  endedAt: string;
+  totalCost: number;
+  durationSeconds: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+}
+
+export interface StackRecommendationEvidence {
+  id: string;
+  label: string;
+  summary: string;
+  sourceType: string;
+  sourceId: string;
+  sourcePath: string;
+  confidence: number;
+  metrics: Record<string, unknown>;
+  similarWork: SimilarWorkExample[];
+}
+
+export interface RecommendedStack {
+  id: string;
+  label: string;
+  workflowRef: string;
+  commandAlignment: string;
+  confidence: number;
+  sampleSize: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+  sourceSessionId: string;
+  sourceFeatureId: string;
+  explanation: string;
+  components: RecommendedStackComponent[];
+}
+
 export interface FeatureExecutionSessionLink {
   sessionId: string;
   title?: string;
@@ -1069,6 +1463,16 @@ export interface FeatureExecutionSessionLink {
   toolSummary?: string[];
   totalCost?: number;
   durationSeconds?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;
@@ -1141,6 +1545,10 @@ export interface FeatureExecutionContext {
   analytics: FeatureExecutionAnalyticsSummary;
   recommendations: ExecutionRecommendation;
   warnings: FeatureExecutionWarning[];
+  recommendedStack?: RecommendedStack | null;
+  stackAlternatives: RecommendedStack[];
+  stackEvidence: StackRecommendationEvidence[];
+  definitionResolutionWarnings: FeatureExecutionWarning[];
   generatedAt: string;
 }
 

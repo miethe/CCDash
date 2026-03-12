@@ -1,5 +1,93 @@
 # Changelog
 
+## 2026-03-10
+
+### Added
+
+- Claude Code session usage attribution rollout controls:
+  - global env gate `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED`
+  - project-scoped `usageAttributionEnabled` flag in Project Settings
+- User and developer attribution references:
+  - `docs/session-usage-attribution-user-guide.md`
+  - `docs/session-usage-attribution-developer-reference.md`
+- Regression coverage for:
+  - attribution feature-flag defaults and overrides
+  - attribution-disabled analytics/session behavior
+  - workflow-effectiveness rollups carrying attributed token/cost metrics
+
+### Changed
+
+- `/analytics?tab=attribution`, Session Inspector attribution sections, and related session payloads now respect rollout gating instead of assuming attribution is always on.
+- Workflow intelligence documentation and rollout notes now treat attribution metrics as additive signals that can be disabled independently from the rest of workflow effectiveness.
+- Implementation and PRD tracking for Claude Code session usage attribution V2 now reflect completed delivery status and committed rollout checkpoints.
+
+### Docs
+
+- Added:
+  - `docs/session-usage-attribution-user-guide.md`
+  - `docs/session-usage-attribution-developer-reference.md`
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
+  - `docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-attribution-v2.md`
+  - `docs/project_plans/PRDs/enhancements/claude-code-session-usage-attribution-v2.md`
+
+## 2026-03-09
+
+### Added
+
+- Claude Code relay-mirror diagnostics in parser forensics:
+  - `usageSummary.relayMirrorTotals` now tracks excluded `data.message.message.*` relay usage separately from observed totals.
+- Regression coverage for:
+  - relay-mirror exclusion from persisted observed workload.
+  - feature-linked session payloads exposing observed/cache/tool-reported token fields.
+  - frontend token fallback rules when linked subthreads are present.
+
+### Changed
+
+- Dashboard, Analytics, Session Inspector, Feature Board, and Execution Workbench token surfaces now default to observed workload semantics and label model IO separately.
+- Feature and session rollups now expose cache contribution directly instead of implying `tokensIn + tokensOut` is the only meaningful total.
+- Commit and artifact-adjacent token tables now label model-IO-style totals explicitly as IO tokens.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-analytics-alignment-v1.md`
+
+## 2026-03-08
+
+### Added
+
+- Agentic SDLC intelligence rollout tooling:
+  - `backend/scripts/agentic_intelligence_rollout.py` to sync SkillMeat definitions, backfill stack observations, and recompute workflow rollups.
+- Agentic intelligence feature-flag layer:
+  - global env gates for SkillMeat integration, stack recommendations, and workflow effectiveness analytics.
+  - project-scoped SkillMeat feature flags for the recommended-stack UI and workflow intelligence surfaces.
+- Regression coverage for:
+  - router disable paths for integrations, execution-context stack recommendations, and workflow analytics.
+  - frontend SkillMeat feature-flag helpers.
+
+### Changed
+
+- SkillMeat project settings now expose intelligence-surface toggles in the Settings UI.
+- `/execution` and `/analytics` now render explicit disabled-state messaging when project settings turn off stack recommendations or workflow intelligence.
+- SkillMeat definition source sync now persists project feature-flag metadata alongside project mappings.
+
+### Docs
+
+- Added:
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
+- Updated:
+  - `README.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/execution-workbench-developer-reference.md`
+  - `docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v1.md`
+
 ## 2026-03-06
 
 ### Added

@@ -15,6 +15,8 @@ import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { isUsageAttributionEnabled } from '../services/agenticIntelligence';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -2419,9 +2421,17 @@ const TranscriptView: React.FC<{
                             <span className="text-xs font-mono text-slate-200">{session.durationSeconds}s</span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Tokens</div>
-                            <span className="text-xs font-mono text-slate-200">{(session.tokensIn + session.tokensOut).toLocaleString()}</span>
+                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Workload</div>
+                            <span className="text-xs font-mono text-slate-200">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
                         </div>
+                        {resolveTokenMetrics(session).cacheInputTokens > 0 && (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-500"><Zap size={14} /> Cache Input</div>
+                                <span className="text-xs font-mono text-cyan-300">
+                                    {formatTokenCount(resolveTokenMetrics(session).cacheInputTokens)} ({formatPercent(resolveTokenMetrics(session).cacheShare, 0)})
+                                </span>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-xs text-slate-400"><Code size={14} /> Base Model</div>
                             <span
@@ -4451,7 +4461,8 @@ const AnalyticsView: React.FC<{
     threadSessions: AgentSession[];
     threadSessionDetails: Record<string, AgentSession>;
     goToTranscript: (agentName?: string) => void;
-}> = ({ session, threadSessions, threadSessionDetails, goToTranscript }) => {
+    usageAttributionEnabled: boolean;
+}> = ({ session, threadSessions, threadSessionDetails, goToTranscript, usageAttributionEnabled }) => {
     const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
@@ -4468,19 +4479,53 @@ const AnalyticsView: React.FC<{
         [scopeMode, session, threadSessions, threadSessionDetails]
     );
 
+    const sessionHasLinkedSubthreads = useCallback(
+        (sessionId: string) => sessionsInScope.some(candidate => (
+            candidate.id !== sessionId
+            && (
+                candidate.parentSessionId === sessionId
+                || candidate.rootSessionId === sessionId
+            )
+        )),
+        [sessionsInScope]
+    );
+
     const scopeTotals = useMemo(
         () => sessionsInScope.reduce(
             (acc, scopeSession) => {
-                acc.tokensIn += Number(scopeSession.tokensIn || 0);
-                acc.tokensOut += Number(scopeSession.tokensOut || 0);
+                const resolvedTokens = resolveTokenMetrics(scopeSession, {
+                    hasLinkedSubthreads: sessionHasLinkedSubthreads(scopeSession.id),
+                });
+                acc.tokensIn += resolvedTokens.tokenInput;
+                acc.tokensOut += resolvedTokens.tokenOutput;
+                acc.modelIOTokens += resolvedTokens.modelIOTokens;
+                acc.cacheInputTokens += resolvedTokens.cacheInputTokens;
+                acc.workloadTokens += resolvedTokens.workloadTokens;
+                acc.toolFallbackTokens += resolvedTokens.usedToolFallback ? resolvedTokens.workloadTokens : 0;
+                acc.toolFallbackCount += resolvedTokens.usedToolFallback ? 1 : 0;
                 acc.totalCost += Number(scopeSession.totalCost || 0);
                 acc.logCount += (scopeSession.logs || []).length;
                 return acc;
             },
-            { tokensIn: 0, tokensOut: 0, totalCost: 0, logCount: 0 }
+            {
+                tokensIn: 0,
+                tokensOut: 0,
+                modelIOTokens: 0,
+                cacheInputTokens: 0,
+                workloadTokens: 0,
+                toolFallbackTokens: 0,
+                toolFallbackCount: 0,
+                totalCost: 0,
+                logCount: 0,
+            }
         ),
-        [sessionsInScope]
+        [sessionHasLinkedSubthreads, sessionsInScope]
     );
+    const attributionRows = useMemo(
+        () => (session.usageAttributionSummary?.rows || []).slice(0, 8),
+        [session.usageAttributionSummary]
+    );
+    const attributionCalibration = session.usageAttributionCalibration || null;
 
     const toolData = useMemo(() => {
         const byTool = new Map<string, { name: string; value: number; tokens: number; type: 'tool'; toolCount: number }>();
@@ -4495,7 +4540,7 @@ const AnalyticsView: React.FC<{
                 byTool.set(toolName, current);
             });
         });
-        const totalTokens = Math.max(1, scopeTotals.tokensIn + scopeTotals.tokensOut);
+        const totalTokens = Math.max(1, scopeTotals.workloadTokens);
         return Array.from(byTool.values())
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
@@ -4522,8 +4567,8 @@ const AnalyticsView: React.FC<{
             value: stat.count,
             tokens: Math.round(stat.tokens),
             toolCount: stat.tools,
-            cost: (scopeTotals.tokensIn + scopeTotals.tokensOut) > 0
-                ? (scopeTotals.totalCost * stat.tokens) / (scopeTotals.tokensIn + scopeTotals.tokensOut)
+            cost: scopeTotals.workloadTokens > 0
+                ? (scopeTotals.totalCost * stat.tokens) / scopeTotals.workloadTokens
                 : 0,
             type: 'agent'
         }));
@@ -4534,7 +4579,9 @@ const AnalyticsView: React.FC<{
         sessionsInScope.forEach(scopeSession => {
             const modelName = String(scopeSession.model || 'unknown').trim() || 'unknown';
             const current = byModel.get(modelName) || { name: modelName, value: 0, tokens: 0, toolCount: 0, cost: 0, type: 'model' };
-            const sessionTokens = Number(scopeSession.tokensIn || 0) + Number(scopeSession.tokensOut || 0);
+            const sessionTokens = resolveTokenMetrics(scopeSession, {
+                hasLinkedSubthreads: sessionHasLinkedSubthreads(scopeSession.id),
+            }).workloadTokens;
             current.value += (scopeSession.logs || []).length;
             current.tokens += sessionTokens;
             current.toolCount += (scopeSession.logs || []).filter(log => log.type === 'tool').length;
@@ -4542,7 +4589,7 @@ const AnalyticsView: React.FC<{
             byModel.set(modelName, current);
         });
         return Array.from(byModel.values()).sort((a, b) => b.value - a.value);
-    }, [sessionsInScope]);
+    }, [sessionHasLinkedSubthreads, sessionsInScope]);
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
@@ -4657,8 +4704,11 @@ const AnalyticsView: React.FC<{
                         {tokenViewMode === 'summary' ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={[
-                                    { name: 'Input', tokens: scopeTotals.tokensIn, fill: '#3b82f6' },
-                                    { name: 'Output', tokens: scopeTotals.tokensOut, fill: '#10b981' }
+                                    { name: 'Model IO', tokens: scopeTotals.modelIOTokens, fill: '#3b82f6' },
+                                    { name: 'Cache Input', tokens: scopeTotals.cacheInputTokens, fill: '#06b6d4' },
+                                    ...(scopeTotals.toolFallbackTokens > 0
+                                        ? [{ name: 'Tool Fallback', tokens: scopeTotals.toolFallbackTokens, fill: '#f59e0b' }]
+                                        : [])
                                 ]} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
                                     <XAxis type="number" stroke="#475569" tick={{ fontSize: 12 }} />
@@ -4683,6 +4733,72 @@ const AnalyticsView: React.FC<{
             </div>
 
             {/* COST SUMMARY */}
+            {usageAttributionEnabled && session.usageAttributionSummary ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h3 className="text-sm font-bold text-slate-300">Usage Attribution</h3>
+                        <p className="mt-1 text-xs text-slate-500">Event-level ownership for this session only. Exclusive totals reconcile; supporting totals are participatory.</p>
+                    </div>
+                    <div className="flex gap-3 text-xs">
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                            Coverage <span className="ml-1 font-mono text-slate-100">{formatPercent(Number(attributionCalibration?.primaryCoverage || 0), 0)}</span>
+                        </div>
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                            Model IO gap <span className="ml-1 font-mono text-slate-100">{formatTokenCount(Math.abs(Number(attributionCalibration?.modelIOGap || 0)))}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Model IO</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveModelIOTokens || 0))}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Cache</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveCacheInputTokens || 0))}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Confidence</div>
+                        <div className="mt-2 text-xl font-mono text-slate-100">{Number(attributionCalibration?.averageConfidence || 0).toFixed(2)}</div>
+                    </div>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-slate-400 border-b border-slate-800">
+                                <th className="text-left py-2 pr-3">Entity</th>
+                                <th className="text-right py-2 pr-3">Exclusive</th>
+                                <th className="text-right py-2 pr-3">Supporting</th>
+                                <th className="text-right py-2 pr-3">Cost</th>
+                                <th className="text-right py-2">Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {attributionRows.map((row, idx) => (
+                                <tr key={`${row.entityType}-${row.entityId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                    <td className="py-2 pr-3">
+                                        <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
+                                        <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                    </td>
+                                    <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.exclusiveTokens || 0))}</td>
+                                    <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.supportingTokens || 0))}</td>
+                                    <td className="py-2 pr-3 text-right font-mono">${Number(row.exclusiveCostUsdModelIO || 0).toFixed(2)}</td>
+                                    <td className="py-2 text-right font-mono">{Number(row.averageConfidence || 0).toFixed(2)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            ) : (
+                <div className="bg-slate-900 border border-amber-500/25 rounded-xl p-6 mb-6 text-sm text-amber-100">
+                    {usageAttributionEnabled
+                        ? 'Usage attribution is currently unavailable for this session. Check the backend rollout gate or refresh after re-enabling attribution APIs.'
+                        : 'Usage attribution is disabled for this project. Re-enable it in Project Settings to restore event-level attribution summaries for this session.'}
+                </div>
+            )}
+
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h3 className="text-sm font-bold text-slate-300 mb-2">Cost Analysis</h3>
                 <div className="flex items-center gap-8">
@@ -4695,8 +4811,22 @@ const AnalyticsView: React.FC<{
                         <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd(scopeTotals.totalCost / Math.max(scopeTotals.logCount, 1), 4)}</div>
                     </div>
                     <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
-                        <div className="text-xs text-slate-500 mb-1">Tokens / Step</div>
-                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round((scopeTotals.tokensIn + scopeTotals.tokensOut) / Math.max(scopeTotals.logCount, 1))}</div>
+                        <div className="text-xs text-slate-500 mb-1">Workload / Step</div>
+                        <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round(scopeTotals.workloadTokens / Math.max(scopeTotals.logCount, 1))}</div>
+                    </div>
+                </div>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Observed workload</span>
+                        <div className="mt-1 font-mono">{formatTokenCount(scopeTotals.workloadTokens)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Cache share</span>
+                        <div className="mt-1 font-mono">{formatPercent(scopeTotals.workloadTokens > 0 ? scopeTotals.cacheInputTokens / scopeTotals.workloadTokens : 0, 0)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
+                        <span className="text-slate-500">Fallback sessions</span>
+                        <div className="mt-1 font-mono">{scopeTotals.toolFallbackCount}</div>
                     </div>
                 </div>
             </div>
@@ -7441,6 +7571,7 @@ const SessionDetail: React.FC<{
                         threadSessions={threadSessions}
                         threadSessionDetails={threadSessionDetails}
                         goToTranscript={handleJumpToTranscript}
+                        usageAttributionEnabled={isUsageAttributionEnabled(activeProject)}
                     />
                 )}
                 {activeTab === 'agents' && (

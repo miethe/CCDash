@@ -25,11 +25,13 @@ from backend.routers.session_mappings import session_mappings_router
 from backend.routers.codebase import codebase_router
 from backend.routers.test_visualizer import test_visualizer_router
 from backend.routers.execution import execution_router
+from backend.routers.integrations import integrations_router
 
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
 from backend.project_manager import project_manager
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
+from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
 
 logging.basicConfig(level=logging.INFO)
@@ -84,6 +86,20 @@ async def lifespan(app: FastAPI):
                     max_parse_concurrency=active_project.testConfig.maxParseConcurrency,
                 )
                 logger.info("Startup test result sync stats: %s", test_stats)
+
+            if skillmeat_refresh_configured(active_project):
+                refresh_payload = await refresh_skillmeat_cache(
+                    db,
+                    active_project,
+                    force_observation_recompute=True,
+                )
+                sync_payload = refresh_payload.get("sync", {}) if isinstance(refresh_payload, dict) else {}
+                backfill_payload = refresh_payload.get("backfill", {}) if isinstance(refresh_payload, dict) else {}
+                logger.info(
+                    "Startup SkillMeat refresh complete: definitions=%s observations=%s",
+                    sync_payload.get("totalDefinitions", 0) if isinstance(sync_payload, dict) else 0,
+                    backfill_payload.get("observationsStored", 0) if isinstance(backfill_payload, dict) else 0,
+                )
 
             if light_mode and bool(getattr(config, "STARTUP_DEFERRED_REBUILD_LINKS", True)):
                 stagger = max(0, int(getattr(config, "STARTUP_DEFERRED_REBUILD_DELAY_SECONDS", 0)))
@@ -196,6 +212,7 @@ app.include_router(session_mappings_router)
 app.include_router(codebase_router)
 app.include_router(test_visualizer_router)
 app.include_router(execution_router)
+app.include_router(integrations_router)
 
 
 @app.get("/api/health")

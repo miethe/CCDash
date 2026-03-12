@@ -38,6 +38,8 @@ from backend.document_linking import (
     normalize_ref_path,
 )
 from backend.date_utils import make_date_value
+from backend.services.agentic_intelligence_flags import usage_attribution_enabled
+from backend.services.session_usage_analytics import get_session_usage_attribution_details
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
@@ -64,6 +66,47 @@ def _safe_json_list(raw: str | list | None) -> list:
         return parsed if isinstance(parsed, list) else []
     except Exception:
         return []
+
+
+def _usage_ratio(numerator: Any, denominator: Any) -> float:
+    try:
+        num = max(0.0, float(numerator or 0))
+    except (TypeError, ValueError):
+        num = 0.0
+    try:
+        den = max(0.0, float(denominator or 0))
+    except (TypeError, ValueError):
+        den = 0.0
+    if den <= 0:
+        return 0.0
+    return round(num / den, 4)
+
+
+def _session_usage_fields(row: dict[str, Any]) -> dict[str, Any]:
+    model_io_tokens = int(row.get("model_io_tokens") or 0)
+    cache_creation_input_tokens = int(row.get("cache_creation_input_tokens") or 0)
+    cache_read_input_tokens = int(row.get("cache_read_input_tokens") or 0)
+    cache_input_tokens = int(row.get("cache_input_tokens") or 0)
+    observed_tokens = int(row.get("observed_tokens") or 0)
+    tool_reported_tokens = int(row.get("tool_reported_tokens") or 0)
+    tool_result_input_tokens = int(row.get("tool_result_input_tokens") or 0)
+    tool_result_output_tokens = int(row.get("tool_result_output_tokens") or 0)
+    tool_result_cache_creation_input_tokens = int(row.get("tool_result_cache_creation_input_tokens") or 0)
+    tool_result_cache_read_input_tokens = int(row.get("tool_result_cache_read_input_tokens") or 0)
+    return {
+        "modelIOTokens": model_io_tokens,
+        "cacheCreationInputTokens": cache_creation_input_tokens,
+        "cacheReadInputTokens": cache_read_input_tokens,
+        "cacheInputTokens": cache_input_tokens,
+        "observedTokens": observed_tokens,
+        "toolReportedTokens": tool_reported_tokens,
+        "toolResultInputTokens": tool_result_input_tokens,
+        "toolResultOutputTokens": tool_result_output_tokens,
+        "toolResultCacheCreationInputTokens": tool_result_cache_creation_input_tokens,
+        "toolResultCacheReadInputTokens": tool_result_cache_read_input_tokens,
+        "cacheShare": _usage_ratio(cache_input_tokens, observed_tokens),
+        "outputShare": _usage_ratio(row.get("tokens_out") or 0, model_io_tokens),
+    }
 
 
 def _string_list(raw: Any) -> list[str]:
@@ -548,6 +591,7 @@ async def list_sessions(
             durationSeconds=s["duration_seconds"],
             tokensIn=s["tokens_in"],
             tokensOut=s["tokens_out"],
+            **_session_usage_fields(s),
             totalCost=s["total_cost"],
             startedAt=s["started_at"] or "",
             endedAt=s.get("ended_at") or "",
@@ -733,7 +777,7 @@ async def get_session(session_id: str):
                 tc["name"] = metadata["toolLabel"].strip()
             
         session_logs.append({
-            "id": f"log-{l['log_index']}", # verify if we store the ID string or format it
+            "id": l.get("source_log_id") or f"log-{l['log_index']}",
             "timestamp": l["timestamp"],
             "speaker": l["speaker"],
             "type": l["type"],
@@ -785,6 +829,20 @@ async def get_session(session_id: str):
         event for event in _safe_json_list(s.get("platform_version_transitions_json"))
         if isinstance(event, dict)
     ]
+    usage_attribution_details = (
+        await get_session_usage_attribution_details(
+            db,
+            project_id=project.id,
+            session_id=session_id,
+        )
+        if project and usage_attribution_enabled(project)
+        else {
+            "usageEvents": [],
+            "usageAttributions": [],
+            "usageAttributionSummary": None,
+            "usageAttributionCalibration": None,
+        }
+    )
         
     # Tools
     tool_usage = []
@@ -861,6 +919,7 @@ async def get_session(session_id: str):
         durationSeconds=s["duration_seconds"],
         tokensIn=s["tokens_in"],
         tokensOut=s["tokens_out"],
+        **_session_usage_fields(s),
         totalCost=s["total_cost"],
         startedAt=s["started_at"] or "",
         endedAt=s.get("ended_at") or "",
@@ -882,6 +941,10 @@ async def get_session(session_id: str):
         sessionForensics=_safe_json(s.get("session_forensics_json")),
         forks=fork_summaries,
         sessionRelationships=session_relationships,
+        usageEvents=usage_attribution_details["usageEvents"],
+        usageAttributions=usage_attribution_details["usageAttributions"],
+        usageAttributionSummary=usage_attribution_details["usageAttributionSummary"],
+        usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

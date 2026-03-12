@@ -6,6 +6,14 @@ from backend.routers import analytics as analytics_router
 
 
 class _FakeSessionRepo:
+    async def get_project_stats(self, project_id: str):
+        return {
+            "count": 3,
+            "cost": 4.5,
+            "tokens": 9876,
+            "duration": 123.0,
+        }
+
     async def get_logs(self, session_id: str):
         return [
             {"timestamp": "2026-02-16T10:00:00Z", "metadata_json": '{"inputTokens": 10, "outputTokens": 20}'},
@@ -148,6 +156,160 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["range"]["start"], "2026-02-01")
         self.assertEqual(response["range"]["end"], "2026-02-22")
         self.assertIn("generatedAt", response)
+
+    async def test_overview_prefers_observed_session_token_stats(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        class _TaskRepo:
+            async def get_project_stats(self, project_id: str):
+                return {"completed": 7, "completion_pct": 63.0}
+
+        class _SessionRepo(_FakeSessionRepo):
+            async def list_paginated(self, *args, **kwargs):
+                return [
+                    {
+                        "id": "S-1",
+                        "model": "claude-opus-4-5",
+                        "tokens_in": 120,
+                        "tokens_out": 180,
+                        "model_io_tokens": 300,
+                        "cache_input_tokens": 80,
+                        "observed_tokens": 380,
+                        "tool_reported_tokens": 500,
+                        "started_at": "2026-03-03T09:00:00Z",
+                    },
+                    {
+                        "id": "S-2",
+                        "model": "gpt-5",
+                        "tokens_in": 20,
+                        "tokens_out": 30,
+                        "model_io_tokens": 50,
+                        "cache_input_tokens": 10,
+                        "observed_tokens": 60,
+                        "tool_reported_tokens": 0,
+                        "started_at": "2026-03-03T09:01:00Z",
+                    },
+                ]
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_analytics_repository", return_value=_FakeAnalyticsRepo()), patch.object(analytics_router, "get_task_repository", return_value=_TaskRepo()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
+            response = await analytics_router.get_overview()
+
+        self.assertEqual(response["kpis"]["sessionTokens"], 9876)
+        self.assertEqual(response["kpis"]["modelIOTokens"], 350)
+        self.assertEqual(response["kpis"]["cacheInputTokens"], 90)
+        self.assertEqual(response["kpis"]["observedTokens"], 440)
+        self.assertEqual(response["kpis"]["toolReportedTokens"], 500)
+
+    async def test_workflow_effectiveness_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "period": "all",
+            "metricDefinitions": [
+                {
+                    "id": "successScore",
+                    "label": "Success",
+                    "description": "desc",
+                    "formula": "formula",
+                    "inputs": ["session.status"],
+                }
+            ],
+            "items": [
+                {
+                    "projectId": "project-1",
+                    "scopeType": "workflow",
+                    "scopeId": "phase-execution",
+                    "scopeLabel": "phase-execution",
+                    "period": "all",
+                    "sampleSize": 2,
+                    "successScore": 0.8,
+                    "efficiencyScore": 0.7,
+                    "qualityScore": 0.9,
+                    "riskScore": 0.2,
+                    "evidenceSummary": {"featureIds": ["feature-1"]},
+                    "generatedAt": "2026-03-07T00:00:00+00:00",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 20,
+            "generatedAt": "2026-03-07T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_workflow_effectiveness", return_value=payload):
+            response = await analytics_router.workflow_effectiveness(limit=20, offset=0)
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.items[0].scopeType, "workflow")
+        self.assertEqual(response.items[0].successScore, 0.8)
+
+    async def test_failure_patterns_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "items": [
+                {
+                    "id": "queue_waste:workflow:debug-loop",
+                    "patternType": "queue_waste",
+                    "title": "Queue waste",
+                    "scopeType": "workflow",
+                    "scopeId": "debug-loop",
+                    "severity": "high",
+                    "confidence": 0.9,
+                    "occurrenceCount": 2,
+                    "averageSuccessScore": 0.4,
+                    "averageRiskScore": 0.8,
+                    "evidenceSummary": {"representativeSessionIds": ["session-2"]},
+                    "sessionIds": ["session-2"],
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 20,
+            "generatedAt": "2026-03-07T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "detect_failure_patterns", return_value=payload):
+            response = await analytics_router.failure_patterns(limit=20, offset=0)
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.items[0].patternType, "queue_waste")
+        self.assertEqual(response.items[0].scopeId, "debug-loop")
+
+    def test_scope_validation_patterns_include_effective_workflow_and_bundle(self) -> None:
+        workflow_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/workflow-effectiveness"
+        )
+        failure_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/failure-patterns"
+        )
+
+        workflow_scope_param = next(param for param in workflow_route.dependant.query_params if param.alias == "scopeType")
+        failure_scope_param = next(param for param in failure_route.dependant.query_params if param.alias == "scopeType")
+
+        workflow_pattern = workflow_scope_param.field_info.metadata[0].pattern
+        failure_pattern = failure_scope_param.field_info.metadata[0].pattern
+
+        self.assertIn("effective_workflow", workflow_pattern)
+        self.assertIn("bundle", workflow_pattern)
+        self.assertIn("effective_workflow", failure_pattern)
+        self.assertIn("bundle", failure_pattern)
+
+    async def test_workflow_effectiveness_endpoint_returns_503_when_disabled(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router, "require_workflow_analytics_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.workflow_effectiveness(limit=20, offset=0)
+
+        self.assertEqual(ctx.exception.status_code, 503)
 
     async def test_prometheus_export_includes_artifact_metrics(self) -> None:
         project = types.SimpleNamespace(id="project-1")
@@ -308,6 +470,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "duration_seconds": 300,
                         "tokens_in": 120,
                         "tokens_out": 180,
+                        "model_io_tokens": 300,
+                        "cache_creation_input_tokens": 20,
+                        "cache_read_input_tokens": 60,
+                        "cache_input_tokens": 80,
+                        "observed_tokens": 380,
+                        "tool_reported_tokens": 500,
                         "total_cost": 1.5,
                     },
                     {
@@ -323,6 +491,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                         "duration_seconds": 60,
                         "tokens_in": 20,
                         "tokens_out": 30,
+                        "model_io_tokens": 50,
+                        "cache_creation_input_tokens": 15,
+                        "cache_read_input_tokens": 25,
+                        "cache_input_tokens": 40,
+                        "observed_tokens": 90,
+                        "tool_reported_tokens": 140,
                         "total_cost": 0.2,
                     },
                 ]
@@ -357,7 +531,11 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked_row["linkedFeatureCount"], 1)
         self.assertEqual(linked_row["tokenInput"], 120)
         self.assertEqual(linked_row["tokenOutput"], 180)
-        self.assertEqual(linked_row["totalTokens"], 300)
+        self.assertEqual(linked_row["modelIOTokens"], 300)
+        self.assertEqual(linked_row["cacheInputTokens"], 80)
+        self.assertEqual(linked_row["observedTokens"], 380)
+        self.assertEqual(linked_row["toolReportedTokens"], 500)
+        self.assertEqual(linked_row["totalTokens"], 380)
         self.assertEqual(linked_row["durationSeconds"], 300)
         self.assertFalse(linked_row["isSubagent"])
 
@@ -366,7 +544,150 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unlinked_row["sessionType"], "subagent")
         self.assertEqual(unlinked_row["rootSessionId"], "S-1")
         self.assertEqual(unlinked_row["parentSessionId"], "S-1")
+        self.assertEqual(unlinked_row["observedTokens"], 90)
         self.assertTrue(unlinked_row["isSubagent"])
+
+    async def test_usage_attribution_endpoint_wraps_rollup_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+            "total": 1,
+            "offset": 0,
+            "limit": 50,
+            "rows": [
+                {
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "entityLabel": "symbols",
+                    "exclusiveTokens": 80,
+                    "supportingTokens": 0,
+                    "exclusiveModelIOTokens": 60,
+                    "exclusiveCacheInputTokens": 20,
+                    "supportingModelIOTokens": 0,
+                    "supportingCacheInputTokens": 0,
+                    "exclusiveCostUsdModelIO": 0.6,
+                    "supportingCostUsdModelIO": 0.0,
+                    "eventCount": 2,
+                    "primaryEventCount": 2,
+                    "supportingEventCount": 0,
+                    "sessionCount": 1,
+                    "averageConfidence": 0.82,
+                    "methods": [],
+                }
+            ],
+            "summary": {
+                "entityCount": 1,
+                "sessionCount": 1,
+                "eventCount": 2,
+                "totalExclusiveTokens": 80,
+                "totalSupportingTokens": 0,
+                "totalExclusiveModelIOTokens": 60,
+                "totalExclusiveCacheInputTokens": 20,
+                "totalExclusiveCostUsdModelIO": 0.6,
+                "averageConfidence": 0.82,
+            },
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_rollup", return_value=payload):
+            response = await analytics_router.get_usage_attribution(limit=50, offset=0)
+
+        self.assertEqual(response.rows[0].entityType, "skill")
+        self.assertEqual(response.summary.totalExclusiveTokens, 80)
+
+    async def test_usage_attribution_drilldown_endpoint_wraps_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+            "total": 1,
+            "offset": 0,
+            "limit": 100,
+            "items": [
+                {
+                    "eventId": "evt-1",
+                    "sessionId": "S-1",
+                    "rootSessionId": "S-1",
+                    "linkedSessionId": "",
+                    "sessionType": "session",
+                    "parentSessionId": "",
+                    "sourceLogId": "log-1",
+                    "capturedAt": "2026-03-10T10:00:00Z",
+                    "eventKind": "message",
+                    "tokenFamily": "model_input",
+                    "deltaTokens": 60,
+                    "costUsdModelIO": 0.6,
+                    "model": "claude-opus-4-6",
+                    "toolName": "",
+                    "agentName": "planner",
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "entityLabel": "symbols",
+                    "attributionRole": "primary",
+                    "weight": 1.0,
+                    "method": "explicit_skill_invocation",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ],
+            "summary": {
+                "entityCount": 1,
+                "sessionCount": 1,
+                "eventCount": 1,
+                "totalExclusiveTokens": 60,
+                "totalSupportingTokens": 0,
+                "totalExclusiveModelIOTokens": 60,
+                "totalExclusiveCacheInputTokens": 0,
+                "totalExclusiveCostUsdModelIO": 0.6,
+                "averageConfidence": 1.0,
+            },
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_drilldown", return_value=payload):
+            response = await analytics_router.get_usage_attribution_drilldown_view(entity_type="skill", entity_id="symbols")
+
+        self.assertEqual(response.items[0].entityId, "symbols")
+        self.assertEqual(response.summary.totalExclusiveModelIOTokens, 60)
+
+    async def test_usage_attribution_calibration_endpoint_wraps_service(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "sessionCount": 1,
+            "eventCount": 3,
+            "attributedEventCount": 3,
+            "primaryAttributedEventCount": 3,
+            "ambiguousEventCount": 0,
+            "unattributedEventCount": 0,
+            "primaryCoverage": 1.0,
+            "supportingCoverage": 1.0,
+            "sessionModelIOTokens": 100,
+            "exclusiveModelIOTokens": 100,
+            "modelIOGap": 0,
+            "sessionCacheInputTokens": 20,
+            "exclusiveCacheInputTokens": 20,
+            "cacheGap": 0,
+            "averageConfidence": 0.84,
+            "confidenceBands": [{"band": "high", "count": 2}],
+            "methodMix": [{"method": "explicit_skill_invocation", "tokens": 60, "eventCount": 1, "averageConfidence": 1.0}],
+            "generatedAt": "2026-03-10T00:00:00+00:00",
+        }
+
+        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_calibration", return_value=payload):
+            response = await analytics_router.get_usage_attribution_calibration_view()
+
+        self.assertEqual(response.eventCount, 3)
+        self.assertEqual(response.modelIOGap, 0)
+
+    async def test_usage_attribution_endpoint_returns_503_when_disabled(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router, "require_usage_attribution_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.get_usage_attribution(limit=10, offset=0)
+
+        self.assertEqual(ctx.exception.status_code, 503)
 
     def test_build_artifact_payload_agent_model_falls_back_to_main_agent_speaker(self) -> None:
         payload = analytics_router._build_artifact_analytics_payload(

@@ -8,7 +8,7 @@ description: "Establish CCDash as the evidence-backed recommendation and optimiz
 author: codex
 audience: [ai-agents, developers, engineering-leads, platform-engineering]
 created: 2026-03-07
-updated: 2026-03-07
+updated: 2026-03-08
 
 tags: [prd, analytics, workflow, skillmeat, recommendations, telemetry, agentic-sdlc]
 feature_slug: agentic-sdlc-intelligence-foundation-v1
@@ -22,6 +22,8 @@ related:
   - README.md
   - docs/session-data-discovery.md
   - docs/project_plans/implementation_plans/telemetry-analytics-modernization-v1.md
+  - docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v1.md
+  - docs/project_plans/implementation_plans/enhancements/agentic-sdlc-intelligence-foundation-v2.md
   - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
   - docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-4-sdk-orchestration-v1.md
   - backend/db/sync_engine.py

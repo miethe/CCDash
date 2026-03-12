@@ -49,6 +49,7 @@ import {
   retryExecutionRun,
   trackExecutionEvent,
 } from '../services/execution';
+import { isStackRecommendationsEnabled, isWorkflowAnalyticsEnabled } from '../services/agenticIntelligence';
 import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
@@ -56,8 +57,11 @@ import { DocumentModal } from './DocumentModal';
 import { getFeatureStatusStyle } from './featureStatus';
 import { TestStatusView } from './TestVisualizer/TestStatusView';
 import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
+import { RecommendedStackCard } from './execution/RecommendedStackCard';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
+import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -122,6 +126,13 @@ const CORE_SESSION_GROUPS: CoreSessionGroupDefinition[] = [
     description: 'Primary linked sessions that do not fit planning or phase execution.',
   },
 ];
+
+const IntelligenceDisabledNotice: React.FC<{ title: string; message: string }> = ({ title, message }) => (
+  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+    <p className="font-semibold">{title}</p>
+    <p className="mt-1 text-amber-100/80">{message}</p>
+  </div>
+);
 
 const DEFAULT_CORE_SESSION_GROUP_EXPANDED: Record<CoreSessionGroupId, boolean> = {
   plan: true,
@@ -350,6 +361,17 @@ const isPrimarySession = (session: FeatureExecutionSessionLink): boolean => {
   return (session.confidence || 0) >= 0.9;
 };
 
+const sessionHasLinkedSubthreads = (sessionId: string, sessions: FeatureExecutionSessionLink[]): boolean => (
+  sessions.some(candidate => (
+    candidate.sessionId !== sessionId
+    && isSubthreadSession(candidate)
+    && (
+      candidate.parentSessionId === sessionId
+      || candidate.rootSessionId === sessionId
+    )
+  ))
+);
+
 const compareSessionsByConfidenceAndTime = (a: FeatureExecutionSessionLink, b: FeatureExecutionSessionLink): number => {
   if ((b.confidence || 0) !== (a.confidence || 0)) return (b.confidence || 0) - (a.confidence || 0);
   return toEpoch(b.startedAt) - toEpoch(a.startedAt);
@@ -507,6 +529,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
+  const stackRecommendationsAvailable = isStackRecommendationsEnabled(activeProject);
+  const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
   const featureParam = searchParams.get('feature') || '';
   const tabParam = searchParams.get('tab');
 
@@ -1118,6 +1142,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     return Array.from(bestBySession.values()).sort(compareSessionsByConfidenceAndTime);
   }, [context?.sessions]);
 
+  const executionWorkload = useMemo(
+    () => executionSessions.reduce(
+      (acc, session) => {
+        const metrics = resolveTokenMetrics(session, {
+          hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, executionSessions),
+        });
+        acc.workloadTokens += metrics.workloadTokens;
+        acc.modelIOTokens += metrics.modelIOTokens;
+        acc.cacheInputTokens += metrics.cacheInputTokens;
+        acc.toolFallbackSessions += metrics.usedToolFallback ? 1 : 0;
+        return acc;
+      },
+      { workloadTokens: 0, modelIOTokens: 0, cacheInputTokens: 0, toolFallbackSessions: 0 },
+    ),
+    [executionSessions],
+  );
+
   const featureDetail = useMemo(() => {
     if (!context) return null;
     if (fullFeature && fullFeature.id === context.feature.id) return fullFeature;
@@ -1439,6 +1480,12 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       durationSeconds: artifactSourceSessions.reduce((sum, session) => sum + Number(session.durationSeconds || 0), 0),
       tokensIn: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensIn || 0), 0),
       tokensOut: artifactSourceSessions.reduce((sum, session) => sum + Number(session.tokensOut || 0), 0),
+      modelIOTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.modelIOTokens || 0), 0),
+      cacheCreationInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheCreationInputTokens || 0), 0),
+      cacheReadInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheReadInputTokens || 0), 0),
+      cacheInputTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.cacheInputTokens || 0), 0),
+      observedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.observedTokens || 0), 0),
+      toolReportedTokens: artifactSourceSessions.reduce((sum, session) => sum + Number(session.toolReportedTokens || 0), 0),
       totalCost: artifactSourceSessions.reduce((sum, session) => sum + Number(session.totalCost || 0), 0),
       startedAt: earliestStartedAt,
       endedAt: latestEndedAt || undefined,
@@ -1522,6 +1569,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       (session.title || '').trim(),
       session.sessionMetadata || null,
     );
+    const sessionTokenMetrics = resolveTokenMetrics(session, {
+      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, executionSessions),
+    });
 
     return (
       <SessionCard
@@ -1552,12 +1602,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         onClick={() => openSession(session.sessionId)}
         className="rounded-lg"
         infoBadges={(
-          <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
-            {Math.round((session.confidence || 0) * 100)}% confidence
-          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">
+              {Math.round((session.confidence || 0) * 100)}% confidence
+            </span>
+            {sessionTokenMetrics.cacheInputTokens > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/25 text-cyan-200 bg-cyan-500/10">
+                Cache {formatPercent(sessionTokenMetrics.cacheShare, 0)}
+              </span>
+            )}
+          </div>
         )}
         headerRight={(
           <div className="flex items-center gap-3 text-right">
+            <div>
+              <div className="text-[9px] text-slate-600 uppercase">Workload</div>
+              <div className="text-xs font-mono text-sky-300">{formatTokenCount(sessionTokenMetrics.workloadTokens)}</div>
+            </div>
             <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
               <div className="text-xs font-mono text-emerald-400">${Number(session.totalCost || 0).toFixed(2)}</div>
@@ -1756,8 +1817,9 @@ export const FeatureExecutionWorkbench: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-[390px_1fr] gap-4">
-            <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-fit sticky top-0 space-y-4">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
+            <section className="h-fit space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4 xl:sticky xl:top-0">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-[11px] uppercase tracking-wider text-slate-400">Recommendation</p>
@@ -1878,9 +1940,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   })}
                 </ul>
               </div>
+
             </section>
 
-            <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[520px]">
+            <section className="min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-4 min-h-[42rem] h-[clamp(42rem,74vh,58rem)] flex flex-col">
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
                 {visibleTabItems.map(tab => (
                   <button
@@ -1898,8 +1961,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 ))}
               </div>
 
+              <div className="mt-4 min-h-0 flex-1 overflow-hidden">
               {activeTab === 'overview' && featureDetail && (
-                <div className="mt-4 space-y-4">
+                <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 xl:grid xl:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] xl:overflow-hidden xl:pr-0">
+                  <div className="space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'overview')}
@@ -1961,51 +2026,60 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       )}
                     </div>
                   </div>
+                  </div>
 
-                  {(featureDetail.linkedFeatures || []).length > 0 && (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div className="flex min-h-0 flex-col gap-4 xl:min-w-0">
+                    <div className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Typed Related Features</p>
-                      <div className="space-y-2">
-                        {(featureDetail.linkedFeatures || []).map((relation, index) => (
-                          <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
-                            <button
-                              onClick={() => openBoardFeature(relation.feature, 'overview')}
-                              className="font-mono text-indigo-300 hover:text-indigo-200"
-                            >
-                              {relation.feature}
-                            </button>
-                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
-                            <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
-                            {typeof relation.confidence === 'number' && (
-                              <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                      {(featureDetail.linkedFeatures || []).length > 0 ? (
+                        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                          {(featureDetail.linkedFeatures || []).map((relation, index) => (
+                            <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
+                              <button
+                                onClick={() => openBoardFeature(relation.feature, 'overview')}
+                                className="font-mono text-indigo-300 hover:text-indigo-200 [overflow-wrap:anywhere]"
+                              >
+                                {relation.feature}
+                              </button>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
+                              {typeof relation.confidence === 'number' && (
+                                <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-1 items-center rounded-lg border border-dashed border-slate-800 px-3 text-sm text-slate-500">
+                          No typed feature relations were detected for this feature.
+                        </div>
+                      )}
                     </div>
-                  )}
 
-                  {featureDetail.relatedFeatures.length > 0 && (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Related Features</p>
-                      <div className="flex flex-wrap gap-2">
-                        {featureDetail.relatedFeatures.map(featureId => (
-                          <button
-                            key={featureId}
-                            onClick={() => openBoardFeature(featureId, 'overview')}
-                            className="text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-indigo-300 hover:border-indigo-500/40"
-                          >
-                            {featureId}
-                          </button>
-                        ))}
-                      </div>
+                      {featureDetail.relatedFeatures.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {featureDetail.relatedFeatures.map(featureId => (
+                            <button
+                              key={featureId}
+                              onClick={() => openBoardFeature(featureId, 'overview')}
+                              className="text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-indigo-300 hover:border-indigo-500/40 [overflow-wrap:anywhere]"
+                            >
+                              {featureId}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-500">No secondary related feature IDs were attached.</p>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 
               {activeTab === 'runs' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {runsError && (
                     <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
                       {runsError}
@@ -2035,7 +2109,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'phases' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {fullFeatureLoading && (
                     <div className="text-xs text-slate-400 flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
@@ -2178,7 +2252,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'documents' && (
-                <div className="mt-4 space-y-2">
+                <div className="h-full overflow-y-auto pr-1 space-y-2">
                   {context.documents.length === 0 && <p className="text-sm text-slate-400">No correlated documents found.</p>}
                   {context.documents.map(doc => (
                     <button
@@ -2201,7 +2275,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'sessions' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {executionSessions.length === 0 && <p className="text-sm text-slate-400">No linked sessions available.</p>}
                   {executionSessions.length > 0 && (
                     <>
@@ -2271,7 +2345,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'artifacts' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {artifactsLoading && (
                     <div className="text-xs text-slate-400 flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
@@ -2293,7 +2367,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'history' && (
-                <div className="mt-4 space-y-3">
+                <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {featureHistoryEvents.length === 0 && (
                     <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
                       <Calendar size={32} className="mx-auto mb-3 opacity-50" />
@@ -2341,31 +2415,71 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'analytics' && (
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
-                    <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
+                <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
+                      <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Observed Workload</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{formatTokenCount(executionWorkload.workloadTokens)}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {formatTokenCount(executionWorkload.cacheInputTokens)} cache input
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
+                      <p className="text-xs text-slate-500 mt-1">{formatTokenCount(executionWorkload.modelIOTokens)} model IO tokens</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
+                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {context.analytics.commandEventCount} command events
+                        {executionWorkload.toolFallbackSessions > 0 ? ` • ${executionWorkload.toolFallbackSessions} tool fallback` : ''}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
+                      <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Session Cost</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
-                    <p className="text-xs text-slate-500 mt-1">Models {context.analytics.modelCount}</p>
+
+                  <div className="min-h-0 overflow-hidden">
+                    {workflowAnalyticsAvailable ? (
+                      <WorkflowEffectivenessSurface
+                        embedded
+                        featureId={context.feature.id}
+                        description="Feature-scoped effectiveness rolls historical stack evidence, observed workflow quality, and failure patterns into one comparison surface."
+                        onOpenSession={openSession}
+                      />
+                    ) : (
+                      <IntelligenceDisabledNotice
+                        title="Workflow Intelligence Disabled"
+                        message="Workflow effectiveness analytics are disabled for this project. Session and execution summaries are still available."
+                      />
+                    )}
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
-                    <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
-                    <p className="text-xs text-slate-500 mt-1">{context.analytics.commandEventCount} command events</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 md:col-span-2 xl:col-span-3">
-                    <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
-                    <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
-                  </div>
+
+                  {workflowAnalyticsAvailable && (
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => navigate('/analytics?tab=workflow_intelligence')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                      >
+                        <ExternalLink size={13} />
+                        Open Full Analytics
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
               {activeTab === 'test-status' && context.feature && (
-                <div className="mt-4">
+                <div className="h-full overflow-y-auto pr-1">
                   {activeProject?.id ? (
                     <TestStatusView
                       projectId={activeProject.id}
@@ -2381,7 +2495,25 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   )}
                 </div>
               )}
+              </div>
             </section>
+            </div>
+
+            {stackRecommendationsAvailable ? (
+              <RecommendedStackCard
+                recommendedStack={context.recommendedStack}
+                stackAlternatives={context.stackAlternatives}
+                stackEvidence={context.stackEvidence}
+                definitionResolutionWarnings={context.definitionResolutionWarnings}
+                onOpenSession={openSession}
+                onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
+              />
+            ) : (
+              <IntelligenceDisabledNotice
+                title="Recommended Stack Disabled"
+                message="Project settings have disabled historical stack recommendations. Command guidance and execution runs remain available."
+              />
+            )}
           </div>
         </div>
       )}

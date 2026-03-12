@@ -1,7 +1,9 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import Any, Optional, Generic, TypeVar, Literal
+
+from typing import Any, Generic, Literal, Optional, TypeVar
+
+from pydantic import BaseModel, Field, model_validator
 
 T = TypeVar("T")
 
@@ -180,6 +182,18 @@ class AgentSession(BaseModel):
     durationSeconds: int = 0
     tokensIn: int = 0
     tokensOut: int = 0
+    modelIOTokens: int = 0
+    cacheCreationInputTokens: int = 0
+    cacheReadInputTokens: int = 0
+    cacheInputTokens: int = 0
+    observedTokens: int = 0
+    toolReportedTokens: int = 0
+    toolResultInputTokens: int = 0
+    toolResultOutputTokens: int = 0
+    toolResultCacheCreationInputTokens: int = 0
+    toolResultCacheReadInputTokens: int = 0
+    cacheShare: float = 0.0
+    outputShare: float = 0.0
     totalCost: float = 0.0
     startedAt: str = ""
     endedAt: str = ""
@@ -202,8 +216,170 @@ class AgentSession(BaseModel):
     forks: list[dict[str, Any]] = Field(default_factory=list)
     sessionRelationships: list[dict[str, Any]] = Field(default_factory=list)
     derivedSessions: list[dict[str, Any]] = Field(default_factory=list)
+    usageEvents: list["SessionUsageEvent"] = Field(default_factory=list)
+    usageAttributions: list["SessionUsageAttribution"] = Field(default_factory=list)
+    usageAttributionSummary: Optional["SessionUsageAggregateResponse"] = None
+    usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+
+
+SessionUsageTokenFamily = Literal[
+    "model_input",
+    "model_output",
+    "cache_creation_input",
+    "cache_read_input",
+    "tool_result_input",
+    "tool_result_output",
+    "tool_result_cache_creation_input",
+    "tool_result_cache_read_input",
+    "tool_reported_total",
+    "relay_mirror_input",
+    "relay_mirror_output",
+    "relay_mirror_cache_creation_input",
+    "relay_mirror_cache_read_input",
+]
+
+SessionUsageEntityType = Literal["skill", "agent", "subthread", "command", "artifact", "workflow", "feature"]
+SessionUsageAttributionRole = Literal["primary", "supporting"]
+SessionUsageAttributionMethod = Literal[
+    "explicit_skill_invocation",
+    "explicit_subthread_ownership",
+    "explicit_agent_ownership",
+    "explicit_command_context",
+    "explicit_artifact_link",
+    "skill_window",
+    "artifact_window",
+    "workflow_membership",
+    "feature_inheritance",
+]
+
+
+class SessionUsageEvent(BaseModel):
+    id: str
+    projectId: str
+    sessionId: str
+    rootSessionId: str
+    linkedSessionId: str = ""
+    sourceLogId: str = ""
+    capturedAt: str
+    eventKind: str
+    model: str = ""
+    toolName: str = ""
+    agentName: str = ""
+    tokenFamily: SessionUsageTokenFamily
+    deltaTokens: int = 0
+    costUsdModelIO: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageAttribution(BaseModel):
+    eventId: str
+    entityType: SessionUsageEntityType
+    entityId: str
+    attributionRole: SessionUsageAttributionRole
+    weight: float = 1.0
+    method: SessionUsageAttributionMethod
+    confidence: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageAggregateRow(BaseModel):
+    entityType: SessionUsageEntityType
+    entityId: str
+    entityLabel: str = ""
+    exclusiveTokens: int = 0
+    supportingTokens: int = 0
+    exclusiveModelIOTokens: int = 0
+    exclusiveCacheInputTokens: int = 0
+    supportingModelIOTokens: int = 0
+    supportingCacheInputTokens: int = 0
+    exclusiveCostUsdModelIO: float = 0.0
+    supportingCostUsdModelIO: float = 0.0
+    eventCount: int = 0
+    primaryEventCount: int = 0
+    supportingEventCount: int = 0
+    sessionCount: int = 0
+    averageConfidence: float = 0.0
+    methods: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionUsageAggregateSummary(BaseModel):
+    entityCount: int = 0
+    sessionCount: int = 0
+    eventCount: int = 0
+    totalExclusiveTokens: int = 0
+    totalSupportingTokens: int = 0
+    totalExclusiveModelIOTokens: int = 0
+    totalExclusiveCacheInputTokens: int = 0
+    totalExclusiveCostUsdModelIO: float = 0.0
+    averageConfidence: float = 0.0
+
+
+class SessionUsageAggregateResponse(BaseModel):
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    rows: list[SessionUsageAggregateRow] = Field(default_factory=list)
+    summary: SessionUsageAggregateSummary = Field(default_factory=SessionUsageAggregateSummary)
+
+
+class SessionUsageDrilldownRow(BaseModel):
+    eventId: str
+    sessionId: str
+    rootSessionId: str = ""
+    linkedSessionId: str = ""
+    sessionType: str = ""
+    parentSessionId: str = ""
+    sourceLogId: str = ""
+    capturedAt: str = ""
+    eventKind: str = ""
+    tokenFamily: SessionUsageTokenFamily
+    deltaTokens: int = 0
+    costUsdModelIO: float = 0.0
+    model: str = ""
+    toolName: str = ""
+    agentName: str = ""
+    entityType: SessionUsageEntityType
+    entityId: str
+    entityLabel: str = ""
+    attributionRole: SessionUsageAttributionRole
+    weight: float = 1.0
+    method: SessionUsageAttributionMethod
+    confidence: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionUsageDrilldownResponse(BaseModel):
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SessionUsageDrilldownRow] = Field(default_factory=list)
+    summary: SessionUsageAggregateSummary = Field(default_factory=SessionUsageAggregateSummary)
+
+
+class SessionUsageCalibrationSummary(BaseModel):
+    projectId: str = ""
+    sessionCount: int = 0
+    eventCount: int = 0
+    attributedEventCount: int = 0
+    primaryAttributedEventCount: int = 0
+    ambiguousEventCount: int = 0
+    unattributedEventCount: int = 0
+    primaryCoverage: float = 0.0
+    supportingCoverage: float = 0.0
+    sessionModelIOTokens: int = 0
+    exclusiveModelIOTokens: int = 0
+    modelIOGap: int = 0
+    sessionCacheInputTokens: int = 0
+    exclusiveCacheInputTokens: int = 0
+    cacheGap: int = 0
+    averageConfidence: float = 0.0
+    confidenceBands: list[dict[str, Any]] = Field(default_factory=list)
+    methodMix: list[dict[str, Any]] = Field(default_factory=list)
+    generatedAt: str = ""
 
 
 # ── Document-related models ────────────────────────────────────────
@@ -505,6 +681,36 @@ class ProjectTestConfig(BaseModel):
     instructionNotes: str = ""
 
 
+class SkillMeatFeatureFlags(BaseModel):
+    stackRecommendationsEnabled: bool = True
+    workflowAnalyticsEnabled: bool = True
+    usageAttributionEnabled: bool = True
+
+
+class SkillMeatProjectConfig(BaseModel):
+    enabled: bool = False
+    baseUrl: str = ""
+    projectId: str = ""
+    collectionId: str = ""
+    aaaEnabled: bool = False
+    apiKey: str = ""
+    requestTimeoutSeconds: float = 5.0
+    featureFlags: SkillMeatFeatureFlags = Field(default_factory=SkillMeatFeatureFlags)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_workspace_id(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        collection_id = str(migrated.get("collectionId") or "").strip()
+        legacy_workspace_id = str(migrated.get("workspaceId") or "").strip()
+        if not collection_id and legacy_workspace_id:
+            migrated["collectionId"] = legacy_workspace_id
+        migrated.pop("workspaceId", None)
+        return migrated
+
+
 # ── Project model ──────────────────────────────────────────────────
 
 class Project(BaseModel):
@@ -518,6 +724,7 @@ class Project(BaseModel):
     sessionsPath: str = ""       # absolute path to session JSONL files (e.g. ~/.claude/projects/<hash>/)
     progressPath: str = "progress"  # relative to project root
     testConfig: ProjectTestConfig = Field(default_factory=ProjectTestConfig)
+    skillMeat: SkillMeatProjectConfig = Field(default_factory=SkillMeatProjectConfig)
 
 
 # ── Feature models ─────────────────────────────────────────────────
@@ -627,6 +834,12 @@ class Feature(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
+SkillMeatDefinitionType = Literal["artifact", "workflow", "context_module", "bundle"]
+StackComponentType = Literal["workflow", "agent", "skill", "context_module", "command", "model_policy", "artifact"]
+StackComponentStatus = Literal["explicit", "inferred", "resolved", "unresolved"]
+DefinitionReferenceStatus = Literal["resolved", "cached", "unresolved"]
+
+
 class ExecutionRecommendationEvidence(BaseModel):
     id: str
     label: str = ""
@@ -669,6 +882,73 @@ class FeatureExecutionAnalyticsSummary(BaseModel):
     modelCount: int = 0
 
 
+class RecommendedStackDefinitionRef(BaseModel):
+    definitionType: str = ""
+    externalId: str = ""
+    displayName: str = ""
+    version: str = ""
+    sourceUrl: str = ""
+    status: DefinitionReferenceStatus = "unresolved"
+
+
+class RecommendedStackComponent(BaseModel):
+    componentType: StackComponentType
+    componentKey: str = ""
+    label: str = ""
+    status: StackComponentStatus = "explicit"
+    confidence: float = 0.0
+    sourceAttribution: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    definition: Optional[RecommendedStackDefinitionRef] = None
+
+
+class SimilarWorkExample(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    title: str = ""
+    workflowRef: str = ""
+    similarityScore: float = 0.0
+    reasons: list[str] = Field(default_factory=list)
+    matchedComponents: list[str] = Field(default_factory=list)
+    startedAt: str = ""
+    endedAt: str = ""
+    totalCost: float = 0.0
+    durationSeconds: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+
+
+class StackRecommendationEvidence(BaseModel):
+    id: str
+    label: str = ""
+    summary: str = ""
+    sourceType: str = ""
+    sourceId: str = ""
+    sourcePath: str = ""
+    confidence: float = 0.0
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    similarWork: list[SimilarWorkExample] = Field(default_factory=list)
+
+
+class RecommendedStack(BaseModel):
+    id: str
+    label: str = ""
+    workflowRef: str = ""
+    commandAlignment: str = ""
+    confidence: float = 0.0
+    sampleSize: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+    sourceSessionId: str = ""
+    sourceFeatureId: str = ""
+    explanation: str = ""
+    components: list[RecommendedStackComponent] = Field(default_factory=list)
+
+
 class FeatureExecutionContext(BaseModel):
     feature: Feature
     documents: list[LinkedDocument] = Field(default_factory=list)
@@ -676,6 +956,207 @@ class FeatureExecutionContext(BaseModel):
     analytics: FeatureExecutionAnalyticsSummary = Field(default_factory=FeatureExecutionAnalyticsSummary)
     recommendations: ExecutionRecommendation
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    recommendedStack: Optional[RecommendedStack] = None
+    stackAlternatives: list[RecommendedStack] = Field(default_factory=list)
+    stackEvidence: list[StackRecommendationEvidence] = Field(default_factory=list)
+    definitionResolutionWarnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    generatedAt: str = ""
+
+class SkillMeatDefinitionSource(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sourceKind: str = "skillmeat"
+    enabled: bool = False
+    baseUrl: str = ""
+    projectMapping: dict[str, Any] = Field(default_factory=dict)
+    featureFlags: SkillMeatFeatureFlags = Field(default_factory=SkillMeatFeatureFlags)
+    lastSyncedAt: str = ""
+    lastSyncStatus: str = "never"
+    lastSyncError: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatDefinition(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sourceId: Optional[int] = None
+    definitionType: SkillMeatDefinitionType
+    externalId: str
+    displayName: str = ""
+    version: str = ""
+    sourceUrl: str = ""
+    resolutionMetadata: dict[str, Any] = Field(default_factory=dict)
+    rawSnapshot: dict[str, Any] = Field(default_factory=dict)
+    fetchedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatSyncWarning(BaseModel):
+    section: str
+    message: str
+    recoverable: bool = True
+
+
+SkillMeatProbeState = Literal["idle", "success", "warning", "error"]
+
+
+class SkillMeatProbeResult(BaseModel):
+    state: SkillMeatProbeState = "idle"
+    message: str = ""
+    checkedAt: str = ""
+    httpStatus: Optional[int] = None
+
+
+class SkillMeatConfigValidationRequest(BaseModel):
+    baseUrl: str = ""
+    projectId: str = ""
+    aaaEnabled: bool = False
+    apiKey: str = ""
+    requestTimeoutSeconds: float = 5.0
+
+
+class SkillMeatConfigValidationResponse(BaseModel):
+    baseUrl: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
+    projectMapping: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
+    auth: SkillMeatProbeResult = Field(default_factory=SkillMeatProbeResult)
+
+
+class SkillMeatSyncRequest(BaseModel):
+    projectId: str = ""
+
+
+class SkillMeatDefinitionSyncResponse(BaseModel):
+    projectId: str
+    source: SkillMeatDefinitionSource
+    totalDefinitions: int = 0
+    countsByType: dict[str, int] = Field(default_factory=dict)
+    fetchedAt: str = ""
+    warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
+
+
+class SessionStackComponent(BaseModel):
+    id: Optional[int] = None
+    observationId: Optional[int] = None
+    projectId: str
+    componentType: StackComponentType
+    componentKey: str = ""
+    status: StackComponentStatus = "explicit"
+    confidence: float = 0.0
+    externalDefinitionId: Optional[int] = None
+    externalDefinitionType: str = ""
+    externalDefinitionExternalId: str = ""
+    sourceAttribution: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SessionStackObservation(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sessionId: str
+    featureId: str = ""
+    workflowRef: str = ""
+    confidence: float = 0.0
+    source: str = "backfill"
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    components: list[SessionStackComponent] = Field(default_factory=list)
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatObservationBackfillRequest(BaseModel):
+    projectId: str = ""
+    limit: int = Field(default=200, ge=1, le=5000)
+    forceRecompute: bool = False
+
+
+class SkillMeatObservationBackfillResponse(BaseModel):
+    projectId: str
+    sessionsProcessed: int = 0
+    observationsStored: int = 0
+    skippedSessions: int = 0
+    resolvedComponents: int = 0
+    unresolvedComponents: int = 0
+    generatedAt: str = ""
+    warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
+
+
+class SkillMeatRefreshResponse(BaseModel):
+    projectId: str
+    sync: SkillMeatDefinitionSyncResponse
+    backfill: SkillMeatObservationBackfillResponse | None = None
+
+
+EffectivenessScopeType = Literal["workflow", "effective_workflow", "agent", "skill", "context_module", "bundle", "stack"]
+
+
+class EffectivenessMetricDefinition(BaseModel):
+    id: Literal["successScore", "efficiencyScore", "qualityScore", "riskScore"]
+    label: str = ""
+    description: str = ""
+    formula: str = ""
+    inputs: list[str] = Field(default_factory=list)
+
+
+class WorkflowEffectivenessRollup(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    scopeType: EffectivenessScopeType
+    scopeId: str
+    scopeLabel: str = ""
+    period: str = "all"
+    sampleSize: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+    attributedTokens: int = 0
+    supportingAttributionTokens: int = 0
+    attributedCostUsdModelIO: float = 0.0
+    averageAttributionConfidence: float = 0.0
+    attributionCoverage: float = 0.0
+    attributionCacheShare: float = 0.0
+    evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+    generatedAt: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class WorkflowEffectivenessResponse(BaseModel):
+    projectId: str
+    period: str = "all"
+    metricDefinitions: list[EffectivenessMetricDefinition] = Field(default_factory=list)
+    items: list[WorkflowEffectivenessRollup] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    generatedAt: str = ""
+
+
+class FailurePatternRecord(BaseModel):
+    id: str
+    patternType: str
+    title: str
+    scopeType: str = ""
+    scopeId: str = ""
+    severity: Literal["low", "medium", "high"] = "medium"
+    confidence: float = 0.0
+    occurrenceCount: int = 0
+    averageSuccessScore: float = 0.0
+    averageRiskScore: float = 0.0
+    evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+    sessionIds: list[str] = Field(default_factory=list)
+
+
+class FailurePatternResponse(BaseModel):
+    projectId: str
+    items: list[FailurePatternRecord] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
     generatedAt: str = ""
 
 

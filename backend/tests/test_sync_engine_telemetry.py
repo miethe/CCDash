@@ -3,9 +3,109 @@ import unittest
 
 from backend.db.sync_engine import _build_session_telemetry_events
 from backend.db.sync_engine import _build_session_commit_correlations
+from backend.db.sync_engine import _derive_claude_usage_fields
 
 
 class SyncEngineTelemetryTests(unittest.TestCase):
+    def test_derive_claude_usage_fields_maps_usage_summary(self) -> None:
+        session_payload = {
+            "platformType": "Claude Code",
+            "tokensIn": 120,
+            "tokensOut": 80,
+            "sessionForensics": {
+                "platform": "claude_code",
+                "usageSummary": {
+                    "messageTotals": {
+                        "inputTokens": 120,
+                        "outputTokens": 80,
+                        "cacheCreationInputTokens": 25,
+                        "cacheReadInputTokens": 75,
+                        "allInputTokens": 220,
+                        "allTokens": 300,
+                    },
+                    "toolResultReportedTotals": {"totalTokens": 610},
+                    "toolResultUsageTotals": {
+                        "inputTokens": 7,
+                        "outputTokens": 11,
+                        "cacheCreationInputTokens": 13,
+                        "cacheReadInputTokens": 17,
+                    },
+                },
+            },
+        }
+
+        usage_fields = _derive_claude_usage_fields(session_payload)
+
+        self.assertEqual(usage_fields["model_io_tokens"], 200)
+        self.assertEqual(usage_fields["cache_creation_input_tokens"], 25)
+        self.assertEqual(usage_fields["cache_read_input_tokens"], 75)
+        self.assertEqual(usage_fields["cache_input_tokens"], 220)
+        self.assertEqual(usage_fields["observed_tokens"], 300)
+        self.assertEqual(usage_fields["tool_reported_tokens"], 610)
+        self.assertEqual(usage_fields["tool_result_input_tokens"], 7)
+        self.assertEqual(usage_fields["tool_result_output_tokens"], 11)
+        self.assertEqual(usage_fields["tool_result_cache_creation_input_tokens"], 13)
+        self.assertEqual(usage_fields["tool_result_cache_read_input_tokens"], 17)
+
+    def test_derive_claude_usage_fields_ignores_excluded_relay_mirror_totals(self) -> None:
+        session_payload = {
+            "platformType": "Claude Code",
+            "tokensIn": 12,
+            "tokensOut": 8,
+            "sessionForensics": {
+                "platform": "claude_code",
+                "usageSummary": {
+                    "messageTotals": {
+                        "inputTokens": 12,
+                        "outputTokens": 8,
+                        "cacheCreationInputTokens": 5,
+                        "cacheReadInputTokens": 15,
+                        "allInputTokens": 32,
+                        "allTokens": 40,
+                    },
+                    "relayMirrorTotals": {
+                        "excludedCount": 1,
+                        "inputTokens": 100,
+                        "outputTokens": 200,
+                        "cacheCreationInputTokens": 300,
+                        "cacheReadInputTokens": 400,
+                        "allInputTokens": 800,
+                        "allTokens": 1000,
+                    },
+                },
+            },
+        }
+
+        usage_fields = _derive_claude_usage_fields(session_payload)
+
+        self.assertEqual(usage_fields["model_io_tokens"], 20)
+        self.assertEqual(usage_fields["cache_input_tokens"], 32)
+        self.assertEqual(usage_fields["observed_tokens"], 40)
+
+    def test_derive_claude_usage_fields_preserves_existing_non_claude_values(self) -> None:
+        session_payload = {
+            "platformType": "Codex CLI",
+            "modelIOTokens": 9,
+            "cacheCreationInputTokens": 4,
+            "cacheReadInputTokens": 5,
+            "cacheInputTokens": 9,
+            "observedTokens": 18,
+            "toolReportedTokens": 27,
+            "toolResultInputTokens": 3,
+            "toolResultOutputTokens": 6,
+            "toolResultCacheCreationInputTokens": 1,
+            "toolResultCacheReadInputTokens": 2,
+        }
+
+        usage_fields = _derive_claude_usage_fields(session_payload)
+
+        self.assertEqual(usage_fields["model_io_tokens"], 9)
+        self.assertEqual(usage_fields["cache_creation_input_tokens"], 4)
+        self.assertEqual(usage_fields["cache_read_input_tokens"], 5)
+        self.assertEqual(usage_fields["cache_input_tokens"], 9)
+        self.assertEqual(usage_fields["observed_tokens"], 18)
+        self.assertEqual(usage_fields["tool_reported_tokens"], 27)
+
     def test_build_session_telemetry_events_captures_dimensions(self) -> None:
         session_payload = {
             "id": "S-123",

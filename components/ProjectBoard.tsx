@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -44,6 +45,16 @@ interface FeatureSessionLink {
   updatedAt?: string;
   totalCost: number;
   durationSeconds: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  modelIOTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheInputTokens?: number;
+  observedTokens?: number;
+  toolReportedTokens?: number;
+  cacheShare?: number;
+  outputShare?: number;
   gitCommitHash?: string;
   gitCommitHashes?: string[];
   gitBranch?: string;
@@ -187,6 +198,9 @@ interface FeatureSessionSummary {
   mainThreads: number;
   subThreads: number;
   unresolvedSubThreads: number;
+  workloadTokens: number;
+  modelIOTokens: number;
+  cacheInputTokens: number;
   byType: Array<{ type: string; count: number }>;
 }
 
@@ -290,6 +304,17 @@ const isPrimarySession = (session: FeatureSessionLink): boolean => {
   if (session.isPrimaryLink) return true;
   return session.confidence >= 0.9;
 };
+
+const sessionHasLinkedSubthreads = (sessionId: string, sessions: FeatureSessionLink[]): boolean => (
+  sessions.some(candidate => (
+    candidate.sessionId !== sessionId
+    && isSubthreadSession(candidate)
+    && (
+      candidate.parentSessionId === sessionId
+      || candidate.rootSessionId === sessionId
+    )
+  ))
+);
 
 const parsePhaseNumber = (value: string, allowBareNumber = false): number | null => {
   const normalized = (value || '').trim();
@@ -456,10 +481,19 @@ const buildFeatureSessionSummary = (sessions: FeatureSessionLink[]): FeatureSess
   let mainThreads = 0;
   let subThreads = 0;
   let unresolvedSubThreads = 0;
+  let workloadTokens = 0;
+  let modelIOTokens = 0;
+  let cacheInputTokens = 0;
 
   sessions.forEach(session => {
     const typeLabel = sessionTypeBucketLabel(session);
     typeCounts.set(typeLabel, (typeCounts.get(typeLabel) || 0) + 1);
+    const resolvedTokens = resolveTokenMetrics(session, {
+      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, sessions),
+    });
+    workloadTokens += resolvedTokens.workloadTokens;
+    modelIOTokens += resolvedTokens.modelIOTokens;
+    cacheInputTokens += resolvedTokens.cacheInputTokens;
 
     if (isSubthreadSession(session)) {
       subThreads += 1;
@@ -481,6 +515,9 @@ const buildFeatureSessionSummary = (sessions: FeatureSessionLink[]): FeatureSess
     mainThreads,
     subThreads,
     unresolvedSubThreads,
+    workloadTokens,
+    modelIOTokens,
+    cacheInputTokens,
     byType,
   };
 };
@@ -1684,14 +1721,14 @@ const FeatureModal = ({
     };
 
     linkedSessions.forEach(session => {
-      const metadata = session.sessionMetadata || {};
-      const metadataPrLinks = Array.isArray(metadata.prLinks) ? metadata.prLinks as PullRequestRef[] : [];
+      const metadata = session.sessionMetadata;
+      const metadataPrLinks = Array.isArray(metadata?.prLinks) ? metadata.prLinks as PullRequestRef[] : [];
       const sessionPrLinks = Array.isArray(session.pullRequests) ? session.pullRequests : [];
       const mergedPrLinks = [...sessionPrLinks, ...metadataPrLinks];
 
       mergedPrLinks.forEach(addPullRequest);
 
-      const correlationRows = Array.isArray(metadata.commitCorrelations)
+      const correlationRows = Array.isArray(metadata?.commitCorrelations)
         ? metadata.commitCorrelations
         : [];
 
@@ -2077,6 +2114,9 @@ const FeatureModal = ({
     const linkRole = isPrimarySession(session) ? 'Primary' : 'Related';
     const workflow = (session.workflowType || '').trim() || 'Related';
     const displayTitle = deriveSessionCardTitle(session.sessionId, (session.title || '').trim(), session.sessionMetadata || null);
+    const sessionTokenMetrics = resolveTokenMetrics(session, {
+      hasLinkedSubthreads: sessionHasLinkedSubthreads(session.sessionId, linkedSessions),
+    });
     const modelBadges = (session.modelsUsed && session.modelsUsed.length > 0)
       ? session.modelsUsed.map(modelInfo => ({
         raw: modelInfo.raw,
@@ -2156,6 +2196,10 @@ const FeatureModal = ({
         headerRight={(
           <div className="flex items-center gap-4 text-right">
             <div>
+              <div className="text-[9px] text-slate-600 uppercase">Workload</div>
+              <div className="text-xs font-mono text-sky-300">{formatTokenCount(sessionTokenMetrics.workloadTokens)}</div>
+            </div>
+            <div>
               <div className="text-[9px] text-slate-600 uppercase">Cost</div>
               <div className="text-xs font-mono text-emerald-400">${session.totalCost.toFixed(2)}</div>
             </div>
@@ -2185,6 +2229,11 @@ const FeatureModal = ({
           <span className="px-1.5 py-0.5 rounded border border-purple-500/30 text-purple-300 bg-purple-500/10">
             {workflow}
           </span>
+          {sessionTokenMetrics.cacheInputTokens > 0 && (
+            <span className="px-1.5 py-0.5 rounded border border-cyan-500/25 text-cyan-200 bg-cyan-500/10">
+              Cache {formatPercent(sessionTokenMetrics.cacheShare, 0)}
+            </span>
+          )}
         </div>
 
         {relatedTasks.length > 0 && (
@@ -3096,7 +3145,7 @@ const FeatureModal = ({
                         <div className="text-slate-400">Sessions: <span className="text-slate-200">{commit.sessionIds.length}</span></div>
                         <div className="text-slate-400">Files: <span className="text-slate-200">{commit.fileCount}</span></div>
                         <div className="text-slate-400">+/-: <span className="text-slate-200">{commit.additions}/{commit.deletions}</span></div>
-                        <div className="text-slate-400">Tokens: <span className="text-slate-200">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
+                        <div className="text-slate-400">Model IO: <span className="text-slate-200">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
                         <div className="text-slate-400">Events: <span className="text-slate-200">{commit.eventCount}</span></div>
                         <div className="text-slate-400">Cost: <span className="text-slate-200">${commit.costUsd.toFixed(2)}</span></div>
                       </div>
@@ -3162,6 +3211,17 @@ const FeatureSessionIndicator = ({
           <div className="flex items-center justify-between">
             <span>Sub-Threads</span>
             <span className="font-mono">{summary?.subThreads ?? 0}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Observed Workload</span>
+            <span className="font-mono">{formatTokenCount(summary?.workloadTokens)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Cache Input</span>
+            <span className="font-mono">
+              {formatTokenCount(summary?.cacheInputTokens)}
+              {(summary?.workloadTokens || 0) > 0 ? ` (${formatPercent((summary?.cacheInputTokens || 0) / Math.max(summary?.workloadTokens || 0, 1), 0)})` : ''}
+            </span>
           </div>
           {(summary?.unresolvedSubThreads || 0) > 0 && (
             <div className="flex items-center justify-between text-amber-300">

@@ -42,6 +42,16 @@ class _FakeRepo:
                 "duration_seconds": 1,
                 "tokens_in": 1,
                 "tokens_out": 1,
+                "model_io_tokens": 2,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 5,
+                "cache_input_tokens": 8,
+                "observed_tokens": 10,
+                "tool_reported_tokens": 13,
+                "tool_result_input_tokens": 21,
+                "tool_result_output_tokens": 34,
+                "tool_result_cache_creation_input_tokens": 55,
+                "tool_result_cache_read_input_tokens": 89,
                 "total_cost": 0.0,
                 "started_at": "2026-02-16T00:00:00Z",
                 "quality_rating": 0,
@@ -111,6 +121,16 @@ class _FakeFullSessionRepo:
                 "duration_seconds": 1,
                 "tokens_in": 1,
                 "tokens_out": 1,
+                "model_io_tokens": 2,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 5,
+                "cache_input_tokens": 8,
+                "observed_tokens": 10,
+                "tool_reported_tokens": 13,
+                "tool_result_input_tokens": 21,
+                "tool_result_output_tokens": 34,
+                "tool_result_cache_creation_input_tokens": 55,
+                "tool_result_cache_read_input_tokens": 89,
                 "total_cost": 0.0,
                 "started_at": "2026-02-16T00:00:00Z",
                 "ended_at": "2026-02-16T00:00:01Z",
@@ -329,6 +349,11 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].conversationFamilyId, "S-main")
         self.assertEqual(response.items[0].thinkingLevel, "high")
         self.assertEqual(response.items[0].sessionForensics.get("platform"), "claude_code")
+        self.assertEqual(response.items[0].observedTokens, 10)
+        self.assertEqual(response.items[0].cacheInputTokens, 8)
+        self.assertEqual(response.items[0].toolReportedTokens, 13)
+        self.assertAlmostEqual(response.items[0].cacheShare, 0.8)
+        self.assertAlmostEqual(response.items[0].outputShare, 0.5)
 
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()
@@ -401,8 +426,100 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_includes_fork_relationships_and_summaries(self) -> None:
         repo = _FakeFullSessionRepo()
         project = types.SimpleNamespace(id="project-1")
+        usage_payload = {
+            "usageEvents": [
+                {
+                    "id": "evt-1",
+                    "projectId": "project-1",
+                    "sessionId": "S-main",
+                    "rootSessionId": "S-main",
+                    "linkedSessionId": "",
+                    "sourceLogId": "log-1",
+                    "capturedAt": "2026-02-16T00:00:00Z",
+                    "eventKind": "message",
+                    "model": "claude-sonnet",
+                    "toolName": "",
+                    "agentName": "planner",
+                    "tokenFamily": "model_input",
+                    "deltaTokens": 2,
+                    "costUsdModelIO": 0.0,
+                    "metadata": {},
+                }
+            ],
+            "usageAttributions": [
+                {
+                    "eventId": "evt-1",
+                    "entityType": "skill",
+                    "entityId": "symbols",
+                    "attributionRole": "primary",
+                    "weight": 1.0,
+                    "method": "explicit_skill_invocation",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ],
+            "usageAttributionSummary": {
+                "generatedAt": "2026-02-16T00:00:01Z",
+                "total": 1,
+                "offset": 0,
+                "limit": 1,
+                "rows": [
+                    {
+                        "entityType": "skill",
+                        "entityId": "symbols",
+                        "entityLabel": "symbols",
+                        "exclusiveTokens": 2,
+                        "supportingTokens": 0,
+                        "exclusiveModelIOTokens": 2,
+                        "exclusiveCacheInputTokens": 0,
+                        "supportingModelIOTokens": 0,
+                        "supportingCacheInputTokens": 0,
+                        "exclusiveCostUsdModelIO": 0.0,
+                        "supportingCostUsdModelIO": 0.0,
+                        "eventCount": 1,
+                        "primaryEventCount": 1,
+                        "supportingEventCount": 0,
+                        "sessionCount": 1,
+                        "averageConfidence": 1.0,
+                        "methods": [],
+                    }
+                ],
+                "summary": {
+                    "entityCount": 1,
+                    "sessionCount": 1,
+                    "eventCount": 1,
+                    "totalExclusiveTokens": 2,
+                    "totalSupportingTokens": 0,
+                    "totalExclusiveModelIOTokens": 2,
+                    "totalExclusiveCacheInputTokens": 0,
+                    "totalExclusiveCostUsdModelIO": 0.0,
+                    "averageConfidence": 1.0,
+                },
+            },
+            "usageAttributionCalibration": {
+                "projectId": "project-1",
+                "sessionCount": 1,
+                "eventCount": 1,
+                "attributedEventCount": 1,
+                "primaryAttributedEventCount": 1,
+                "ambiguousEventCount": 0,
+                "unattributedEventCount": 0,
+                "primaryCoverage": 1.0,
+                "supportingCoverage": 1.0,
+                "sessionModelIOTokens": 2,
+                "exclusiveModelIOTokens": 2,
+                "modelIOGap": 0,
+                "sessionCacheInputTokens": 8,
+                "exclusiveCacheInputTokens": 0,
+                "cacheGap": 8,
+                "averageConfidence": 1.0,
+                "confidenceBands": [],
+                "methodMix": [],
+                "generatedAt": "2026-02-16T00:00:01Z",
+            },
+        }
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "get_session_usage_attribution_details", return_value=usage_payload):
             response = await api_router.get_session("S-main")
 
         self.assertEqual(response.id, "S-main")
@@ -412,6 +529,33 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str((response.sessionRelationships or [])[0].get("childSessionId") or ""), "S-fork-1")
         self.assertEqual(len(response.forks or []), 1)
         self.assertEqual(str((response.forks or [])[0].get("sessionId") or ""), "S-fork-1")
+        self.assertEqual(response.modelIOTokens, 2)
+        self.assertEqual(response.cacheCreationInputTokens, 3)
+        self.assertEqual(response.cacheReadInputTokens, 5)
+        self.assertEqual(response.cacheInputTokens, 8)
+        self.assertEqual(response.observedTokens, 10)
+        self.assertEqual(response.toolReportedTokens, 13)
+        self.assertEqual(len(response.usageEvents or []), 1)
+        self.assertEqual((response.usageAttributionSummary or api_router.SessionUsageAggregateResponse()).summary.totalExclusiveTokens, 2)
+        self.assertEqual((response.usageAttributionCalibration or api_router.SessionUsageCalibrationSummary()).modelIOGap, 0)
+
+    async def test_get_session_omits_usage_attribution_when_disabled(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
+            response = await api_router.get_session("S-main")
+
+        self.assertEqual(response.usageEvents, [])
+        self.assertEqual(response.usageAttributions, [])
+        self.assertIsNone(response.usageAttributionSummary)
+        self.assertIsNone(response.usageAttributionCalibration)
+        self.assertEqual(response.toolResultInputTokens, 21)
+        self.assertEqual(response.toolResultOutputTokens, 34)
+        self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
+        self.assertEqual(response.toolResultCacheReadInputTokens, 89)
+        self.assertAlmostEqual(response.cacheShare, 0.8)
+        self.assertAlmostEqual(response.outputShare, 0.5)
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:
         session_repo = _FakeSessionDetailRepo()

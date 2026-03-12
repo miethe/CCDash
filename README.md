@@ -36,7 +36,8 @@
 *   **Theme**: Deep "Slate" dark mode optimized for long engineering sessions.
 
 ### 2. Dashboard (Overview)
-*   **KPI Cards**: Backend-derived KPIs from `GET /api/analytics/overview` (cost, tokens, session count, completion, tool reliability, velocity).
+*   **KPI Cards**: Backend-derived KPIs from `GET /api/analytics/overview` now distinguish observed workload, model IO, cache contribution, cost, session count, completion, tool reliability, and velocity.
+*   **Usage Attribution Tab**: `/analytics?tab=attribution` ranks attributed workload by skill, agent, command, artifact, workflow, and feature with calibration and event drill-down.
 *   **AI Insights**: Integrated **Google Gemini** analysis that reads current metrics/tasks and generates executive summaries on project health.
 *   **Visualizations**:
     *   **Cost vs. Velocity Area Chart**: Tracks spending against task velocity over time (`GET /api/analytics/series`).
@@ -51,6 +52,7 @@
     *   **Overview**: Visualize linked documents (PRDs, Plans, Reports), category badges, and related feature variants (v1, v2).
     *   **Phases tab**: Accordion view of implementation phases. Each phase expands to show a checklist of individual tasks with their real-time status.
     *   **Documents tab**: Quick access to all documentation files associated with the feature.
+    *   **Session summaries**: Feature-linked session chips and modal cards now surface observed workload and cache share instead of implying `tokensIn + tokensOut` is the only total.
 *   **Filtering**: Search features by name/slug/tag, filter by category/status (including deferred caveat), and sort by update date or total task count.
     *   In the feature modal, the **Phases** tab supports phase-status and task-status filtering, including deferred.
 
@@ -104,6 +106,8 @@ The core debugging loop for AI interactions.
     5.  **Analytics (Advanced)**:
         *   **Interactive Charts**: Click on any chart (Active Agents, Tool Usage, Model Allocation) to view detailed stats (Cost, Tokens, Count) and deep-link to filtered transcript views.
         *   **Token Timeline**: Detailed cumulative timeline from persisted backend data via `GET /api/analytics/series?metric=session_tokens&session_id=...`.
+        *   **Token Semantics**: Session analytics now separate model IO, cache input, observed workload, and tool-reported fallback diagnostics.
+        *   **Usage Attribution**: Session analytics now include per-session attribution summaries with exclusive vs supporting totals, confidence, and model-IO-derived cost context.
         *   **Master Timeline**: Full-width correlation view of session lifecycle events against token consumption.
     6.  **Artifacts**:
         *   Visual cards for generated and captured artifact events, including Skills, Commands, Agents/Subagents, Hooks, Tasks, and test-run artifacts.
@@ -148,9 +152,19 @@ The core debugging loop for AI interactions.
 *   **Alert Rules Engine**: Persisted alert CRUD (`POST/PATCH/DELETE /api/analytics/alerts`) for threshold-based monitoring.
 *   **Toggle System**: Activate/Deactivate alerts with backend persistence.
 *   **Project Testing Configuration**: Per-project Testing settings to configure platforms (`pytest`, `jest`, `playwright`, coverage/perf/load/triage), result directories, glob patterns, runtime flags, path validation, on-demand sync, and setup-script export.
+*   **SkillMeat Intelligence Controls**: Per-project SkillMeat settings now include rollout controls for:
+    *   read-only definition sync
+    *   recommended stack UI visibility in `/execution`
+    *   usage attribution visibility in `/analytics` and Session Inspector
+    *   workflow intelligence analytics visibility in `/analytics` and `/execution`
 
 ### 9. Execution Workbench (In-App Local Terminal)
 *   **Route**: `/execution` with feature-scoped execution context and command recommendations.
+*   **Recommended Stack Card**:
+    *   confidence-scored workflow/stack suggestion based on historical outcomes
+    *   resolved SkillMeat definition chips and cached metadata fallbacks
+    *   inline insight panels for context coverage, curated bundle fit, and SkillMeat execution awareness
+    *   similar-work evidence links into prior sessions/features
 *   **Run Launch UX**: `Run in Workbench` actions open a pre-run review modal with:
     *   editable command text
     *   working-directory selection
@@ -165,7 +179,27 @@ The core debugging loop for AI interactions.
     *   active run metadata/status
     *   streamed terminal output (`stdout`/`stderr`)
     *   actions for cancel and retry
+*   **Embedded Workflow Intelligence**:
+    *   feature-scoped workflow effectiveness leaderboard
+    *   failure-pattern summaries
+    *   jump-off to the full analytics workflow intelligence view
 *   **Backend API**: `/api/execution/*` endpoints persist runs, events, and approvals for auditable run lifecycles.
+
+### 10. Agentic SDLC Intelligence
+*   **Read-only SkillMeat integration**:
+    *   caches artifact, workflow, context-module, and bundle definitions per project
+    *   stores normalized provenance and snapshot metadata for deterministic recommendations
+    *   enriches effective workflows with plan summaries, context previews, and recent workflow execution metadata
+*   **Observed Stack Extraction**:
+    *   backfills historical sessions into stack observations using agents, skills, commands, linked artifacts, and session forensics
+    *   resolves matching components against cached SkillMeat definitions when available
+*   **Workflow Intelligence Analytics**:
+    *   `/analytics?tab=workflow_intelligence` ranks workflow, agent, skill, context, and stack scopes by success, efficiency, quality, and risk
+    *   workflow rollups now include attributed token, cost, coverage, and cache-share signals when attribution is enabled
+    *   failure-pattern clustering highlights queue waste, repeated debug loops, and weak validation paths
+*   **Operator Tooling**:
+    *   `python backend/scripts/agentic_intelligence_rollout.py` can sync definitions, backfill observations, and recompute workflow rollups for the active or selected project
+    *   support flags: `--project`, `--all-projects`, `--skip-sync`, `--skip-backfill`, `--skip-recompute`, `--force-recompute`, `--fail-on-warning`
 
 ---
 
@@ -230,6 +264,7 @@ Represents Markdown documentation. Contains:
     *   `npm run build` - build frontend assets
     *   `npm run start:backend` - production-style backend startup
     *   `npm run start:frontend` - serve built frontend (`vite preview`)
+    *   `python backend/scripts/agentic_intelligence_rollout.py --project <project-id>` - sync SkillMeat definitions, backfill stack observations, and recompute workflow intelligence rollups
 
 5.  **Environment Variables**:
     *   `GEMINI_API_KEY`: Enables AI insight features.
@@ -245,6 +280,10 @@ Represents Markdown documentation. Contains:
     *   `CCDASH_STARTUP_DEFERRED_REBUILD_LINKS`: run deferred link rebuild after light startup sync (default `true`).
     *   `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS`: delay before deferred rebuild (default `45`).
     *   `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS`: capture analytics during deferred rebuild (default `false`).
+    *   `CCDASH_SKILLMEAT_INTEGRATION_ENABLED`: global hard gate for SkillMeat sync/cache endpoints (default `true`).
+    *   `CCDASH_AGENTIC_RECOMMENDATIONS_ENABLED`: global hard gate for historical stack recommendations (default `true`).
+    *   `CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED`: global hard gate for workflow intelligence endpoints (default `true`).
+    *   `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED`: global hard gate for attribution analytics and session attribution payloads (default `true`).
 
 6.  **Test Mapping Workflow (recommended)**:
     *   Run one initial backfill for each project (`POST /api/tests/mappings/backfill`) to bootstrap mappings across existing runs.
@@ -257,6 +296,10 @@ Represents Markdown documentation. Contains:
 For detailed setup, troubleshooting, and deployment startup guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).  
 For project-scoped Testing configuration and `/tests` ingestion flow, see [`docs/testing-user-guide.md`](docs/testing-user-guide.md).  
 For end-user execution flow in `/execution`, see [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md).  
+For end-user workflow intelligence and recommended-stack usage, see [`docs/agentic-sdlc-intelligence-user-guide.md`](docs/agentic-sdlc-intelligence-user-guide.md).
+For end-user attribution semantics and interpretation, see [`docs/session-usage-attribution-user-guide.md`](docs/session-usage-attribution-user-guide.md).
+For implementation details and rollout commands, see [`docs/agentic-sdlc-intelligence-developer-reference.md`](docs/agentic-sdlc-intelligence-developer-reference.md).
+For attribution contracts, rollout controls, and API details, see [`docs/session-usage-attribution-developer-reference.md`](docs/session-usage-attribution-developer-reference.md).
 For sync/rebuild operation behavior, see [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md).  
 For codebase explorer backend and scoring details, see [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md).
 For execution run architecture and API integration details, see [`docs/execution-workbench-developer-reference.md`](docs/execution-workbench-developer-reference.md).

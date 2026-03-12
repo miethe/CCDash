@@ -2,13 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendChart } from './TrendChart';
 import { analyticsService } from '../../services/analytics';
 import { useModelColors } from '../../contexts/ModelColorsContext';
+import { useData } from '../../contexts/DataContext';
+import { isUsageAttributionEnabled, isWorkflowAnalyticsEnabled } from '../../services/agenticIntelligence';
 import {
     AnalyticsArtifactsResponse,
     AnalyticsCorrelationItem,
-    AnalyticsMetric,
+    AnalyticsOverview,
     Notification,
+    SessionUsageAggregateResponse,
+    SessionUsageCalibrationSummary,
+    SessionUsageDrilldownResponse,
 } from '../../types';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     BarChart3,
     Bell,
@@ -16,6 +21,7 @@ import {
     Layers3,
     Network,
     RefreshCcw,
+    Sparkles,
     Shapes,
     Wrench,
 } from 'lucide-react';
@@ -31,16 +37,26 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
+import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
 
-type AnalyticsTab = 'overview' | 'artifacts' | 'models_tools' | 'features' | 'correlation';
+type AnalyticsTab = 'overview' | 'attribution' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
 const TAB_LABELS: Array<{ id: AnalyticsTab; label: string; icon: any }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'attribution', label: 'Attribution', icon: Sparkles },
+    { id: 'workflow_intelligence', label: 'Workflow Intel', icon: Sparkles },
     { id: 'artifacts', label: 'Artifacts', icon: Shapes },
     { id: 'models_tools', label: 'Models + Tools', icon: Network },
     { id: 'features', label: 'Features', icon: Layers3 },
     { id: 'correlation', label: 'Correlation', icon: Wrench },
 ];
+
+const TAB_IDS = new Set<AnalyticsTab>(TAB_LABELS.map(tab => tab.id));
+
+const isAnalyticsTab = (value: string | null): value is AnalyticsTab => (
+    Boolean(value) && TAB_IDS.has(value as AnalyticsTab)
+);
 
 const PIE_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316'];
 
@@ -86,16 +102,27 @@ const EntityLinkButton: React.FC<{ label: string; onClick: () => void; mono?: bo
 
 export const AnalyticsDashboard: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { getColorForModel, getBadgeStyleForModel } = useModelColors();
-    const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
+    const { activeProject } = useData();
+    const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => {
+        const tabParam = searchParams.get('tab');
+        return isAnalyticsTab(tabParam) ? tabParam : 'overview';
+    });
     const [modelGrouping, setModelGrouping] = useState<'model' | 'family'>('model');
-    const [metrics, setMetrics] = useState<AnalyticsMetric[]>([]);
+    const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [artifacts, setArtifacts] = useState<AnalyticsArtifactsResponse | null>(null);
     const [correlation, setCorrelation] = useState<AnalyticsCorrelationItem[]>([]);
+    const [usageAttribution, setUsageAttribution] = useState<SessionUsageAggregateResponse | null>(null);
+    const [usageCalibration, setUsageCalibration] = useState<SessionUsageCalibrationSummary | null>(null);
+    const [usageDrilldown, setUsageDrilldown] = useState<SessionUsageDrilldownResponse | null>(null);
+    const [selectedUsageEntity, setSelectedUsageEntity] = useState<{ entityType: string; entityId: string } | null>(null);
     const [correlationLinkedOnly, setCorrelationLinkedOnly] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
+    const usageAttributionAvailable = isUsageAttributionEnabled(activeProject);
 
     const openSession = useCallback((sessionId: string) => {
         if (!sessionId) return;
@@ -110,16 +137,36 @@ export const AnalyticsDashboard: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const [metricData, notificationData, artifactData, correlationData] = await Promise.all([
-                analyticsService.getMetrics(),
+            const usagePayloadPromise = usageAttributionAvailable
+                ? analyticsService.getUsageAttribution({ limit: 24 }).then(data => ({ data, error: null as string | null }))
+                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution analytics.' }))
+                : Promise.resolve({ data: null, error: null as string | null });
+            const calibrationPayloadPromise = usageAttributionAvailable
+                ? analyticsService.getUsageAttributionCalibration().then(data => ({ data, error: null as string | null }))
+                    .catch(fetchError => ({ data: null, error: fetchError instanceof Error ? fetchError.message : 'Failed to load usage attribution calibration.' }))
+                : Promise.resolve({ data: null, error: null as string | null });
+
+            const [overviewData, notificationData, artifactData, correlationData, usagePayload, calibrationPayload] = await Promise.all([
+                analyticsService.getOverview(),
                 analyticsService.getNotifications(),
                 analyticsService.getArtifacts({ limit: 200 }),
                 analyticsService.getCorrelation(),
+                usagePayloadPromise,
+                calibrationPayloadPromise,
             ]);
-            setMetrics(metricData);
+            setOverview(overviewData);
             setNotifications(notificationData);
             setArtifacts(artifactData);
             setCorrelation(correlationData.items || []);
+            setUsageAttribution(usagePayload.data);
+            setUsageCalibration(calibrationPayload.data);
+            const firstRow = (usagePayload.data?.rows || [])[0];
+            setSelectedUsageEntity(firstRow?.entityType && firstRow?.entityId
+                ? { entityType: firstRow.entityType, entityId: firstRow.entityId }
+                : null);
+            if (usagePayload.error || calibrationPayload.error) {
+                console.warn('Usage attribution analytics unavailable', usagePayload.error || calibrationPayload.error);
+            }
         } catch (e) {
             console.error('Failed to load analytics dashboard payloads', e);
             setError('Failed to load analytics data.');
@@ -131,6 +178,46 @@ export const AnalyticsDashboard: React.FC = () => {
     useEffect(() => {
         void loadAll();
     }, []);
+
+    useEffect(() => {
+        const tabParam = searchParams.get('tab');
+        if (isAnalyticsTab(tabParam)) {
+            setActiveTab(prev => (prev === tabParam ? prev : tabParam));
+        }
+    }, [searchParams]);
+
+    useEffect(() => {
+        const nextParams = new URLSearchParams(searchParams);
+        if (activeTab === 'overview') {
+            nextParams.delete('tab');
+        } else {
+            nextParams.set('tab', activeTab);
+        }
+        if (nextParams.toString() !== searchParams.toString()) {
+            setSearchParams(nextParams, { replace: true });
+        }
+    }, [activeTab, searchParams, setSearchParams]);
+
+    useEffect(() => {
+        if (!selectedUsageEntity?.entityType || !selectedUsageEntity?.entityId) {
+            setUsageDrilldown(null);
+            return;
+        }
+        let cancelled = false;
+        void analyticsService.getUsageAttributionDrilldown({
+            entityType: selectedUsageEntity.entityType,
+            entityId: selectedUsageEntity.entityId,
+            limit: 30,
+        }).then(payload => {
+            if (!cancelled) setUsageDrilldown(payload);
+        }).catch(fetchError => {
+            console.error('Failed to load attribution drilldown', fetchError);
+            if (!cancelled) setUsageDrilldown(null);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedUsageEntity]);
 
     const handleExport = () => {
         window.open(analyticsService.getPrometheusExportUrl(), '_blank');
@@ -203,6 +290,23 @@ export const AnalyticsDashboard: React.FC = () => {
             totalTokens,
         };
     }, [correlation]);
+    const overviewWorkload = useMemo(
+        () => resolveTokenMetrics({
+            modelIOTokens: overview?.kpis?.modelIOTokens,
+            cacheInputTokens: overview?.kpis?.cacheInputTokens,
+            observedTokens: overview?.kpis?.observedTokens,
+            toolReportedTokens: overview?.kpis?.toolReportedTokens,
+        }),
+        [overview]
+    );
+    const attributionMethodMix = useMemo(
+        () => (usageCalibration?.methodMix || []).slice(0, 6),
+        [usageCalibration]
+    );
+    const attributionRows = useMemo(
+        () => (usageAttribution?.rows || []).slice(0, 12),
+        [usageAttribution]
+    );
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -257,21 +361,42 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'overview' && (
                 <div className="space-y-6">
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                        {metrics.map((m) => (
-                            <div key={m.name} className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                                <p className="text-slate-500 text-xs font-medium uppercase">{m.name}</p>
-                                <div className="mt-2 flex items-baseline gap-1">
-                                    <span className="text-2xl font-bold text-slate-100">{m.value}</span>
-                                    <span className="text-sm text-slate-500">{m.unit}</span>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        <MetricCard
+                            label="Observed Workload"
+                            value={formatTokenCount(overviewWorkload.workloadTokens)}
+                            subtitle={`${formatTokenCount(overviewWorkload.cacheInputTokens)} cache input`}
+                        />
+                        <MetricCard
+                            label="Model IO"
+                            value={formatTokenCount(overviewWorkload.modelIOTokens)}
+                            subtitle={`${formatTokenCount(overviewWorkload.tokenOutput)} output tokens`}
+                        />
+                        <MetricCard
+                            label="Estimated Cost"
+                            value={formatCurrency(Number(overview?.kpis?.sessionCost || 0))}
+                            subtitle="Model-IO-derived in V1"
+                        />
+                        <MetricCard
+                            label="Sessions"
+                            value={formatNumber(Number(overview?.kpis?.sessionCount || 0))}
+                            subtitle={`${Number(overview?.kpis?.sessionDurationAvg || 0).toFixed(1)}s avg duration`}
+                        />
+                        <MetricCard
+                            label="Task Velocity"
+                            value={formatNumber(Number(overview?.kpis?.taskVelocity || 0))}
+                            subtitle={`${Number(overview?.kpis?.taskCompletionPct || 0).toFixed(1)}% completion`}
+                        />
+                        <MetricCard
+                            label="Tool Reliability"
+                            value={`${Number(overview?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
+                            subtitle={`${formatNumber(Number(overview?.kpis?.toolCallCount || 0))} calls tracked`}
+                        />
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <TrendChart metric="session_cost" title="Session Cost" color="#ef4444" valueFormatter={(v) => `$${v.toFixed(2)}`} />
-                        <TrendChart metric="session_tokens" title="Tokens Used" color="#3b82f6" valueFormatter={(v) => v.toLocaleString()} />
+                        <TrendChart metric="session_tokens" title="Observed Workload" color="#3b82f6" valueFormatter={(v) => v.toLocaleString()} />
                         <TrendChart metric="session_count" title="Sessions" color="#10b981" />
                         <TrendChart
                             metric="task_completion_pct"
@@ -279,6 +404,50 @@ export const AnalyticsDashboard: React.FC = () => {
                             color="#f59e0b"
                             valueFormatter={(v) => `${v.toFixed(1)}%`}
                         />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-slate-200">Cache Efficiency</h3>
+                            <p className="mt-1 text-sm text-slate-500">
+                                Observed workload defaults to message-derived tokens. Tool-reported totals remain fallback-only and are not additive.
+                            </p>
+                            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Share</div>
+                                    <div className="mt-2 text-2xl font-semibold text-cyan-300">{formatPercent(overviewWorkload.cacheShare)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">of observed workload</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Input</div>
+                                    <div className="mt-2 text-2xl font-semibold text-emerald-300">{formatTokenCount(overviewWorkload.cacheInputTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">cache creation + cache read</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Tool Fallback</div>
+                                    <div className="mt-2 text-2xl font-semibold text-amber-300">{formatTokenCount(overviewWorkload.toolReportedTokens)}</div>
+                                    <div className="mt-1 text-xs text-slate-500">visible for diagnostics only</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-slate-200">Token Semantics</h3>
+                            <div className="mt-4 space-y-3 text-sm text-slate-300">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Observed Workload</div>
+                                    <div className="mt-1">Model IO plus cache input when available.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Model IO</div>
+                                    <div className="mt-1">Legacy `tokensIn` + `tokensOut`, preserved for cost and compatibility.</div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Relay Policy</div>
+                                    <div className="mt-1">Relay-wrapped `data.message.message.*` records stay excluded until attribution is implemented.</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -300,6 +469,196 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {!loading && !error && activeTab === 'attribution' && (
+                usageAttributionAvailable && usageAttribution && usageCalibration ? (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <MetricCard
+                            label="Primary Coverage"
+                            value={formatPercent(Number(usageCalibration?.primaryCoverage || 0))}
+                            subtitle={`${formatNumber(Number(usageCalibration?.primaryAttributedEventCount || 0))} primary-attributed events`}
+                        />
+                        <MetricCard
+                            label="Exclusive Model IO"
+                            value={formatTokenCount(Number(usageCalibration?.exclusiveModelIOTokens || 0))}
+                            subtitle={`${formatTokenCount(Number(usageCalibration?.sessionModelIOTokens || 0))} session model IO`}
+                        />
+                        <MetricCard
+                            label="Model IO Gap"
+                            value={formatTokenCount(Math.abs(Number(usageCalibration?.modelIOGap || 0)))}
+                            subtitle={Number(usageCalibration?.modelIOGap || 0) === 0 ? 'fully reconciled' : 'needs tuning'}
+                        />
+                        <MetricCard
+                            label="Avg Confidence"
+                            value={Number(usageCalibration?.averageConfidence || 0).toFixed(2)}
+                            subtitle={`${formatNumber(Number(usageCalibration?.ambiguousEventCount || 0))} ambiguous events`}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 className="text-slate-200 font-semibold">Top Attribution Targets</h3>
+                                    <p className="mt-1 text-sm text-slate-500">Exclusive totals reconcile workload. Supporting totals show participation across overlaps.</p>
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    {formatNumber(Number(usageAttribution?.summary?.entityCount || 0))} entities
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-slate-400 border-b border-slate-800">
+                                            <th className="text-left py-2 pr-3">Entity</th>
+                                            <th className="text-right py-2 pr-3">Exclusive</th>
+                                            <th className="text-right py-2 pr-3">Supporting</th>
+                                            <th className="text-right py-2 pr-3">Cache Share</th>
+                                            <th className="text-right py-2 pr-3">Cost</th>
+                                            <th className="text-right py-2">Confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {attributionRows.map((row, idx) => {
+                                            const isSelected = selectedUsageEntity?.entityType === row.entityType && selectedUsageEntity?.entityId === row.entityId;
+                                            const cacheShare = Number(row.exclusiveTokens || 0) > 0
+                                                ? Number(row.exclusiveCacheInputTokens || 0) / Number(row.exclusiveTokens || 1)
+                                                : 0;
+                                            return (
+                                                <tr
+                                                    key={`${row.entityType}-${row.entityId}-${idx}`}
+                                                    className={`border-b border-slate-900/80 text-slate-300 ${isSelected ? 'bg-indigo-500/5' : ''}`}
+                                                >
+                                                    <td className="py-2 pr-3">
+                                                        <button
+                                                            onClick={() => setSelectedUsageEntity({ entityType: row.entityType, entityId: row.entityId })}
+                                                            className="text-left"
+                                                        >
+                                                            <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
+                                                            <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                                        </button>
+                                                    </td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.exclusiveTokens || 0))}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.supportingTokens || 0))}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatPercent(cacheShare)}</td>
+                                                    <td className="py-2 pr-3 text-right font-mono">{formatCurrency(Number(row.exclusiveCostUsdModelIO || 0))}</td>
+                                                    <td className="py-2 text-right font-mono">{Number(row.averageConfidence || 0).toFixed(2)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <h3 className="text-slate-200 font-semibold">Calibration Summary</h3>
+                            <div className="mt-4 space-y-3 text-sm">
+                                {(usageCalibration?.confidenceBands || []).map((band, idx) => (
+                                    <div key={`${String(band.band)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                        <span className="text-slate-300 capitalize">{String(band.band || 'unknown')} confidence</span>
+                                        <span className="font-mono text-slate-100">{formatNumber(Number(band.count || 0))}</span>
+                                    </div>
+                                ))}
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-slate-300">Unattributed events</span>
+                                    <span className="font-mono text-slate-100">{formatNumber(Number(usageCalibration?.unattributedEventCount || 0))}</span>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-slate-300">Cache reconciliation gap</span>
+                                    <span className="font-mono text-slate-100">{formatTokenCount(Math.abs(Number(usageCalibration?.cacheGap || 0)))}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <h3 className="text-slate-200 font-semibold mb-4">Method Mix</h3>
+                            <div className="space-y-3">
+                                {attributionMethodMix.map((row, idx) => (
+                                    <div key={`${String(row.method)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span className="text-slate-200 text-sm">{String(row.method || 'unknown')}</span>
+                                            <span className="font-mono text-slate-100">{formatNumber(Number(row.tokens || 0))}</span>
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {formatNumber(Number(row.eventCount || 0))} events, avg confidence {Number(row.averageConfidence || 0).toFixed(2)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 className="text-slate-200 font-semibold">Entity Drill-down</h3>
+                                    <p className="mt-1 text-sm text-slate-500">
+                                        {selectedUsageEntity ? `${selectedUsageEntity.entityType}: ${selectedUsageEntity.entityId}` : 'Select an entity to inspect contributing events.'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-slate-400 border-b border-slate-800">
+                                            <th className="text-left py-2 pr-3">Captured</th>
+                                            <th className="text-left py-2 pr-3">Session</th>
+                                            <th className="text-left py-2 pr-3">Method</th>
+                                            <th className="text-right py-2 pr-3">Tokens</th>
+                                            <th className="text-right py-2 pr-3">Role</th>
+                                            <th className="text-right py-2">Confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(usageDrilldown?.items || []).map((row, idx) => (
+                                            <tr key={`${row.eventId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                                <td className="py-2 pr-3 text-xs text-slate-400">{new Date(row.capturedAt).toLocaleString()}</td>
+                                                <td className="py-2 pr-3">
+                                                    <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
+                                                </td>
+                                                <td className="py-2 pr-3 text-xs">{row.method}</td>
+                                                <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.deltaTokens || 0))}</td>
+                                                <td className="py-2 pr-3 text-right text-xs uppercase tracking-wide">{row.attributionRole}</td>
+                                                <td className="py-2 text-right font-mono">{Number(row.confidence || 0).toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                ) : (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                        <p className="font-semibold">{usageAttributionAvailable ? 'Usage Attribution Unavailable' : 'Usage Attribution Disabled'}</p>
+                        <p className="mt-1 text-amber-100/80">
+                            {usageAttributionAvailable
+                                ? 'The attribution endpoints are currently unavailable. Check the global rollout gate or backend status.'
+                                : 'Enable Usage Attribution in Project Settings to show attribution rollups, calibration, and drill-down views.'}
+                        </p>
+                    </div>
+                )
+            )}
+
+            {!loading && !error && activeTab === 'workflow_intelligence' && (
+                workflowAnalyticsAvailable ? (
+                    <WorkflowEffectivenessSurface
+                        title="Workflow Effectiveness"
+                        description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
+                        onOpenSession={(sessionId) => openSession(sessionId)}
+                    />
+                ) : (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                        <p className="font-semibold">Workflow Intelligence Disabled</p>
+                        <p className="mt-1 text-amber-100/80">
+                            Project settings have disabled workflow effectiveness analytics for this surface.
+                        </p>
+                    </div>
+                )
             )}
 
             {!loading && !error && activeTab === 'artifacts' && (
@@ -390,7 +749,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-right py-2 pr-3">Count</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -419,7 +778,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Session</th>
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2 pr-3">Cost</th>
                                         <th className="text-left py-2">Feature(s)</th>
                                     </tr>
@@ -521,7 +880,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Family</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -558,7 +917,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-left py-2 pr-3">Tool</th>
                                         <th className="text-right py-2 pr-3">Count</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -706,7 +1065,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">IO Tokens</th>
                                         <th className="text-right py-2">Cost</th>
                                     </tr>
                                 </thead>
@@ -738,7 +1097,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <MetricCard label="Linked Rows" value={formatNumber(correlationSummary.linkedRows)} subtitle="feature-attached rows" />
                         <MetricCard label="High Confidence" value={formatNumber(correlationSummary.highConfidenceRows)} subtitle="confidence >= 0.75" />
                         <MetricCard label="Avg Confidence" value={correlationSummary.avgConfidence.toFixed(2)} subtitle="linked rows only" />
-                        <MetricCard label="Session Tokens" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
+                        <MetricCard label="Observed Workload" value={formatNumber(correlationSummary.totalTokens)} subtitle={`${formatNumber(correlationSummary.subagentRows)} sub-thread rows`} />
                     </div>
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -767,7 +1126,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Confidence</th>
                                         <th className="text-right py-2 pr-3">Linked Features</th>
-                                        <th className="text-right py-2 pr-3">Tokens</th>
+                                        <th className="text-right py-2 pr-3">Observed Tokens</th>
                                         <th className="text-right py-2 pr-3">Cost</th>
                                         <th className="text-right py-2 pr-3">Duration</th>
                                         <th className="text-left py-2 pr-3">Model</th>

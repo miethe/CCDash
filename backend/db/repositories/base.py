@@ -150,6 +150,82 @@ class AnalyticsRepository(Protocol):
     async def get_metric_types(self) -> list[dict]: ...
 
 
+@runtime_checkable
+class SessionUsageRepository(Protocol):
+    async def replace_session_usage(
+        self,
+        project_id: str,
+        session_id: str,
+        events: list[dict[str, Any]],
+        attributions: list[dict[str, Any]],
+    ) -> None: ...
+    async def get_session_usage_events(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def get_session_usage_attributions(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def count_usage_events(self, project_id: str) -> int: ...
+
+
+@runtime_checkable
+class AgenticIntelligenceRepository(Protocol):
+    async def upsert_definition_source(self, source_data: dict, project_id: str | None = None) -> dict: ...
+    async def get_definition_source(self, project_id: str, source_kind: str = "skillmeat") -> dict | None: ...
+    async def update_definition_source_status(
+        self,
+        project_id: str,
+        source_kind: str,
+        *,
+        last_synced_at: str = "",
+        last_sync_status: str = "",
+        last_sync_error: str = "",
+    ) -> dict | None: ...
+    async def upsert_external_definition(self, definition_data: dict, project_id: str | None = None) -> dict: ...
+    async def list_external_definitions(
+        self,
+        project_id: str,
+        *,
+        definition_type: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict]: ...
+    async def get_external_definition(self, project_id: str, definition_type: str, external_id: str) -> dict | None: ...
+    async def upsert_stack_observation(
+        self,
+        observation_data: dict,
+        components: list[dict] | None = None,
+        project_id: str | None = None,
+    ) -> dict: ...
+    async def get_stack_observation(self, project_id: str, session_id: str) -> dict | None: ...
+    async def list_stack_observations(
+        self,
+        project_id: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+        feature_id: str | None = None,
+    ) -> list[dict]: ...
+    async def list_stack_components(self, observation_id: int) -> list[dict]: ...
+    async def upsert_effectiveness_rollup(
+        self,
+        rollup_data: dict,
+        project_id: str | None = None,
+    ) -> dict: ...
+    async def list_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        period: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]: ...
+    async def purge_effectiveness_rollups(
+        self,
+        project_id: str,
+        *,
+        period: str | None = None,
+    ) -> None: ...
+
+
 # ── Test Visualizer Repositories ───────────────────────────────────
 
 @runtime_checkable

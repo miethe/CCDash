@@ -1,0 +1,313 @@
+{
+  "_comment": "Example payloads for CCDash integration. Based on real SkillMeat API response shapes.",
+
+  "artifact_detail": {
+    "_endpoint": "GET /api/v1/artifacts/skill:pdf",
+    "id": "skill:pdf",
+    "uuid": "a1b2c3d4e5f6789012345678abcdef01",
+    "name": "pdf",
+    "type": "skill",
+    "source": "anthropics/skills/document-skills/pdf",
+    "origin": "github",
+    "origin_source": null,
+    "version": "latest",
+    "aliases": ["document-pdf"],
+    "tags": ["document", "pdf", "conversion"],
+    "target_platforms": null,
+    "metadata": {
+      "title": "PDF Document Skill",
+      "description": "Convert documents to and from PDF format with OCR support",
+      "author": "anthropic",
+      "license": "MIT",
+      "version": "2.1.0",
+      "dependencies": [],
+      "tools": ["Read", "Write", "Bash"],
+      "linked_artifacts": [
+        {"name": "document-converter", "type": "skill"}
+      ],
+      "unlinked_references": ["pandoc"]
+    },
+    "upstream": {
+      "tracking_enabled": true,
+      "current_sha": "abc123def456789012345678abcdef0123456789",
+      "upstream_sha": "abc123def456789012345678abcdef0123456789",
+      "update_available": false,
+      "has_local_modifications": false,
+      "drift_status": "synced"
+    },
+    "deployment_stats": {
+      "total_deployments": 3,
+      "active_deployments": 2
+    },
+    "deployments": [
+      {
+        "project_id": "/Users/miethe/dev/homelab/development/skillmeat",
+        "deployed_at": "2026-02-15T10:30:00Z",
+        "scope": "local"
+      }
+    ],
+    "collections": [
+      {
+        "collection_id": "default",
+        "collection_name": "Default Collection",
+        "added_at": "2026-01-10T08:00:00Z"
+      }
+    ],
+    "added": "2026-01-10T08:00:00Z",
+    "updated": "2026-03-01T14:20:00Z",
+    "import_id": null,
+    "owner_id": null,
+    "owner_type": "user",
+    "visibility": "private"
+  },
+
+  "workflow_detail": {
+    "_endpoint": "GET /api/v1/workflows/{workflow_id}",
+    "id": "f47ac10b58cc4372a5670e02b2c3d479",
+    "name": "Feature Implementation Pipeline",
+    "description": "Standard feature implementation workflow with planning, coding, review, and testing stages",
+    "version": "1.2.0",
+    "status": "active",
+    "definition": "name: Feature Implementation Pipeline\nversion: 1.2.0\nstages:\n  - id: planning\n    type: agent\n    agent: agent:lead-architect\n    description: Analyze requirements and create implementation plan\n  - id: implementation\n    type: fan_out\n    depends_on: [planning]\n    stages:\n      - id: backend\n        type: agent\n        agent: agent:python-backend-engineer\n      - id: frontend\n        type: agent\n        agent: agent:ui-engineer-enhanced\n  - id: review\n    type: agent\n    agent: agent:senior-code-reviewer\n    depends_on: [implementation]\n  - id: approval\n    type: gate\n    depends_on: [review]\n    description: Manual approval before merge\n",
+    "tags": ["feature", "implementation", "standard"],
+    "stages": [
+      {
+        "id": "stage_001",
+        "stage_id_ref": "planning",
+        "name": "Planning",
+        "description": "Analyze requirements and create implementation plan",
+        "order_index": 0,
+        "stage_type": "agent",
+        "condition": null,
+        "depends_on": []
+      },
+      {
+        "id": "stage_002",
+        "stage_id_ref": "implementation",
+        "name": "Implementation",
+        "description": null,
+        "order_index": 1,
+        "stage_type": "fan_out",
+        "condition": null,
+        "depends_on": ["planning"]
+      },
+      {
+        "id": "stage_003",
+        "stage_id_ref": "review",
+        "name": "Review",
+        "description": null,
+        "order_index": 2,
+        "stage_type": "agent",
+        "condition": null,
+        "depends_on": ["implementation"]
+      },
+      {
+        "id": "stage_004",
+        "stage_id_ref": "approval",
+        "name": "Approval",
+        "description": "Manual approval before merge",
+        "order_index": 3,
+        "stage_type": "gate",
+        "condition": null,
+        "depends_on": ["review"]
+      }
+    ],
+    "project_id": null,
+    "created_at": "2026-02-01T09:00:00Z",
+    "updated_at": "2026-03-05T16:45:00Z"
+  },
+
+  "workflow_plan": {
+    "_endpoint": "POST /api/v1/workflows/{workflow_id}/plan",
+    "_note": "Plan output structure - actual shape depends on SWDL engine implementation",
+    "workflow_id": "f47ac10b58cc4372a5670e02b2c3d479",
+    "workflow_name": "Feature Implementation Pipeline",
+    "is_valid": true,
+    "validation_errors": [],
+    "execution_order": [
+      {
+        "batch_index": 0,
+        "stages": [
+          {
+            "stage_id": "planning",
+            "stage_type": "agent",
+            "depends_on": []
+          }
+        ]
+      },
+      {
+        "batch_index": 1,
+        "stages": [
+          {
+            "stage_id": "backend",
+            "stage_type": "agent",
+            "depends_on": ["planning"]
+          },
+          {
+            "stage_id": "frontend",
+            "stage_type": "agent",
+            "depends_on": ["planning"]
+          }
+        ]
+      },
+      {
+        "batch_index": 2,
+        "stages": [
+          {
+            "stage_id": "review",
+            "stage_type": "agent",
+            "depends_on": ["implementation"]
+          }
+        ]
+      },
+      {
+        "batch_index": 3,
+        "stages": [
+          {
+            "stage_id": "approval",
+            "stage_type": "gate",
+            "depends_on": ["review"]
+          }
+        ]
+      }
+    ],
+    "estimated_stages": 5,
+    "estimated_batches": 4,
+    "has_gates": true
+  },
+
+  "context_module_detail": {
+    "_endpoint": "GET /api/v1/context-modules/{module_id}",
+    "id": "cm_abc123def456",
+    "project_id": "L1VzZXJzL21pZXRoZS9kZXYvaG9tZWxhYi9kZXZlbG9wbWVudC9za2lsbG1lYXQ=",
+    "name": "API Development Context",
+    "description": "Context module for API development tasks - includes patterns, gotchas, and decisions about FastAPI routers and schemas",
+    "selectors": {
+      "memory_types": ["decision", "gotcha", "learning"],
+      "min_confidence": 0.7,
+      "file_patterns": ["skillmeat/api/**/*.py"],
+      "workflow_stages": ["implementation", "review"]
+    },
+    "priority": 8,
+    "content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "created_at": "2026-02-20T11:00:00Z",
+    "updated_at": "2026-03-06T09:30:00Z",
+    "memory_items": null
+  },
+
+  "context_pack_preview": {
+    "_endpoint": "POST /api/v1/context-packs/preview",
+    "_request": {
+      "module_id": "cm_abc123def456",
+      "budget_tokens": 4000,
+      "filters": null
+    },
+    "items": [
+      {
+        "id": "mi_001",
+        "type": "decision",
+        "content": "SQLAlchemy 2.x select() style for enterprise repos; 1.x session.query() for local — intentional divergence",
+        "confidence": 0.92,
+        "anchors": ["skillmeat/cache/repositories.py:code"],
+        "estimated_tokens": 45
+      },
+      {
+        "id": "mi_002",
+        "type": "gotcha",
+        "content": "SQLAlchemy comparator cache poisoning: patching column.type for SQLite compat doesn't propagate to comparator.__dict__['type']",
+        "confidence": 0.88,
+        "anchors": ["skillmeat/cache/tests/CLAUDE.md:doc"],
+        "estimated_tokens": 52
+      }
+    ],
+    "total_items": 2,
+    "total_estimated_tokens": 97,
+    "budget_tokens": 4000,
+    "budget_remaining": 3903
+  },
+
+  "execution_detail": {
+    "_endpoint": "GET /api/v1/workflow-executions/{execution_id}",
+    "id": "exec_789abc012def",
+    "workflow_id": "f47ac10b58cc4372a5670e02b2c3d479",
+    "status": "completed",
+    "parameters": {
+      "feature_name": "Add user avatars",
+      "target_branch": "feat/user-avatars"
+    },
+    "started_at": "2026-03-07T14:00:00Z",
+    "completed_at": "2026-03-07T15:23:00Z",
+    "error_message": null,
+    "steps": [
+      {
+        "id": "step_001",
+        "stage_id": "planning",
+        "stage_name": "Planning",
+        "stage_type": "agent",
+        "batch_index": 0,
+        "status": "completed",
+        "started_at": "2026-03-07T14:00:00Z",
+        "completed_at": "2026-03-07T14:12:00Z",
+        "error_message": null
+      },
+      {
+        "id": "step_002",
+        "stage_id": "backend",
+        "stage_name": "Backend Implementation",
+        "stage_type": "agent",
+        "batch_index": 1,
+        "status": "completed",
+        "started_at": "2026-03-07T14:12:00Z",
+        "completed_at": "2026-03-07T14:45:00Z",
+        "error_message": null
+      },
+      {
+        "id": "step_003",
+        "stage_id": "frontend",
+        "stage_name": "Frontend Implementation",
+        "stage_type": "agent",
+        "batch_index": 1,
+        "status": "completed",
+        "started_at": "2026-03-07T14:12:00Z",
+        "completed_at": "2026-03-07T14:50:00Z",
+        "error_message": null
+      },
+      {
+        "id": "step_004",
+        "stage_id": "review",
+        "stage_name": "Code Review",
+        "stage_type": "agent",
+        "batch_index": 2,
+        "status": "completed",
+        "started_at": "2026-03-07T14:50:00Z",
+        "completed_at": "2026-03-07T15:10:00Z",
+        "error_message": null
+      },
+      {
+        "id": "step_005",
+        "stage_id": "approval",
+        "stage_name": "Approval Gate",
+        "stage_type": "gate",
+        "batch_index": 3,
+        "status": "completed",
+        "started_at": "2026-03-07T15:10:00Z",
+        "completed_at": "2026-03-07T15:23:00Z",
+        "error_message": null
+      }
+    ]
+  },
+
+  "error_response_example": {
+    "_comment": "Standard error envelope shape",
+    "error": "NotFound",
+    "message": "Artifact 'skill:nonexistent' not found in collection",
+    "details": [
+      {
+        "code": "NOT_FOUND",
+        "message": "No artifact matches the identifier 'skill:nonexistent'",
+        "field": "artifact_id"
+      }
+    ],
+    "request_id": "req_abc123"
+  }
+}

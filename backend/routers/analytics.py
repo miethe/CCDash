@@ -11,7 +11,16 @@ import aiosqlite
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
-from backend.models import AnalyticsMetric, AlertConfig, Notification
+from backend.models import (
+    AlertConfig,
+    AnalyticsMetric,
+    FailurePatternResponse,
+    SessionUsageAggregateResponse,
+    SessionUsageCalibrationSummary,
+    SessionUsageDrilldownResponse,
+    Notification,
+    WorkflowEffectivenessResponse,
+)
 from backend.model_identity import canonical_model_name, model_family_name
 from backend.project_manager import project_manager
 from backend.db import connection
@@ -23,6 +32,14 @@ from backend.db.factory import (
     get_session_repository,
     get_task_repository,
 )
+from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
+from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
+from backend.services.session_usage_analytics import (
+    get_usage_attribution_calibration,
+    get_usage_attribution_drilldown,
+    get_usage_attribution_rollup,
+)
+from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -101,6 +118,44 @@ def _coerce_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _session_usage_metrics(row: dict[str, Any]) -> dict[str, float | int]:
+    token_input = _coerce_int(row.get("tokens_in") or row.get("tokensIn"))
+    token_output = _coerce_int(row.get("tokens_out") or row.get("tokensOut"))
+    model_io_tokens = _coerce_int(row.get("model_io_tokens") or row.get("modelIOTokens"))
+    if model_io_tokens <= 0:
+        model_io_tokens = token_input + token_output
+    cache_creation_input_tokens = _coerce_int(
+        row.get("cache_creation_input_tokens") or row.get("cacheCreationInputTokens")
+    )
+    cache_read_input_tokens = _coerce_int(
+        row.get("cache_read_input_tokens") or row.get("cacheReadInputTokens")
+    )
+    cache_input_tokens = _coerce_int(row.get("cache_input_tokens") or row.get("cacheInputTokens"))
+    if cache_input_tokens <= 0:
+        cache_input_tokens = cache_creation_input_tokens + cache_read_input_tokens
+    observed_tokens = _coerce_int(row.get("observed_tokens") or row.get("observedTokens"))
+    if observed_tokens <= 0:
+        observed_tokens = model_io_tokens + cache_input_tokens
+    if observed_tokens <= 0:
+        observed_tokens = token_input + token_output
+    tool_reported_tokens = _coerce_int(row.get("tool_reported_tokens") or row.get("toolReportedTokens"))
+    cache_share = round(cache_input_tokens / observed_tokens, 4) if observed_tokens > 0 else 0.0
+    output_share = round(token_output / model_io_tokens, 4) if model_io_tokens > 0 else 0.0
+    return {
+        "tokenInput": token_input,
+        "tokenOutput": token_output,
+        "modelIOTokens": model_io_tokens,
+        "cacheCreationInputTokens": cache_creation_input_tokens,
+        "cacheReadInputTokens": cache_read_input_tokens,
+        "cacheInputTokens": cache_input_tokens,
+        "observedTokens": observed_tokens,
+        "toolReportedTokens": tool_reported_tokens,
+        "cacheShare": cache_share,
+        "outputShare": output_share,
+        "totalTokens": observed_tokens,
+    }
 
 
 def _normalize_artifact_type(value: Any) -> str:
@@ -1328,16 +1383,18 @@ async def get_metrics():
 
     db = await connection.get_connection()
     repo = get_analytics_repository(db)
+    session_repo = get_session_repository(db)
 
     types = [
         "session_cost", "session_tokens", "session_count",
         "task_velocity", "task_completion_pct",
     ]
     latest = await repo.get_latest_entries(project.id, types)
+    session_stats = await session_repo.get_project_stats(project.id)
     return [
-        AnalyticsMetric(name="Total Cost", value=round(latest.get("session_cost", 0.0), 4), unit="$"),
-        AnalyticsMetric(name="Total Tokens", value=int(latest.get("session_tokens", 0)), unit="tokens"),
-        AnalyticsMetric(name="Sessions", value=int(latest.get("session_count", 0)), unit="count"),
+        AnalyticsMetric(name="Total Cost", value=round(session_stats.get("cost", latest.get("session_cost", 0.0)), 4), unit="$"),
+        AnalyticsMetric(name="Total Tokens", value=int(session_stats.get("tokens", latest.get("session_tokens", 0))), unit="tokens"),
+        AnalyticsMetric(name="Sessions", value=int(session_stats.get("count", latest.get("session_count", 0))), unit="count"),
         AnalyticsMetric(name="Tasks Done", value=int(latest.get("task_velocity", 0)), unit="count"),
         AnalyticsMetric(name="Completion", value=round(latest.get("task_completion_pct", 0.0), 1), unit="%"),
     ]
@@ -1372,6 +1429,7 @@ async def get_overview(
         ],
     )
     task_stats = await task_repo.get_project_stats(project.id)
+    session_stats = await session_repo.get_project_stats(project.id)
     session_filters: dict[str, Any] = {"include_subagents": True}
     if start:
         session_filters["start_date"] = start
@@ -1391,10 +1449,14 @@ async def get_overview(
 
     return {
         "kpis": {
-            "sessionCost": float(latest.get("session_cost", 0.0)),
-            "sessionTokens": int(latest.get("session_tokens", 0)),
-            "sessionCount": int(latest.get("session_count", 0)),
-            "sessionDurationAvg": float(latest.get("session_duration", 0.0)),
+            "sessionCost": float(session_stats.get("cost", latest.get("session_cost", 0.0))),
+            "sessionTokens": int(session_stats.get("tokens", latest.get("session_tokens", 0))),
+            "sessionCount": int(session_stats.get("count", latest.get("session_count", 0))),
+            "sessionDurationAvg": float(session_stats.get("duration", latest.get("session_duration", 0.0))),
+            "modelIOTokens": sum(_session_usage_metrics(row)["modelIOTokens"] for row in recent_sessions),
+            "cacheInputTokens": sum(_session_usage_metrics(row)["cacheInputTokens"] for row in recent_sessions),
+            "observedTokens": sum(_session_usage_metrics(row)["observedTokens"] for row in recent_sessions),
+            "toolReportedTokens": sum(_session_usage_metrics(row)["toolReportedTokens"] for row in recent_sessions),
             "taskVelocity": int(latest.get("task_velocity", task_stats.get("completed", 0))),
             "taskCompletionPct": float(latest.get("task_completion_pct", task_stats.get("completion_pct", 0.0))),
             "featureProgress": float(latest.get("feature_progress", 0.0)),
@@ -1434,7 +1496,9 @@ async def get_series(
             metadata = _safe_json(log.get("metadata_json"))
             in_tokens = int(metadata.get("inputTokens") or 0)
             out_tokens = int(metadata.get("outputTokens") or 0)
-            delta = max(0, in_tokens + out_tokens)
+            cache_creation_tokens = int(metadata.get("cacheCreationInputTokens") or 0)
+            cache_read_tokens = int(metadata.get("cacheReadInputTokens") or 0)
+            delta = max(0, in_tokens + out_tokens + cache_creation_tokens + cache_read_tokens)
             if delta == 0:
                 continue
             cumulative += delta
@@ -1445,10 +1509,94 @@ async def get_series(
                     "stepTokens": delta,
                     "inputTokens": in_tokens,
                     "outputTokens": out_tokens,
+                    "cacheInputTokens": cache_creation_tokens + cache_read_tokens,
+                    "observedTokens": delta,
                     "agent": log.get("agent_name") or "",
                 },
             })
         return {"items": points[offset:offset + limit], "total": len(points), "offset": offset, "limit": limit}
+
+    if metric == "session_tokens":
+        filters: dict[str, Any] = {"include_subagents": True}
+        if start:
+            filters["start_date"] = start
+        if end:
+            filters["end_date"] = end
+        sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
+        if period == "point" and not group_by:
+            items: list[dict[str, Any]] = []
+            for row in sessions:
+                ts = str(row.get("started_at") or "")
+                if not ts:
+                    continue
+                usage = _session_usage_metrics(row)
+                items.append(
+                    {
+                        "captured_at": ts,
+                        "value": usage["observedTokens"],
+                        "metadata": {
+                            "sessionId": str(row.get("id") or ""),
+                            "modelIOTokens": usage["modelIOTokens"],
+                            "cacheInputTokens": usage["cacheInputTokens"],
+                            "observedTokens": usage["observedTokens"],
+                            "toolReportedTokens": usage["toolReportedTokens"],
+                        },
+                    }
+                )
+            items.sort(key=lambda row: str(row.get("captured_at") or ""))
+            total = len(items)
+            return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
+
+        aggregates: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in sessions:
+            ts = _parse_iso(str(row.get("started_at") or ""))
+            if not ts:
+                continue
+            bucket = _bucket_ts(ts, period)
+            if group_by == "model":
+                group_value = canonical_model_name(str(row.get("model") or "").strip()) or "unknown"
+            elif group_by == "model_family":
+                group_value = model_family_name(str(row.get("model") or "").strip()) or "Unknown"
+            elif group_by == "session_type":
+                group_value = str(row.get("session_type") or "session")
+            else:
+                group_value = "all"
+            key = (bucket, group_value)
+            current = aggregates.setdefault(
+                key,
+                {
+                    "captured_at": bucket,
+                    "group": group_value,
+                    "observedTokens": 0,
+                    "modelIOTokens": 0,
+                    "cacheInputTokens": 0,
+                    "toolReportedTokens": 0,
+                },
+            )
+            usage = _session_usage_metrics(row)
+            current["observedTokens"] += usage["observedTokens"]
+            current["modelIOTokens"] += usage["modelIOTokens"]
+            current["cacheInputTokens"] += usage["cacheInputTokens"]
+            current["toolReportedTokens"] += usage["toolReportedTokens"]
+
+        items = []
+        for row in aggregates.values():
+            payload = {
+                "captured_at": row["captured_at"],
+                "value": row["observedTokens"],
+                "metadata": {
+                    "modelIOTokens": row["modelIOTokens"],
+                    "cacheInputTokens": row["cacheInputTokens"],
+                    "observedTokens": row["observedTokens"],
+                    "toolReportedTokens": row["toolReportedTokens"],
+                },
+            }
+            if group_by:
+                payload["metadata"][group_by] = row["group"]
+            items.append(payload)
+        items.sort(key=lambda row: str(row.get("captured_at") or ""))
+        total = len(items)
+        return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
 
     raw_points = await analytics_repo.get_trends(project.id, metric, period="point", start=start, end=end)
     if period == "point" and not group_by:
@@ -1518,7 +1666,38 @@ async def get_breakdown(
         filters["end_date"] = end
     sessions = await session_repo.list_paginated(0, 2000, project.id, "started_at", "desc", filters)
 
-    counts: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "tokens": 0, "cost": 0.0})
+    counts: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "count": 0,
+            "tokens": 0,
+            "tokenInput": 0,
+            "tokenOutput": 0,
+            "modelIOTokens": 0,
+            "cacheInputTokens": 0,
+            "observedTokens": 0,
+            "toolReportedTokens": 0,
+            "totalTokens": 0,
+            "cost": 0.0,
+        }
+    )
+    counted_usage_pairs: set[tuple[str, str]] = set()
+
+    def add_usage(key: str, row: dict[str, Any]) -> None:
+        session_id = str(row.get("id") or "")
+        if not key or not session_id or (key, session_id) in counted_usage_pairs:
+            return
+        counted_usage_pairs.add((key, session_id))
+        usage = _session_usage_metrics(row)
+        counts[key]["tokens"] += int(usage["observedTokens"])
+        counts[key]["tokenInput"] += int(usage["tokenInput"])
+        counts[key]["tokenOutput"] += int(usage["tokenOutput"])
+        counts[key]["modelIOTokens"] += int(usage["modelIOTokens"])
+        counts[key]["cacheInputTokens"] += int(usage["cacheInputTokens"])
+        counts[key]["observedTokens"] += int(usage["observedTokens"])
+        counts[key]["toolReportedTokens"] += int(usage["toolReportedTokens"])
+        counts[key]["totalTokens"] += int(usage["totalTokens"])
+        counts[key]["cost"] += float(row.get("total_cost") or 0.0)
+
     if dimension in {"model", "model_family", "session_type"}:
         for row in sessions:
             if dimension == "model":
@@ -1528,14 +1707,14 @@ async def get_breakdown(
             else:
                 key = model_family_name(str(row.get("model") or "").strip()) or "Unknown"
             counts[key]["count"] += 1
-            counts[key]["tokens"] += int(row.get("tokens_in") or 0) + int(row.get("tokens_out") or 0)
-            counts[key]["cost"] += float(row.get("total_cost") or 0.0)
+            add_usage(key, row)
     elif dimension == "tool":
         for row in sessions:
             tools = await session_repo.get_tool_usage(str(row.get("id") or ""))
             for tool in tools:
                 key = str(tool.get("tool_name") or "unknown")
                 counts[key]["count"] += int(tool.get("call_count") or 0)
+                add_usage(key, row)
     elif dimension in {"agent", "skill"}:
         for row in sessions:
             logs = await session_repo.get_logs(str(row.get("id") or ""))
@@ -1545,12 +1724,14 @@ async def get_breakdown(
                     if not key:
                         continue
                     counts[key]["count"] += 1
+                    add_usage(key, row)
                 else:
                     metadata = _safe_json(log.get("metadata_json"))
                     if str(log.get("tool_name") or "") == "Skill":
                         key = str(metadata.get("toolLabel") or metadata.get("skill") or "").strip()
                         if key:
                             counts[key]["count"] += 1
+                            add_usage(key, row)
     else:
         # feature correlation count via feature -> session links
         for row in sessions:
@@ -1565,6 +1746,7 @@ async def get_breakdown(
                 if not feature_id:
                     continue
                 counts[feature_id]["count"] += 1
+                add_usage(feature_id, row)
 
     items = [
         {"name": name, **values}
@@ -1598,8 +1780,7 @@ async def get_correlation(
         feature_links = [link for link in links if link.get("source_type") == "feature"]
         model_dims = _model_dimensions(row.get("model"))
         session_type = str(row.get("session_type") or "")
-        token_input = int(row.get("tokens_in") or 0)
-        token_output = int(row.get("tokens_out") or 0)
+        usage = _session_usage_metrics(row)
         base_payload = {
             "sessionId": session_id,
             "commitHash": row.get("git_commit_hash") or "",
@@ -1613,9 +1794,7 @@ async def get_correlation(
             "parentSessionId": row.get("parent_session_id") or "",
             "sessionType": session_type or "",
             "durationSeconds": int(row.get("duration_seconds") or 0),
-            "tokenInput": token_input,
-            "tokenOutput": token_output,
-            "totalTokens": token_input + token_output,
+            **usage,
             "totalCost": float(row.get("total_cost") or 0.0),
             "linkedFeatureCount": len(feature_links),
             "isSubagent": session_type == "subagent",
@@ -1643,6 +1822,79 @@ async def get_correlation(
 
     total = len(items)
     return {"items": items[offset:offset + limit], "total": total, "offset": offset, "limit": limit}
+
+
+@analytics_router.get("/usage-attribution", response_model=SessionUsageAggregateResponse)
+async def get_usage_attribution(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_rollup(
+        db,
+        project_id=project.id,
+        start=start,
+        end=end,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        offset=offset,
+        limit=limit,
+    )
+    return SessionUsageAggregateResponse(**payload)
+
+
+@analytics_router.get("/usage-attribution/drilldown", response_model=SessionUsageDrilldownResponse)
+async def get_usage_attribution_drilldown_view(
+    entity_type: str = Query(...),
+    entity_id: str = Query(...),
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_drilldown(
+        db,
+        project_id=project.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        start=start,
+        end=end,
+        offset=offset,
+        limit=limit,
+    )
+    return SessionUsageDrilldownResponse(**payload)
+
+
+@analytics_router.get("/usage-attribution/calibration", response_model=SessionUsageCalibrationSummary)
+async def get_usage_attribution_calibration_view(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    require_usage_attribution_enabled(project)
+    db = await connection.get_connection()
+    payload = await get_usage_attribution_calibration(
+        db,
+        project_id=project.id,
+        start=start,
+        end=end,
+    )
+    return SessionUsageCalibrationSummary(**payload)
 
 
 @analytics_router.get("/artifacts")
@@ -1699,6 +1951,91 @@ async def get_artifacts(
     payload["generatedAt"] = datetime.now(timezone.utc).isoformat()
     payload["range"] = {"start": start or "", "end": end or ""}
     return payload
+
+
+@analytics_router.get("/workflow-effectiveness", response_model=WorkflowEffectivenessResponse)
+async def workflow_effectiveness(
+    period: str = Query("all", pattern="^(all|daily|weekly)$"),
+    scope_type: str | None = Query(
+        None,
+        alias="scopeType",
+        pattern="^(workflow|effective_workflow|agent|skill|context_module|bundle|stack)$",
+    ),
+    scope_id: str | None = Query(None, alias="scopeId"),
+    feature_id: str | None = Query(None, alias="featureId"),
+    start: str | None = None,
+    end: str | None = None,
+    recompute: bool = False,
+    offset: int = 0,
+    limit: int = 100,
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return WorkflowEffectivenessResponse(
+            projectId="",
+            period=period,
+            total=0,
+            offset=offset,
+            limit=limit,
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+    require_workflow_analytics_enabled(project)
+
+    db = await connection.get_connection()
+    payload = await get_workflow_effectiveness(
+        db,
+        project,
+        period=period,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        feature_id=feature_id,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+        recompute=recompute,
+    )
+    return WorkflowEffectivenessResponse(**payload)
+
+
+@analytics_router.get("/failure-patterns", response_model=FailurePatternResponse)
+async def failure_patterns(
+    scope_type: str | None = Query(
+        None,
+        alias="scopeType",
+        pattern="^(workflow|effective_workflow|agent|skill|context_module|bundle|stack)$",
+    ),
+    scope_id: str | None = Query(None, alias="scopeId"),
+    feature_id: str | None = Query(None, alias="featureId"),
+    start: str | None = None,
+    end: str | None = None,
+    offset: int = 0,
+    limit: int = 100,
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return FailurePatternResponse(
+            projectId="",
+            total=0,
+            offset=offset,
+            limit=limit,
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+    require_workflow_analytics_enabled(project)
+
+    db = await connection.get_connection()
+    payload = await detect_failure_patterns(
+        db,
+        project,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        feature_id=feature_id,
+        start=start,
+        end=end,
+        offset=offset,
+        limit=limit,
+    )
+    return FailurePatternResponse(**payload)
 
 
 @analytics_router.get("/alerts", response_model=list[AlertConfig])

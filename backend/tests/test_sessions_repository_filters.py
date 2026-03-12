@@ -24,6 +24,16 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             "durationSeconds": 1,
             "tokensIn": 1,
             "tokensOut": 1,
+            "modelIOTokens": 2,
+            "cacheCreationInputTokens": 3,
+            "cacheReadInputTokens": 5,
+            "cacheInputTokens": 8,
+            "observedTokens": 10,
+            "toolReportedTokens": 13,
+            "toolResultInputTokens": 21,
+            "toolResultOutputTokens": 34,
+            "toolResultCacheCreationInputTokens": 55,
+            "toolResultCacheReadInputTokens": 89,
             "totalCost": 0.0,
             "qualityRating": 0,
             "frictionRating": 0,
@@ -214,6 +224,21 @@ class SessionRepositoryFilterTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual([r["id"] for r in rows], ["S-opus-45"])
+
+    async def test_usage_contract_fields_round_trip_through_repository(self) -> None:
+        row = await self.repo.get_by_id("S-main")
+        assert row is not None
+
+        self.assertEqual(row["model_io_tokens"], 2)
+        self.assertEqual(row["cache_creation_input_tokens"], 3)
+        self.assertEqual(row["cache_read_input_tokens"], 5)
+        self.assertEqual(row["cache_input_tokens"], 8)
+        self.assertEqual(row["observed_tokens"], 10)
+        self.assertEqual(row["tool_reported_tokens"], 13)
+        self.assertEqual(row["tool_result_input_tokens"], 21)
+        self.assertEqual(row["tool_result_output_tokens"], 34)
+        self.assertEqual(row["tool_result_cache_creation_input_tokens"], 55)
+        self.assertEqual(row["tool_result_cache_read_input_tokens"], 89)
 
     async def test_relationship_upsert_and_lookup(self) -> None:
         await self.repo.delete_relationships_for_source("project-1", "sessions/main.jsonl")

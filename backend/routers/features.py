@@ -49,10 +49,13 @@ from backend.model_identity import derive_model_identity
 from backend.session_badges import derive_session_badges
 from backend.document_linking import canonical_slug
 from backend.services.feature_execution import (
+    build_execution_recommendation,
     build_execution_context,
     load_execution_analytics,
     load_execution_documents,
 )
+from backend.services.agentic_intelligence_flags import stack_recommendations_enabled
+from backend.services.stack_recommendations import build_stack_recommendations
 
 
 features_router = APIRouter(prefix="/api/features", tags=["features"])
@@ -325,6 +328,16 @@ class FeatureSessionLink(BaseModel):
     updatedAt: str = ""
     totalCost: float = 0.0
     durationSeconds: int = 0
+    tokensIn: int = 0
+    tokensOut: int = 0
+    modelIOTokens: int = 0
+    cacheCreationInputTokens: int = 0
+    cacheReadInputTokens: int = 0
+    cacheInputTokens: int = 0
+    observedTokens: int = 0
+    toolReportedTokens: int = 0
+    cacheShare: float = 0.0
+    outputShare: float = 0.0
     gitCommitHash: str | None = None
     gitCommitHashes: list[str] = Field(default_factory=list)
     gitBranch: str | None = None
@@ -903,12 +916,50 @@ async def get_feature_execution_context(feature_id: str):
             )
         )
 
+    recommendation = build_execution_recommendation(feature, documents)
+    recommended_stack = None
+    stack_alternatives = []
+    stack_evidence = []
+    definition_resolution_warnings: list[FeatureExecutionWarning] = []
+    if stack_recommendations_enabled(active_project):
+        try:
+            stack_payload = await build_stack_recommendations(
+                db,
+                active_project,
+                feature=feature,
+                sessions=sessions,
+                recommendation=recommendation,
+            )
+            recommended_stack = stack_payload.get("recommendedStack")
+            stack_alternatives = stack_payload.get("stackAlternatives", [])
+            stack_evidence = stack_payload.get("stackEvidence", [])
+            definition_resolution_warnings = stack_payload.get("definitionResolutionWarnings", [])
+        except Exception:
+            logger.exception("Failed to build stack recommendations for '%s'", feature.id)
+            warnings.append(
+                FeatureExecutionWarning(
+                    section="stack",
+                    message="Historical stack recommendations are currently unavailable; command guidance is still available.",
+                )
+            )
+    else:
+        warnings.append(
+            FeatureExecutionWarning(
+                section="stack",
+                message="Historical stack recommendations are disabled for this project; command guidance is still available.",
+            )
+        )
+
     return build_execution_context(
         feature=feature,
         documents=documents,
         sessions=sessions,
         analytics=analytics,
         warnings=warnings,
+        recommended_stack=recommended_stack,
+        stack_alternatives=stack_alternatives,
+        stack_evidence=stack_evidence,
+        definition_resolution_warnings=definition_resolution_warnings,
     )
 
 
@@ -1400,6 +1451,16 @@ async def get_feature_linked_sessions(feature_id: str):
             updatedAt=str(session_row.get("updated_at") or ""),
             totalCost=float(session_row.get("total_cost") or 0.0),
             durationSeconds=int(session_row.get("duration_seconds") or 0),
+            tokensIn=_safe_int(session_row.get("tokens_in"), 0),
+            tokensOut=_safe_int(session_row.get("tokens_out"), 0),
+            modelIOTokens=_safe_int(session_row.get("model_io_tokens"), 0),
+            cacheCreationInputTokens=_safe_int(session_row.get("cache_creation_input_tokens"), 0),
+            cacheReadInputTokens=_safe_int(session_row.get("cache_read_input_tokens"), 0),
+            cacheInputTokens=_safe_int(session_row.get("cache_input_tokens"), 0),
+            observedTokens=_safe_int(session_row.get("observed_tokens"), 0),
+            toolReportedTokens=_safe_int(session_row.get("tool_reported_tokens"), 0),
+            cacheShare=float(session_row.get("cache_share") or 0.0),
+            outputShare=float(session_row.get("output_share") or 0.0),
             gitCommitHash=session_row.get("git_commit_hash"),
             gitCommitHashes=merged_hashes,
             gitBranch=session_row.get("git_branch"),
