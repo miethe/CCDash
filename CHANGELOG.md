@@ -23,6 +23,9 @@
   - delete support for manual exact-model overrides while protecting required defaults
 - Claude/Codex pricing defaults and parser-side fallback estimates were refreshed to current model families and exact-version references.
 - Claude Code session context and cost observability tracking now records phase 6 as completed and marks the overall plan set complete.
+- Project settings now use typed path-source editors for project roots, plan docs, sessions, and progress paths, with support for local and GitHub-backed plan sources.
+- Settings now split integration management into `Integrations > SkillMeat` and `Integrations > GitHub`, including GitHub validation, workspace refresh, and write-capability checks for managed repo workspaces.
+- Plan documents can now be edited from the document modal, with local save-in-place support and managed GitHub commit/push write-back for eligible repo-backed plans.
 
 ### Docs
 
@@ -33,6 +36,9 @@
 - Updated:
   - `README.md`
   - `CHANGELOG.md`
+  - `docs/document-entity-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
   - `docs/project_plans/implementation_plans/enhancements/claude-code-session-context-and-cost-observability-v1.md`
   - `docs/project_plans/PRDs/enhancements/claude-code-session-context-and-cost-observability-v1.md`
 
