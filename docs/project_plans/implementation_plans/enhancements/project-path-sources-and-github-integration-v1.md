@@ -463,3 +463,12 @@ Frontend:
 3. GitHub-backed path fields resolve through managed local workspaces.
 4. SkillMeat and GitHub settings live under the new Integrations tab.
 5. Tests cover migration, resolver logic, and the main UI flows.
+
+## Execution Notes
+
+1. Phases 5-7 landed on March 12, 2026 with typed project-path editors, a dedicated Integrations surface, controlled plan-document write-back, and targeted frontend/backend tests.
+2. V1 GitHub writes use the configured branch directly; no integration-only branch indirection was added in this iteration.
+3. The implementation plan remains `in-progress` until unrelated repo-wide `pnpm typecheck` failures are cleared in:
+   - `components/TranscriptMappedMessageCard.tsx`
+   - `constants.ts`
+   - `contexts/DataContext.tsx`
