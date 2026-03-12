@@ -13,6 +13,40 @@
       "planDocsPath": "project_plans",
       "sessionsPath": "",
       "progressPath": "progress",
+      "pathConfig": {
+        "root": {
+          "field": "root",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/dev/homelab/development/CCDash/examples/skillmeat",
+          "filesystemPath": "/Users/miethe/dev/homelab/development/CCDash/examples/skillmeat",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "planDocs": {
+          "field": "plan_docs",
+          "sourceKind": "project_root",
+          "displayValue": "project_plans",
+          "filesystemPath": "",
+          "relativePath": "project_plans",
+          "repoRef": null
+        },
+        "sessions": {
+          "field": "sessions",
+          "sourceKind": "filesystem",
+          "displayValue": "",
+          "filesystemPath": "",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "progress": {
+          "field": "progress",
+          "sourceKind": "project_root",
+          "displayValue": "progress",
+          "filesystemPath": "",
+          "relativePath": "progress",
+          "repoRef": null
+        }
+      },
       "testConfig": {
         "flags": {
           "testVisualizerEnabled": true,
@@ -122,7 +156,8 @@
         "featureFlags": {
           "stackRecommendationsEnabled": true,
           "workflowAnalyticsEnabled": true,
-          "usageAttributionEnabled": true
+          "usageAttributionEnabled": true,
+          "sessionBlockInsightsEnabled": true
         }
       }
     },
@@ -138,6 +173,40 @@
       "planDocsPath": "plans",
       "sessionsPath": "",
       "progressPath": "progress",
+      "pathConfig": {
+        "root": {
+          "field": "root",
+          "sourceKind": "filesystem",
+          "displayValue": "/tmp/test-project-1",
+          "filesystemPath": "/tmp/test-project-1",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "planDocs": {
+          "field": "plan_docs",
+          "sourceKind": "project_root",
+          "displayValue": "plans",
+          "filesystemPath": "",
+          "relativePath": "plans",
+          "repoRef": null
+        },
+        "sessions": {
+          "field": "sessions",
+          "sourceKind": "filesystem",
+          "displayValue": "",
+          "filesystemPath": "",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "progress": {
+          "field": "progress",
+          "sourceKind": "project_root",
+          "displayValue": "progress",
+          "filesystemPath": "",
+          "relativePath": "progress",
+          "repoRef": null
+        }
+      },
       "testConfig": {
         "flags": {
           "testVisualizerEnabled": true,
@@ -247,7 +316,8 @@
         "featureFlags": {
           "stackRecommendationsEnabled": true,
           "workflowAnalyticsEnabled": true,
-          "usageAttributionEnabled": true
+          "usageAttributionEnabled": true,
+          "sessionBlockInsightsEnabled": true
         }
       }
     },
@@ -263,6 +333,40 @@
       "planDocsPath": "docs/project_plans/",
       "sessionsPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
       "progressPath": ".claude/progress",
+      "pathConfig": {
+        "root": {
+          "field": "root",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/dev/homelab/development/skillmeat",
+          "filesystemPath": "/Users/miethe/dev/homelab/development/skillmeat",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "planDocs": {
+          "field": "plan_docs",
+          "sourceKind": "project_root",
+          "displayValue": "docs/project_plans/",
+          "filesystemPath": "",
+          "relativePath": "docs/project_plans/",
+          "repoRef": null
+        },
+        "sessions": {
+          "field": "sessions",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+          "filesystemPath": "/Users/miethe/.claude/projects/-Users-miethe-dev-homelab-development-skillmeat",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "progress": {
+          "field": "progress",
+          "sourceKind": "project_root",
+          "displayValue": ".claude/progress",
+          "filesystemPath": "",
+          "relativePath": ".claude/progress",
+          "repoRef": null
+        }
+      },
       "testConfig": {
         "flags": {
           "testVisualizerEnabled": true,
@@ -372,7 +476,8 @@
         "featureFlags": {
           "stackRecommendationsEnabled": true,
           "workflowAnalyticsEnabled": true,
-          "usageAttributionEnabled": true
+          "usageAttributionEnabled": true,
+          "sessionBlockInsightsEnabled": true
         }
       }
     }
