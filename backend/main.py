@@ -26,6 +26,7 @@ from backend.routers.codebase import codebase_router
 from backend.routers.test_visualizer import test_visualizer_router
 from backend.routers.execution import execution_router
 from backend.routers.integrations import integrations_router
+from backend.routers.pricing import pricing_router
 
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
@@ -213,6 +214,7 @@ app.include_router(codebase_router)
 app.include_router(test_visualizer_router)
 app.include_router(execution_router)
 app.include_router(integrations_router)
+app.include_router(pricing_router)
 
 
 @app.get("/api/health")

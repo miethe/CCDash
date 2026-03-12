@@ -32,6 +32,7 @@ from backend.parsers.features import scan_features
 from backend.parsers.test_adapters import parse_test_artifact
 from backend.services.test_ingest import ingest_run as ingest_test_run
 from backend.services.test_config import ResolvedTestSource
+from backend.services.pricing_catalog import PricingCatalogService
 from backend.services.session_observability import (
     calculate_context_utilization,
     derive_context_observability,
@@ -72,6 +73,7 @@ from backend.db.factory import (
     get_sync_state_repository,
     get_tag_repository,
     get_feature_repository, # Added in factory
+    get_pricing_catalog_repository,
 )
 
 logger = logging.getLogger("ccdash.sync")
@@ -1108,6 +1110,8 @@ class SyncEngine:
         self.tag_repo = get_tag_repository(db)
         self.analytics_repo = get_analytics_repository(db)
         self.session_usage_repo = get_session_usage_repository(db)
+        self.pricing_catalog_repo = get_pricing_catalog_repository(db)
+        self.pricing_catalog_service = PricingCatalogService(self.pricing_catalog_repo)
         self._ops_lock = asyncio.Lock()
         self._operations: dict[str, dict[str, Any]] = {}
         self._operation_order: list[str] = []
@@ -1236,6 +1240,19 @@ class SyncEngine:
                 event["payload_json"],
             )
         return len(events)
+
+    async def _derive_session_observability_fields(
+        self,
+        project_id: str,
+        session_payload: dict[str, Any],
+        logs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        context_fields = _derive_claude_observability_fields(session_payload, logs)
+        return await self.pricing_catalog_service.hydrate_session_observability(
+            project_id,
+            session_payload,
+            context_fields,
+        )
 
     async def _replace_session_usage_attribution(
         self,
@@ -1837,7 +1854,7 @@ class SyncEngine:
                     continue
                 current_fields = _observability_field_snapshot(session)
                 logs = await self.session_repo.get_logs(session_id)
-                derived_fields = _derive_claude_observability_fields(session, logs)
+                derived_fields = await self._derive_session_observability_fields(project_id, session, logs)
                 if derived_fields == current_fields:
                     continue
                 await self.session_repo.update_observability_fields(session_id, derived_fields)
@@ -3465,7 +3482,7 @@ class SyncEngine:
                     await self.session_repo.upsert_artifacts(session_id, artifacts)
                     await self.session_repo.update_observability_fields(
                         session_id,
-                        _derive_claude_observability_fields(session_dict, logs),
+                        await self._derive_session_observability_fields(project_id, session_dict, logs),
                     )
 
                     await self._replace_session_usage_attribution(

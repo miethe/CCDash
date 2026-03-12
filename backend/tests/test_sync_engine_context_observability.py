@@ -23,9 +23,9 @@ class SyncEngineContextObservabilityTests(unittest.IsolatedAsyncioTestCase):
                 "platformVersions": ["2.1.52"],
                 "platformVersionTransitions": [],
                 "durationSeconds": 60,
-                "tokensIn": 100,
-                "tokensOut": 25,
-                "totalCost": 0.12,
+                "tokensIn": 100000,
+                "tokensOut": 25000,
+                "totalCost": 0.675,
                 "startedAt": "2026-03-12T12:00:00Z",
                 "endedAt": "2026-03-12T12:01:00Z",
                 "sourceFile": "/tmp/session.jsonl",
@@ -64,7 +64,11 @@ class SyncEngineContextObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(row["context_utilization_pct"], 0.07)
         self.assertEqual(row["context_measurement_source"], "transcript_latest_assistant_usage")
         self.assertEqual(row["context_measured_at"], "2026-03-12T12:01:00Z")
-        self.assertEqual(row["total_cost"], 0.12)
+        self.assertAlmostEqual(row["recalculated_cost_usd"], 0.675)
+        self.assertAlmostEqual(row["display_cost_usd"], 0.675)
+        self.assertEqual(row["cost_provenance"], "recalculated")
+        self.assertEqual(row["pricing_model_source"], "claude-sonnet-4-5")
+        self.assertAlmostEqual(row["total_cost"], 0.675)
 
         repeat_stats = await self.sync_engine._backfill_session_observability_fields_for_project("project-1")
         self.assertEqual(repeat_stats, {"sessions": 0})
