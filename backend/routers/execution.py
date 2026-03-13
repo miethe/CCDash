@@ -6,9 +6,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend import config
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
+from backend.application.services import resolve_application_request
+from backend.application.services.execution import ExecutionApplicationService
 from backend.db import connection
 from backend.db.factory import get_execution_repository
 from backend.models import (
@@ -24,11 +28,13 @@ from backend.models import (
     ExecutionRunEventPageDTO,
 )
 from backend.project_manager import project_manager
+from backend.request_scope import get_core_ports, get_request_context
 from backend.services.execution_policy import evaluate_execution_policy
 from backend.services.execution_runtime import get_execution_runtime
 
 
 execution_router = APIRouter(prefix="/api/execution", tags=["execution"])
+execution_application_service = ExecutionApplicationService()
 
 
 def _now_iso() -> str:
@@ -243,7 +249,17 @@ async def _create_execution_run(
 
 
 @execution_router.post("/policy-check", response_model=ExecutionPolicyResultDTO)
-async def check_execution_policy(req: ExecutionPolicyCheckRequest) -> ExecutionPolicyResultDTO:
+async def check_execution_policy(
+    req: ExecutionPolicyCheckRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionPolicyResultDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        policy = await execution_application_service.check_policy(app_request.context, app_request.ports, req)
+        return _to_policy_dto(policy)
+
     project = _active_project_or_400()
     policy = evaluate_execution_policy(
         command=req.command,
@@ -255,7 +271,17 @@ async def check_execution_policy(req: ExecutionPolicyCheckRequest) -> ExecutionP
 
 
 @execution_router.post("/runs", response_model=ExecutionRunDTO)
-async def create_execution_run(req: ExecutionRunCreateRequest) -> ExecutionRunDTO:
+async def create_execution_run(
+    req: ExecutionRunCreateRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionRunDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        created = await execution_application_service.create_run(app_request.context, app_request.ports, req)
+        return _to_run_dto(created)
+
     project = _active_project_or_400()
     db = await connection.get_connection()
     created = await _create_execution_run(db=db, project=project, req=req)
@@ -267,7 +293,21 @@ async def list_execution_runs(
     feature_id: str | None = None,
     limit: int = 40,
     offset: int = 0,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> list[ExecutionRunDTO]:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        rows = await execution_application_service.list_runs(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [_to_run_dto(row) for row in rows]
+
     project = _active_project_or_400()
     safe_limit = min(200, max(1, int(limit or 40)))
     safe_offset = max(0, int(offset or 0))
@@ -283,7 +323,17 @@ async def list_execution_runs(
 
 
 @execution_router.get("/runs/{run_id}", response_model=ExecutionRunDTO)
-async def get_execution_run(run_id: str) -> ExecutionRunDTO:
+async def get_execution_run(
+    run_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionRunDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        row = await execution_application_service.get_run(app_request.context, app_request.ports, run_id)
+        return _to_run_dto(row)
+
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_execution_repository(db)
@@ -296,7 +346,24 @@ async def list_execution_run_events(
     run_id: str,
     after_sequence: int = 0,
     limit: int = 200,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ) -> ExecutionRunEventPageDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        rows = await execution_application_service.list_events(
+            app_request.context,
+            app_request.ports,
+            run_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        safe_after = max(0, int(after_sequence or 0))
+        items = [_to_event_dto(row) for row in rows]
+        next_sequence = max([safe_after, *[item.sequenceNo for item in items]])
+        return ExecutionRunEventPageDTO(runId=run_id, items=items, nextSequence=next_sequence)
+
     project = _active_project_or_400()
     safe_after = max(0, int(after_sequence or 0))
     safe_limit = min(1000, max(1, int(limit or 200)))
@@ -314,7 +381,18 @@ async def list_execution_run_events(
 
 
 @execution_router.post("/runs/{run_id}/approve", response_model=ExecutionRunDTO)
-async def approve_execution_run(run_id: str, req: ExecutionApprovalRequest) -> ExecutionRunDTO:
+async def approve_execution_run(
+    run_id: str,
+    req: ExecutionApprovalRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionRunDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        row = await execution_application_service.approve_run(app_request.context, app_request.ports, run_id, req)
+        return _to_run_dto(row)
+
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_execution_repository(db)
@@ -416,7 +494,18 @@ async def approve_execution_run(run_id: str, req: ExecutionApprovalRequest) -> E
 
 
 @execution_router.post("/runs/{run_id}/cancel", response_model=ExecutionRunDTO)
-async def cancel_execution_run(run_id: str, req: ExecutionCancelRequest) -> ExecutionRunDTO:
+async def cancel_execution_run(
+    run_id: str,
+    req: ExecutionCancelRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionRunDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        row = await execution_application_service.cancel_run(app_request.context, app_request.ports, run_id, req)
+        return _to_run_dto(row)
+
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_execution_repository(db)
@@ -438,7 +527,18 @@ async def cancel_execution_run(run_id: str, req: ExecutionCancelRequest) -> Exec
 
 
 @execution_router.post("/runs/{run_id}/retry", response_model=ExecutionRunDTO)
-async def retry_execution_run(run_id: str, req: ExecutionRetryRequest) -> ExecutionRunDTO:
+async def retry_execution_run(
+    run_id: str,
+    req: ExecutionRetryRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ExecutionRunDTO:
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        row = await execution_application_service.retry_run(app_request.context, app_request.ports, run_id, req)
+        return _to_run_dto(row)
+
     project = _active_project_or_400()
     db = await connection.get_connection()
     repo = get_execution_repository(db)

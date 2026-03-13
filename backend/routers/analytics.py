@@ -8,9 +8,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
+from backend.application.services import resolve_application_request
+from backend.application.services.analytics import AnalyticsOverviewService
 from backend.models import (
     AlertConfig,
     AnalyticsMetric,
@@ -36,6 +40,7 @@ from backend.db.factory import (
     get_session_repository,
     get_task_repository,
 )
+from backend.request_scope import get_core_ports, get_request_context
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
 from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
 from backend.services.session_usage_analytics import (
@@ -46,6 +51,7 @@ from backend.services.session_usage_analytics import (
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+analytics_overview_service = AnalyticsOverviewService()
 
 
 def _safe_json(value: Any) -> dict[str, Any]:
@@ -1537,7 +1543,19 @@ async def get_metrics():
 async def get_overview(
     start: str | None = None,
     end: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
+    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
+        db = await connection.get_connection()
+        app_request = await resolve_application_request(request_context, core_ports, db)
+        return await analytics_overview_service.get_overview(
+            app_request.context,
+            app_request.ports,
+            start=start,
+            end=end,
+        )
+
     project = project_manager.get_active_project()
     if not project:
         return {"kpis": {}, "generatedAt": datetime.now(timezone.utc).isoformat()}
