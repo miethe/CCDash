@@ -1,760 +1,119 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AgentSession, PlanDocument, ProjectTask, AlertConfig, Notification, Project, Feature, TaskStatus } from '../types';
-import { ensureProjectTestConfig } from '../services/testConfigDefaults';
+import React, { useCallback } from 'react';
+import type {
+  AgentSession,
+  AlertConfig,
+  Feature,
+  Notification,
+  PlanDocument,
+  Project,
+  ProjectTask,
+  TaskStatus,
+} from '../types';
+import { AppEntityDataProvider, useAppEntityData } from './AppEntityDataContext';
+import { AppRuntimeProvider, useAppRuntime } from './AppRuntimeContext';
+import { AppSessionProvider, useAppSession } from './AppSessionContext';
+import { DataClientProvider } from './DataClientContext';
+import {
+  hasSessionDetail,
+  mergeSessionDetail,
+  type SessionFetchOptions,
+  type SessionFilters,
+} from './dataContextShared';
+import type { RuntimeStatus } from '../services/runtimeProfile';
 
-export interface SessionFilters {
-    status?: string;
-    thread_kind?: string;
-    conversation_family_id?: string;
-    model?: string;
-    model_provider?: string;
-    model_family?: string;
-    model_version?: string;
-    platform_type?: string;
-    platform_version?: string;
-    include_subagents?: boolean;
-    root_session_id?: string;
-    start_date?: string;
-    end_date?: string;
-    created_start?: string;
-    created_end?: string;
-    completed_start?: string;
-    completed_end?: string;
-    updated_start?: string;
-    updated_end?: string;
-    min_duration?: number;
-    max_duration?: number;
-}
-
-export interface SessionFetchOptions {
-    force?: boolean;
-}
-
-// ── Types ──────────────────────────────────────────────────────────
+export type { SessionFetchOptions, SessionFilters } from './dataContextShared';
+export { hasSessionDetail, mergeSessionDetail } from './dataContextShared';
 
 interface DataContextValue {
-    // Data
-    sessions: AgentSession[];
-    sessionTotal: number;
-    hasMoreSessions: boolean;
-    sessionFilters: SessionFilters;
-    setSessionFilters: (filters: SessionFilters) => void;
-    documents: PlanDocument[];
-    tasks: ProjectTask[];
-    alerts: AlertConfig[];
-    notifications: Notification[];
-    features: Feature[];
-
-    // Projects
-    projects: Project[];
-    activeProject: Project | null;
-
-    // Status
-    loading: boolean;
-    error: string | null;
-
-    // Actions
-    refreshAll: () => Promise<void>;
-    refreshSessions: (reset?: boolean) => Promise<void>;
-    loadMoreSessions: () => Promise<void>;
-    refreshDocuments: () => Promise<void>;
-    refreshTasks: () => Promise<void>;
-    refreshFeatures: () => Promise<void>;
-
-    // Project Actions
-    refreshProjects: () => Promise<void>;
-    addProject: (project: Project) => Promise<void>;
-    updateProject: (projectId: string, project: Project) => Promise<void>;
-    switchProject: (projectId: string) => Promise<void>;
-
-    // Status Update Actions
-    updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
-    updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
-    updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: TaskStatus, previousStatus?: TaskStatus) => Promise<void>;
-    getSessionById: (sessionId: string, options?: SessionFetchOptions) => Promise<AgentSession | null>;
+  sessions: AgentSession[];
+  sessionTotal: number;
+  hasMoreSessions: boolean;
+  sessionFilters: SessionFilters;
+  setSessionFilters: (filters: SessionFilters) => void;
+  documents: PlanDocument[];
+  tasks: ProjectTask[];
+  alerts: AlertConfig[];
+  notifications: Notification[];
+  features: Feature[];
+  projects: Project[];
+  activeProject: Project | null;
+  loading: boolean;
+  error: string | null;
+  runtimeStatus: RuntimeStatus | null;
+  refreshAll: () => Promise<void>;
+  refreshSessions: (reset?: boolean) => Promise<void>;
+  loadMoreSessions: () => Promise<void>;
+  refreshDocuments: () => Promise<void>;
+  refreshTasks: () => Promise<void>;
+  refreshFeatures: () => Promise<void>;
+  refreshProjects: () => Promise<void>;
+  addProject: (project: Project) => Promise<void>;
+  updateProject: (projectId: string, project: Project) => Promise<void>;
+  switchProject: (projectId: string) => Promise<void>;
+  updateFeatureStatus: (featureId: string, status: string) => Promise<void>;
+  updatePhaseStatus: (featureId: string, phaseId: string, status: string) => Promise<void>;
+  updateTaskStatus: (featureId: string, phaseId: string, taskId: string, status: TaskStatus, previousStatus?: TaskStatus) => Promise<void>;
+  getSessionById: (sessionId: string, options?: SessionFetchOptions) => Promise<AgentSession | null>;
 }
 
-const DataContext = createContext<DataContextValue | null>(null);
-
-// ── API helpers ────────────────────────────────────────────────────
-
-const API_BASE = '/api';
-
-interface PaginatedResponse<T> {
-    items: T[];
-    total: number;
-    offset: number;
-    limit: number;
-}
-
-export const hasSessionDetail = (session: AgentSession | null | undefined): boolean => (
-    Boolean(session && Array.isArray(session.logs) && session.logs.length > 0)
+const ComposedDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <DataClientProvider>
+    <AppSessionProvider>
+      <AppEntityDataProvider>
+        <AppRuntimeProvider>{children}</AppRuntimeProvider>
+      </AppEntityDataProvider>
+    </AppSessionProvider>
+  </DataClientProvider>
 );
 
-export const mergeSessionDetail = (sessions: AgentSession[], fetched: AgentSession): AgentSession[] => {
-    const idx = sessions.findIndex(session => session.id === fetched.id);
-    if (idx === -1) return sessions;
-    const next = [...sessions];
-    next[idx] = fetched;
-    return next;
-};
-
-async function fetchJson<T>(path: string): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`);
-    if (!res.ok) {
-        throw new Error(`API error: ${res.status} ${res.statusText} for ${path}`);
-    }
-    return res.json();
-}
-
-// ── Provider ───────────────────────────────────────────────────────
-
-const POLL_INTERVAL_MS = 30_000; // 30 seconds
-const FEATURE_POLL_INTERVAL_MS = 5_000; // 5 seconds
-const SESSIONS_PER_PAGE = 50;
-const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
-const isTestsHashRoute = (): boolean => (
-    typeof window !== 'undefined' && window.location.hash.startsWith('#/tests')
+export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <ComposedDataProvider>{children}</ComposedDataProvider>
 );
-
-const matchesPhase = (phase: Feature['phases'][number], phaseId: string): boolean =>
-    phase.id === phaseId || phase.phase === phaseId;
-
-const aggregateFeatureFromPhases = (feature: Feature, phases: Feature['phases']): Feature => {
-    const totalTasks = phases.reduce((sum, phase) => sum + Math.max(phase.totalTasks || 0, 0), 0);
-    const completedTasks = phases.reduce((sum, phase) => {
-        const completed = Math.max(phase.completedTasks || 0, 0);
-        const deferred = Math.max(phase.deferredTasks || 0, 0);
-        return sum + Math.max(completed, deferred);
-    }, 0);
-    const deferredTasks = phases.reduce((sum, phase) => sum + Math.max(phase.deferredTasks || 0, 0), 0);
-    const allTerminal = phases.length > 0 && phases.every(phase => TERMINAL_PHASE_STATUSES.has(phase.status));
-    const anyInProgress = phases.some(phase => phase.status === 'in-progress');
-    const anyReview = phases.some(phase => phase.status === 'review');
-
-    const status = totalTasks > 0 && completedTasks >= totalTasks
-        ? 'done'
-        : allTerminal
-            ? 'done'
-            : anyInProgress
-                ? 'in-progress'
-                : anyReview
-                    ? 'review'
-                    : 'backlog';
-
-    return {
-        ...feature,
-        status,
-        totalTasks,
-        completedTasks,
-        deferredTasks,
-        phases,
-    };
-};
-
-export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [sessions, setSessions] = useState<AgentSession[]>([]);
-    const [sessionTotal, setSessionTotal] = useState(0);
-    const [sessionFilters, setSessionFilters] = useState<SessionFilters>({ include_subagents: true });
-    const [documents, setDocuments] = useState<PlanDocument[]>([]);
-    const [tasks, setTasks] = useState<ProjectTask[]>([]);
-    const [alerts, setAlerts] = useState<AlertConfig[]>([]);
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [features, setFeatures] = useState<Feature[]>([]);
-    const [pendingFeatureStatusById, setPendingFeatureStatusById] = useState<Record<string, string>>({});
-    const [projects, setProjects] = useState<Project[]>([]);
-    const [activeProject, setActiveProject] = useState<Project | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [isTestsRoute, setIsTestsRoute] = useState<boolean>(isTestsHashRoute);
-    const sessionsCountRef = useRef(0);
-    const sessionsRef = useRef<AgentSession[]>([]);
-    const hasLoadedOnceRef = useRef(false);
-    const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
-    const refreshFeaturesInFlightRef = useRef<Promise<void> | null>(null);
-    const sessionDetailRequestsRef = useRef<Map<string, Promise<AgentSession | null>>>(new Map());
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const onHashChange = () => setIsTestsRoute(isTestsHashRoute());
-        window.addEventListener('hashchange', onHashChange);
-        return () => window.removeEventListener('hashchange', onHashChange);
-    }, []);
-
-    const upsertFeatureInState = useCallback((updatedFeature: Feature) => {
-        setFeatures(prev => {
-            const idx = prev.findIndex(f => f.id === updatedFeature.id);
-            if (idx === -1) return [updatedFeature, ...prev];
-            const next = [...prev];
-            next[idx] = updatedFeature;
-            return next;
-        });
-    }, []);
-
-    const applyPendingFeatureStatuses = useCallback((serverFeatures: Feature[]) => {
-        const pendingIds = Object.keys(pendingFeatureStatusById);
-        if (pendingIds.length === 0) return serverFeatures;
-        return serverFeatures.map(feature => {
-            const pendingStatus = pendingFeatureStatusById[feature.id];
-            if (!pendingStatus || pendingStatus === feature.status) return feature;
-            return { ...feature, status: pendingStatus };
-        });
-    }, [pendingFeatureStatusById]);
-
-    useEffect(() => {
-        sessionsRef.current = sessions;
-        sessionsCountRef.current = sessions.length;
-    }, [sessions]);
-
-    const refreshSessions = useCallback(async (reset = true) => {
-        try {
-            // If resetting (background poll), we want to fetch enough items to cover what the user has currently loaded
-            // so they don't lose their scroll position or see items disappear.
-            // Minimum 50, but if they loaded 300, fetch 300.
-            const currentCount = sessionsCountRef.current;
-            const limit = reset ? Math.max(SESSIONS_PER_PAGE, currentCount) : SESSIONS_PER_PAGE;
-            const offset = reset ? 0 : currentCount;
-
-            const params = new URLSearchParams({
-                offset: offset.toString(),
-                limit: limit.toString(),
-                sort_by: 'started_at',
-                sort_order: 'desc'
-            });
-
-            if (sessionFilters.status) params.append('status', sessionFilters.status);
-            if (sessionFilters.thread_kind) params.append('thread_kind', sessionFilters.thread_kind);
-            if (sessionFilters.conversation_family_id) params.append('conversation_family_id', sessionFilters.conversation_family_id);
-            if (sessionFilters.model) params.append('model', sessionFilters.model);
-            if (sessionFilters.model_provider) params.append('model_provider', sessionFilters.model_provider);
-            if (sessionFilters.model_family) params.append('model_family', sessionFilters.model_family);
-            if (sessionFilters.model_version) params.append('model_version', sessionFilters.model_version);
-            if (sessionFilters.platform_type) params.append('platform_type', sessionFilters.platform_type);
-            if (sessionFilters.platform_version) params.append('platform_version', sessionFilters.platform_version);
-            if (sessionFilters.include_subagents) params.append('include_subagents', 'true');
-            if (sessionFilters.root_session_id) params.append('root_session_id', sessionFilters.root_session_id);
-            if (sessionFilters.start_date) params.append('start_date', sessionFilters.start_date);
-            if (sessionFilters.end_date) params.append('end_date', sessionFilters.end_date);
-            if (sessionFilters.created_start) params.append('created_start', sessionFilters.created_start);
-            if (sessionFilters.created_end) params.append('created_end', sessionFilters.created_end);
-            if (sessionFilters.completed_start) params.append('completed_start', sessionFilters.completed_start);
-            if (sessionFilters.completed_end) params.append('completed_end', sessionFilters.completed_end);
-            if (sessionFilters.updated_start) params.append('updated_start', sessionFilters.updated_start);
-            if (sessionFilters.updated_end) params.append('updated_end', sessionFilters.updated_end);
-            if (sessionFilters.min_duration) params.append('min_duration', sessionFilters.min_duration.toString());
-            if (sessionFilters.max_duration) params.append('max_duration', sessionFilters.max_duration.toString());
-
-            const data = await fetchJson<PaginatedResponse<AgentSession>>(`/sessions?${params}`);
-
-            if (reset) {
-                setSessions(data.items);
-            } else {
-                setSessions(prev => [...prev, ...data.items]);
-            }
-            setSessionTotal(data.total);
-        } catch (e) {
-            console.error('Failed to fetch sessions:', e);
-        }
-    }, [sessionFilters]);
-
-    // Refresh when filters change
-    useEffect(() => {
-        void refreshSessions(true);
-    }, [refreshSessions]);
-
-    const loadMoreSessions = useCallback(async () => {
-        if (sessions.length < sessionTotal) {
-            await refreshSessions(false);
-        }
-    }, [sessions.length, sessionTotal, refreshSessions]);
-
-    const getSessionById = useCallback(async (sessionId: string, options?: SessionFetchOptions): Promise<AgentSession | null> => {
-        const forceFetch = Boolean(options?.force);
-        const cachedSessions = sessionsRef.current;
-        // First check if we already have it in state
-        const existing = cachedSessions.find(s => s.id === sessionId);
-
-        // Only return cached if it has logs (meaning it's a full detail object, not a list item)
-        // List items have empty logs arrays usually.
-        if (!forceFetch && hasSessionDetail(existing)) {
-            return existing;
-        }
-
-        const inFlight = sessionDetailRequestsRef.current.get(sessionId);
-        if (inFlight) {
-            return inFlight;
-        }
-
-        // If not, fetch it
-        const request = (async () => {
-            try {
-                const fetched = await fetchJson<AgentSession>(`/sessions/${sessionId}`);
-                setSessions(prev => mergeSessionDetail(prev, fetched));
-                return fetched;
-            } catch (e) {
-                console.error(`Failed to fetch session ${sessionId}:`, e);
-                return null;
-            } finally {
-                sessionDetailRequestsRef.current.delete(sessionId);
-            }
-        })();
-
-        sessionDetailRequestsRef.current.set(sessionId, request);
-        return request;
-    }, []);
-
-    const refreshDocuments = useCallback(async () => {
-        try {
-            const pageSize = 500;
-            const firstPage = await fetchJson<PaginatedResponse<PlanDocument> | PlanDocument[]>(
-                `/documents?offset=0&limit=${pageSize}&include_progress=true`
-            );
-            if (Array.isArray(firstPage)) {
-                setDocuments(firstPage);
-                return;
-            }
-
-            const collected = [...(firstPage.items || [])];
-            const total = firstPage.total || collected.length;
-            let offset = collected.length;
-
-            while (offset < total) {
-                const page = await fetchJson<PaginatedResponse<PlanDocument>>(
-                    `/documents?offset=${offset}&limit=${pageSize}&include_progress=true`
-                );
-                const items = page.items || [];
-                if (items.length === 0) break;
-                collected.push(...items);
-                offset += items.length;
-            }
-
-            setDocuments(collected);
-        } catch (e) {
-            console.error('Failed to fetch documents:', e);
-        }
-    }, []);
-
-    const refreshTasks = useCallback(async () => {
-        try {
-            const data = await fetchJson<PaginatedResponse<ProjectTask> | ProjectTask[]>('/tasks?offset=0&limit=5000');
-            setTasks(Array.isArray(data) ? data : (data.items || []));
-        } catch (e) {
-            console.error('Failed to fetch tasks:', e);
-        }
-    }, []);
-
-    const refreshAlerts = useCallback(async () => {
-        try {
-            const data = await fetchJson<AlertConfig[]>('/analytics/alerts');
-            setAlerts(data);
-        } catch (e) {
-            console.error('Failed to fetch alerts:', e);
-        }
-    }, []);
-
-    const refreshNotifications = useCallback(async () => {
-        try {
-            const data = await fetchJson<Notification[]>('/analytics/notifications');
-            setNotifications(data);
-        } catch (e) {
-            console.error('Failed to fetch notifications:', e);
-        }
-    }, []);
-
-    const refreshFeatures = useCallback(async () => {
-        if (refreshFeaturesInFlightRef.current) {
-            return refreshFeaturesInFlightRef.current;
-        }
-        const task = (async () => {
-            try {
-                const data = await fetchJson<PaginatedResponse<Feature> | Feature[]>('/features?offset=0&limit=5000');
-                const items = Array.isArray(data) ? data : (data.items || []);
-                setFeatures(applyPendingFeatureStatuses(items));
-            } catch (e) {
-                console.error('Failed to fetch features:', e);
-            }
-        })();
-        refreshFeaturesInFlightRef.current = task;
-        try {
-            await task;
-        } finally {
-            if (refreshFeaturesInFlightRef.current === task) {
-                refreshFeaturesInFlightRef.current = null;
-            }
-        }
-    }, [applyPendingFeatureStatuses]);
-
-    const refreshProjects = useCallback(async () => {
-        try {
-            const data = await fetchJson<Project[]>('/projects');
-            setProjects(data.map(project => ({ ...project, testConfig: ensureProjectTestConfig(project.testConfig) })));
-            try {
-                const active = await fetchJson<Project>('/projects/active');
-                setActiveProject({ ...active, testConfig: ensureProjectTestConfig(active.testConfig) });
-            } catch (e) {
-                setActiveProject(null);
-            }
-        } catch (e) {
-            console.error('Failed to fetch projects:', e);
-        }
-    }, []);
-
-    const addProject = useCallback(async (project: Project) => {
-        try {
-            await fetch(`${API_BASE}/projects`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(project),
-            });
-            await refreshProjects();
-        } catch (e) {
-            console.error('Failed to add project:', e);
-            throw e;
-        }
-    }, [refreshProjects]);
-
-    const updateProject = useCallback(async (projectId: string, project: Project) => {
-        try {
-            const res = await fetch(`${API_BASE}/projects/${projectId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(project),
-            });
-            if (!res.ok) {
-                throw new Error(`Failed to update project: ${res.status}`);
-            }
-            await refreshProjects();
-            // Refresh all data since paths may have changed
-            await Promise.all([
-                refreshSessions(),
-                refreshDocuments(),
-                refreshTasks(),
-                refreshFeatures(),
-            ]);
-        } catch (e) {
-            console.error('Failed to update project:', e);
-            throw e;
-        }
-    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures]);
-
-    const switchProject = useCallback(async (projectId: string) => {
-        try {
-            await fetch(`${API_BASE}/projects/active/${projectId}`, {
-                method: 'POST',
-            });
-            await refreshProjects();
-            // Refresh all data immediately
-            await Promise.all([
-                refreshSessions(),
-                refreshDocuments(),
-                refreshTasks(),
-                refreshFeatures(),
-                refreshAlerts(),
-                refreshNotifications(),
-            ]);
-        } catch (e) {
-            console.error('Failed to switch project:', e);
-            throw e;
-        }
-    }, [refreshProjects, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures]);
-
-    // ── Status update methods ──────────────────────────────────────
-
-    const updateFeatureStatus = useCallback(async (featureId: string, status: string) => {
-        let previousStatus: string | null = null;
-        setPendingFeatureStatusById(prev => ({ ...prev, [featureId]: status }));
-        setFeatures(prev => prev.map(f => {
-            if (f.id !== featureId) return f;
-            previousStatus = f.status;
-            return { ...f, status };
-        }));
-
-        try {
-            const res = await fetch(`${API_BASE}/features/${featureId}/status`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
-            });
-            if (!res.ok) {
-                throw new Error(`Failed to update feature status: ${res.status} ${res.statusText}`);
-            }
-            const updated = await res.json() as Feature;
-            if (updated.id !== featureId) {
-                setFeatures(prev => prev.filter(f => f.id !== featureId));
-            }
-            setPendingFeatureStatusById(prev => {
-                const { [featureId]: _ignore, ...rest } = prev;
-                return rest;
-            });
-            upsertFeatureInState(updated);
-        } catch (e) {
-            setPendingFeatureStatusById(prev => {
-                const { [featureId]: _ignore, ...rest } = prev;
-                return rest;
-            });
-            if (previousStatus !== null) {
-                setFeatures(prev => prev.map(f => (
-                    f.id === featureId ? { ...f, status: previousStatus as string } : f
-                )));
-            }
-            console.error('Failed to update feature status:', e);
-            throw e;
-        }
-    }, [upsertFeatureInState]);
-
-    const updatePhaseStatus = useCallback(async (featureId: string, phaseId: string, status: string) => {
-        let previousFeatureSnapshot: Feature | null = null;
-        setFeatures(prev => prev.map(feature => {
-            if (feature.id !== featureId) return feature;
-            previousFeatureSnapshot = feature;
-            const nextPhases = (feature.phases || []).map(phase => {
-                if (!matchesPhase(phase, phaseId)) return phase;
-                const totalTasks = Math.max(phase.totalTasks || 0, 0);
-                const doneFromTasks = (phase.tasks || []).filter(task => task.status === 'done').length;
-                const deferredFromTasks = (phase.tasks || []).filter(task => task.status === 'deferred').length;
-                let completedTasks = phase.tasks && phase.tasks.length > 0
-                    ? doneFromTasks + deferredFromTasks
-                    : Math.max(phase.completedTasks || 0, 0);
-                let deferredTasks = phase.tasks && phase.tasks.length > 0
-                    ? deferredFromTasks
-                    : Math.max(phase.deferredTasks || 0, 0);
-                if (status === 'deferred' && totalTasks > 0) {
-                    completedTasks = totalTasks;
-                    deferredTasks = totalTasks;
-                }
-                if (totalTasks > 0 && completedTasks > totalTasks) completedTasks = totalTasks;
-                if (deferredTasks > completedTasks) deferredTasks = completedTasks;
-                return { ...phase, status, completedTasks, deferredTasks };
-            });
-            return aggregateFeatureFromPhases(feature, nextPhases);
-        }));
-
-        try {
-            const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/status`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
-            });
-            if (!res.ok) {
-                throw new Error(`Failed to update phase status: ${res.status} ${res.statusText}`);
-            }
-            const updated = await res.json() as Feature;
-            if (updated.id !== featureId) {
-                setFeatures(prev => prev.filter(f => f.id !== featureId));
-            }
-            upsertFeatureInState(updated);
-        } catch (e) {
-            if (previousFeatureSnapshot) {
-                upsertFeatureInState(previousFeatureSnapshot);
-            }
-            console.error('Failed to update phase status:', e);
-            throw e;
-        }
-    }, [upsertFeatureInState]);
-
-    const updateTaskStatus = useCallback(async (featureId: string, phaseId: string, taskId: string, status: TaskStatus, previousStatus?: TaskStatus) => {
-        let previousFeatureSnapshot: Feature | null = null;
-        setFeatures(prev => prev.map(feature => {
-            if (feature.id !== featureId) return feature;
-            previousFeatureSnapshot = feature;
-            const nextPhases = (feature.phases || []).map(phase => {
-                if (!matchesPhase(phase, phaseId)) return phase;
-                let tasks = phase.tasks || [];
-                let changed = false;
-                if (Array.isArray(phase.tasks) && phase.tasks.length > 0) {
-                    tasks = phase.tasks.map(task => {
-                        if (task.id !== taskId) return task;
-                        changed = true;
-                        return { ...task, status };
-                    });
-                } else if (previousStatus && previousStatus !== status) {
-                    changed = true;
-                }
-                if (!changed) return phase;
-
-                const totalTasks = Math.max(phase.totalTasks || 0, tasks.length);
-                let completedTasks = Math.max(phase.completedTasks || 0, 0);
-                let deferredTasks = Math.max(phase.deferredTasks || 0, 0);
-
-                if (tasks.length > 0) {
-                    const doneCount = tasks.filter(task => task.status === 'done').length;
-                    const deferredCount = tasks.filter(task => task.status === 'deferred').length;
-                    completedTasks = doneCount + deferredCount;
-                    deferredTasks = deferredCount;
-                } else if (previousStatus && previousStatus !== status) {
-                    if (previousStatus === 'done') completedTasks -= 1;
-                    if (previousStatus === 'deferred') {
-                        completedTasks -= 1;
-                        deferredTasks -= 1;
-                    }
-                    if (status === 'done') completedTasks += 1;
-                    if (status === 'deferred') {
-                        completedTasks += 1;
-                        deferredTasks += 1;
-                    }
-                }
-
-                if (phase.status === 'deferred' && totalTasks > 0) {
-                    completedTasks = totalTasks;
-                    deferredTasks = totalTasks;
-                }
-                if (completedTasks < 0) completedTasks = 0;
-                if (deferredTasks < 0) deferredTasks = 0;
-                if (totalTasks > 0 && completedTasks > totalTasks) completedTasks = totalTasks;
-                return {
-                    ...phase,
-                    tasks,
-                    completedTasks,
-                    deferredTasks: Math.min(deferredTasks, completedTasks),
-                };
-            });
-            return aggregateFeatureFromPhases(feature, nextPhases);
-        }));
-
-        try {
-            const res = await fetch(`${API_BASE}/features/${featureId}/phases/${phaseId}/tasks/${taskId}/status`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
-            });
-            if (!res.ok) {
-                throw new Error(`Failed to update task status: ${res.status} ${res.statusText}`);
-            }
-            const updated = await res.json() as Feature;
-            if (updated.id !== featureId) {
-                setFeatures(prev => prev.filter(f => f.id !== featureId));
-            }
-            upsertFeatureInState(updated);
-        } catch (e) {
-            if (previousFeatureSnapshot) {
-                upsertFeatureInState(previousFeatureSnapshot);
-            }
-            console.error('Failed to update task status:', e);
-            throw e;
-        }
-    }, [upsertFeatureInState]);
-
-    const refreshAll = useCallback(async () => {
-        if (refreshAllInFlightRef.current) {
-            return refreshAllInFlightRef.current;
-        }
-        const isInitialLoad = !hasLoadedOnceRef.current;
-        if (isInitialLoad) {
-            setLoading(true);
-        }
-        setError(null);
-        const task = (async () => {
-            try {
-                const tasksToRun: Promise<unknown>[] = [
-                    refreshSessions(),
-                    refreshDocuments(),
-                    refreshTasks(),
-                    refreshAlerts(),
-                    refreshNotifications(),
-                    refreshProjects(),
-                ];
-                if (!isTestsRoute) {
-                    tasksToRun.push(refreshFeatures());
-                }
-                await Promise.all(tasksToRun);
-            } catch (e: any) {
-                setError(e.message || 'Failed to load data');
-            } finally {
-                if (isInitialLoad) {
-                    setLoading(false);
-                    hasLoadedOnceRef.current = true;
-                }
-            }
-        })();
-        refreshAllInFlightRef.current = task;
-        try {
-            await task;
-        } finally {
-            if (refreshAllInFlightRef.current === task) {
-                refreshAllInFlightRef.current = null;
-            }
-        }
-    }, [isTestsRoute, refreshSessions, refreshDocuments, refreshTasks, refreshFeatures, refreshAlerts, refreshNotifications, refreshProjects]);
-
-    const refreshAllRef = useRef(refreshAll);
-    const refreshFeaturesRef = useRef(refreshFeatures);
-
-    useEffect(() => {
-        refreshAllRef.current = refreshAll;
-    }, [refreshAll]);
-
-    useEffect(() => {
-        refreshFeaturesRef.current = refreshFeatures;
-    }, [refreshFeatures]);
-
-    // Initial load
-    useEffect(() => {
-        void refreshAllRef.current();
-    }, []);
-
-    // Polling for live updates
-    useEffect(() => {
-        const interval = setInterval(() => {
-            void refreshAllRef.current();
-        }, POLL_INTERVAL_MS);
-        return () => clearInterval(interval);
-    }, []);
-
-    // Faster feature polling to keep Kanban and Feature modal responsive to background updates.
-    useEffect(() => {
-        if (isTestsRoute) {
-            return undefined;
-        }
-        const interval = setInterval(() => {
-            void refreshFeaturesRef.current();
-        }, FEATURE_POLL_INTERVAL_MS);
-        return () => clearInterval(interval);
-    }, [isTestsRoute]);
-
-    return (
-        <DataContext.Provider
-            value={{
-                sessions,
-                sessionTotal,
-                hasMoreSessions: sessions.length < sessionTotal,
-                sessionFilters,
-                setSessionFilters,
-                documents,
-                tasks,
-                alerts,
-                notifications,
-                features,
-                loading,
-                error,
-                refreshAll,
-                refreshSessions,
-                loadMoreSessions,
-                refreshDocuments,
-                refreshTasks,
-                refreshFeatures,
-                projects,
-                activeProject,
-                refreshProjects,
-                addProject,
-                updateProject,
-                switchProject,
-                updateFeatureStatus,
-                updatePhaseStatus,
-                updateTaskStatus,
-                getSessionById,
-            }}
-        >
-            {children}
-        </DataContext.Provider>
-    );
-};
-
-// ── Hook ───────────────────────────────────────────────────────────
 
 export function useData(): DataContextValue {
-    const ctx = useContext(DataContext);
-    if (!ctx) {
-        throw new Error('useData must be used within a DataProvider');
-    }
-    return ctx;
+  const session = useAppSession();
+  const entity = useAppEntityData();
+  const runtime = useAppRuntime();
+
+  const switchProject = useCallback(async (projectId: string) => {
+    await session.switchProject(projectId);
+    await runtime.refreshAll();
+  }, [runtime, session]);
+
+  const updateProject = useCallback(async (projectId: string, project: Project) => {
+    await session.updateProject(projectId, project);
+    await runtime.refreshAll();
+  }, [runtime, session]);
+
+  return {
+    sessions: entity.sessions,
+    sessionTotal: entity.sessionTotal,
+    hasMoreSessions: entity.sessions.length < entity.sessionTotal,
+    sessionFilters: entity.sessionFilters,
+    setSessionFilters: entity.setSessionFilters,
+    documents: entity.documents,
+    tasks: entity.tasks,
+    alerts: entity.alerts,
+    notifications: entity.notifications,
+    features: entity.features,
+    projects: session.projects,
+    activeProject: session.activeProject,
+    loading: runtime.loading,
+    error: runtime.error,
+    runtimeStatus: runtime.runtimeStatus,
+    refreshAll: runtime.refreshAll,
+    refreshSessions: entity.refreshSessions,
+    loadMoreSessions: entity.loadMoreSessions,
+    refreshDocuments: entity.refreshDocuments,
+    refreshTasks: entity.refreshTasks,
+    refreshFeatures: entity.refreshFeatures,
+    refreshProjects: session.refreshProjects,
+    addProject: session.addProject,
+    updateProject,
+    switchProject,
+    updateFeatureStatus: entity.updateFeatureStatus,
+    updatePhaseStatus: entity.updatePhaseStatus,
+    updateTaskStatus: entity.updateTaskStatus,
+    getSessionById: entity.getSessionById,
+  };
 }
