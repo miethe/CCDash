@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
-from backend.db.file_watcher import file_watcher
 from backend.routers.analytics import analytics_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -64,10 +63,14 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
         _: Request,
         _request_context: RequestContext = Depends(get_request_context),
     ) -> dict[str, str]:
+        runtime_status = container.runtime_status()
         return {
             "status": "ok",
             "db": "connected" if connection._connection else "disconnected",
-            "watcher": "running" if file_watcher.is_running else "stopped",
+            "watcher": str(runtime_status.get("watcher", "unknown")),
+            "profile": str(runtime_status.get("profile", runtime_profile.name)),
+            "startupSync": str(runtime_status.get("startupSync", "idle")),
+            "analyticsSnapshots": str(runtime_status.get("analyticsSnapshots", "idle")),
         }
 
     return app

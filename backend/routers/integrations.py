@@ -12,8 +12,6 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.integrations import SkillMeatApplicationService
-from backend.db import connection
-from backend.db.factory import get_agentic_intelligence_repository
 from backend.models import (
     GitHubCredentialValidationRequest,
     GitHubCredentialValidationResponse,
@@ -55,9 +53,6 @@ from backend.services.project_paths.resolver import _normalize_relative_path
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceManager, RepoWorkspaceError
 from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
-from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
-from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
-from backend.services.stack_observations import backfill_session_stack_observations
 
 
 integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["integrations"])
@@ -277,6 +272,20 @@ async def validate_skillmeat_config(req: SkillMeatConfigValidationRequest):
     )
 
 
+async def _resolve_skillmeat_request(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    *,
+    requested_project_id: str | None = None,
+):
+    return await resolve_application_request(
+        request_context,
+        core_ports,
+        core_ports.storage.db,
+        requested_project_id=requested_project_id,
+    )
+
+
 @integrations_router.post("/sync", response_model=SkillMeatDefinitionSyncResponse)
 async def sync_skillmeat(
     req: SkillMeatSyncRequest | None = None,
@@ -284,38 +293,20 @@ async def sync_skillmeat(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     require_skillmeat_integration_enabled()
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(
-            request_context,
-            core_ports,
-            db,
-            requested_project_id=str((req.projectId if req else "") or "").strip() or None,
-        )
-        payload = await skillmeat_application_service.sync(
-            app_request.context,
-            app_request.ports,
-            requested_project_id=str((req.projectId if req else "") or "").strip() or None,
-        )
-        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
-        warnings = payload.get("warnings", [])
-        project = _project_for_request_or_active(str((req.projectId if req else "") or "").strip() or None)
-        return SkillMeatDefinitionSyncResponse(
-            projectId=str(payload.get("projectId") or project.id),
-            source=_to_source_dto(source, getattr(project, "skillMeat", None)),
-            totalDefinitions=int(payload.get("totalDefinitions") or 0),
-            countsByType=payload.get("countsByType", {}) if isinstance(payload.get("countsByType"), dict) else {},
-            fetchedAt=str(payload.get("fetchedAt") or ""),
-            warnings=[SkillMeatSyncWarning(**warning) for warning in warnings if isinstance(warning, dict)],
-        )
-
-    requested_project_id = str((req.projectId if req else "") or "").strip()
-    project = _project_for_request_or_active(requested_project_id)
-
-    db = await connection.get_connection()
-    payload = await sync_skillmeat_definitions(db, project)
+    requested_project_id = str((req.projectId if req else "") or "").strip() or None
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=requested_project_id,
+    )
+    payload = await skillmeat_application_service.sync(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=requested_project_id,
+    )
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     warnings = payload.get("warnings", [])
+    project = app_request.project
     return SkillMeatDefinitionSyncResponse(
         projectId=str(payload.get("projectId") or project.id),
         source=_to_source_dto(source, getattr(project, "skillMeat", None)),
@@ -333,69 +324,18 @@ async def refresh_skillmeat(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     require_skillmeat_integration_enabled()
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        requested_project_id = str((req.projectId if req else "") or "").strip() or None
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(
-            request_context,
-            core_ports,
-            db,
-            requested_project_id=requested_project_id,
-        )
-        payload = await skillmeat_application_service.refresh(
-            app_request.context,
-            app_request.ports,
-            requested_project_id=requested_project_id,
-        )
-        project = _project_for_request_or_active(requested_project_id)
-        sync_payload = payload.get("sync") if isinstance(payload, dict) else {}
-        if not isinstance(sync_payload, dict):
-            sync_payload = {}
-        backfill_payload = payload.get("backfill") if isinstance(payload, dict) else None
-        if not isinstance(backfill_payload, dict):
-            backfill_payload = None
-
-        source = sync_payload.get("source") if isinstance(sync_payload.get("source"), dict) else {}
-        sync_warnings = sync_payload.get("warnings", [])
-        sync_response = SkillMeatDefinitionSyncResponse(
-            projectId=str(sync_payload.get("projectId") or project.id),
-            source=_to_source_dto(source, getattr(project, "skillMeat", None)),
-            totalDefinitions=int(sync_payload.get("totalDefinitions") or 0),
-            countsByType=sync_payload.get("countsByType", {}) if isinstance(sync_payload.get("countsByType"), dict) else {},
-            fetchedAt=str(sync_payload.get("fetchedAt") or ""),
-            warnings=[SkillMeatSyncWarning(**warning) for warning in sync_warnings if isinstance(warning, dict)],
-        )
-        backfill_response = None
-        if backfill_payload is not None:
-            backfill_response = SkillMeatObservationBackfillResponse(
-                projectId=str(backfill_payload.get("projectId") or project.id),
-                sessionsProcessed=int(backfill_payload.get("sessionsProcessed") or 0),
-                observationsStored=int(backfill_payload.get("observationsStored") or 0),
-                skippedSessions=int(backfill_payload.get("skippedSessions") or 0),
-                resolvedComponents=int(backfill_payload.get("resolvedComponents") or 0),
-                unresolvedComponents=int(backfill_payload.get("unresolvedComponents") or 0),
-                generatedAt=str(backfill_payload.get("generatedAt") or ""),
-                warnings=[
-                    SkillMeatSyncWarning(**warning)
-                    for warning in backfill_payload.get("warnings", [])
-                    if isinstance(warning, dict)
-                ],
-            )
-        return SkillMeatRefreshResponse(
-            projectId=str(project.id),
-            sync=sync_response,
-            backfill=backfill_response,
-        )
-
-    requested_project_id = str((req.projectId if req else "") or "").strip()
-    project = _project_for_request_or_active(requested_project_id)
-
-    db = await connection.get_connection()
-    payload = await refresh_skillmeat_cache(
-        db,
-        project,
-        force_observation_recompute=True,
+    requested_project_id = str((req.projectId if req else "") or "").strip() or None
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=requested_project_id,
     )
+    payload = await skillmeat_application_service.refresh(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=requested_project_id,
+    )
+    project = app_request.project
     sync_payload = payload.get("sync") if isinstance(payload, dict) else {}
     if not isinstance(sync_payload, dict):
         sync_payload = {}
@@ -429,7 +369,6 @@ async def refresh_skillmeat(
                 if isinstance(warning, dict)
             ],
         )
-
     return SkillMeatRefreshResponse(
         projectId=str(project.id),
         sync=sync_response,
@@ -446,23 +385,10 @@ async def list_skillmeat_definitions(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     require_skillmeat_integration_enabled()
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(request_context, core_ports, db)
-        rows = await skillmeat_application_service.list_definitions(
-            app_request.context,
-            app_request.ports,
-            definition_type=definition_type,
-            limit=limit,
-            offset=offset,
-        )
-        return [_to_definition_dto(row) for row in rows]
-
-    project = _active_project_or_400()
-    db = await connection.get_connection()
-    repo = get_agentic_intelligence_repository(db)
-    rows = await repo.list_external_definitions(
-        str(project.id),
+    app_request = await _resolve_skillmeat_request(request_context, core_ports)
+    rows = await skillmeat_application_service.list_definitions(
+        app_request.context,
+        app_request.ports,
         definition_type=definition_type,
         limit=limit,
         offset=offset,
@@ -477,44 +403,20 @@ async def backfill_skillmeat_observations(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     require_skillmeat_integration_enabled()
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(
-            request_context,
-            core_ports,
-            db,
-            requested_project_id=req.projectId,
-        )
-        payload = await skillmeat_application_service.backfill_observations(
-            app_request.context,
-            app_request.ports,
-            requested_project_id=req.projectId,
-            limit=req.limit,
-            force_recompute=req.forceRecompute,
-        )
-        warnings = payload.get("warnings", [])
-        project = _project_for_request_or_active(req.projectId)
-        return SkillMeatObservationBackfillResponse(
-            projectId=str(payload.get("projectId") or project.id),
-            sessionsProcessed=int(payload.get("sessionsProcessed") or 0),
-            observationsStored=int(payload.get("observationsStored") or 0),
-            skippedSessions=int(payload.get("skippedSessions") or 0),
-            resolvedComponents=int(payload.get("resolvedComponents") or 0),
-            unresolvedComponents=int(payload.get("unresolvedComponents") or 0),
-            generatedAt=str(payload.get("generatedAt") or ""),
-            warnings=[SkillMeatSyncWarning(**warning) for warning in warnings if isinstance(warning, dict)],
-        )
-
-    project = _project_for_request_or_active(req.projectId)
-
-    db = await connection.get_connection()
-    payload = await backfill_session_stack_observations(
-        db,
-        project,
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=req.projectId,
+    )
+    payload = await skillmeat_application_service.backfill_observations(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=req.projectId,
         limit=req.limit,
         force_recompute=req.forceRecompute,
     )
     warnings = payload.get("warnings", [])
+    project = app_request.project
     return SkillMeatObservationBackfillResponse(
         projectId=str(payload.get("projectId") or project.id),
         sessionsProcessed=int(payload.get("sessionsProcessed") or 0),
@@ -535,27 +437,14 @@ async def list_skillmeat_observations(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     require_skillmeat_integration_enabled()
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(request_context, core_ports, db)
-        rows = await skillmeat_application_service.list_observations(
-            app_request.context,
-            app_request.ports,
-            limit=limit,
-            offset=offset,
-        )
-        return [_to_observation_dto(row) for row in rows]
-
-    project = _active_project_or_400()
-    db = await connection.get_connection()
-    repo = get_agentic_intelligence_repository(db)
-    rows = await repo.list_stack_observations(str(project.id), limit=limit, offset=offset)
-    hydrated: list[SessionStackObservation] = []
-    for row in rows:
-        observation = await repo.get_stack_observation(str(project.id), str(row.get("session_id") or ""))
-        if observation:
-            hydrated.append(_to_observation_dto(observation))
-    return hydrated
+    app_request = await _resolve_skillmeat_request(request_context, core_ports)
+    rows = await skillmeat_application_service.list_observations(
+        app_request.context,
+        app_request.ports,
+        limit=limit,
+        offset=offset,
+    )
+    return [_to_observation_dto(row) for row in rows]
 
 
 @github_integrations_router.get("/settings", response_model=GitHubIntegrationSettingsResponse)

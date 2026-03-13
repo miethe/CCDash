@@ -50,12 +50,12 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
         name="worker",
         capabilities=RuntimeCapabilities(
             watch=False,
-            sync=False,
+            sync=True,
             jobs=True,
             auth=False,
             integrations=True,
         ),
-        description="Background job profile for worker-only execution paths.",
+        description="Background worker profile for sync, refresh, and scheduled job execution without HTTP serving.",
     ),
     "test": RuntimeProfile(
         name="test",

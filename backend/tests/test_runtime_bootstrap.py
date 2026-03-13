@@ -9,6 +9,7 @@ from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
 from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
+from backend.worker import serve_worker
 
 
 class _ResolvedBundle:
@@ -53,6 +54,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertFalse(profiles["api"].capabilities.watch)
         self.assertFalse(profiles["test"].capabilities.jobs)
         self.assertTrue(profiles["worker"].capabilities.jobs)
+        self.assertTrue(profiles["worker"].capabilities.sync)
 
     def test_worker_bootstrap_returns_worker_runtime_container(self) -> None:
         container = build_worker_runtime()
@@ -74,17 +76,17 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
             patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
             patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
-            patch("backend.runtime.container.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime.container.project_manager.get_active_path_bundle", return_value=bundle),
-            patch("backend.runtime.container.resolve_test_sources", return_value=[]),
-            patch("backend.runtime.container.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
-            patch("backend.runtime.container.skillmeat_refresh_configured", return_value=False),
-            patch("backend.runtime.container.file_watcher.start", AsyncMock()) as watcher_start,
-            patch("backend.runtime.container.file_watcher.stop", AsyncMock()) as watcher_stop,
-            patch("backend.runtime.container.config.STARTUP_SYNC_DELAY_SECONDS", 0),
-            patch("backend.runtime.container.config.STARTUP_SYNC_LIGHT_MODE", True),
-            patch("backend.runtime.container.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
-            patch("backend.runtime.container.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
+            patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
+            patch("backend.adapters.jobs.runtime.skillmeat_refresh_configured", return_value=False),
+            patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
+            patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
+            patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
+            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -110,13 +112,13 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
             patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
             patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
-            patch("backend.runtime.container.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime.container.project_manager.get_active_path_bundle", return_value=bundle),
-            patch("backend.runtime.container.resolve_test_sources", return_value=[]),
-            patch("backend.runtime.container.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
-            patch("backend.runtime.container.file_watcher.start", AsyncMock()) as watcher_start,
-            patch("backend.runtime.container.file_watcher.stop", AsyncMock()) as watcher_stop,
-            patch("backend.runtime.container.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
+            patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
+            patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
+            patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
+            patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
+            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -140,10 +142,10 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
             patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
             patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
-            patch("backend.runtime.container.project_manager.get_active_project", return_value=None),
-            patch("backend.runtime.container.file_watcher.start", AsyncMock()) as watcher_start,
-            patch("backend.runtime.container.file_watcher.stop", AsyncMock()) as watcher_stop,
-            patch("backend.runtime.container.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
+            patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
+            patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.runtime_ports.project_manager.get_active_project", return_value=None),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -154,6 +156,41 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             watcher_stop.assert_not_awaited()
             close_connection.assert_awaited_once()
+
+    async def test_worker_process_starts_without_http_server(self) -> None:
+        project = _active_project()
+        bundle = _ResolvedBundle()
+        fake_sync = _fake_sync_engine()
+        stop_event = asyncio.Event()
+
+        with (
+            patch("backend.runtime.container.initialize_observability"),
+            patch("backend.runtime.container.shutdown_observability"),
+            patch("backend.runtime.container.connection.get_connection", AsyncMock(return_value=object())),
+            patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
+            patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
+            patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
+            patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
+            patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
+            patch("backend.adapters.jobs.runtime.skillmeat_refresh_configured", return_value=False),
+            patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
+            patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_DELAY_SECONDS", 0),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
+            patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
+            patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
+            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
+            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
+        ):
+            task = asyncio.create_task(serve_worker(container=build_worker_runtime(), stop_event=stop_event))
+            await asyncio.sleep(0.05)
+            self.assertTrue(fake_sync.sync_project.await_count >= 1)
+            watcher_start.assert_not_awaited()
+            stop_event.set()
+            await task
+
+        watcher_stop.assert_not_awaited()
+        close_connection.assert_awaited_once()
 
 
 if __name__ == "__main__":
