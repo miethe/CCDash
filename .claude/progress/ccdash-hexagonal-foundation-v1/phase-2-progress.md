@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
 phase: 2
 title: "Request Context and Core Ports"
-status: "in-progress"
+status: "completed"
 started: "2026-03-13"
-completed: null
-commit_refs: []
+completed: "2026-03-13"
+commit_refs: ["64e1b58", "8b4b1fc"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "4 days"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "PORT-001"
     description: "Add a request context object carrying principal, workspace scope, project scope, runtime profile, and tracing metadata."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: ["ARC-003"]
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "PORT-002"
     description: "Define framework-agnostic ports for IdentityProvider, AuthorizationPolicy, WorkspaceRegistry, StorageUnitOfWork, JobScheduler, and IntegrationClient."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["PORT-001"]
     estimated_effort: "4pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "PORT-003"
     description: "Add local/default adapters for no-auth identity, permissive authorization, project/workspace resolution, and in-process jobs."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["PORT-002"]
     estimated_effort: "2pt"
@@ -67,4 +67,24 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/ccdash-hexagonal-foundation-v1/phase-2-progress.md"
+  - "backend/application/__init__.py"
+  - "backend/application/context.py"
+  - "backend/application/ports/__init__.py"
+  - "backend/application/ports/core.py"
+  - "backend/adapters/__init__.py"
+  - "backend/adapters/auth/__init__.py"
+  - "backend/adapters/auth/local.py"
+  - "backend/adapters/integrations/__init__.py"
+  - "backend/adapters/integrations/local.py"
+  - "backend/adapters/jobs/__init__.py"
+  - "backend/adapters/jobs/local.py"
+  - "backend/adapters/storage/__init__.py"
+  - "backend/adapters/storage/local.py"
+  - "backend/adapters/workspaces/__init__.py"
+  - "backend/adapters/workspaces/local.py"
+  - "backend/runtime/__init__.py"
+  - "backend/runtime/bootstrap.py"
+  - "backend/runtime/container.py"
+  - "backend/runtime/dependencies.py"
+  - "backend/tests/test_request_context.py"
 ---
