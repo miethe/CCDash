@@ -3,11 +3,13 @@ import { AlertTriangle, RefreshCcw, Search, ShieldAlert, Sparkles, Trophy } from
 
 import { AnalyticsApiError, analyticsService } from '../../services/analytics';
 import {
+  ExecutionArtifactReference,
   EffectivenessScopeType,
   FailurePatternRecord,
   WorkflowEffectivenessResponse,
   WorkflowEffectivenessRollup,
 } from '../../types';
+import { ArtifactReferenceModal } from './ArtifactReferenceModal';
 
 type PeriodPreset = '7d' | '30d' | '90d';
 
@@ -192,6 +194,10 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   const [failurePatterns, setFailurePatterns] = useState<FailurePatternRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeScopeDetail, setActiveScopeDetail] = useState<{
+    item: WorkflowEffectivenessRollup;
+    reference: ExecutionArtifactReference;
+  } | null>(null);
   const requestIdRef = useRef(0);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
 
@@ -423,12 +429,34 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                         {formatInteger(item.sampleSize)} sessions
                       </span>
                     </div>
-                    <h4 className="mt-3 text-lg font-semibold leading-tight text-slate-100 [overflow-wrap:anywhere]">
-                      {item.scopeLabel || item.scopeId}
-                    </h4>
+                    {item.scopeRef ? (
+                      <button
+                        onClick={() => setActiveScopeDetail({ item, reference: item.scopeRef! })}
+                        className="mt-3 text-left text-lg font-semibold leading-tight text-sky-200 underline decoration-slate-600 underline-offset-4 [overflow-wrap:anywhere]"
+                      >
+                        {item.scopeLabel || item.scopeId}
+                      </button>
+                    ) : (
+                      <h4 className="mt-3 text-lg font-semibold leading-tight text-slate-100 [overflow-wrap:anywhere]">
+                        {item.scopeLabel || item.scopeId}
+                      </h4>
+                    )}
                     <p className="mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">
                       {summarizeScope(item)}
                     </p>
+                    {(item.relatedRefs || []).length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {(item.relatedRefs || []).slice(0, 4).map(reference => (
+                          <button
+                            key={`${item.scopeType}-${item.scopeId}-${reference.kind}-${reference.key}`}
+                            onClick={() => setActiveScopeDetail({ item, reference })}
+                            className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-300 transition-colors hover:border-slate-600"
+                          >
+                            {reference.label || reference.key}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {summary.topPerformer?.scopeType === item.scopeType && summary.topPerformer?.scopeId === item.scopeId && (
@@ -611,6 +639,23 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           </div>
         </aside>
       </div>
+
+      {activeScopeDetail && (
+        <ArtifactReferenceModal
+          reference={activeScopeDetail.reference}
+          title={`${scopeLabelFor(activeScopeDetail.item.scopeType)} Reference`}
+          subtitle={`Observed across ${formatInteger(activeScopeDetail.item.sampleSize)} session${activeScopeDetail.item.sampleSize === 1 ? '' : 's'} in the current window.`}
+          metrics={[
+            { label: 'Success', value: formatPercent(activeScopeDetail.item.successScore) },
+            { label: 'Quality', value: formatPercent(activeScopeDetail.item.qualityScore) },
+            { label: 'Risk', value: formatPercent(activeScopeDetail.item.riskScore) },
+            { label: 'Sessions', value: formatInteger(activeScopeDetail.item.sampleSize) },
+          ]}
+          relatedRefs={activeScopeDetail.item.relatedRefs || []}
+          onOpenReference={(reference) => setActiveScopeDetail({ item: activeScopeDetail.item, reference })}
+          onClose={() => setActiveScopeDetail(null)}
+        />
+      )}
     </section>
   );
 };

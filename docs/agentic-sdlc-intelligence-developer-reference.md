@@ -4,6 +4,8 @@ Last updated: 2026-03-12
 
 This reference covers the rollout script, feature-flag model, API surfaces, and primary implementation files for the Agentic SDLC Intelligence foundation.
 
+For the full current-state Workflow + SkillMeat dataflow, resolution behavior, storage model, and tuning gaps, see [docs/workflow-skillmeat-integration-developer-reference.md](/Users/miethe/dev/homelab/development/CCDash/docs/workflow-skillmeat-integration-developer-reference.md).
+
 ## Primary backend files
 
 - `backend/services/integrations/skillmeat_client.py`

@@ -1143,6 +1143,8 @@ export interface WorkflowEffectivenessRollup {
   attributionCoverage?: number;
   attributionCacheShare?: number;
   evidenceSummary: Record<string, unknown>;
+  scopeRef?: ExecutionArtifactReference | null;
+  relatedRefs?: ExecutionArtifactReference[];
   generatedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -1250,6 +1252,7 @@ export interface SkillMeatFeatureFlags {
 export interface SkillMeatProjectConfig {
   enabled: boolean;
   baseUrl: string;
+  webBaseUrl: string;
   projectId: string;
   collectionId: string;
   aaaEnabled: boolean;
@@ -1645,6 +1648,19 @@ export interface RecommendedStackDefinitionRef {
   status: DefinitionReferenceStatus;
 }
 
+export interface ExecutionArtifactReference {
+  key: string;
+  label: string;
+  kind: string;
+  status: string;
+  definitionType: string;
+  externalId: string;
+  sourceUrl: string;
+  sourceAttribution: string;
+  description: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface RecommendedStackComponent {
   componentType: 'workflow' | 'agent' | 'skill' | 'context_module' | 'command' | 'model_policy' | 'artifact';
   componentKey: string;
@@ -1654,6 +1670,7 @@ export interface RecommendedStackComponent {
   sourceAttribution: string;
   payload: Record<string, unknown>;
   definition?: RecommendedStackDefinitionRef | null;
+  artifactRef?: ExecutionArtifactReference | null;
 }
 
 export interface SimilarWorkExample {

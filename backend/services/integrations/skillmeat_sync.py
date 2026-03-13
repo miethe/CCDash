@@ -36,14 +36,16 @@ async def _store_definitions(
     definition_type: str,
     items: list[dict[str, Any]],
     fetched_at: str,
-    base_url: str,
+    web_base_url: str,
     source_project_id: str,
+    collection_id: str,
 ) -> None:
     for item in items:
         stored_item = attach_stable_definition_source(
             item,
-            base_url=base_url,
+            web_base_url=web_base_url,
             project_id=source_project_id,
+            collection_id=collection_id,
         )
         await repo.upsert_external_definition(
             {
@@ -156,6 +158,7 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
 
     configured_project_id = str(getattr(config, "projectId", "") or "")
     configured_collection_id = str(getattr(config, "collectionId", "") or "")
+    configured_web_base_url = str(getattr(config, "webBaseUrl", "") or "").strip()
     context_module_items: list[dict[str, Any]] = []
     workflow_items: list[dict[str, Any]] = []
 
@@ -172,8 +175,9 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="artifact",
             items=artifact_items,
             fetched_at=fetched_at,
-            base_url=base_url,
+            web_base_url=configured_web_base_url,
             source_project_id=configured_project_id,
+            collection_id=configured_collection_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(
@@ -365,8 +369,9 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="workflow",
             items=workflow_items,
             fetched_at=fetched_at,
-            base_url=base_url,
+            web_base_url=configured_web_base_url,
             source_project_id=configured_project_id,
+            collection_id=configured_collection_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(
@@ -385,8 +390,9 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="context_module",
             items=context_module_items,
             fetched_at=fetched_at,
-            base_url=base_url,
+            web_base_url=configured_web_base_url,
             source_project_id=configured_project_id,
+            collection_id=configured_collection_id,
         )
 
     try:
@@ -423,8 +429,9 @@ async def sync_skillmeat_definitions(db: Any, project: Any) -> dict[str, Any]:
             definition_type="bundle",
             items=detailed_bundles,
             fetched_at=fetched_at,
-            base_url=base_url,
+            web_base_url=configured_web_base_url,
             source_project_id=configured_project_id,
+            collection_id=configured_collection_id,
         )
     except SkillMeatClientError as exc:
         warnings.append(

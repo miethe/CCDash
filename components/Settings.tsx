@@ -2032,7 +2032,7 @@ const IntegrationsTab: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label className="block">
                 <span className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
-                  <span>Base URL</span>
+                  <span>API Base URL</span>
                   <SkillMeatStatusBadge result={skillMeatValidation?.baseUrl} fallback="Unchecked" />
                 </span>
                 <input
@@ -2042,6 +2042,19 @@ const IntegrationsTab: React.FC = () => {
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                   placeholder="http://127.0.0.1:8080"
                 />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-slate-400 mb-1">Web App URL (optional)</span>
+                <input
+                  type="url"
+                  value={editData.skillMeat?.webBaseUrl || ''}
+                  onChange={event => updateSkillMeatConfig(prev => ({ ...prev, webBaseUrl: event.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  placeholder="http://127.0.0.1:3000"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Used for deep links from CCDash to SkillMeat pages. Leave blank to hide SkillMeat hyperlinks.
+                </p>
               </label>
               <label className="block">
                 <span className="block text-xs text-slate-400 mb-1">Request Timeout (seconds)</span>

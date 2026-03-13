@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
+from backend.db.factory import get_agentic_intelligence_repository
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import (
     GitHubIntegrationSettingsUpdateRequest,
@@ -30,7 +31,8 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
             id="project-1",
             skillMeat=SkillMeatProjectConfig(
                 enabled=True,
-                baseUrl="http://skillmeat.local",
+                baseUrl="http://skillmeat.local/api/v1",
+                webBaseUrl="http://skillmeat-web.local:3000",
                 projectId="sm-project",
                 collectionId="default",
                 aaaEnabled=False,
@@ -142,6 +144,11 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.countsByType["bundle"], 1)
         self.assertEqual(len(definitions), 5)
         self.assertEqual(definitions[0].projectId, "project-1")
+        artifact = next(item for item in definitions if item.definitionType == "artifact" and item.externalId == "artifact:build-docs")
+        self.assertEqual(
+            artifact.sourceUrl,
+            "http://skillmeat-web.local:3000/collection?collection=default&artifact=artifact%3Abuild-docs",
+        )
         self.assertEqual(len(workflow_definitions), 2)
         effective = next(item for item in workflow_definitions if item.externalId == "wf_project")
         overridden = next(item for item in workflow_definitions if item.externalId == "wf_global")
@@ -156,18 +163,54 @@ class IntegrationsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective.resolutionMetadata["resolvedContextModules"][0]["previewSummary"]["totalTokens"], 97)
         self.assertEqual(effective.resolutionMetadata["executionSummary"]["count"], 1)
         self.assertEqual(effective.resolutionMetadata["recentExecutions"][0]["gateStepCount"], 1)
-        self.assertEqual(effective.sourceUrl, "http://skillmeat.local/workflows/wf_project")
+        self.assertEqual(effective.sourceUrl, "http://skillmeat-web.local:3000/workflows/wf_project")
         self.assertEqual(
             effective.resolutionMetadata["resolvedContextModules"][0]["sourceUrl"],
-            "http://skillmeat.local/projects/sm-project/memory",
+            "http://skillmeat-web.local:3000/projects/sm-project/memory",
         )
         self.assertEqual(
             effective.resolutionMetadata["executionSummary"]["sourceUrl"],
-            "http://skillmeat.local/workflows/executions?workflow_id=wf_project",
+            "http://skillmeat-web.local:3000/workflows/executions?workflow_id=wf_project",
         )
         bundle = next(item for item in definitions if item.definitionType == "bundle")
         self.assertEqual(bundle.resolutionMetadata["bundleSummary"]["artifactRefs"], ["skill:symbols"])
-        self.assertEqual(bundle.sourceUrl, "http://skillmeat.local/collection")
+        self.assertEqual(bundle.sourceUrl, "http://skillmeat-web.local:3000/collection?collection=default")
+
+    async def test_list_definitions_hides_links_when_web_app_url_is_unset(self) -> None:
+        self.project.skillMeat.webBaseUrl = ""
+        repo = get_agentic_intelligence_repository(self.db)
+        source = await repo.upsert_definition_source(
+            {
+                "project_id": "project-1",
+                "source_kind": "skillmeat",
+                "enabled": True,
+                "base_url": "http://skillmeat.local/api/v1",
+                "project_mapping": {"projectId": "sm-project", "collectionId": "default"},
+            }
+        )
+        await repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
+                "definition_type": "workflow",
+                "external_id": "wf_project",
+                "display_name": "Phase Execution",
+                "source_url": "http://old-skillmeat-web.local/workflows/wf_project",
+                "resolution_metadata": {
+                    "executionSummary": {
+                        "count": 1,
+                        "sourceUrl": "http://old-skillmeat-web.local/workflows/executions?workflow_id=wf_project",
+                    },
+                },
+                "fetched_at": "2026-03-07T00:00:00Z",
+            }
+        )
+
+        definitions = await integrations_router.list_skillmeat_definitions(definition_type=None, limit=500, offset=0)
+        workflow = next(item for item in definitions if item.definitionType == "workflow")
+
+        self.assertEqual(workflow.sourceUrl, "")
+        self.assertEqual(workflow.resolutionMetadata["executionSummary"]["sourceUrl"], "")
 
     async def test_validate_config_reports_connection_and_project_status(self) -> None:
         with (

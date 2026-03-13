@@ -10,14 +10,14 @@ import {
 } from 'lucide-react';
 
 import {
+  ExecutionArtifactReference,
   FeatureExecutionWarning,
   RecommendedStack,
   RecommendedStackComponent,
   SimilarWorkExample,
   StackRecommendationEvidence,
 } from '../../types';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
+import { ArtifactReferenceModal } from './ArtifactReferenceModal';
 
 interface RecommendedStackCardProps {
   recommendedStack?: RecommendedStack | null;
@@ -36,6 +36,7 @@ interface ReferenceChipData {
   externalId: string;
   version: string;
   sourceUrl: string;
+  reference: ExecutionArtifactReference;
 }
 
 interface InsightMetric {
@@ -129,6 +130,18 @@ const compactUnique = (values: string[]): string[] => {
 };
 
 const getReferenceData = (component: RecommendedStackComponent): ReferenceChipData => {
+  const fallbackReference: ExecutionArtifactReference = component.artifactRef || {
+    key: `${component.componentType}:${component.componentKey}`,
+    label: component.label || component.componentKey || 'local-only',
+    kind: component.componentType,
+    status: component.status === 'resolved' ? 'resolved' : 'unresolved',
+    definitionType: component.definition?.definitionType || '',
+    externalId: component.definition?.externalId || component.componentKey,
+    sourceUrl: component.definition?.sourceUrl || '',
+    sourceAttribution: component.sourceAttribution || '',
+    description: '',
+    metadata: component.payload || {},
+  };
   if (component.definition) {
     return {
       key: `${component.componentType}:${component.definition.externalId || component.componentKey}`,
@@ -138,6 +151,15 @@ const getReferenceData = (component: RecommendedStackComponent): ReferenceChipDa
       externalId: component.definition.externalId,
       version: component.definition.version,
       sourceUrl: component.definition.sourceUrl,
+      reference: {
+        ...fallbackReference,
+        key: component.definition.externalId || fallbackReference.key,
+        label: component.definition.displayName || fallbackReference.label,
+        status: component.definition.status,
+        definitionType: component.definition.definitionType,
+        externalId: component.definition.externalId,
+        sourceUrl: component.definition.sourceUrl,
+      },
     };
   }
 
@@ -149,12 +171,8 @@ const getReferenceData = (component: RecommendedStackComponent): ReferenceChipDa
     externalId: component.componentKey,
     version: '',
     sourceUrl: '',
+    reference: fallbackReference,
   };
-};
-
-const openExternalReference = (reference: ReferenceChipData) => {
-  if (!reference.sourceUrl) return;
-  window.open(reference.sourceUrl, '_blank', 'noopener,noreferrer');
 };
 
 const openExternalUrl = (url: string) => {
@@ -287,9 +305,10 @@ const buildHeadlineTags = (stackEvidence: StackRecommendationEvidence[]): Insigh
   return tags.slice(0, 4);
 };
 
-const DefinitionChip: React.FC<{ reference: ReferenceChipData; fullWidth?: boolean }> = ({
+const DefinitionChip: React.FC<{ reference: ReferenceChipData; fullWidth?: boolean; onOpenReference: (reference: ExecutionArtifactReference) => void }> = ({
   reference,
   fullWidth = false,
+  onOpenReference,
 }) => {
   const content = (
     <span className={`inline-flex min-w-0 max-w-full items-start gap-2 overflow-hidden rounded-xl border px-3 py-2 text-xs leading-4 ${fullWidth ? 'w-full justify-between' : ''} ${statusChipClass(reference.status)}`}>
@@ -298,54 +317,13 @@ const DefinitionChip: React.FC<{ reference: ReferenceChipData; fullWidth?: boole
       {reference.sourceUrl ? <ExternalLink size={12} className="shrink-0" /> : <Info size={12} className="shrink-0" />}
     </span>
   );
-
-  if (reference.sourceUrl) {
-    return (
-      <button onClick={() => openExternalReference(reference)} className={fullWidth ? 'w-full text-left' : 'text-left'}>
-        {content}
-      </button>
-    );
-  }
-
-  if (reference.status === 'unresolved') {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className={fullWidth ? 'block w-full' : ''}>{content}</span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-xs border border-slate-700 bg-slate-950 text-slate-100">
-          No matching SkillMeat definition was resolved for this component yet.
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button className={fullWidth ? 'w-full text-left' : 'text-left'}>{content}</button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 border border-slate-700 bg-slate-950 text-slate-100">
-        <div className="space-y-2 text-sm">
-          <div className="font-mono text-base">{reference.label}</div>
-          <div className="text-slate-400">Cached reference metadata is available even though a direct deep link is not.</div>
-          <dl className="space-y-1 text-xs text-slate-300">
-            <div className="flex justify-between gap-3">
-              <dt className="text-slate-500">Type</dt>
-              <dd>{reference.definitionType || 'unknown'}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-slate-500">External ID</dt>
-              <dd className="font-mono">{reference.externalId || 'n/a'}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-slate-500">Version</dt>
-              <dd>{reference.version || 'n/a'}</dd>
-            </div>
-          </dl>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <button
+      onClick={() => onOpenReference(reference.reference)}
+      className={fullWidth ? 'w-full text-left' : 'text-left'}
+    >
+      {content}
+    </button>
   );
 };
 
@@ -570,6 +548,7 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
   onOpenFeature,
 }) => {
   const [activeEvidence, setActiveEvidence] = useState<StackRecommendationEvidence | null>(null);
+  const [activeReference, setActiveReference] = useState<ExecutionArtifactReference | null>(null);
 
   const groupedComponents = useMemo(() => {
     const groups = new Map<string, RecommendedStackComponent[]>();
@@ -599,6 +578,10 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
     () => buildHeadlineTags(stackEvidence),
     [stackEvidence],
   );
+  const workflowReference = useMemo(
+    () => recommendedStack?.components.find(component => component.componentType === 'workflow')?.artifactRef || null,
+    [recommendedStack?.components],
+  );
 
   if (!recommendedStack) {
     return (
@@ -626,7 +609,7 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
   }
 
   return (
-    <TooltipProvider>
+    <>
       <section className="rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 shadow-[0_24px_70px_rgba(2,6,23,0.2)]">
         <div className="flex items-start gap-4">
           <div className="max-w-3xl">
@@ -646,9 +629,18 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Workflow</div>
-                <div className="mt-2 text-lg font-semibold text-slate-100 [overflow-wrap:anywhere]">
-                  {recommendedStack.workflowRef || recommendedStack.label}
-                </div>
+                {workflowReference ? (
+                  <button
+                    onClick={() => setActiveReference(workflowReference)}
+                    className="mt-2 text-left text-lg font-semibold text-sky-200 underline decoration-slate-600 underline-offset-4 [overflow-wrap:anywhere]"
+                  >
+                    {recommendedStack.workflowRef || recommendedStack.label}
+                  </button>
+                ) : (
+                  <div className="mt-2 text-lg font-semibold text-slate-100 [overflow-wrap:anywhere]">
+                    {recommendedStack.workflowRef || recommendedStack.label}
+                  </div>
+                )}
                 <p className="mt-2 text-sm leading-6 text-slate-400 [overflow-wrap:anywhere]">
                   {recommendedStack.explanation || 'Historical execution signals were matched against similar work to recommend the most reliable workflow composition.'}
                 </p>
@@ -752,6 +744,7 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
                           key={`${group.key}-${component.componentKey}-${component.label}`}
                           reference={getReferenceData(component)}
                           fullWidth
+                          onOpenReference={setActiveReference}
                         />
                       ))}
                     </div>
@@ -771,7 +764,7 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {referenceChips.map(reference => (
-                      <DefinitionChip key={reference.key} reference={reference} />
+                      <DefinitionChip key={reference.key} reference={reference} onOpenReference={setActiveReference} />
                     ))}
                   </div>
                 </div>
@@ -812,29 +805,42 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
                   No alternate historical stacks were strong enough to rank.
                 </div>
               )}
-              {stackAlternatives.map((alternative, index) => (
-                <div key={alternative.id} className="min-w-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-base font-semibold text-slate-100 [overflow-wrap:anywhere]">{index + 1}. {alternative.label || alternative.workflowRef}</div>
-                      <div className="mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">{alternative.commandAlignment || 'Aligned to current execution pattern'}</div>
+              {stackAlternatives.map((alternative, index) => {
+                const alternativeWorkflowRef = alternative.components.find(component => component.componentType === 'workflow')?.artifactRef || null;
+                return (
+                  <div key={alternative.id} className="min-w-0 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/45 px-4 py-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        {alternativeWorkflowRef ? (
+                          <button
+                            onClick={() => setActiveReference(alternativeWorkflowRef)}
+                            className="text-left text-base font-semibold text-sky-200 underline decoration-slate-600 underline-offset-4 [overflow-wrap:anywhere]"
+                          >
+                            {index + 1}. {alternative.label || alternative.workflowRef}
+                          </button>
+                        ) : (
+                          <div className="text-base font-semibold text-slate-100 [overflow-wrap:anywhere]">{index + 1}. {alternative.label || alternative.workflowRef}</div>
+                        )}
+                        <div className="mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">{alternative.commandAlignment || 'Aligned to current execution pattern'}</div>
+                      </div>
+                      <div className="shrink-0 self-start rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-sm font-semibold text-slate-200">
+                        {formatPercent(alternative.confidence)}
+                      </div>
                     </div>
-                    <div className="shrink-0 self-start rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-sm font-semibold text-slate-200">
-                      {formatPercent(alternative.confidence)}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {alternative.components.slice(0, 5).map(component => (
+                        <button
+                          key={`${alternative.id}-${component.componentKey}`}
+                          onClick={() => component.artifactRef && setActiveReference(component.artifactRef)}
+                          className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-300 [overflow-wrap:anywhere]"
+                        >
+                          {getReferenceLabel(component)}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {alternative.components.slice(0, 5).map(component => (
-                      <span
-                        key={`${alternative.id}-${component.componentKey}`}
-                        className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-300 [overflow-wrap:anywhere]"
-                      >
-                        {getReferenceLabel(component)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -900,6 +906,25 @@ export const RecommendedStackCard: React.FC<RecommendedStackCardProps> = ({
           onOpenFeature={onOpenFeature}
         />
       )}
-    </TooltipProvider>
+      {activeReference && (
+        <ArtifactReferenceModal
+          reference={activeReference}
+          title="Artifact Reference"
+          subtitle="Resolved from the historical stack recommendation payload for this feature."
+          metrics={[
+            { label: 'Kind', value: activeReference.kind || 'artifact' },
+            { label: 'Status', value: activeReference.status || 'unresolved' },
+            { label: 'External ID', value: activeReference.externalId || 'n/a' },
+          ]}
+          relatedRefs={(recommendedStack?.components || [])
+            .map(component => component.artifactRef)
+            .filter((reference): reference is ExecutionArtifactReference => Boolean(reference))
+            .filter(reference => reference.key !== activeReference.key)
+            .slice(0, 8)}
+          onOpenReference={setActiveReference}
+          onClose={() => setActiveReference(null)}
+        />
+      )}
+    </>
   );
 };

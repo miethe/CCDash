@@ -801,6 +801,7 @@ class SkillMeatFeatureFlags(BaseModel):
 class SkillMeatProjectConfig(BaseModel):
     enabled: bool = False
     baseUrl: str = ""
+    webBaseUrl: str = ""
     projectId: str = ""
     collectionId: str = ""
     aaaEnabled: bool = False
@@ -1260,6 +1261,19 @@ class RecommendedStackDefinitionRef(BaseModel):
     status: DefinitionReferenceStatus = "unresolved"
 
 
+class ExecutionArtifactReference(BaseModel):
+    key: str = ""
+    label: str = ""
+    kind: str = ""
+    status: str = "unresolved"
+    definitionType: str = ""
+    externalId: str = ""
+    sourceUrl: str = ""
+    sourceAttribution: str = ""
+    description: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RecommendedStackComponent(BaseModel):
     componentType: StackComponentType
     componentKey: str = ""
@@ -1269,6 +1283,7 @@ class RecommendedStackComponent(BaseModel):
     sourceAttribution: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     definition: Optional[RecommendedStackDefinitionRef] = None
+    artifactRef: Optional[ExecutionArtifactReference] = None
 
 
 class SimilarWorkExample(BaseModel):
@@ -1489,6 +1504,8 @@ class WorkflowEffectivenessRollup(BaseModel):
     attributionCoverage: float = 0.0
     attributionCacheShare: float = 0.0
     evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+    scopeRef: Optional[ExecutionArtifactReference] = None
+    relatedRefs: list[ExecutionArtifactReference] = Field(default_factory=list)
     generatedAt: str = ""
     createdAt: str = ""
     updatedAt: str = ""

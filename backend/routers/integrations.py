@@ -49,6 +49,7 @@ from backend.services.agentic_intelligence_flags import require_skillmeat_integr
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.services.project_paths.providers.base import PathResolutionError
 from backend.services.project_paths.providers.filesystem import FilesystemProjectPathProvider
+from backend.services.integrations.skillmeat_routes import normalize_definitions_for_project
 from backend.services.project_paths.resolver import _normalize_relative_path
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceManager, RepoWorkspaceError
@@ -393,7 +394,8 @@ async def list_skillmeat_definitions(
         limit=limit,
         offset=offset,
     )
-    return [_to_definition_dto(row) for row in rows]
+    normalized_rows = normalize_definitions_for_project(rows, app_request.project)
+    return [_to_definition_dto(row) for row in normalized_rows]
 
 
 @integrations_router.post("/observations/backfill", response_model=SkillMeatObservationBackfillResponse)
