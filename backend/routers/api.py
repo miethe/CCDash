@@ -7,9 +7,14 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
+from backend.application.services import resolve_application_request
+from backend.application.services.documents import DocumentQueryService
+from backend.application.services.sessions import SessionFacetService
 from backend import config
 from backend.models import (
     AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference,
@@ -46,10 +51,13 @@ from backend.services.integrations.github_settings_store import GitHubSettingsSt
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceError, RepoWorkspaceManager
 from backend.services.session_usage_analytics import get_session_usage_attribution_details
+from backend.request_scope import get_core_ports, get_request_context
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
 logger = logging.getLogger("ccdash.api")
+session_facet_service = SessionFacetService()
+document_query_service = DocumentQueryService()
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -645,54 +653,66 @@ async def list_sessions(
 @sessions_router.get("/facets/models", response_model=list[SessionModelFacet])
 async def get_session_model_facets(
     include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return normalized model facets for Session Forensics filters."""
-    project = project_manager.get_active_project()
-    if not project:
-        return []
-
     db = await connection.get_connection()
-    repo = get_session_repository(db)
-    rows = await repo.get_model_facets(project.id, include_subagents=include_subagents)
-
-    items: list[SessionModelFacet] = []
-    for row in rows:
-        raw_model = str(row.get("model") or "")
-        identity = derive_model_identity(raw_model)
-        items.append(
+    if not isinstance(request_context, RequestContext) and not isinstance(core_ports, CorePorts):
+        project = project_manager.get_active_project()
+        if not project:
+            return []
+        repo = get_session_repository(db)
+        rows = await repo.get_model_facets(project.id, include_subagents=include_subagents)
+        return [
             SessionModelFacet(
-                raw=raw_model,
-                modelDisplayName=identity["modelDisplayName"],
-                modelProvider=identity["modelProvider"],
-                modelFamily=identity["modelFamily"],
-                modelVersion=identity["modelVersion"],
+                raw=str(row.get("model") or ""),
+                modelDisplayName=derive_model_identity(str(row.get("model") or ""))["modelDisplayName"],
+                modelProvider=derive_model_identity(str(row.get("model") or ""))["modelProvider"],
+                modelFamily=derive_model_identity(str(row.get("model") or ""))["modelFamily"],
+                modelVersion=derive_model_identity(str(row.get("model") or ""))["modelVersion"],
                 count=int(row.get("count") or 0),
             )
-        )
-    return items
+            for row in rows
+        ]
+    app_request = await resolve_application_request(request_context, core_ports, db)
+    rows = await session_facet_service.get_model_facets(
+        app_request.context,
+        app_request.ports,
+        include_subagents=include_subagents,
+    )
+    return [SessionModelFacet(**row) for row in rows]
 
 
 @sessions_router.get("/facets/platforms", response_model=list[SessionPlatformFacet])
 async def get_session_platform_facets(
     include_subagents: bool = Query(True, description="Include subagent sessions in facet calculations"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return platform facets for Session Forensics platform filters."""
-    project = project_manager.get_active_project()
-    if not project:
-        return []
-
     db = await connection.get_connection()
-    repo = get_session_repository(db)
-    rows = await repo.get_platform_facets(project.id, include_subagents=include_subagents)
-
-    return [
-        SessionPlatformFacet(
-            platformType=str(row.get("platform_type") or "Claude Code").strip() or "Claude Code",
-            platformVersion=str(row.get("platform_version") or "").strip(),
-            count=int(row.get("count") or 0),
-        )
-        for row in rows
-    ]
+    if not isinstance(request_context, RequestContext) and not isinstance(core_ports, CorePorts):
+        project = project_manager.get_active_project()
+        if not project:
+            return []
+        repo = get_session_repository(db)
+        rows = await repo.get_platform_facets(project.id, include_subagents=include_subagents)
+        return [
+            SessionPlatformFacet(
+                platformType=str(row.get("platform_type") or "Claude Code").strip() or "Claude Code",
+                platformVersion=str(row.get("platform_version") or "").strip(),
+                count=int(row.get("count") or 0),
+            )
+            for row in rows
+        ]
+    app_request = await resolve_application_request(request_context, core_ports, db)
+    rows = await session_facet_service.get_platform_facets(
+        app_request.context,
+        app_request.ports,
+        include_subagents=include_subagents,
+    )
+    return [SessionPlatformFacet(**row) for row in rows]
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)
@@ -1478,14 +1498,12 @@ async def list_documents(
     include_progress: bool = Query(False),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=5000),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return paginated typed documents with optional filters."""
-    project = project_manager.get_active_project()
-    if not project:
-        return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
-
     db = await connection.get_connection()
-    repo = get_document_repository(db)
+    app_request = await resolve_application_request(request_context, core_ports, db)
     filters = {
         "q": q,
         "doc_subtype": doc_subtype,
@@ -1498,14 +1516,13 @@ async def list_documents(
         "phase": phase,
         "include_progress": include_progress,
     }
-    rows = await repo.list_paginated(project.id, offset, limit, filters)
-    total = await repo.count(project.id, filters)
-
-    items: list[PlanDocument] = []
-    for row in rows:
-        items.append(_map_document_row_to_model(row, include_content=False, link_counts=None))
-
-    return PaginatedResponse(items=items, total=total, offset=offset, limit=limit)
+    return await document_query_service.list_documents(
+        app_request.context,
+        app_request.ports,
+        filters=filters,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @documents_router.get("/catalog")
@@ -1520,14 +1537,12 @@ async def get_documents_catalog(
     prd: str | None = Query(None),
     phase: str | None = Query(None),
     include_progress: bool = Query(False),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return DB-backed document facet counts for filters."""
-    project = project_manager.get_active_project()
-    if not project:
-        return {"total": 0}
-
     db = await connection.get_connection()
-    repo = get_document_repository(db)
+    app_request = await resolve_application_request(request_context, core_ports, db)
     filters = {
         "q": q,
         "doc_subtype": doc_subtype,
@@ -1540,148 +1555,44 @@ async def get_documents_catalog(
         "phase": phase,
         "include_progress": include_progress,
     }
-    return await repo.get_catalog_facets(project.id, filters)
+    return await document_query_service.get_catalog(
+        app_request.context,
+        app_request.ports,
+        filters=filters,
+    )
 
 
 @documents_router.get("/{doc_id}/links")
-async def get_document_links(doc_id: str):
+async def get_document_links(
+    doc_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return linked entities for a document."""
-    project = project_manager.get_active_project()
-    if not project:
-        raise HTTPException(status_code=404, detail="No active project")
-
     db = await connection.get_connection()
-    doc_repo = get_document_repository(db)
-    link_repo = get_entity_link_repository(db)
-    feature_repo = get_feature_repository(db)
-    task_repo = get_task_repository(db)
-    session_repo = get_session_repository(db)
-
-    row = await doc_repo.get_by_id(doc_id)
-    if not row:
-        row = await doc_repo.get_by_path(project.id, doc_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-
-    canonical_doc_id = str(row.get("id") or doc_id)
-    links = await link_repo.get_links_for("document", canonical_doc_id)
-
-    feature_ids: set[str] = set()
-    task_ids: set[str] = set()
-    session_ids: set[str] = set()
-    document_ids: set[str] = set()
-
-    for link in links:
-        source_type = str(link.get("source_type") or "")
-        source_id = str(link.get("source_id") or "")
-        target_type = str(link.get("target_type") or "")
-        target_id = str(link.get("target_id") or "")
-
-        if source_type == "document" and source_id == canonical_doc_id:
-            counterpart_type = target_type
-            counterpart_id = target_id
-        elif target_type == "document" and target_id == canonical_doc_id:
-            counterpart_type = source_type
-            counterpart_id = source_id
-        else:
-            continue
-
-        if counterpart_type == "feature":
-            feature_ids.add(counterpart_id)
-        elif counterpart_type == "task":
-            task_ids.add(counterpart_id)
-        elif counterpart_type == "session":
-            session_ids.add(counterpart_id)
-        elif counterpart_type == "document" and counterpart_id != canonical_doc_id:
-            document_ids.add(counterpart_id)
-
-    features = []
-    for feature_id in sorted(feature_ids):
-        feature_row = await feature_repo.get_by_id(feature_id)
-        if not feature_row:
-            continue
-        features.append({
-            "id": feature_id,
-            "name": feature_row.get("name", ""),
-            "status": feature_row.get("status", ""),
-            "category": feature_row.get("category", ""),
-        })
-
-    tasks = []
-    for task_row in await task_repo.list_all(project.id):
-        task_id = str(task_row.get("id") or "")
-        if task_id not in task_ids:
-            continue
-        tasks.append({
-            "id": task_id,
-            "title": task_row.get("title", ""),
-            "status": task_row.get("status", ""),
-            "sourceFile": task_row.get("source_file", ""),
-            "sessionId": task_row.get("session_id", ""),
-            "featureId": task_row.get("feature_id"),
-            "phaseId": task_row.get("phase_id"),
-        })
-
-    sessions = []
-    for session_id in sorted(session_ids):
-        session_row = await session_repo.get_by_id(session_id)
-        if not session_row:
-            continue
-        sessions.append({
-            "id": session_id,
-            "status": session_row.get("status", ""),
-            "model": session_row.get("model", ""),
-            "startedAt": session_row.get("started_at", ""),
-            "totalCost": session_row.get("total_cost", 0.0),
-        })
-
-    documents = []
-    for linked_doc_id in sorted(document_ids):
-        linked_row = await doc_repo.get_by_id(linked_doc_id)
-        if not linked_row:
-            continue
-        documents.append({
-            "id": linked_doc_id,
-            "title": linked_row.get("title", ""),
-            "filePath": linked_row.get("file_path", ""),
-            "canonicalPath": linked_row.get("canonical_path", ""),
-            "docType": linked_row.get("doc_type", ""),
-            "docSubtype": linked_row.get("doc_subtype", ""),
-        })
-
-    return {
-        "documentId": canonical_doc_id,
-        "features": features,
-        "tasks": tasks,
-        "sessions": sessions,
-        "documents": documents,
-    }
+    app_request = await resolve_application_request(request_context, core_ports, db)
+    return await document_query_service.get_document_links(
+        app_request.context,
+        app_request.ports,
+        doc_id=doc_id,
+    )
 
 
 @documents_router.get("/{doc_id}", response_model=PlanDocument)
-async def get_document(doc_id: str):
+async def get_document(
+    doc_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return a single document with full content."""
-    project = project_manager.get_active_project()
-    if not project:
-        raise HTTPException(status_code=404, detail="No active project")
-
     db = await connection.get_connection()
-    repo = get_document_repository(db)
-
-    row = await repo.get_by_id(doc_id)
-    if not row:
-        row = await repo.get_by_path(project.id, doc_id)
-    if not row and doc_id.startswith("DOC-"):
-        legacy_hint = doc_id[4:]
-        # Legacy IDs used hyphenated paths; keep a best-effort fallback.
-        candidate_path = normalize_ref_path(legacy_hint.replace("-", "/"))
-        if candidate_path:
-            row = await repo.get_by_path(project.id, candidate_path)
-
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-
-    return _map_document_row_to_model(row, include_content=True, link_counts=None)
+    app_request = await resolve_application_request(request_context, core_ports, db)
+    return await document_query_service.get_document(
+        app_request.context,
+        app_request.ports,
+        doc_id=doc_id,
+        include_content=True,
+    )
 
 
 @documents_router.put("/{doc_id}", response_model=DocumentUpdateResponse)

@@ -10,11 +10,6 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
-from backend.adapters.auth import LocalIdentityProvider, PermitAllAuthorizationPolicy
-from backend.adapters.integrations import NoopIntegrationClient
-from backend.adapters.jobs import InProcessJobScheduler
-from backend.adapters.storage import FactoryStorageUnitOfWork
-from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.context import RequestContext, RequestMetadata, TraceContext
 from backend.application.ports import CorePorts
 from backend import config
@@ -25,6 +20,7 @@ from backend.project_manager import project_manager
 from backend.runtime.profiles import RuntimeProfile
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
+from backend.runtime_ports import build_core_ports
 
 logger = logging.getLogger("ccdash.runtime")
 
@@ -143,14 +139,7 @@ class RuntimeContainer:
         return active_bundle.as_tuple()
 
     def _build_core_ports(self) -> CorePorts:
-        return CorePorts(
-            identity_provider=LocalIdentityProvider(),
-            authorization_policy=PermitAllAuthorizationPolicy(),
-            workspace_registry=ProjectManagerWorkspaceRegistry(project_manager),
-            storage=FactoryStorageUnitOfWork(self.db),
-            job_scheduler=InProcessJobScheduler(),
-            integration_client=NoopIntegrationClient(),
-        )
+        return build_core_ports(self.db)
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()

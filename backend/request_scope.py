@@ -1,28 +1,29 @@
-"""FastAPI dependency helpers for runtime-scoped services."""
+"""FastAPI dependency helpers that avoid importing the runtime package."""
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 
 from backend.application.context import RequestContext, RequestMetadata
 from backend.application.ports import CorePorts
-from backend.runtime.container import RuntimeContainer
 
 
-def get_runtime_container(request: Request) -> RuntimeContainer:
+def get_runtime_container(request: Request) -> Any:
     container = getattr(request.app.state, "runtime_container", None)
-    if not isinstance(container, RuntimeContainer):
+    if container is None or not hasattr(container, "build_request_context"):
         raise HTTPException(status_code=500, detail="Runtime container is unavailable")
     return container
 
 
 def get_core_ports(
     request: Request,
-    container: RuntimeContainer = Depends(get_runtime_container),
+    container: Any = Depends(get_runtime_container),
 ) -> CorePorts:
     ports = getattr(request.app.state, "core_ports", None)
     if isinstance(ports, CorePorts):
         return ports
-    ports = container.ports
+    ports = getattr(container, "ports", None)
     if isinstance(ports, CorePorts):
         return ports
     raise HTTPException(status_code=500, detail="Runtime ports are unavailable")
@@ -30,7 +31,7 @@ def get_core_ports(
 
 async def get_request_context(
     request: Request,
-    container: RuntimeContainer = Depends(get_runtime_container),
+    container: Any = Depends(get_runtime_container),
 ) -> RequestContext:
     cached = getattr(request.state, "request_context", None)
     if isinstance(cached, RequestContext):
