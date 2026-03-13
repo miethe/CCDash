@@ -271,18 +271,14 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   }, [failurePatterns.length, filteredItems]);
 
   const shellClass = embedded
-    ? 'flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
+    ? 'rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
     : 'rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 md:p-6 shadow-[0_28px_90px_rgba(2,6,23,0.22)]';
   const contentGridClass = embedded
-    ? 'mt-5 grid min-h-0 flex-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[minmax(0,1fr)_320px] xl:overflow-hidden xl:pr-0'
+    ? 'mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.88fr)]'
     : 'mt-5 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]';
-  const itemsColumnClass = embedded ? 'space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1' : 'space-y-4';
-  const failurePatternsBodyClass = embedded
-    ? 'space-y-3 px-4 py-4 xl:min-h-0 xl:overflow-y-auto xl:pr-2'
-    : 'space-y-3 px-4 py-4';
-  const failurePatternsAsideClass = embedded
-    ? 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50 xl:flex xl:min-h-0 xl:flex-col'
-    : 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50';
+  const itemsColumnClass = 'space-y-4';
+  const failurePatternsBodyClass = 'space-y-3 px-4 py-4';
+  const failurePatternsAsideClass = 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50';
 
   return (
     <section className={shellClass}>
