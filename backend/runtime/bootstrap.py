@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
 from backend.db.file_watcher import file_watcher
@@ -21,6 +22,7 @@ from backend.routers.projects import projects_router
 from backend.routers.session_mappings import session_mappings_router
 from backend.routers.test_visualizer import test_visualizer_router
 from backend.runtime.container import RuntimeContainer
+from backend.runtime.dependencies import get_request_context
 from backend.runtime.profiles import RuntimeProfile, RuntimeProfileName, get_runtime_profile
 
 
@@ -58,7 +60,10 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     _register_routers(app)
 
     @app.get("/api/health")
-    def health(_: Request) -> dict[str, str]:
+    def health(
+        _: Request,
+        _request_context: RequestContext = Depends(get_request_context),
+    ) -> dict[str, str]:
         return {
             "status": "ok",
             "db": "connected" if connection._connection else "disconnected",

@@ -6,9 +6,17 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI
 
+from backend.adapters.auth import LocalIdentityProvider, PermitAllAuthorizationPolicy
+from backend.adapters.integrations import NoopIntegrationClient
+from backend.adapters.jobs import InProcessJobScheduler
+from backend.adapters.storage import FactoryStorageUnitOfWork
+from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
+from backend.application.context import RequestContext, RequestMetadata, TraceContext
+from backend.application.ports import CorePorts
 from backend import config
 from backend.db import connection, migrations, sync_engine
 from backend.db.file_watcher import file_watcher
@@ -33,6 +41,7 @@ class RuntimeContainer:
     profile: RuntimeProfile
     db: Any | None = None
     sync: Any | None = None
+    ports: CorePorts | None = None
     lifecycle: RuntimeLifecycleState = field(default_factory=RuntimeLifecycleState)
 
     async def startup(self, app: FastAPI) -> None:
@@ -44,12 +53,15 @@ class RuntimeContainer:
 
         self.db = await connection.get_connection()
         await migrations.run_migrations(self.db)
+        self.ports = self._build_core_ports()
+        app.state.core_ports = self.ports
 
         self.sync = sync_engine.SyncEngine(self.db)
         app.state.sync_engine = self.sync
 
-        active_project = project_manager.get_active_project()
-        active_bundle = project_manager.get_active_path_bundle() if active_project else None
+        workspace_registry = self.require_ports().workspace_registry
+        active_project = workspace_registry.get_active_project()
+        active_bundle = workspace_registry.get_active_path_bundle() if active_project else None
         sessions_dir, docs_dir, progress_dir = self._resolve_paths(active_bundle)
         test_sources = (
             resolve_test_sources(active_project, project_root=active_bundle.root.path)
@@ -60,7 +72,7 @@ class RuntimeContainer:
         test_results_dir: Path | None = test_sources[0].resolved_dir if test_sources else None
 
         if active_project and self.profile.capabilities.sync:
-            self.lifecycle.sync_task = asyncio.create_task(
+            self.lifecycle.sync_task = self.require_ports().job_scheduler.schedule(
                 self._run_startup_sync_pipeline(
                     active_project=active_project,
                     sessions_dir=sessions_dir,
@@ -69,7 +81,8 @@ class RuntimeContainer:
                     test_sources=test_sources,
                     test_results_dir=test_results_dir,
                     test_flags=flags,
-                )
+                ),
+                name=f"ccdash:{self.profile.name}:startup-sync",
             )
             app.state.sync_task = self.lifecycle.sync_task
 
@@ -115,6 +128,11 @@ class RuntimeContainer:
         shutdown_observability(app)
         await connection.close_connection()
 
+    def require_ports(self) -> CorePorts:
+        if self.ports is None:
+            raise RuntimeError("Runtime ports are unavailable before startup completes.")
+        return self.ports
+
     def _resolve_paths(self, active_bundle: Any | None) -> tuple[Path, Path, Path]:
         if active_bundle is None:
             return (
@@ -123,6 +141,50 @@ class RuntimeContainer:
                 config.PROGRESS_DIR,
             )
         return active_bundle.as_tuple()
+
+    def _build_core_ports(self) -> CorePorts:
+        return CorePorts(
+            identity_provider=LocalIdentityProvider(),
+            authorization_policy=PermitAllAuthorizationPolicy(),
+            workspace_registry=ProjectManagerWorkspaceRegistry(project_manager),
+            storage=FactoryStorageUnitOfWork(self.db),
+            job_scheduler=InProcessJobScheduler(),
+            integration_client=NoopIntegrationClient(),
+        )
+
+    async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
+        ports = self.require_ports()
+        requested_project_id = str(metadata.headers.get("x-ccdash-project-id") or "").strip() or None
+        principal = await ports.identity_provider.get_principal(
+            metadata,
+            runtime_profile=self.profile.name,
+        )
+        workspace_scope, project_scope = ports.workspace_registry.resolve_scope(requested_project_id)
+
+        request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
+        correlation_id = self._header(metadata, "x-correlation-id") or request_id
+        return RequestContext(
+            principal=principal,
+            workspace=workspace_scope,
+            project=project_scope,
+            runtime_profile=self.profile.name,
+            trace=TraceContext(
+                request_id=request_id,
+                correlation_id=correlation_id,
+                traceparent=self._header(metadata, "traceparent"),
+                client_host=metadata.client_host,
+                user_agent=self._header(metadata, "user-agent"),
+                path=metadata.path,
+                method=metadata.method,
+            ),
+        )
+
+    def _header(self, metadata: RequestMetadata, key: str) -> str | None:
+        value = metadata.headers.get(key.lower())
+        if value is None:
+            return None
+        clean = str(value).strip()
+        return clean or None
 
     async def _run_startup_sync_pipeline(
         self,
@@ -189,11 +251,12 @@ class RuntimeContainer:
         analytics_interval = max(0, int(getattr(config, "ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0)))
         if analytics_interval <= 0:
             return None
+        ports = self.require_ports()
 
         async def _run_periodic_analytics_snapshots() -> None:
             while True:
                 await asyncio.sleep(analytics_interval)
-                current_project = project_manager.get_active_project()
+                current_project = ports.workspace_registry.get_active_project()
                 if not current_project:
                     continue
                 try:
@@ -214,4 +277,7 @@ class RuntimeContainer:
             self.profile.name,
             analytics_interval,
         )
-        return asyncio.create_task(_run_periodic_analytics_snapshots())
+        return ports.job_scheduler.schedule(
+            _run_periodic_analytics_snapshots(),
+            name=f"ccdash:{self.profile.name}:analytics-snapshots",
+        )

@@ -6,6 +6,7 @@ from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
 from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.container import RuntimeContainer
+from backend.runtime.dependencies import get_request_context, get_runtime_container
 from backend.runtime.profiles import (
     RuntimeCapabilities,
     RuntimeProfile,
@@ -24,6 +25,8 @@ __all__ = [
     "build_runtime_app",
     "build_test_app",
     "build_worker_runtime",
+    "get_request_context",
+    "get_runtime_container",
     "get_runtime_profile",
     "iter_runtime_profiles",
 ]
