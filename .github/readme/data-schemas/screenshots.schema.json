@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Screenshots",
+  "type": "object",
+  "properties": {
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "file", "alt", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "file": { "type": "string" },
+          "alt": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "captured", "outdated"] },
+          "category": { "type": "string" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "capturedAt": { "type": "string", "format": "date-time" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "gifs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "file", "alt", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "file": { "type": "string" },
+          "alt": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "captured", "outdated"] },
+          "tool": { "type": "string" },
+          "sequence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
