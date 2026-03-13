@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "_comment": "NotebookLM sync hook - syncs markdown docs to NotebookLM when modified. Logs to ~/.notebooklm/sync.log",
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notebooklm-sync-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
