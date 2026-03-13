@@ -164,4 +164,4 @@ npm test -- --run services/__tests__/agenticIntelligence.test.ts
 npm run build
 ```
 
-`npm run typecheck` currently fails in unrelated pre-existing files outside this feature area (`components/ProjectBoard.tsx`, `contexts/DataContext.tsx`, `constants.ts`, `components/TranscriptMappedMessageCard.tsx`).
+`pnpm typecheck` is currently expected to pass for the repo baseline after the frontend shell/context split removed the prior `contexts/DataContext.tsx` typecheck drift from this area.

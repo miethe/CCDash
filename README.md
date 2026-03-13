@@ -276,9 +276,11 @@ Represents Markdown documentation. Contains:
 4.  **Useful scripts**:
     *   `npm run dev:backend` - backend only (reload mode)
     *   `npm run dev:frontend` - frontend only
+    *   `npm run dev:worker` - background worker only (startup sync + scheduled jobs, no HTTP server)
     *   `npm run discover:sessions` - run session signal discovery (default profile: `claude_code`)
     *   `npm run build` - build frontend assets
     *   `npm run start:backend` - production-style backend startup
+    *   `npm run start:worker` - production-style background worker startup
     *   `npm run start:frontend` - serve built frontend (`vite preview`)
     *   `python backend/scripts/agentic_intelligence_rollout.py --project <project-id>` - sync SkillMeat definitions, backfill stack observations, and recompute workflow intelligence rollups
 
@@ -300,6 +302,12 @@ Represents Markdown documentation. Contains:
     *   `CCDASH_AGENTIC_RECOMMENDATIONS_ENABLED`: global hard gate for historical stack recommendations (default `true`).
     *   `CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED`: global hard gate for workflow intelligence endpoints (default `true`).
     *   `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED`: global hard gate for attribution analytics and session attribution payloads (default `true`).
+
+7.  **Runtime profile notes**:
+    *   `npm run dev` / `npm run start:backend` use the `local` runtime profile: HTTP + in-process sync/watch/job behavior for desktop-style convenience.
+    *   `backend.main:app` is the hosted-style API entrypoint with incidental background work disabled.
+    *   `npm run dev:worker` / `npm run start:worker` run `backend.worker`, which performs sync/refresh/scheduled work without serving HTTP.
+    *   Frontend shell state is split across session, entity-data, runtime, and API-client layers; `contexts/DataContext.tsx` remains a compatibility facade for existing components.
 
 6.  **Test Mapping Workflow (recommended)**:
     *   Run one initial backfill for each project (`POST /api/tests/mappings/backfill`) to bootstrap mappings across existing runs.

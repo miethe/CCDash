@@ -69,6 +69,12 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
+To run background work separately from the API:
+
+```bash
+npm run dev:worker
+```
+
 ## Production-Style Startup
 
 Build frontend assets:
@@ -83,13 +89,19 @@ Start backend:
 npm run start:backend
 ```
 
+Start background worker:
+
+```bash
+npm run start:worker
+```
+
 Serve built frontend:
 
 ```bash
 npm run start:frontend
 ```
 
-For real deployments, run backend/frontend under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy.
+For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. `backend.main:app` should stay stateless for hosted API deployments; `backend.worker` owns startup sync and scheduled/background job execution.
 
 ## Troubleshooting
 
