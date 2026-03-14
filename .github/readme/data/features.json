@@ -1,0 +1,430 @@
+{
+  "categories": [
+    {
+      "id": "global-layout",
+      "name": "Global Navigation & Layout",
+      "items": [
+        {
+          "id": "collapsible-sidebar",
+          "name": "Collapsible Sidebar",
+          "description": "Fluid-transition sidebar with icon-only mode to maximize workspace",
+          "highlight": true
+        },
+        {
+          "id": "notifications",
+          "name": "Notification Badges",
+          "description": "System alerts for cost overruns, quality drops, and threshold breaches",
+          "highlight": false
+        },
+        {
+          "id": "dark-theme",
+          "name": "Slate Dark Mode",
+          "description": "Deep dark theme optimized for extended engineering sessions",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "dashboard-analytics",
+      "name": "Dashboard & Analytics",
+      "items": [
+        {
+          "id": "kpi-cards",
+          "name": "KPI Cards",
+          "description": "Real-time metrics for workload, model IO, cache, cost, velocity, and tool reliability",
+          "highlight": true
+        },
+        {
+          "id": "usage-attribution",
+          "name": "Usage Attribution",
+          "description": "Rank attributed workload by skill, agent, command, artifact, and workflow",
+          "highlight": true
+        },
+        {
+          "id": "ai-insights",
+          "name": "AI Insights",
+          "description": "Google Gemini-powered executive summaries on project health",
+          "highlight": true
+        },
+        {
+          "id": "cost-velocity-charts",
+          "name": "Cost vs Velocity Charts",
+          "description": "Track spending against task velocity over time with interactive area charts",
+          "highlight": false
+        },
+        {
+          "id": "model-usage-charts",
+          "name": "Model Usage Charts",
+          "description": "Model usage breakdown revealing allocation and cost drivers across sessions",
+          "highlight": false
+        },
+        {
+          "id": "workflow-intelligence-analytics",
+          "name": "Workflow Intelligence",
+          "description": "Ranks workflows, agents, and skills by success, efficiency, quality, and risk",
+          "highlight": false
+        },
+        {
+          "id": "session-block-insights",
+          "name": "Session Block Insights",
+          "description": "Break long sessions into time blocks with burn-rate and cost projections",
+          "highlight": false
+        },
+        {
+          "id": "master-timeline",
+          "name": "Master Timeline",
+          "description": "Full-width session lifecycle correlation view against token consumption",
+          "highlight": false
+        },
+        {
+          "id": "token-semantics",
+          "name": "Token Semantics",
+          "description": "Separate model IO, cache input, and observed workload for accurate attribution",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "session-forensics",
+      "name": "Session Inspector & Forensics",
+      "items": [
+        {
+          "id": "session-transcript",
+          "name": "3-Pane Transcript",
+          "description": "Fluid layout with log list, detail view, and metadata sidebar",
+          "highlight": true
+        },
+        {
+          "id": "forensics-payload",
+          "name": "Deep Forensics",
+          "description": "Queue pressure, resource footprint, subagent topology, and hook signals",
+          "highlight": true
+        },
+        {
+          "id": "session-analytics",
+          "name": "Session Analytics",
+          "description": "Token timeline, model allocation, session block insights, and master timeline",
+          "highlight": false
+        },
+        {
+          "id": "session-artifacts",
+          "name": "Artifact Cards",
+          "description": "Skills, commands, agents, hooks, tasks, and test-run artifacts with source correlation",
+          "highlight": false
+        },
+        {
+          "id": "app-impact",
+          "name": "App Impact",
+          "description": "Delivery outcomes, file footprint, validation movement, and workflow risk signals",
+          "highlight": false
+        },
+        {
+          "id": "test-status",
+          "name": "Test Status",
+          "description": "Track modified test files and run telemetry including framework, status, and timing",
+          "highlight": false
+        },
+        {
+          "id": "session-files",
+          "name": "File Activity",
+          "description": "Per-file action chips, touch counts, net diff, and session history in one table",
+          "highlight": false
+        },
+        {
+          "id": "session-agents",
+          "name": "Agent Cards",
+          "description": "Card view of participating agents with click-to-filter transcript navigation",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "feature-management",
+      "name": "Feature Board",
+      "items": [
+        {
+          "id": "feature-board",
+          "name": "Feature-Centric Board",
+          "description": "Kanban and list views grouping work by feature stage with drill-down modals",
+          "highlight": true
+        },
+        {
+          "id": "document-discovery",
+          "name": "Document-First Discovery",
+          "description": "Cross-references PRDs, implementation plans, and progress files automatically",
+          "highlight": true
+        },
+        {
+          "id": "kanban-list-views",
+          "name": "Kanban & List Views",
+          "description": "Toggle between visual Kanban board and sortable list for different workflows",
+          "highlight": false
+        },
+        {
+          "id": "feature-drill-down",
+          "name": "Drill-Down Modal",
+          "description": "Overview, phases accordion, documents tab, and session summaries per feature",
+          "highlight": false
+        },
+        {
+          "id": "phase-task-tracking",
+          "name": "Phase & Task Tracking",
+          "description": "Accordion phase view with real-time task checklist and deferred caveat indicators",
+          "highlight": false
+        },
+        {
+          "id": "feature-filtering",
+          "name": "Search & Filtering",
+          "description": "Search by name, filter by category, status, and deferred state with sort controls",
+          "highlight": false
+        },
+        {
+          "id": "session-correlation",
+          "name": "Session Correlation",
+          "description": "Feature-linked session chips surface workload and cache share context",
+          "highlight": false
+        },
+        {
+          "id": "deferred-tracking",
+          "name": "Deferred Task Tracking",
+          "description": "Features with terminal-complete deferred steps land in Done with caveat badge",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "project-management",
+      "name": "Project Management",
+      "items": [
+        {
+          "id": "dynamic-switching",
+          "name": "Dynamic Project Switching",
+          "description": "Instantly switch between multiple local projects from the sidebar",
+          "highlight": true
+        },
+        {
+          "id": "project-context",
+          "name": "Project Context Config",
+          "description": "Typed path-source configuration for sessions, plans, and progress tracking",
+          "highlight": false
+        },
+        {
+          "id": "project-creation",
+          "name": "Project Creation",
+          "description": "Add projects with metadata and path roots persisted for future sessions",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "plan-catalog",
+      "name": "Plan Catalog",
+      "items": [
+        {
+          "id": "card-grid-view",
+          "name": "Card Grid View",
+          "description": "Visual overview of PRDs, RFCs, and architecture docs in scannable card format",
+          "highlight": true
+        },
+        {
+          "id": "folder-explorer",
+          "name": "Folder Explorer",
+          "description": "3-pane IDE-style file explorer for navigating documentation hierarchies",
+          "highlight": false
+        },
+        {
+          "id": "document-modal",
+          "name": "Document Modal",
+          "description": "Tabbed modal with Summary, Delivery, Relationships, Content, and Timeline views",
+          "highlight": false
+        },
+        {
+          "id": "inline-editing",
+          "name": "Inline Document Editing",
+          "description": "Edit plan documents in-modal with local save and GitHub write-back support",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "codebase-explorer",
+      "name": "Codebase Explorer",
+      "items": [
+        {
+          "id": "file-tree",
+          "name": "Project File Tree",
+          "description": "Full project tree with gitignore-aware filtering and safety excludes",
+          "highlight": true
+        },
+        {
+          "id": "file-correlations",
+          "name": "File Correlations",
+          "description": "Per-file session involvement, feature links, document references, and activity",
+          "highlight": false
+        },
+        {
+          "id": "cross-navigation",
+          "name": "Cross-Surface Navigation",
+          "description": "Deep-link from files into sessions, features, and plan documents for full context",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "name": "Settings",
+      "items": [
+        {
+          "id": "alert-rules",
+          "name": "Alert Rules Engine",
+          "description": "Persisted threshold-based alerts with activate/deactivate toggle controls",
+          "highlight": true
+        },
+        {
+          "id": "projects-tab",
+          "name": "Projects Tab",
+          "description": "Per-project path editors, typed source selection, and testing configuration",
+          "highlight": false
+        },
+        {
+          "id": "integrations-tab",
+          "name": "Integrations Tab",
+          "description": "SkillMeat and GitHub sub-tabs for token validation and workspace controls",
+          "highlight": false
+        },
+        {
+          "id": "ai-pricing-catalog",
+          "name": "AI Pricing Catalog",
+          "description": "Global platform pricing with provider sync, exact-model rows, and manual overrides",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "execution",
+      "name": "Execution Workbench",
+      "items": [
+        {
+          "id": "execution-workbench",
+          "name": "Execution Workbench",
+          "description": "Feature-scoped execution with safety pipeline, env profiles, and run history",
+          "highlight": true
+        },
+        {
+          "id": "recommended-stack",
+          "name": "Recommended Stack",
+          "description": "Confidence-scored workflow suggestions based on historical outcomes and SkillMeat definitions",
+          "highlight": true
+        },
+        {
+          "id": "run-launch-ux",
+          "name": "Run Launch UX",
+          "description": "Pre-run review modal with editable command, working directory, and env profile selection",
+          "highlight": false
+        },
+        {
+          "id": "safety-pipeline",
+          "name": "Safety Pipeline",
+          "description": "Allow, approval-required, and deny command policies for auditable run lifecycles",
+          "highlight": false
+        },
+        {
+          "id": "run-history",
+          "name": "Run History & Output",
+          "description": "Streamed terminal output with run history, active run metadata, cancel, and retry",
+          "highlight": false
+        },
+        {
+          "id": "embedded-workflow-intelligence",
+          "name": "Embedded Workflow Intelligence",
+          "description": "Feature-scoped leaderboard with failure patterns and direct registry handoff",
+          "highlight": false
+        },
+        {
+          "id": "execution-api",
+          "name": "Execution API",
+          "description": "Persistent run events and approval workflow through dedicated backend endpoints",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "workflow-registry",
+      "name": "Workflow Registry",
+      "items": [
+        {
+          "id": "workflow-catalog",
+          "name": "Workflow Catalog",
+          "description": "Searchable catalog with correlation-state filters and keyboard navigation",
+          "highlight": true
+        },
+        {
+          "id": "workflow-detail",
+          "name": "Workflow Detail",
+          "description": "Composition summary, effectiveness scores, issue cards, and representative sessions",
+          "highlight": true
+        },
+        {
+          "id": "workflow-identity",
+          "name": "Workflow Identity",
+          "description": "Correlation state (strong/hybrid/weak), family refs, and SkillMeat resolution metadata",
+          "highlight": false
+        },
+        {
+          "id": "cross-surface-navigation",
+          "name": "Cross-Surface Navigation",
+          "description": "Registry actions open SkillMeat workflows, bundles, and representative sessions",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "agentic-intelligence",
+      "name": "Agentic SDLC Intelligence",
+      "items": [
+        {
+          "id": "skillmeat-sync",
+          "name": "SkillMeat Sync",
+          "description": "Read-only cache for artifact, workflow, context-module, and bundle definitions",
+          "highlight": true
+        },
+        {
+          "id": "stack-extraction",
+          "name": "Observed Stack Extraction",
+          "description": "Backfills historical sessions into stack observations against cached SkillMeat definitions",
+          "highlight": false
+        },
+        {
+          "id": "operator-tooling",
+          "name": "Operator Tooling",
+          "description": "CLI script to sync definitions, backfill observations, and recompute workflow rollups",
+          "highlight": false
+        }
+      ]
+    },
+    {
+      "id": "platform-support",
+      "name": "Platform Support",
+      "items": [
+        {
+          "id": "claude-code",
+          "name": "Claude Code",
+          "description": "Native JSONL parsing with sidecar enrichment for todos, tasks, teams, and tool results",
+          "highlight": true
+        },
+        {
+          "id": "codex",
+          "name": "Codex",
+          "description": "JSONL payload parsing with tool/result correlation and signal extraction",
+          "highlight": false
+        },
+        {
+          "id": "platform-registry",
+          "name": "Platform Registry",
+          "description": "Centralized parser routing for adding platforms without changing API/UI contracts",
+          "highlight": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "screenshots": [
+    {
+      "id": "dashboard-hero",
+      "file": "docs/screenshots/dashboard-hero.png",
+      "alt": "CCDash dashboard showing KPI cards, cost vs velocity chart, and AI insights panel",
+      "status": "pending",
+      "category": "readme",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture at 1280x720 with demo project data loaded, route: /"
+    },
+    {
+      "id": "session-inspector-transcript",
+      "file": "docs/screenshots/session-inspector-transcript.png",
+      "alt": "Session Inspector 3-pane transcript view with tool call expanded in detail panel",
+      "status": "pending",
+      "category": "readme",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture with active session showing tool call expanded inline, route: /sessions"
+    },
+    {
+      "id": "feature-board-kanban",
+      "file": "docs/screenshots/feature-board-kanban.png",
+      "alt": "Feature board Kanban view with drill-down modal open showing phases and tasks",
+      "status": "pending",
+      "category": "readme",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture kanban columns with drill-down modal visible, route: /board"
+    },
+    {
+      "id": "execution-workbench",
+      "file": "docs/screenshots/execution-workbench.png",
+      "alt": "Execution workbench showing recommended stack card and streaming run output",
+      "status": "pending",
+      "category": "features",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture with recommended stack card and active run output streaming, route: /execution"
+    },
+    {
+      "id": "workflow-registry",
+      "file": "docs/screenshots/workflow-registry.png",
+      "alt": "Workflow Registry catalog pane with detail panel showing effectiveness scores",
+      "status": "pending",
+      "category": "features",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture catalog + detail panel with effectiveness scores visible, route: /workflows"
+    },
+    {
+      "id": "analytics-workflow-intelligence",
+      "file": "docs/screenshots/analytics-workflow-intelligence.png",
+      "alt": "Analytics workflow intelligence tab showing leaderboard with failure pattern clustering",
+      "status": "pending",
+      "category": "features",
+      "width": 1280,
+      "height": 720,
+      "notes": "Capture workflow leaderboard with failure clustering visible, route: /analytics?tab=workflow_intelligence"
+    }
+  ],
+  "gifs": [
+    {
+      "id": "session-walkthrough",
+      "file": "docs/gifs/session-walkthrough.gif",
+      "alt": "Animated walkthrough opening a session, browsing the transcript, and exploring forensics",
+      "status": "pending",
+      "tool": "chrome-mcp",
+      "sequence": ["open-session-list", "select-session", "browse-transcript", "click-forensics-tab"]
+    },
+    {
+      "id": "feature-board-drill",
+      "file": "docs/gifs/feature-board-drill.gif",
+      "alt": "Animated demo clicking a feature on the board, opening the modal, and browsing phases",
+      "status": "pending",
+      "tool": "chrome-mcp",
+      "sequence": ["click-feature-in-board", "open-modal", "browse-phases", "view-documents-tab"]
+    }
+  ]
+}
