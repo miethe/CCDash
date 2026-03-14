@@ -1,6 +1,6 @@
 # Workflow + SkillMeat Integration Developer Reference
 
-Last updated: 2026-03-13
+Last updated: 2026-03-14
 
 This document explains how CCDash currently integrates with SkillMeat for workflow intelligence, recommended stacks, and artifact resolution. It is a current-state implementation reference for developers tuning the integration, not a future-state PRD.
 
@@ -63,6 +63,9 @@ Current implementation files:
 - [backend/routers/analytics.py](/Users/miethe/dev/homelab/development/CCDash/backend/routers/analytics.py)
 - [components/execution/RecommendedStackCard.tsx](/Users/miethe/dev/homelab/development/CCDash/components/execution/RecommendedStackCard.tsx)
 - [components/execution/WorkflowEffectivenessSurface.tsx](/Users/miethe/dev/homelab/development/CCDash/components/execution/WorkflowEffectivenessSurface.tsx)
+- [backend/services/workflow_registry.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/workflow_registry.py)
+- [components/Workflows/WorkflowRegistryPage.tsx](/Users/miethe/dev/homelab/development/CCDash/components/Workflows/WorkflowRegistryPage.tsx)
+- [services/workflows.ts](/Users/miethe/dev/homelab/development/CCDash/services/workflows.ts)
 
 ## Configuration and feature gates
 
@@ -258,6 +261,33 @@ Important limitation:
 - bundles: `/collection?collection=<id>`
 
 ## Step 4: Where CCDash stores SkillMeat data
+
+## Workflow Registry surface
+
+The new Workflow Registry surface makes the hybrid model visible instead of hiding it behind a single `workflowRef`.
+
+Route:
+
+- `/workflows`
+
+It consumes:
+
+- `GET /api/analytics/workflow-registry`
+- `GET /api/analytics/workflow-registry/detail`
+
+What it exposes per workflow entity:
+
+1. identity
+2. correlation state
+3. composition summary
+4. effectiveness summary
+5. issue cards
+6. action links into SkillMeat or CCDash
+
+This is intentionally different from the existing analytics leaderboard:
+
+- `/analytics?tab=workflow_intelligence` is optimized for ranking and comparison
+- `/workflows` is optimized for identity inspection, correlation debugging, and drill-down navigation
 
 Relevant tables:
 

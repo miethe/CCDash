@@ -1,10 +1,10 @@
 # Agentic SDLC Intelligence Developer Reference
 
-Last updated: 2026-03-12
+Last updated: 2026-03-14
 
 This reference covers the rollout script, feature-flag model, API surfaces, and primary implementation files for the Agentic SDLC Intelligence foundation.
 
-For the full current-state Workflow + SkillMeat dataflow, resolution behavior, storage model, and tuning gaps, see [docs/workflow-skillmeat-integration-developer-reference.md](/Users/miethe/dev/homelab/development/CCDash/docs/workflow-skillmeat-integration-developer-reference.md).
+For the full current-state Workflow + SkillMeat dataflow, resolution behavior, storage model, and tuning gaps, see [workflow-skillmeat-integration-developer-reference.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/dev/workflow-skillmeat-integration-developer-reference.md).
 
 ## Primary backend files
 
@@ -25,11 +25,14 @@ For the full current-state Workflow + SkillMeat dataflow, resolution behavior, s
 
 - `components/execution/RecommendedStackCard.tsx`
 - `components/execution/WorkflowEffectivenessSurface.tsx`
+- `components/Workflows/WorkflowRegistryPage.tsx`
+- `components/Workflows/detail/WorkflowDetailPanel.tsx`
 - `components/FeatureExecutionWorkbench.tsx`
 - `components/Analytics/AnalyticsDashboard.tsx`
 - `components/Settings.tsx`
 - `services/analytics.ts`
 - `services/agenticIntelligence.ts`
+- `services/workflows.ts`
 - `types.ts`
 
 ## Feature flags
@@ -140,6 +143,8 @@ Use `--fail-on-warning` when you want rollout to act like a stricter operator ga
 ### Analytics
 
 - `GET /api/analytics/workflow-effectiveness`
+- `GET /api/analytics/workflow-registry`
+- `GET /api/analytics/workflow-registry/detail`
 - `GET /api/analytics/failure-patterns`
 - `GET /api/analytics/usage-attribution`
 - `GET /api/analytics/usage-attribution/drilldown`
@@ -154,6 +159,26 @@ Workflow effectiveness rows may now carry attribution-derived metrics when usage
 - `attributionCoverage`
 - `attributionCacheShare`
 
+### Workflow Registry surface
+
+`/workflows` is the identity-and-correlation companion to `/analytics?tab=workflow_intelligence`.
+
+Use it when the implementation task is about:
+
+- workflow-resolution quality
+- observed family aliasing
+- command-artifact fallback matches
+- bundle/context/stage composition exposure
+- SkillMeat deep-link actions
+
+Primary files:
+
+- `backend/services/workflow_registry.py`
+- `backend/routers/analytics.py`
+- `components/Workflows/WorkflowRegistryPage.tsx`
+- `components/Workflows/detail/WorkflowDetailPanel.tsx`
+- `services/workflows.ts`
+
 ## Verification
 
 Targeted checks used for this rollout:
@@ -162,7 +187,9 @@ Targeted checks used for this rollout:
 python3 -m pytest backend/tests/test_agentic_intelligence_flags.py backend/tests/test_integrations_router.py backend/tests/test_features_execution_context_router.py backend/tests/test_analytics_router.py -q
 python3 -m pytest backend/tests/test_stack_recommendations.py -q
 python3 -m pytest backend/tests/test_session_usage_analytics.py backend/tests/test_sessions_api_router.py backend/tests/test_workflow_effectiveness.py -q
+python3 -m pytest backend/tests/test_workflow_registry.py backend/tests/test_analytics_router.py -q
 npm test -- --run services/__tests__/agenticIntelligence.test.ts
+npm test -- --run services/__tests__/workflows.test.ts components/Workflows/__tests__/workflowRegistryRendering.test.tsx
 npm run build
 ```
 

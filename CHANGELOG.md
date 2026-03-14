@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-03-14
+
+### Added
+
+- Workflow Registry surface at `/workflows`:
+  - dedicated catalog + detail workflow hub with deep-linkable selected workflow routes
+  - explicit correlation-state badges for strong, hybrid, weak, and unresolved workflow entities
+  - composition, effectiveness, issues, actions, representative sessions, and recent SkillMeat execution sections
+- Frontend regression coverage for:
+  - workflow registry route encoding and API query behavior
+  - workflow registry catalog/detail render smoke cases
+  - workflow action dispatch between internal CCDash navigation and external SkillMeat links
+- User documentation for the Workflow Registry:
+  - `docs/workflow-registry-user-guide.md`
+
+### Changed
+
+- `/analytics?tab=workflow_intelligence` and `/execution` now provide direct entry points into the Workflow Registry.
+- Workflow intelligence documentation now treats `/workflows` as the primary identity-and-correlation hub, with `/analytics` remaining the comparative leaderboard view.
+- Workflow Registry and Correlation Surface V1 tracking now completes phases 5-7 and marks the implementation plan complete.
+
+### Docs
+
+- Added:
+  - `docs/workflow-registry-user-guide.md`
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/agentic-sdlc-intelligence-user-guide.md`
+  - `docs/agentic-sdlc-intelligence-developer-reference.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/guides/dev/workflow-skillmeat-integration-developer-reference.md`
+  - `docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md`
+
 ## 2026-03-12
 
 ### Added

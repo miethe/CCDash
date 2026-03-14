@@ -1,5 +1,6 @@
 import {
   ExecutionArtifactReference,
+  WorkflowRegistryAction,
   WorkflowRegistryCorrelationState,
   WorkflowRegistryEffectivenessSummary,
   WorkflowRegistryIdentity,
@@ -76,6 +77,21 @@ export const hasEffectivenessSummary = (
 export const openExternalUrl = (url: string) => {
   if (!url) return;
   window.open(url, '_blank', 'noopener,noreferrer');
+};
+
+export const runWorkflowRegistryAction = (
+  action: WorkflowRegistryAction,
+  handlers: {
+    navigate: (href: string) => void;
+    openExternal?: (href: string) => void;
+  },
+) => {
+  if (action.disabled || !action.href) return;
+  if (action.target === 'internal') {
+    handlers.navigate(action.href);
+    return;
+  }
+  (handlers.openExternal || openExternalUrl)(action.href);
 };
 
 export const buildIdentityReference = (

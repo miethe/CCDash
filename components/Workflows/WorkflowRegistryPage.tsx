@@ -18,7 +18,7 @@ import {
 } from '../../services/workflows';
 import { WorkflowCatalog } from './catalog/WorkflowCatalog';
 import { WorkflowDetailPanel } from './detail/WorkflowDetailPanel';
-import { formatInteger, openExternalUrl } from './workflowRegistryUtils';
+import { formatInteger, runWorkflowRegistryAction } from './workflowRegistryUtils';
 
 const formatLoadError = (err: unknown, fallback: string): string => {
   if (err instanceof WorkflowRegistryApiError) {
@@ -172,12 +172,7 @@ export const WorkflowRegistryPage: React.FC = () => {
   };
 
   const handleOpenAction = (action: WorkflowRegistryAction) => {
-    if (action.disabled || !action.href) return;
-    if (action.target === 'internal') {
-      navigate(action.href);
-      return;
-    }
-    openExternalUrl(action.href);
+    runWorkflowRegistryAction(action, { navigate });
   };
 
   const detailTitle = detail?.identity.displayLabel || detail?.identity.observedWorkflowFamilyRef || 'Workflow detail';

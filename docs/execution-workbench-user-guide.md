@@ -1,6 +1,6 @@
 # Execution Workbench User Guide
 
-Last updated: 2026-03-09
+Last updated: 2026-03-14
 
 Use the Execution Workbench to launch, monitor, and control local terminal commands from inside CCDash.
 
@@ -78,6 +78,7 @@ The workbench `Analytics` tab now includes:
 - model IO and cost kept separate so token totals do not imply a direct dollar mapping
 - embedded workflow intelligence scoped to the selected feature
 - a shortcut into `/analytics?tab=workflow_intelligence`
+- a shortcut into `/workflows` when you need workflow identity, correlation, and drill-down actions rather than leaderboard comparisons
 
 If workflow intelligence is disabled for the current project, the summary cards remain and the intelligence panel is replaced with a notice.
 
@@ -101,4 +102,4 @@ If workflow intelligence is disabled for the current project, the summary cards 
 - If approval keeps returning to blocked:
   - policy may now evaluate to `deny`; re-check in review flow and inspect reason codes.
 
-For full workflow-intelligence behavior, see `docs/agentic-sdlc-intelligence-user-guide.md`.
+For full workflow-intelligence behavior, see `docs/agentic-sdlc-intelligence-user-guide.md` and `docs/workflow-registry-user-guide.md`.

@@ -2,7 +2,7 @@
 schema_name: ccdash_document
 schema_version: 3
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Workflow Registry and Correlation Surface V1'
 description: Implement a dedicated Workflow page in CCDash that unifies workflow identity,
