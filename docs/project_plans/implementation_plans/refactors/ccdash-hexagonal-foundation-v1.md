@@ -4,21 +4,34 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: pending
+status: completed
 category: refactors
-title: "Implementation Plan: CCDash Hexagonal Foundation V1"
-description: "Refactor CCDash into explicit runtime composition, application services, and port/adapter boundaries that support auth, hosted deployment, and storage modularization."
-summary: "Sequence the foundation refactor through runtime composition, request context, storage injection, bounded-context service extraction, worker separation, and frontend shell cleanup without breaking local-first operation."
+title: 'Implementation Plan: CCDash Hexagonal Foundation V1'
+description: Refactor CCDash into explicit runtime composition, application services,
+  and port/adapter boundaries that support auth, hosted deployment, and storage modularization.
+summary: Sequence the foundation refactor through runtime composition, request context,
+  storage injection, bounded-context service extraction, worker separation, and frontend
+  shell cleanup without breaking local-first operation.
 author: codex
-audience: [ai-agents, developers, platform-engineering, backend-platform]
+audience:
+- ai-agents
+- developers
+- platform-engineering
+- backend-platform
 created: 2026-03-11
-updated: 2026-03-11
-tags: [implementation, architecture, refactor, hexagonal, ports-adapters, runtime]
+updated: '2026-03-13'
+tags:
+- implementation
+- architecture
+- refactor
+- hexagonal
+- ports-adapters
+- runtime
 priority: critical
 risk_level: high
 complexity: high
 track: Foundation
-timeline_estimate: "4-6 weeks across 6 phases"
+timeline_estimate: 4-6 weeks across 6 phases
 feature_slug: ccdash-hexagonal-foundation-v1
 feature_family: ccdash-platform-foundation
 feature_version: v1
@@ -30,22 +43,23 @@ lineage_children: []
 lineage_type: refactor
 linked_features: []
 related_documents:
-  - docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
-  - docs/project_plans/PRDs/enhancements/shared-auth-rbac-sso-v1.md
-  - docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md
-  - docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
+- docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
+- docs/project_plans/PRDs/enhancements/shared-auth-rbac-sso-v1.md
+- docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md
+- docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
+- docs/project_plans/designs/ccdash-runtime-port-adapter-map-v1.md
 context_files:
-  - backend/main.py
-  - backend/db/connection.py
-  - backend/db/factory.py
-  - backend/db/sync_engine.py
-  - backend/project_manager.py
-  - backend/routers/api.py
-  - backend/routers/analytics.py
-  - backend/routers/execution.py
-  - backend/routers/integrations.py
-  - contexts/DataContext.tsx
+- backend/main.py
+- backend/db/connection.py
+- backend/db/factory.py
+- backend/db/sync_engine.py
+- backend/project_manager.py
+- backend/routers/api.py
+- backend/routers/analytics.py
+- backend/routers/execution.py
+- backend/routers/integrations.py
+- contexts/DataContext.tsx
 ---
 
 # Implementation Plan: CCDash Hexagonal Foundation V1

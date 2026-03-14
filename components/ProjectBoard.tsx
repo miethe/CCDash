@@ -1385,9 +1385,9 @@ const FeatureModal = ({
     }
   };
 
-  const handleTaskStatusChange = async (phaseId: string, taskId: string, newStatus: string) => {
+  const handleTaskStatusChange = async (phaseId: string, taskId: string, newStatus: ProjectTask['status']) => {
     let previousFeatureSnapshot: Feature | null = null;
-    let previousTaskStatus: string | undefined;
+    let previousTaskStatus: ProjectTask['status'] | undefined;
     setFullFeature(prev => {
       if (!prev || prev.id !== feature.id) return prev;
       let changed = false;
@@ -2684,7 +2684,7 @@ const FeatureModal = ({
                           return (
                             <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
                               <button
-                                onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus)}
+                                onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus as ProjectTask['status'])}
                                 className="flex-shrink-0 hover:scale-110 transition-transform"
                                 title={markTitle}
                               >
@@ -2757,7 +2757,7 @@ const FeatureModal = ({
                               )}
                               <StatusDropdown
                                 status={task.status}
-                                onStatusChange={(s) => handleTaskStatusChange(phase.phase, task.id, s)}
+                                onStatusChange={(s) => handleTaskStatusChange(phase.phase, task.id, s as ProjectTask['status'])}
                                 size="xs"
                               />
                             </div>

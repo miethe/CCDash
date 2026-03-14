@@ -34,7 +34,7 @@ export const mappedTranscriptIcon = (
   iconName: string | undefined,
   kind: TranscriptFormattedMessage['kind'],
   size = 12,
-): JSX.Element => {
+): React.ReactElement => {
   const token = String(iconName || '').trim().toLowerCase();
   if (token === 'archive' || token === 'box') return <Archive size={size} />;
   if (token === 'cpu' || token === 'chip') return <Cpu size={size} />;
@@ -135,4 +135,3 @@ export const TranscriptMappedMessageCard: React.FC<TranscriptMappedMessageCardPr
     </div>
   );
 };
-

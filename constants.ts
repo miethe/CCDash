@@ -98,9 +98,9 @@ export const MOCK_SESSIONS: AgentSession[] = [
     gitAuthor: 'Nick Miethe',
     gitBranch: 'feature/vector-search',
     updatedFiles: [
-      { filePath: 'src/lib/db/schema.prisma', commits: ['a1b2c3d'], additions: 45, deletions: 2, agentName: 'Architect', timestamp: '14:00:15' },
-      { filePath: 'src/api/search.ts', commits: ['a1b2c3d', 'f9g8h7j'], additions: 120, deletions: 0, agentName: 'Coder', timestamp: '14:02:10' },
-      { filePath: 'docs/prd/vector-search.md', commits: ['d4e5f6g'], additions: 15, deletions: 5, agentName: 'Planner', timestamp: '14:04:30' }
+      { filePath: 'src/lib/db/schema.prisma', commits: ['a1b2c3d'], additions: 45, deletions: 2, agentName: 'Architect', action: 'update', fileType: 'Schema', timestamp: '14:00:15' },
+      { filePath: 'src/api/search.ts', commits: ['a1b2c3d', 'f9g8h7j'], additions: 120, deletions: 0, agentName: 'Coder', action: 'update', fileType: 'API code', timestamp: '14:02:10' },
+      { filePath: 'docs/prd/vector-search.md', commits: ['d4e5f6g'], additions: 15, deletions: 5, agentName: 'Planner', action: 'update', fileType: 'Documentation', timestamp: '14:04:30' }
     ],
     linkedArtifacts: [
       { id: 'MEM-101', type: 'memory', title: 'Preferred DB Schema Style', source: 'SkillMeat', description: 'User prefers snake_case for DB columns and strictly typed interfaces.' },
@@ -146,9 +146,9 @@ export const MOCK_SESSIONS: AgentSession[] = [
     gitAuthor: 'Nick Miethe',
     gitBranch: 'refactor/auth-flow',
     updatedFiles: [
-      { filePath: 'src/components/AuthProvider.tsx', commits: ['e4f5g6h'], additions: 200, deletions: 150, agentName: 'Coder', timestamp: '08:16:00' },
-      { filePath: 'src/middleware.ts', commits: ['e4f5g6h'], additions: 25, deletions: 40, agentName: 'Coder', timestamp: '08:18:22' },
-      { filePath: 'docs/arch/auth-migration.md', commits: ['h8i9j0k'], additions: 50, deletions: 10, agentName: 'Planner', timestamp: '08:05:15' }
+      { filePath: 'src/components/AuthProvider.tsx', commits: ['e4f5g6h'], additions: 200, deletions: 150, agentName: 'Coder', action: 'update', fileType: 'Frontend code', timestamp: '08:16:00' },
+      { filePath: 'src/middleware.ts', commits: ['e4f5g6h'], additions: 25, deletions: 40, agentName: 'Coder', action: 'update', fileType: 'Middleware', timestamp: '08:18:22' },
+      { filePath: 'docs/arch/auth-migration.md', commits: ['h8i9j0k'], additions: 50, deletions: 10, agentName: 'Planner', action: 'update', fileType: 'Architecture doc', timestamp: '08:05:15' }
     ],
     linkedArtifacts: [
        { id: 'MEM-105', type: 'memory', title: 'Clerk.dev API Keys', source: 'SkillMeat', description: 'Keys retrieved from secure vault skill.' },
@@ -324,7 +324,12 @@ export const MOCK_DOCUMENTS: PlanDocument[] = [
   }
 ];
 
-export const MOCK_ANALYTICS: AnalyticsMetric[] = [
+export const MOCK_ANALYTICS: Array<{
+  date: string;
+  cost: number;
+  featuresShipped: number;
+  avgQuality: number;
+}> = [
   { date: '2026-01-28', cost: 12.5, featuresShipped: 1, avgQuality: 4.2 },
   { date: '2026-01-29', cost: 18.2, featuresShipped: 2, avgQuality: 3.8 },
   { date: '2026-01-30', cost: 8.4, featuresShipped: 0, avgQuality: 4.5 },

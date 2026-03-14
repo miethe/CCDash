@@ -249,6 +249,182 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].scopeType, "workflow")
         self.assertEqual(response.items[0].successScore, 0.8)
 
+    async def test_workflow_registry_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        payload = {
+            "projectId": "project-1",
+            "items": [
+                {
+                    "id": "workflow:phase-execution",
+                    "identity": {
+                        "registryId": "workflow:phase-execution",
+                        "observedWorkflowFamilyRef": "/dev:execute-phase",
+                        "observedAliases": ["/dev:execute-phase"],
+                        "displayLabel": "Phase Execution",
+                        "resolvedWorkflowId": "phase-execution",
+                        "resolvedWorkflowLabel": "Phase Execution",
+                        "resolvedWorkflowSourceUrl": "https://example.com/workflows/phase-execution",
+                        "resolvedCommandArtifactId": "",
+                        "resolvedCommandArtifactLabel": "",
+                        "resolvedCommandArtifactSourceUrl": "",
+                        "resolutionKind": "workflow_definition",
+                        "correlationState": "strong",
+                    },
+                    "correlationState": "strong",
+                    "issueCount": 0,
+                    "issues": [],
+                    "effectiveness": {
+                        "scopeType": "workflow",
+                        "scopeId": "phase-execution",
+                        "scopeLabel": "Phase Execution",
+                        "sampleSize": 4,
+                        "successScore": 0.75,
+                        "efficiencyScore": 0.7,
+                        "qualityScore": 0.8,
+                        "riskScore": 0.2,
+                        "attributionCoverage": 0.9,
+                        "averageAttributionConfidence": 0.88,
+                        "evidenceSummary": {"featureIds": ["feature-1"]},
+                    },
+                    "observedCommandCount": 3,
+                    "representativeCommands": ["/dev:execute-phase"],
+                    "sampleSize": 4,
+                    "lastObservedAt": "2026-03-14T00:00:00+00:00",
+                }
+            ],
+            "correlationCounts": {
+                "strong": 1,
+                "hybrid": 0,
+                "weak": 0,
+                "unresolved": 0,
+            },
+            "total": 1,
+            "offset": 0,
+            "limit": 20,
+            "generatedAt": "2026-03-14T00:00:00+00:00",
+        }
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router.connection, "get_connection", return_value=object()),
+            patch.object(analytics_router, "list_workflow_registry", return_value=payload),
+        ):
+            response = await analytics_router.workflow_registry(limit=20, offset=0, search="phase", correlation_state="strong")
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.items[0].id, "workflow:phase-execution")
+        self.assertEqual(response.items[0].identity.displayLabel, "Phase Execution")
+        self.assertEqual(response.items[0].correlationState, "strong")
+        self.assertEqual(response.correlationCounts["strong"], 1)
+
+    async def test_workflow_registry_detail_endpoint_wraps_service_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        detail = {
+            "id": "workflow:phase-execution",
+            "identity": {
+                "registryId": "workflow:phase-execution",
+                "observedWorkflowFamilyRef": "/dev:execute-phase",
+                "observedAliases": ["/dev:execute-phase"],
+                "displayLabel": "Phase Execution",
+                "resolvedWorkflowId": "phase-execution",
+                "resolvedWorkflowLabel": "Phase Execution",
+                "resolvedWorkflowSourceUrl": "https://example.com/workflows/phase-execution",
+                "resolvedCommandArtifactId": "",
+                "resolvedCommandArtifactLabel": "",
+                "resolvedCommandArtifactSourceUrl": "",
+                "resolutionKind": "workflow_definition",
+                "correlationState": "strong",
+            },
+            "correlationState": "strong",
+            "issueCount": 1,
+            "issues": [
+                {
+                    "code": "stale_cache",
+                    "severity": "warning",
+                    "title": "Stale cache",
+                    "message": "The cached workflow definition is older than the latest observation.",
+                    "metadata": {},
+                }
+            ],
+            "effectiveness": {
+                "scopeType": "workflow",
+                "scopeId": "phase-execution",
+                "scopeLabel": "Phase Execution",
+                "sampleSize": 4,
+                "successScore": 0.75,
+                "efficiencyScore": 0.7,
+                "qualityScore": 0.8,
+                "riskScore": 0.2,
+                "attributionCoverage": 0.9,
+                "averageAttributionConfidence": 0.88,
+                "evidenceSummary": {"featureIds": ["feature-1"]},
+            },
+            "observedCommandCount": 3,
+            "representativeCommands": ["/dev:execute-phase"],
+            "sampleSize": 4,
+            "lastObservedAt": "2026-03-14T00:00:00+00:00",
+            "composition": {
+                "artifactRefs": ["workflow:phase-execution"],
+                "contextRefs": ["context:planning"],
+                "resolvedContextModules": [],
+                "planSummary": {"stages": 3},
+                "stageOrder": ["plan", "execute", "validate"],
+                "gateCount": 2,
+                "fanOutCount": 1,
+                "bundleAlignment": None,
+            },
+            "representativeSessions": [
+                {
+                    "sessionId": "session-1",
+                    "featureId": "feature-1",
+                    "title": "Workflow Session",
+                    "status": "completed",
+                    "workflowRef": "/dev:execute-phase",
+                    "startedAt": "2026-03-14T00:00:00+00:00",
+                    "endedAt": "2026-03-14T00:10:00+00:00",
+                    "href": "/sessions/session-1",
+                }
+            ],
+            "recentExecutions": [],
+            "actions": [
+                {
+                    "id": "open-workflow",
+                    "label": "Open workflow",
+                    "target": "external",
+                    "href": "https://example.com/workflows/phase-execution",
+                    "disabled": False,
+                    "reason": "",
+                    "metadata": {},
+                }
+            ],
+        }
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router.connection, "get_connection", return_value=object()),
+            patch.object(analytics_router, "get_workflow_registry_detail", return_value=detail),
+        ):
+            response = await analytics_router.workflow_registry_detail(registry_id="workflow:phase-execution")
+
+        self.assertEqual(response.projectId, "project-1")
+        self.assertEqual(response.item.id, "workflow:phase-execution")
+        self.assertEqual(response.item.composition.stageOrder, ["plan", "execute", "validate"])
+        self.assertEqual(response.item.actions[0].id, "open-workflow")
+
+    async def test_workflow_registry_detail_endpoint_returns_404_when_missing(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router.connection, "get_connection", return_value=object()),
+            patch.object(analytics_router, "get_workflow_registry_detail", return_value=None),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.workflow_registry_detail(registry_id="workflow:missing")
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertIn("workflow:missing", str(ctx.exception.detail))
+
     async def test_failure_patterns_endpoint_wraps_service_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         payload = {
@@ -288,6 +464,16 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             for route in analytics_router.analytics_router.routes
             if getattr(route, "path", "") == "/api/analytics/workflow-effectiveness"
         )
+        registry_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/workflow-registry"
+        )
+        registry_detail_route = next(
+            route
+            for route in analytics_router.analytics_router.routes
+            if getattr(route, "path", "") == "/api/analytics/workflow-registry/detail"
+        )
         failure_route = next(
             route
             for route in analytics_router.analytics_router.routes
@@ -295,15 +481,33 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         workflow_scope_param = next(param for param in workflow_route.dependant.query_params if param.alias == "scopeType")
+        registry_state_param = next(param for param in registry_route.dependant.query_params if param.alias == "correlationState")
+        registry_detail_param = next(param for param in registry_detail_route.dependant.query_params if param.alias == "registryId")
         failure_scope_param = next(param for param in failure_route.dependant.query_params if param.alias == "scopeType")
 
         workflow_pattern = workflow_scope_param.field_info.metadata[0].pattern
+        registry_pattern = registry_state_param.field_info.metadata[0].pattern
         failure_pattern = failure_scope_param.field_info.metadata[0].pattern
 
         self.assertIn("effective_workflow", workflow_pattern)
         self.assertIn("bundle", workflow_pattern)
+        self.assertIn("strong", registry_pattern)
+        self.assertIn("unresolved", registry_pattern)
+        self.assertEqual(registry_detail_param.alias, "registryId")
         self.assertIn("effective_workflow", failure_pattern)
         self.assertIn("bundle", failure_pattern)
+
+    async def test_workflow_registry_endpoint_returns_503_when_disabled(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with (
+            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
+            patch.object(analytics_router, "require_workflow_analytics_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        ):
+            with self.assertRaises(analytics_router.HTTPException) as ctx:
+                await analytics_router.workflow_registry(limit=10, offset=0)
+
+        self.assertEqual(ctx.exception.status_code, 503)
 
     async def test_workflow_effectiveness_endpoint_returns_503_when_disabled(self) -> None:
         project = types.SimpleNamespace(id="project-1")

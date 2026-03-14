@@ -6,6 +6,7 @@ from typing import Any
 
 from backend.db.factory import get_agentic_intelligence_repository, get_session_repository
 from backend.models import (
+    ExecutionArtifactReference,
     ExecutionRecommendation,
     Feature,
     FeatureExecutionWarning,
@@ -15,13 +16,16 @@ from backend.models import (
     SimilarWorkExample,
     StackRecommendationEvidence,
 )
+from backend.services.integrations.skillmeat_routes import normalize_definitions_for_project
+from backend.services.integrations.skillmeat_resolver import build_definition_indexes, resolve_component_definition
+from backend.services.stack_observations import canonicalize_stack_observation
 from backend.services.workflow_effectiveness import get_workflow_effectiveness
 
 _MAX_STACK_ITEMS = 250
 _MAX_OBSERVATIONS = 400
 _MAX_ALTERNATIVES = 2
 _MAX_SIMILAR_WORK = 3
-_RESOLVABLE_COMPONENT_TYPES = {"workflow", "skill", "context_module", "artifact"}
+_RESOLVABLE_COMPONENT_TYPES = {"workflow", "skill", "context_module", "artifact", "agent", "command"}
 
 _RULE_WORKFLOW_HINTS = {
     "R1_PLAN_FROM_PRD_OR_REPORT": "planning",
@@ -171,7 +175,7 @@ def _component_label(component: dict[str, Any], definition: dict[str, Any] | Non
 
 
 def _stack_label(workflow_ref: str, components: list[RecommendedStackComponent]) -> str:
-    readable_workflow = workflow_ref.replace("-", " ").strip().title() or "Local stack"
+    readable_workflow = workflow_ref if workflow_ref.startswith("/") else workflow_ref.replace("-", " ").strip().title() or "Local stack"
     agents = [component.label for component in components if component.componentType == "agent"][:2]
     skills = [component.label for component in components if component.componentType == "skill"][:2]
     suffix_parts: list[str] = []
@@ -182,6 +186,11 @@ def _stack_label(workflow_ref: str, components: list[RecommendedStackComponent])
     if not suffix_parts:
         return readable_workflow
     return f"{readable_workflow} ({' + '.join(suffix_parts)})"
+
+
+def _is_placeholder_workflow_ref(workflow_ref: str) -> bool:
+    normalized = str(workflow_ref or "").strip().lower()
+    return not normalized or normalized == "unassigned" or normalized.startswith("key-")
 
 
 def _definition_map(definitions: list[dict[str, Any]]) -> tuple[dict[int, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
@@ -217,10 +226,18 @@ def _build_stack_components(
     observation: dict[str, Any],
     definition_by_id: dict[int, dict[str, Any]],
     definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    definition_indexes: tuple[
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+    ],
 ) -> list[RecommendedStackComponent]:
     items: list[RecommendedStackComponent] = []
     for component in _safe_list(observation.get("components")):
         definition_row, fallback_status = _definition_for_component(component, definition_by_id, definition_by_key)
+        matched_via = str(component.get("source_attribution") or component.get("sourceAttribution") or "")
+        if definition_row is None:
+            definition_row, matched_via, fallback_status = resolve_component_definition(component, definition_indexes)
         definition_ref = None
         if definition_row:
             definition_ref = RecommendedStackDefinitionRef(
@@ -231,16 +248,33 @@ def _build_stack_components(
                 sourceUrl=str(definition_row.get("source_url") or ""),
                 status="resolved" if str(component.get("status") or "") == "resolved" else fallback_status,
             )
+        label = _component_label(component, definition_row)
+        payload = _safe_dict(component.get("payload") or component.get("component_payload_json"))
+        component_status = str(component.get("status") or fallback_status)
+        if definition_ref and definition_ref.status in {"resolved", "cached"}:
+            component_status = str(definition_ref.status)
         items.append(
             RecommendedStackComponent(
                 componentType=str(component.get("component_type") or component.get("componentType") or "artifact"),
                 componentKey=str(component.get("component_key") or component.get("componentKey") or ""),
-                label=_component_label(component, definition_row),
-                status=str(component.get("status") or fallback_status),
+                label=label,
+                status=component_status,
                 confidence=round(_safe_float(component.get("confidence"), 0.0), 4),
                 sourceAttribution=str(component.get("source_attribution") or component.get("sourceAttribution") or ""),
-                payload=_safe_dict(component.get("payload") or component.get("component_payload_json")),
+                payload=payload,
                 definition=definition_ref,
+                artifactRef=ExecutionArtifactReference(
+                    key=str((definition_row or {}).get("external_id") or component.get("component_key") or component.get("componentKey") or ""),
+                    label=label or str(component.get("component_key") or component.get("componentKey") or ""),
+                    kind=str(component.get("component_type") or component.get("componentType") or "artifact"),
+                    status=str(definition_ref.status if definition_ref else fallback_status),
+                    definitionType=str((definition_row or {}).get("definition_type") or ""),
+                    externalId=str((definition_row or {}).get("external_id") or ""),
+                    sourceUrl=str((definition_row or {}).get("source_url") or ""),
+                    sourceAttribution=matched_via or str(component.get("source_attribution") or component.get("sourceAttribution") or ""),
+                    description=str(payload.get("title") or payload.get("name") or payload.get("workflowRef") or payload.get("command") or ""),
+                    metadata=payload,
+                ),
             )
         )
     items.sort(key=lambda component: (component.componentType, component.label.lower(), component.componentKey.lower()))
@@ -252,11 +286,14 @@ def _workflow_candidates(
     sessions: list[Any],
 ) -> list[str]:
     items: list[str] = []
+    primary_command = _command_token(recommendation.primary.command)
+    if primary_command:
+        items.append(primary_command)
     rule_hint = _RULE_WORKFLOW_HINTS.get(str(recommendation.ruleId or ""))
     if rule_hint:
         items.append(rule_hint)
 
-    command_hint = _COMMAND_WORKFLOW_HINTS.get(_command_token(recommendation.primary.command))
+    command_hint = _COMMAND_WORKFLOW_HINTS.get(primary_command)
     if command_hint:
         items.append(command_hint)
 
@@ -351,6 +388,11 @@ def _workflow_definition_for_observation(
     observation: dict[str, Any] | None,
     definition_by_id: dict[int, dict[str, Any]],
     definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    definition_indexes: tuple[
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+    ],
 ) -> dict[str, Any] | None:
     if not isinstance(observation, dict):
         return None
@@ -361,7 +403,62 @@ def _workflow_definition_for_observation(
         definition_row, _ = _definition_for_component(component, definition_by_id, definition_by_key)
         if definition_row:
             return definition_row
+        definition_row, _, _ = resolve_component_definition(component, definition_indexes)
+        if definition_row:
+            return definition_row
     return None
+
+
+def _workflow_ref_from_component(component: RecommendedStackComponent) -> str:
+    payload = component.payload if isinstance(component.payload, dict) else {}
+    candidates = [
+        str(payload.get("relatedCommand") or ""),
+        str(payload.get("command") or ""),
+        str(payload.get("workflowRef") or ""),
+        str(component.componentKey or ""),
+        str((component.artifactRef.externalId if component.artifactRef else "") or ""),
+        str(component.label or ""),
+    ]
+    for candidate in candidates:
+        token = _command_token(candidate)
+        if token and not _is_placeholder_workflow_ref(token):
+            return token
+        raw = str(candidate or "").strip()
+        if raw and not _is_placeholder_workflow_ref(raw):
+            return raw
+    return ""
+
+
+def _preferred_stack_workflow_ref(
+    workflow_ref: str,
+    observation: dict[str, Any] | None,
+    components: list[RecommendedStackComponent],
+) -> str:
+    if not _is_placeholder_workflow_ref(workflow_ref):
+        return workflow_ref
+
+    if isinstance(observation, dict):
+        observed_workflow_ref = _command_token(str(observation.get("workflow_ref") or observation.get("workflowRef") or ""))
+        if observed_workflow_ref and not _is_placeholder_workflow_ref(observed_workflow_ref):
+            return observed_workflow_ref
+
+    workflow_component = next((component for component in components if component.componentType == "workflow"), None)
+    if workflow_component is not None:
+        component_workflow_ref = _workflow_ref_from_component(workflow_component)
+        if component_workflow_ref and not _is_placeholder_workflow_ref(component_workflow_ref):
+            return component_workflow_ref
+
+    return workflow_ref
+
+
+def _stack_items_need_refresh(stack_items: list[dict[str, Any]]) -> bool:
+    for item in stack_items:
+        scope_id = str(item.get("scopeId") or "").strip()
+        parsed_scope = _parse_stack_scope_id(scope_id)
+        workflow_ref = str(parsed_scope.get("workflowRef") or scope_id or "").strip()
+        if _is_placeholder_workflow_ref(workflow_ref):
+            return True
+    return False
 
 
 def _artifact_refs_from_definition(definition: dict[str, Any] | None) -> set[str]:
@@ -590,8 +687,13 @@ def _candidate_enrichment(
     definitions: list[dict[str, Any]],
     definition_by_id: dict[int, dict[str, Any]],
     definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    definition_indexes: tuple[
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+    ],
 ) -> dict[str, Any]:
-    workflow_definition = _workflow_definition_for_observation(observation, definition_by_id, definition_by_key)
+    workflow_definition = _workflow_definition_for_observation(observation, definition_by_id, definition_by_key, definition_indexes)
     workflow_metadata = _definition_metadata_row(workflow_definition)
 
     bonus = 0.0
@@ -801,7 +903,7 @@ async def _load_observations(repo: Any, project_id: str) -> list[dict[str, Any]]
             continue
         observation = await repo.get_stack_observation(project_id, session_id)
         if observation:
-            hydrated.append(observation)
+            hydrated.append(canonicalize_stack_observation(observation))
     return hydrated
 
 
@@ -812,12 +914,21 @@ def _build_stack_record(
     recommendation: ExecutionRecommendation,
     definition_by_id: dict[int, dict[str, Any]],
     definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    definition_indexes: tuple[
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+    ],
     rank_score: float,
 ) -> RecommendedStack:
-    components = _build_stack_components(observation or {}, definition_by_id, definition_by_key) if observation else []
-    workflow_ref = str(stack_item.get("scopeId") or "")
-    parsed_scope = _parse_stack_scope_id(workflow_ref)
-    workflow_ref = str(parsed_scope.get("workflowRef") or workflow_ref)
+    components = _build_stack_components(observation or {}, definition_by_id, definition_by_key, definition_indexes) if observation else []
+    workflow_scope = str(stack_item.get("scopeId") or "")
+    parsed_scope = _parse_stack_scope_id(workflow_scope)
+    workflow_ref = _preferred_stack_workflow_ref(
+        str(parsed_scope.get("workflowRef") or workflow_scope),
+        observation,
+        components,
+    )
     if not components and parsed_scope.get("workflowRef"):
         components = [
             RecommendedStackComponent(
@@ -827,8 +938,20 @@ def _build_stack_record(
                 status="inferred",
                 confidence=0.7,
                 sourceAttribution="rollup_scope",
+                artifactRef=ExecutionArtifactReference(
+                    key=str(parsed_scope.get("workflowRef") or ""),
+                    label=str(parsed_scope.get("workflowRef") or ""),
+                    kind="workflow",
+                    status="unresolved",
+                    definitionType="",
+                    externalId="",
+                    sourceUrl="",
+                    sourceAttribution="rollup_scope",
+                    metadata={"workflowRef": str(parsed_scope.get("workflowRef") or "")},
+                ),
             )
         ]
+        workflow_ref = _preferred_stack_workflow_ref(workflow_ref, observation, components)
 
     return RecommendedStack(
         id=str(stack_item.get("scopeId") or workflow_ref or "local-stack"),
@@ -864,8 +987,12 @@ async def build_stack_recommendations(
     intelligence_repo = get_agentic_intelligence_repository(db)
     session_repo = get_session_repository(db)
 
-    definitions = await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0)
+    definitions = normalize_definitions_for_project(
+        await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0),
+        project,
+    )
     definition_by_id, definition_by_key = _definition_map(definitions)
+    definition_indexes = build_definition_indexes(definitions)
     observations = await _load_observations(intelligence_repo, project_id)
     stack_payload = await get_workflow_effectiveness(
         db,
@@ -878,6 +1005,17 @@ async def build_stack_recommendations(
     )
     stack_items = _safe_list(stack_payload.get("items"))
     if not stack_items and observations:
+        stack_payload = await get_workflow_effectiveness(
+            db,
+            project,
+            period="all",
+            scope_type="stack",
+            limit=_MAX_STACK_ITEMS,
+            offset=0,
+            recompute=True,
+        )
+        stack_items = _safe_list(stack_payload.get("items"))
+    elif stack_items and observations and _stack_items_need_refresh(stack_items):
         stack_payload = await get_workflow_effectiveness(
             db,
             project,
@@ -930,6 +1068,7 @@ async def build_stack_recommendations(
             recommendation=recommendation,
             definition_by_id=definition_by_id,
             definition_by_key=definition_by_key,
+            definition_indexes=definition_indexes,
             rank_score=rank_score,
         )
         enrichment = _candidate_enrichment(
@@ -938,6 +1077,7 @@ async def build_stack_recommendations(
             definitions=definitions,
             definition_by_id=definition_by_id,
             definition_by_key=definition_by_key,
+            definition_indexes=definition_indexes,
         )
         if enrichment["notes"]:
             note_preview = ", ".join(str(note) for note in enrichment["notes"][:3])

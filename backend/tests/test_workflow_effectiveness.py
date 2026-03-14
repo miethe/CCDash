@@ -316,15 +316,18 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         )
 
         by_scope = {(item["scopeType"], item["scopeId"]): item for item in payload["items"]}
-        self.assertIn(("workflow", "phase-execution"), by_scope)
-        self.assertIn(("workflow", "debug-loop"), by_scope)
+        self.assertIn(("workflow", "/dev:execute-phase"), by_scope)
+        self.assertIn(("workflow", "/debug:investigate"), by_scope)
         self.assertGreater(
-            by_scope[("workflow", "phase-execution")]["successScore"],
-            by_scope[("workflow", "debug-loop")]["successScore"],
+            by_scope[("workflow", "/dev:execute-phase")]["successScore"],
+            by_scope[("workflow", "/debug:investigate")]["successScore"],
         )
-        self.assertEqual(by_scope[("workflow", "phase-execution")]["attributedTokens"], 1500)
-        self.assertAlmostEqual(by_scope[("workflow", "phase-execution")]["attributionCoverage"], 0.375, places=4)
-        self.assertAlmostEqual(by_scope[("workflow", "phase-execution")]["attributedCostUsdModelIO"], 1.5, places=4)
+        self.assertEqual(by_scope[("workflow", "/dev:execute-phase")]["scopeRef"]["label"], "Phase Execution")
+        self.assertEqual(by_scope[("workflow", "/dev:execute-phase")]["scopeRef"]["externalId"], "wf_project")
+        self.assertGreaterEqual(len(by_scope[("workflow", "/dev:execute-phase")]["relatedRefs"]), 1)
+        self.assertEqual(by_scope[("workflow", "/dev:execute-phase")]["attributedTokens"], 0)
+        self.assertAlmostEqual(by_scope[("workflow", "/dev:execute-phase")]["attributionCoverage"], 0.0, places=4)
+        self.assertAlmostEqual(by_scope[("workflow", "/dev:execute-phase")]["attributedCostUsdModelIO"], 0.0, places=4)
 
         cached = await self.intelligence_repo.list_effectiveness_rollups(
             "project-1",
@@ -369,7 +372,9 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(effective_payload["items"][0]["scopeId"], "wf_project")
+        self.assertEqual(effective_payload["items"][0]["scopeRef"]["externalId"], "wf_project")
         self.assertEqual(bundle_payload["items"][0]["scopeId"], "bundle_python")
+        self.assertEqual(bundle_payload["items"][0]["scopeRef"]["externalId"], "bundle_python")
 
     async def test_feature_scoped_rollups_include_feature_linked_sessions(self) -> None:
         await self.link_repo.upsert(
@@ -397,8 +402,8 @@ class WorkflowEffectivenessTests(unittest.IsolatedAsyncioTestCase):
         )
 
         by_scope = {(item["scopeType"], item["scopeId"]): item for item in payload["items"]}
-        self.assertIn(("workflow", "phase-execution"), by_scope)
-        self.assertEqual(by_scope[("workflow", "phase-execution")]["sampleSize"], 1)
+        self.assertIn(("workflow", "/dev:execute-phase"), by_scope)
+        self.assertEqual(by_scope[("workflow", "/dev:execute-phase")]["sampleSize"], 1)
 
 
 if __name__ == "__main__":

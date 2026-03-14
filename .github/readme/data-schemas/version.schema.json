@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Version",
+  "type": "object",
+  "required": ["current", "releaseDate"],
+  "properties": {
+    "current": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "releaseDate": { "type": "string", "format": "date" },
+    "releaseNotes": { "type": "string" },
+    "previousVersions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["version", "releaseDate"],
+        "properties": {
+          "version": { "type": "string" },
+          "releaseDate": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  }
+}

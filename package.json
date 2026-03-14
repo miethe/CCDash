@@ -8,6 +8,7 @@
     "dev": "node ./scripts/dev.mjs",
     "dev:frontend": "vite",
     "dev:backend": "node ./scripts/backend.mjs --reload --host 127.0.0.1 --port 8000",
+    "dev:worker": "node ./scripts/worker.mjs",
     "discover:sessions": "python3 backend/scripts/session_data_discovery.py --platform claude_code",
     "discover:claude-schema": "python3 backend/scripts/claude_session_schema_inventory.py",
     "test": "vitest run",
@@ -15,6 +16,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start:backend": "node ./scripts/backend.mjs --host 0.0.0.0",
+    "start:worker": "node ./scripts/worker.mjs",
     "start:frontend": "vite preview --host 0.0.0.0 --port 3000"
   },
   "dependencies": {

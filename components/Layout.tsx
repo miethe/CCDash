@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2 } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { ProjectSelector } from './ProjectSelector';
@@ -63,6 +63,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <NavItem to="/session-mappings" icon={SlidersHorizontal} label="Session Mappings" active={location.pathname === '/session-mappings'} isCollapsed={isCollapsed} />
           <NavItem to="/ops" icon={Activity} label="Operations" active={location.pathname === '/ops'} isCollapsed={isCollapsed} />
           <NavItem to="/analytics" icon={LineChart} label="Analytics" active={location.pathname === '/analytics'} isCollapsed={isCollapsed} />
+          <NavItem to="/workflows" icon={Workflow} label="Workflows" active={location.pathname.startsWith('/workflows')} isCollapsed={isCollapsed} />
           <NavItem to="/skills" icon={Database} label="SkillMeat Context" active={location.pathname === '/skills'} isCollapsed={isCollapsed} />
 
           <div id="sidebar-portal" className={`mt-6 pt-6 border-t border-slate-800 empty:hidden w-full min-w-0 overflow-x-hidden ${isCollapsed ? 'hidden' : ''}`}></div>

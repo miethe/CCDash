@@ -1,0 +1,17 @@
+{
+  "name": "ccdash-readme-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-readme.js",
+    "build:dry": "node scripts/build-readme.js --dry-run",
+    "validate": "node scripts/validate-links.js && node scripts/check-screenshots.js --required-only",
+    "validate:links": "node scripts/validate-links.js",
+    "validate:screenshots": "node scripts/check-screenshots.js",
+    "version": "node scripts/update-version.js"
+  },
+  "dependencies": {
+    "handlebars": "^4.7.8"
+  }
+}

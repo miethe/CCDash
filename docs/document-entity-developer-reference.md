@@ -67,7 +67,8 @@ Enhancements include typed columns in `documents` and normalized `document_refs`
 ## Frontend
 
 - `types.ts`: expanded `PlanDocument` shape
-- `contexts/DataContext.tsx`: paged document fetching
+- `contexts/AppEntityDataContext.tsx`: paged document fetching and document-state refresh
+- `contexts/DataContext.tsx`: compatibility facade consumed by existing UI components
 - `components/PlanCatalog.tsx`: scope tabs, facets, metadata-aware search
 - `components/DocumentModal.tsx`: typed metadata + normalized links panels
 - `components/ProjectBoard.tsx`: canonical path doc resolution fallback
