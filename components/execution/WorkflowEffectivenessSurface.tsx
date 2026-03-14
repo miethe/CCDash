@@ -3,11 +3,13 @@ import { AlertTriangle, RefreshCcw, Search, ShieldAlert, Sparkles, Trophy } from
 
 import { AnalyticsApiError, analyticsService } from '../../services/analytics';
 import {
+  ExecutionArtifactReference,
   EffectivenessScopeType,
   FailurePatternRecord,
   WorkflowEffectivenessResponse,
   WorkflowEffectivenessRollup,
 } from '../../types';
+import { ArtifactReferenceModal } from './ArtifactReferenceModal';
 
 type PeriodPreset = '7d' | '30d' | '90d';
 
@@ -192,6 +194,10 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   const [failurePatterns, setFailurePatterns] = useState<FailurePatternRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeScopeDetail, setActiveScopeDetail] = useState<{
+    item: WorkflowEffectivenessRollup;
+    reference: ExecutionArtifactReference;
+  } | null>(null);
   const requestIdRef = useRef(0);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
 
@@ -271,18 +277,14 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
   }, [failurePatterns.length, filteredItems]);
 
   const shellClass = embedded
-    ? 'flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
+    ? 'rounded-[24px] border border-slate-800/80 bg-slate-900/75 p-4 md:p-5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]'
     : 'rounded-[28px] border border-slate-800/80 bg-slate-900/80 p-5 md:p-6 shadow-[0_28px_90px_rgba(2,6,23,0.22)]';
   const contentGridClass = embedded
-    ? 'mt-5 grid min-h-0 flex-1 gap-4 overflow-y-auto pr-1 xl:grid-cols-[minmax(0,1fr)_320px] xl:overflow-hidden xl:pr-0'
+    ? 'mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.88fr)]'
     : 'mt-5 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]';
-  const itemsColumnClass = embedded ? 'space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1' : 'space-y-4';
-  const failurePatternsBodyClass = embedded
-    ? 'space-y-3 px-4 py-4 xl:min-h-0 xl:overflow-y-auto xl:pr-2'
-    : 'space-y-3 px-4 py-4';
-  const failurePatternsAsideClass = embedded
-    ? 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50 xl:flex xl:min-h-0 xl:flex-col'
-    : 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50';
+  const itemsColumnClass = 'space-y-4';
+  const failurePatternsBodyClass = 'space-y-3 px-4 py-4';
+  const failurePatternsAsideClass = 'min-w-0 overflow-hidden rounded-[24px] border border-slate-800/80 bg-slate-950/50';
 
   return (
     <section className={shellClass}>
@@ -427,12 +429,34 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
                         {formatInteger(item.sampleSize)} sessions
                       </span>
                     </div>
-                    <h4 className="mt-3 text-lg font-semibold leading-tight text-slate-100 [overflow-wrap:anywhere]">
-                      {item.scopeLabel || item.scopeId}
-                    </h4>
+                    {item.scopeRef ? (
+                      <button
+                        onClick={() => setActiveScopeDetail({ item, reference: item.scopeRef! })}
+                        className="mt-3 text-left text-lg font-semibold leading-tight text-sky-200 underline decoration-slate-600 underline-offset-4 [overflow-wrap:anywhere]"
+                      >
+                        {item.scopeLabel || item.scopeId}
+                      </button>
+                    ) : (
+                      <h4 className="mt-3 text-lg font-semibold leading-tight text-slate-100 [overflow-wrap:anywhere]">
+                        {item.scopeLabel || item.scopeId}
+                      </h4>
+                    )}
                     <p className="mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">
                       {summarizeScope(item)}
                     </p>
+                    {(item.relatedRefs || []).length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {(item.relatedRefs || []).slice(0, 4).map(reference => (
+                          <button
+                            key={`${item.scopeType}-${item.scopeId}-${reference.kind}-${reference.key}`}
+                            onClick={() => setActiveScopeDetail({ item, reference })}
+                            className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-300 transition-colors hover:border-slate-600"
+                          >
+                            {reference.label || reference.key}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {summary.topPerformer?.scopeType === item.scopeType && summary.topPerformer?.scopeId === item.scopeId && (
@@ -615,6 +639,23 @@ export const WorkflowEffectivenessSurface: React.FC<WorkflowEffectivenessSurface
           </div>
         </aside>
       </div>
+
+      {activeScopeDetail && (
+        <ArtifactReferenceModal
+          reference={activeScopeDetail.reference}
+          title={`${scopeLabelFor(activeScopeDetail.item.scopeType)} Reference`}
+          subtitle={`Observed across ${formatInteger(activeScopeDetail.item.sampleSize)} session${activeScopeDetail.item.sampleSize === 1 ? '' : 's'} in the current window.`}
+          metrics={[
+            { label: 'Success', value: formatPercent(activeScopeDetail.item.successScore) },
+            { label: 'Quality', value: formatPercent(activeScopeDetail.item.qualityScore) },
+            { label: 'Risk', value: formatPercent(activeScopeDetail.item.riskScore) },
+            { label: 'Sessions', value: formatInteger(activeScopeDetail.item.sampleSize) },
+          ]}
+          relatedRefs={activeScopeDetail.item.relatedRefs || []}
+          onOpenReference={(reference) => setActiveScopeDetail({ item: activeScopeDetail.item, reference })}
+          onClose={() => setActiveScopeDetail(null)}
+        />
+      )}
     </section>
   );
 };

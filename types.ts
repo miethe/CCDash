@@ -1143,6 +1143,8 @@ export interface WorkflowEffectivenessRollup {
   attributionCoverage?: number;
   attributionCacheShare?: number;
   evidenceSummary: Record<string, unknown>;
+  scopeRef?: ExecutionArtifactReference | null;
+  relatedRefs?: ExecutionArtifactReference[];
   generatedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -1156,6 +1158,141 @@ export interface WorkflowEffectivenessResponse {
   total: number;
   offset: number;
   limit: number;
+  generatedAt: string;
+}
+
+export type WorkflowRegistryCorrelationState = 'strong' | 'hybrid' | 'weak' | 'unresolved';
+export type WorkflowRegistryResolutionKind = 'workflow_definition' | 'command_artifact' | 'dual_backed' | 'none';
+export type WorkflowRegistryIssueSeverity = 'info' | 'warning' | 'error';
+export type WorkflowRegistryActionTarget = 'external' | 'internal';
+
+export interface WorkflowRegistryIssue {
+  code: string;
+  severity: WorkflowRegistryIssueSeverity;
+  title: string;
+  message: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WorkflowRegistryIdentity {
+  registryId: string;
+  observedWorkflowFamilyRef: string;
+  observedAliases: string[];
+  displayLabel: string;
+  resolvedWorkflowId: string;
+  resolvedWorkflowLabel: string;
+  resolvedWorkflowSourceUrl: string;
+  resolvedCommandArtifactId: string;
+  resolvedCommandArtifactLabel: string;
+  resolvedCommandArtifactSourceUrl: string;
+  resolutionKind: WorkflowRegistryResolutionKind;
+  correlationState: WorkflowRegistryCorrelationState;
+}
+
+export interface WorkflowRegistryBundleAlignment {
+  bundleId: string;
+  bundleName: string;
+  matchScore: number;
+  matchedRefs: string[];
+  sourceUrl: string;
+}
+
+export interface WorkflowRegistryContextModule {
+  contextRef: string;
+  moduleId: string;
+  moduleName: string;
+  status: string;
+  sourceUrl: string;
+  previewTokens: number;
+}
+
+export interface WorkflowRegistryCompositionSummary {
+  artifactRefs: string[];
+  contextRefs: string[];
+  resolvedContextModules: WorkflowRegistryContextModule[];
+  planSummary: Record<string, unknown>;
+  stageOrder: string[];
+  gateCount: number;
+  fanOutCount: number;
+  bundleAlignment?: WorkflowRegistryBundleAlignment | null;
+}
+
+export interface WorkflowRegistryEffectivenessSummary {
+  scopeType: string;
+  scopeId: string;
+  scopeLabel: string;
+  sampleSize: number;
+  successScore: number;
+  efficiencyScore: number;
+  qualityScore: number;
+  riskScore: number;
+  attributionCoverage: number;
+  averageAttributionConfidence: number;
+  evidenceSummary: Record<string, unknown>;
+}
+
+export interface WorkflowRegistryAction {
+  id: string;
+  label: string;
+  target: WorkflowRegistryActionTarget;
+  href: string;
+  disabled: boolean;
+  reason: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WorkflowRegistrySessionEvidence {
+  sessionId: string;
+  featureId: string;
+  title: string;
+  status: string;
+  workflowRef: string;
+  startedAt: string;
+  endedAt: string;
+  href: string;
+}
+
+export interface WorkflowRegistryExecutionEvidence {
+  executionId: string;
+  status: string;
+  startedAt: string;
+  sourceUrl: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface WorkflowRegistryItem {
+  id: string;
+  identity: WorkflowRegistryIdentity;
+  correlationState: WorkflowRegistryCorrelationState;
+  issueCount: number;
+  issues: WorkflowRegistryIssue[];
+  effectiveness?: WorkflowRegistryEffectivenessSummary | null;
+  observedCommandCount: number;
+  representativeCommands: string[];
+  sampleSize: number;
+  lastObservedAt: string;
+}
+
+export interface WorkflowRegistryDetail extends WorkflowRegistryItem {
+  composition: WorkflowRegistryCompositionSummary;
+  representativeSessions: WorkflowRegistrySessionEvidence[];
+  recentExecutions: WorkflowRegistryExecutionEvidence[];
+  actions: WorkflowRegistryAction[];
+}
+
+export interface WorkflowRegistryListResponse {
+  projectId: string;
+  items: WorkflowRegistryItem[];
+  correlationCounts: Record<WorkflowRegistryCorrelationState, number>;
+  total: number;
+  offset: number;
+  limit: number;
+  generatedAt: string;
+}
+
+export interface WorkflowRegistryDetailResponse {
+  projectId: string;
+  item: WorkflowRegistryDetail;
   generatedAt: string;
 }
 
@@ -1250,6 +1387,7 @@ export interface SkillMeatFeatureFlags {
 export interface SkillMeatProjectConfig {
   enabled: boolean;
   baseUrl: string;
+  webBaseUrl: string;
   projectId: string;
   collectionId: string;
   aaaEnabled: boolean;
@@ -1645,6 +1783,19 @@ export interface RecommendedStackDefinitionRef {
   status: DefinitionReferenceStatus;
 }
 
+export interface ExecutionArtifactReference {
+  key: string;
+  label: string;
+  kind: string;
+  status: string;
+  definitionType: string;
+  externalId: string;
+  sourceUrl: string;
+  sourceAttribution: string;
+  description: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface RecommendedStackComponent {
   componentType: 'workflow' | 'agent' | 'skill' | 'context_module' | 'command' | 'model_policy' | 'artifact';
   componentKey: string;
@@ -1654,6 +1805,7 @@ export interface RecommendedStackComponent {
   sourceAttribution: string;
   payload: Record<string, unknown>;
   definition?: RecommendedStackDefinitionRef | null;
+  artifactRef?: ExecutionArtifactReference | null;
 }
 
 export interface SimilarWorkExample {

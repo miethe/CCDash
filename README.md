@@ -199,9 +199,29 @@ The core debugging loop for AI interactions.
     *   feature-scoped workflow effectiveness leaderboard
     *   failure-pattern summaries
     *   jump-off to the full analytics workflow intelligence view
+    *   direct handoff into the dedicated Workflow Registry at `/workflows`
 *   **Backend API**: `/api/execution/*` endpoints persist runs, events, and approvals for auditable run lifecycles.
 
-### 10. Agentic SDLC Intelligence
+### 10. Workflow Registry
+*   **Route**: `/workflows` with deep-linkable workflow detail routes at `/workflows/:workflowId`.
+*   **Catalog + Detail Layout**:
+    *   searchable workflow catalog with correlation-state filters
+    *   responsive master-detail layout for desktop, tablet, and stacked mobile flows
+    *   keyboard support for search focus and catalog navigation
+*   **Workflow Identity**:
+    *   observed workflow family refs and aliases
+    *   explicit correlation state (`strong`, `hybrid`, `weak`, `unresolved`)
+    *   separate SkillMeat workflow-definition and command-artifact resolution metadata
+*   **Workflow Detail**:
+    *   composition summary for artifact refs, context refs, resolved modules, bundle alignment, stages, gates, and fan-out
+    *   effectiveness summary for success, efficiency, quality, risk, attribution coverage, and confidence
+    *   issue cards that explain stale cache, weak resolution, missing composition, missing context coverage, and missing effectiveness evidence
+    *   representative CCDash sessions plus recent SkillMeat workflow execution summaries
+*   **Cross-Surface Navigation**:
+    *   analytics and execution surfaces now link into the registry
+    *   registry actions can open SkillMeat workflows, command artifacts, bundles, context memory, executions, and representative CCDash sessions
+
+### 11. Agentic SDLC Intelligence
 *   **Read-only SkillMeat integration**:
     *   caches artifact, workflow, context-module, and bundle definitions per project
     *   stores normalized provenance and snapshot metadata for deterministic recommendations
@@ -213,6 +233,7 @@ The core debugging loop for AI interactions.
     *   `/analytics?tab=workflow_intelligence` ranks workflow, agent, skill, context, and stack scopes by success, efficiency, quality, and risk
     *   workflow rollups now include attributed token, cost, coverage, and cache-share signals when attribution is enabled
     *   failure-pattern clustering highlights queue waste, repeated debug loops, and weak validation paths
+    *   `/workflows` now acts as the identity-and-correlation hub that complements the leaderboard-style analytics view
 *   **Operator Tooling**:
     *   `python backend/scripts/agentic_intelligence_rollout.py` can sync definitions, backfill observations, and recompute workflow rollups for the active or selected project
     *   support flags: `--project`, `--all-projects`, `--skip-sync`, `--skip-backfill`, `--skip-recompute`, `--force-recompute`, `--fail-on-warning`

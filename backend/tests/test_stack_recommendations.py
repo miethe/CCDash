@@ -18,7 +18,14 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.db = await aiosqlite.connect(":memory:")
         self.db.row_factory = aiosqlite.Row
         await run_migrations(self.db)
-        self.project = types.SimpleNamespace(id="project-1")
+        self.project = types.SimpleNamespace(
+            id="project-1",
+            skillMeat=types.SimpleNamespace(
+                webBaseUrl="http://skillmeat-web.local:3000",
+                projectId="project-1",
+                collectionId="default",
+            ),
+        )
         self.session_repo = get_session_repository(self.db)
         self.intelligence_repo = get_agentic_intelligence_repository(self.db)
 
@@ -164,6 +171,20 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
             {
                 "project_id": "project-1",
                 "source_id": source["id"],
+                "definition_type": "artifact",
+                "external_id": "agent:backend-architect",
+                "display_name": "backend-architect",
+                "source_url": "http://skillmeat.local/collection?collection=default&artifact=agent%3Abackend-architect",
+                "resolution_metadata": {
+                    "artifactType": "agent",
+                    "artifactName": "backend-architect",
+                },
+            }
+        )
+        await self.intelligence_repo.upsert_external_definition(
+            {
+                "project_id": "project-1",
+                "source_id": source["id"],
                 "definition_type": "bundle",
                 "external_id": "bundle_python",
                 "display_name": "Python Essentials",
@@ -301,9 +322,10 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNotNone(payload["recommendedStack"])
-        self.assertEqual(payload["recommendedStack"].workflowRef, "phase-execution")
+        self.assertEqual(payload["recommendedStack"].workflowRef, "/dev:execute-phase")
         self.assertGreaterEqual(payload["recommendedStack"].sampleSize, 2)
         self.assertTrue(any(component.definition for component in payload["recommendedStack"].components if component.componentType in {"workflow", "skill"}))
+        self.assertTrue(any(component.artifactRef for component in payload["recommendedStack"].components if component.componentType in {"workflow", "agent", "skill"}))
         self.assertGreaterEqual(len(payload["stackAlternatives"]), 1)
         similar_work_evidence = next(item for item in payload["stackEvidence"] if item.sourceType == "similar_work")
         self.assertLessEqual(len(similar_work_evidence.similarWork), 3)
@@ -319,7 +341,7 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context_evidence.metrics["resolvedContexts"][0]["moduleName"], "planning")
         effective_evidence = next(item for item in payload["stackEvidence"] if item.sourceType == "effective_workflow")
         self.assertEqual(effective_evidence.metrics["effectiveWorkflowId"], "phase-execution")
-        self.assertEqual(effective_evidence.metrics["sourceUrl"], "http://skillmeat.local/workflows/phase-execution")
+        self.assertEqual(effective_evidence.metrics["sourceUrl"], "http://skillmeat-web.local:3000/workflows/phase-execution")
         self.assertEqual(payload["definitionResolutionWarnings"], [])
 
     async def test_build_stack_recommendations_warns_when_definitions_are_missing(self) -> None:
@@ -336,9 +358,66 @@ class StackRecommendationServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNotNone(payload["recommendedStack"])
-        self.assertEqual(payload["recommendedStack"].workflowRef, "phase-execution")
+        self.assertEqual(payload["recommendedStack"].workflowRef, "/dev:execute-phase")
         self.assertGreaterEqual(len(payload["definitionResolutionWarnings"]), 1)
         self.assertIn("local CCDash observations", payload["definitionResolutionWarnings"][0].message)
+
+    async def test_build_stack_recommendations_refreshes_stale_cached_stack_rollups(self) -> None:
+        await self._seed_observations(with_definitions=True)
+        await self.intelligence_repo.upsert_effectiveness_rollup(
+            {
+                "project_id": "project-1",
+                "scope_type": "stack",
+                "scope_id": "unassigned|agents:none|skills:none|contexts:none",
+                "period": "all",
+                "metrics": {
+                    "sampleSize": 2,
+                    "successScore": 0.82,
+                    "efficiencyScore": 0.74,
+                    "qualityScore": 0.91,
+                    "riskScore": 0.08,
+                },
+                "evidence_summary": {
+                    "representativeSessionIds": ["session-1"],
+                },
+            }
+        )
+        await self.intelligence_repo.upsert_effectiveness_rollup(
+            {
+                "project_id": "project-1",
+                "scope_type": "stack",
+                "scope_id": "key-dev-execute-phase|agents:backend-architect|skills:symbols|contexts:none",
+                "period": "all",
+                "metrics": {
+                    "sampleSize": 1,
+                    "successScore": 0.51,
+                    "efficiencyScore": 0.48,
+                    "qualityScore": 0.44,
+                    "riskScore": 0.42,
+                },
+                "evidence_summary": {
+                    "representativeSessionIds": ["session-2"],
+                },
+            }
+        )
+
+        feature = self._feature()
+        recommendation = build_execution_recommendation(feature, self._plan_doc())
+
+        payload = await build_stack_recommendations(
+            self.db,
+            self.project,
+            feature=feature,
+            sessions=[],
+            recommendation=recommendation,
+        )
+
+        self.assertIsNotNone(payload["recommendedStack"])
+        self.assertEqual(payload["recommendedStack"].workflowRef, "/dev:execute-phase")
+        self.assertNotIn("unassigned", payload["recommendedStack"].label.lower())
+        self.assertTrue(
+            all(not alternative.workflowRef.startswith("key-") for alternative in payload["stackAlternatives"])
+        )
 
 
 if __name__ == "__main__":

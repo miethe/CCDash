@@ -10,6 +10,7 @@ export const DEFAULT_SKILLMEAT_FEATURE_FLAGS: SkillMeatFeatureFlags = {
 export const defaultSkillMeatConfig = () => ({
   enabled: false,
   baseUrl: '',
+  webBaseUrl: '',
   projectId: '',
   collectionId: '',
   aaaEnabled: false,

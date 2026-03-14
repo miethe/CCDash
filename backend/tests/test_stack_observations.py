@@ -93,6 +93,21 @@ class StackObservationBackfillTests(unittest.IsolatedAsyncioTestCase):
                         "status": "success",
                     },
                 },
+                {
+                    "timestamp": "2026-03-07T00:03:00+00:00",
+                    "speaker": "agent",
+                    "type": "tool",
+                    "content": "",
+                    "toolCall": {
+                        "name": "Bash",
+                        "args": "{}",
+                        "status": "success",
+                    },
+                    "metadata": {
+                        "subagentAgentId": "a10e486cb764da4aa",
+                        "taskSubagentType": "data-layer-expert",
+                    },
+                },
             ],
         )
         await self.session_repo.upsert_artifacts(
@@ -127,10 +142,14 @@ class StackObservationBackfillTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["sessionsProcessed"], 1)
         self.assertIsNotNone(observation)
+        self.assertEqual(observation["workflow_ref"], "/dev:execute-phase")
         components = observation["components"]
         resolved_keys = {component["component_key"] for component in components if component["status"] == "resolved"}
+        agent_keys = {component["component_key"] for component in components if component["component_type"] == "agent"}
         self.assertIn("artifact:build-docs", resolved_keys)
         self.assertIn("ctx:planning", resolved_keys)
+        self.assertIn("data-layer-expert", agent_keys)
+        self.assertNotIn("a10e486cb764da4aa", agent_keys)
 
 
 if __name__ == "__main__":

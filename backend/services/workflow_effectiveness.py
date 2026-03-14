@@ -13,6 +13,10 @@ from backend.db.factory import (
     get_test_integrity_repository,
     get_test_run_repository,
 )
+from backend.services.integrations.skillmeat_routes import normalize_definitions_for_project
+from backend.models import ExecutionArtifactReference
+from backend.services.integrations.skillmeat_resolver import build_definition_indexes, resolve_component_definition
+from backend.services.stack_observations import canonicalize_stack_observation
 from backend.services.session_usage_analytics import get_session_scope_attribution_metrics
 
 
@@ -214,6 +218,10 @@ def _best_bundle_scope(
     effective_workflow = _safe_dict(workflow_metadata.get("effectiveWorkflow"))
     effective_workflow_id = str(workflow_metadata.get("effectiveWorkflowId") or effective_workflow.get("id") or "")
     effective_workflow_label = str(workflow_metadata.get("effectiveWorkflowName") or effective_workflow.get("name") or effective_workflow_id)
+    fallback_workflow_ref = str(observation.get("workflow_ref") or observation.get("workflowRef") or "").strip()
+    if not effective_workflow_id and fallback_workflow_ref:
+        effective_workflow_id = fallback_workflow_ref
+        effective_workflow_label = fallback_workflow_ref
     if not effective_workflow_id and workflow_definition is not None:
         effective_workflow_id = str(workflow_definition.get("external_id") or "")
         effective_workflow_label = str(workflow_definition.get("display_name") or effective_workflow_id)
@@ -443,10 +451,189 @@ def _hydrate_rollup(row: dict[str, Any]) -> dict[str, Any]:
         "attributionCoverage": round(_safe_float(metrics.get("attributionCoverage"), 0.0), 4),
         "attributionCacheShare": round(_safe_float(metrics.get("attributionCacheShare"), 0.0), 4),
         "evidenceSummary": evidence,
+        "scopeRef": None,
+        "relatedRefs": [],
         "generatedAt": str(metrics.get("generatedAt") or ""),
         "createdAt": str(row.get("created_at") or ""),
         "updatedAt": str(row.get("updated_at") or ""),
     }
+
+
+def _component_label(component: dict[str, Any], definition: dict[str, Any] | None) -> str:
+    if isinstance(definition, dict) and str(definition.get("display_name") or "").strip():
+        return str(definition.get("display_name") or "")
+    payload = _safe_dict(component.get("payload") or component.get("component_payload_json"))
+    for key in ("displayName", "name", "title", "workflowRef", "relatedCommand", "command", "skill", "externalId"):
+        if str(payload.get(key) or "").strip():
+            return str(payload.get(key) or "")
+    return str(component.get("component_key") or component.get("componentKey") or "")
+
+
+def _artifact_reference_from_definition(
+    definition: dict[str, Any],
+    *,
+    kind: str,
+    label: str = "",
+    source_attribution: str = "",
+    description: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> ExecutionArtifactReference:
+    return ExecutionArtifactReference(
+        key=str(definition.get("external_id") or ""),
+        label=label or str(definition.get("display_name") or definition.get("external_id") or ""),
+        kind=kind,
+        status="resolved",
+        definitionType=str(definition.get("definition_type") or ""),
+        externalId=str(definition.get("external_id") or ""),
+        sourceUrl=str(definition.get("source_url") or ""),
+        sourceAttribution=source_attribution,
+        description=description,
+        metadata=metadata or {},
+    )
+
+
+def _artifact_reference_from_component(
+    component: dict[str, Any],
+    definition_by_id: dict[int, dict[str, Any]],
+    definition_by_key: dict[tuple[str, str], dict[str, Any]],
+    definition_indexes: tuple[
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+    ],
+) -> ExecutionArtifactReference:
+    definition = _definition_for_component(component, definition_by_id, definition_by_key)
+    matched_via = str(component.get("source_attribution") or component.get("sourceAttribution") or "")
+    status = str(component.get("status") or "unresolved")
+    if definition is None:
+        definition, matched_via, resolved_status = resolve_component_definition(component, definition_indexes)
+        status = resolved_status if status == "unresolved" else status
+    payload = _safe_dict(component.get("payload") or component.get("component_payload_json"))
+    label = _component_label(component, definition)
+    if definition is not None:
+        return _artifact_reference_from_definition(
+            definition,
+            kind=str(component.get("component_type") or component.get("componentType") or "artifact"),
+            label=label,
+            source_attribution=matched_via,
+            description=str(payload.get("title") or payload.get("name") or payload.get("workflowRef") or payload.get("command") or ""),
+            metadata=payload,
+        )
+    return ExecutionArtifactReference(
+        key=str(component.get("component_key") or component.get("componentKey") or ""),
+        label=label,
+        kind=str(component.get("component_type") or component.get("componentType") or "artifact"),
+        status=status,
+        definitionType="",
+        externalId="",
+        sourceUrl="",
+        sourceAttribution=matched_via or str(component.get("source_attribution") or component.get("sourceAttribution") or ""),
+        description=str(payload.get("title") or payload.get("name") or payload.get("workflowRef") or payload.get("command") or ""),
+        metadata=payload,
+    )
+
+
+def _scope_component(observation: dict[str, Any], scope_type: str, scope_id: str) -> dict[str, Any] | None:
+    components = _safe_list(observation.get("components"))
+    if scope_type == "workflow":
+        for preferred_type in ("workflow", "command"):
+            for component in components:
+                payload = _safe_dict(component.get("payload") or component.get("component_payload_json"))
+                if str(component.get("component_type") or "") == preferred_type and (
+                    str(component.get("component_key") or "").strip() == scope_id
+                    or str(payload.get("mappingId") or "").strip() == scope_id
+                ):
+                    return component
+    for component in components:
+        component_type = str(component.get("component_type") or "").strip()
+        component_key = str(component.get("component_key") or "").strip()
+        if component_type == scope_type and component_key == scope_id:
+            return component
+        if scope_type == "context_module" and (
+            component_type == "context_module"
+            or str(component.get("external_definition_type") or "").strip() == "context_module"
+        ) and component_key == scope_id:
+            return component
+    return None
+
+
+def _enrich_rollups_with_refs(
+    items: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    definitions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    definition_by_id: dict[int, dict[str, Any]] = {}
+    definition_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for definition in definitions:
+        definition_id = _safe_int(definition.get("id"), 0)
+        if definition_id:
+            definition_by_id[definition_id] = definition
+        definition_type = str(definition.get("definition_type") or "").strip()
+        external_id = str(definition.get("external_id") or "").strip()
+        if definition_type and external_id:
+            definition_by_key[(definition_type, external_id)] = definition
+    definition_indexes = build_definition_indexes(definitions)
+    observation_by_session = {
+        str(observation.get("session_id") or observation.get("sessionId") or ""): observation
+        for observation in observations
+        if str(observation.get("session_id") or observation.get("sessionId") or "").strip()
+    }
+
+    for item in items:
+        evidence_summary = _safe_dict(item.get("evidenceSummary"))
+        representative_session_ids = [
+            str(session_id).strip()
+            for session_id in _safe_list(evidence_summary.get("representativeSessionIds"))
+            if str(session_id).strip()
+        ]
+        observation = next((observation_by_session.get(session_id) for session_id in representative_session_ids if observation_by_session.get(session_id)), None)
+        scope_type = str(item.get("scopeType") or "")
+        scope_id = str(item.get("scopeId") or "")
+        scope_ref: ExecutionArtifactReference | None = None
+        if scope_type in {"workflow", "agent", "skill", "context_module"} and observation is not None:
+            component = _scope_component(observation, scope_type, scope_id)
+            if component is not None:
+                scope_ref = _artifact_reference_from_component(component, definition_by_id, definition_by_key, definition_indexes)
+        elif scope_type in {"bundle", "effective_workflow"}:
+            definition = definition_by_key.get(("bundle" if scope_type == "bundle" else "workflow", scope_id))
+            if definition is None and scope_type == "effective_workflow":
+                definition = definition_by_key.get(("artifact", scope_id))
+            if definition is not None:
+                scope_ref = _artifact_reference_from_definition(definition, kind=scope_type, label=str(item.get("scopeLabel") or scope_id))
+        elif scope_type == "stack":
+            scope_ref = ExecutionArtifactReference(
+                key=scope_id,
+                label=str(item.get("scopeLabel") or scope_id),
+                kind="stack",
+                status="unresolved",
+                definitionType="",
+                externalId="",
+                sourceUrl="",
+                sourceAttribution="rollup_scope",
+                description="Representative stack components from observed work.",
+                metadata={"scopeId": scope_id},
+            )
+
+        related_refs: list[ExecutionArtifactReference] = []
+        if observation is not None:
+            seen: set[tuple[str, str]] = set()
+            for component in _safe_list(observation.get("components")):
+                if str(component.get("component_type") or "") == "model_policy":
+                    continue
+                reference = _artifact_reference_from_component(component, definition_by_id, definition_by_key, definition_indexes)
+                dedupe_key = (reference.kind, reference.key or reference.label)
+                if dedupe_key in seen:
+                    continue
+                if scope_ref and dedupe_key == (scope_ref.kind, scope_ref.key or scope_ref.label):
+                    continue
+                seen.add(dedupe_key)
+                related_refs.append(reference)
+                if len(related_refs) >= 8:
+                    break
+
+        item["scopeRef"] = scope_ref.model_dump() if scope_ref is not None else None
+        item["relatedRefs"] = [reference.model_dump() for reference in related_refs]
+    return items
 
 
 async def _load_hydrated_observations(repo: Any, project_id: str) -> list[dict[str, Any]]:
@@ -462,7 +649,7 @@ async def _load_hydrated_observations(repo: Any, project_id: str) -> list[dict[s
             continue
         full_observation = await repo.get_stack_observation(project_id, session_id)
         if full_observation:
-            hydrated.append(full_observation)
+            hydrated.append(canonicalize_stack_observation(full_observation))
     return hydrated
 
 
@@ -495,7 +682,10 @@ async def _collect_effectiveness_dataset(
     session_repo = get_session_repository(db)
     test_run_repo = get_test_run_repository(db)
     integrity_repo = get_test_integrity_repository(db)
-    definitions = await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0)
+    definitions = normalize_definitions_for_project(
+        await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0),
+        project,
+    )
     definition_by_id: dict[int, dict[str, Any]] = {}
     definition_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for definition in definitions:
@@ -823,6 +1013,10 @@ async def get_workflow_effectiveness(
 ) -> dict[str, Any]:
     project_id = str(getattr(project, "id", "") or "")
     intelligence_repo = get_agentic_intelligence_repository(db)
+    definitions = normalize_definitions_for_project(
+        await intelligence_repo.list_external_definitions(project_id, limit=5000, offset=0),
+        project,
+    )
 
     use_cache = not recompute and not feature_id and not start and not end
     if use_cache:
@@ -836,6 +1030,8 @@ async def get_workflow_effectiveness(
         )
         if cached_rows:
             hydrated = [_hydrate_rollup(row) for row in cached_rows]
+            observations = await _load_hydrated_observations(intelligence_repo, project_id)
+            hydrated = _enrich_rollups_with_refs(hydrated, observations, definitions)
             total = len(hydrated)
             return {
                 "projectId": project_id,
@@ -867,6 +1063,8 @@ async def get_workflow_effectiveness(
         scope_type=scope_type,
         scope_id=scope_id,
     )
+    observations = [canonicalize_stack_observation(_safe_dict(item.get("observation"))) for item in dataset if _safe_dict(item.get("observation"))]
+    items = _enrich_rollups_with_refs(items, observations, definitions)
 
     if not feature_id and not start and not end:
         await intelligence_repo.purge_effectiveness_rollups(project_id, period=period)

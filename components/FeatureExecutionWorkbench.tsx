@@ -58,6 +58,7 @@ import { getFeatureStatusStyle } from './featureStatus';
 import { TestStatusView } from './TestVisualizer/TestStatusView';
 import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
 import { RecommendedStackCard } from './execution/RecommendedStackCard';
+import { RecommendedStackPreviewCard } from './execution/RecommendedStackPreviewCard';
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
@@ -576,6 +577,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [approvalRun, setApprovalRun] = useState<ExecutionRun | null>(null);
   const selectedRunNextSequenceRef = useRef(0);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
+  const isAnalyticsTabActive = activeTab === 'analytics';
 
   useEffect(() => {
     if (features.length === 0) {
@@ -1825,131 +1827,143 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
           <div className="space-y-4">
             <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
-            <section className="h-fit space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4 xl:sticky xl:top-0">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wider text-slate-400">Recommendation</p>
-                  <h2 className="text-lg font-semibold text-slate-100 mt-1">Next Command</h2>
+            <div className="h-fit space-y-4 xl:sticky xl:top-0">
+              <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Recommendation</p>
+                    <h2 className="text-lg font-semibold text-slate-100 mt-1">Next Command</h2>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-1 rounded border border-indigo-500/40 text-indigo-200 bg-indigo-500/20">
+                    {context.recommendations.ruleId}
+                  </span>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-1 rounded border border-indigo-500/40 text-indigo-200 bg-indigo-500/20">
-                  {context.recommendations.ruleId}
-                </span>
-              </div>
 
-              <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
-                <p className="text-[11px] text-slate-500 uppercase tracking-wide mb-2">Primary</p>
-                <code className="text-sm text-emerald-300 block whitespace-pre-wrap break-all">{context.recommendations.primary.command}</code>
-              </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
+                  <p className="text-[11px] text-slate-500 uppercase tracking-wide mb-2">Primary</p>
+                  <code className="text-sm text-emerald-300 block whitespace-pre-wrap break-all">{context.recommendations.primary.command}</code>
+                </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => void openRunReview(context.recommendations.primary.command, context.recommendations.primary.ruleId)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 text-xs font-semibold hover:bg-emerald-500/30"
-                >
-                  <Play size={14} />
-                  Run in Workbench
-                </button>
-                <button
-                  onClick={() => handleCopyCommand(context.recommendations.primary.command)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 text-xs font-semibold hover:bg-indigo-500/30"
-                >
-                  <Clipboard size={14} />
-                  {copiedCommand === context.recommendations.primary.command ? 'Copied' : 'Copy Command'}
-                </button>
-                <button
-                  onClick={openSourceDoc}
-                  disabled={!sourceDocPath}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-700 text-slate-200 text-xs font-semibold enabled:hover:border-slate-500 disabled:opacity-50"
-                >
-                  <ExternalLink size={14} />
-                  Open Source Doc
-                </button>
-              </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void openRunReview(context.recommendations.primary.command, context.recommendations.primary.ruleId)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/20 text-emerald-100 text-xs font-semibold hover:bg-emerald-500/30"
+                  >
+                    <Play size={14} />
+                    Run in Workbench
+                  </button>
+                  <button
+                    onClick={() => handleCopyCommand(context.recommendations.primary.command)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-500/40 bg-indigo-500/20 text-indigo-100 text-xs font-semibold hover:bg-indigo-500/30"
+                  >
+                    <Clipboard size={14} />
+                    {copiedCommand === context.recommendations.primary.command ? 'Copied' : 'Copy Command'}
+                  </button>
+                  <button
+                    onClick={openSourceDoc}
+                    disabled={!sourceDocPath}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-700 text-slate-200 text-xs font-semibold enabled:hover:border-slate-500 disabled:opacity-50"
+                  >
+                    <ExternalLink size={14} />
+                    Open Source Doc
+                  </button>
+                </div>
 
-              <p className="text-sm text-slate-300 leading-relaxed">{context.recommendations.explanation}</p>
+                <p className="text-sm text-slate-300 leading-relaxed">{context.recommendations.explanation}</p>
 
-              {context.recommendations.alternatives.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500">Alternatives</p>
-                  {context.recommendations.alternatives.map(option => (
-                    <div key={option.command} className="rounded-lg border border-slate-700/80 p-2.5 bg-slate-950/70">
-                      <code className="text-xs text-cyan-200 block whitespace-pre-wrap break-all">{option.command}</code>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-slate-500">{option.ruleId}</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => void openRunReview(option.command, option.ruleId)}
-                            className="text-[11px] text-emerald-300 hover:text-emerald-200"
-                          >
-                            Run
-                          </button>
-                          <button
-                            onClick={() => handleCopyCommand(option.command)}
-                            className="text-[11px] text-slate-300 hover:text-white"
-                          >
-                            Copy
-                          </button>
+                {context.recommendations.alternatives.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500">Alternatives</p>
+                    {context.recommendations.alternatives.map(option => (
+                      <div key={option.command} className="rounded-lg border border-slate-700/80 p-2.5 bg-slate-950/70">
+                        <code className="text-xs text-cyan-200 block whitespace-pre-wrap break-all">{option.command}</code>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-slate-500">{option.ruleId}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => void openRunReview(option.command, option.ruleId)}
+                              className="text-[11px] text-emerald-300 hover:text-emerald-200"
+                            >
+                              Run
+                            </button>
+                            <button
+                              onClick={() => handleCopyCommand(option.command)}
+                              className="text-[11px] text-slate-300 hover:text-white"
+                            >
+                              Copy
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {runActionError && (
-                <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
-                  {runActionError}
-                </div>
-              )}
+                {runActionError && (
+                  <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+                    {runActionError}
+                  </div>
+                )}
 
-              <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Evidence</p>
-                <ul className="space-y-1.5">
-                  {context.recommendations.evidence.map(item => {
-                    const rawPath = (item.sourcePath || (isPathLike(item.value) ? item.value : '')).trim();
-                    const parsed = parseEvidenceToken(item.value);
-                    const structuredLabel = rawPath
-                      ? (humanizeEvidenceKey(parsed.key) || 'Document')
-                      : (humanizeEvidenceKey(parsed.key) || item.label?.trim() || 'Evidence');
-                    const structuredValue = parsed.key ? parsed.tokenValue : item.value;
-                    const displayValue = rawPath ? fileNameFromPath(rawPath) : structuredValue;
-                    const tooltipValue = rawPath || structuredValue || item.value;
-                    const clickableToken = rawPath || (parsed.key ? `${parsed.key}:${parsed.tokenValue}` : item.value);
-                    const isClickable = Boolean(rawPath)
-                      || parsed.key === 'feature'
-                      || parsed.key === 'active_phase'
-                      || parsed.key === 'next_phase'
-                      || parsed.key === 'highest_completed_phase';
-                    return (
-                      <li key={item.id} className="text-xs text-slate-300 flex items-center gap-2 min-w-0">
-                        <span className="shrink-0 max-w-[140px] truncate text-[11px] text-slate-500" title={structuredLabel}>
-                          {structuredLabel}:
-                        </span>
-                        {isClickable ? (
-                          <button
-                            onClick={() => openEvidenceLink(clickableToken)}
-                            title={tooltipValue}
-                            className="min-w-0 flex-1 truncate text-left text-cyan-200 hover:text-cyan-100"
-                          >
-                            {displayValue}
-                          </button>
-                        ) : (
-                          <span className="min-w-0 flex-1 truncate" title={tooltipValue}>
-                            {displayValue}
+                <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Evidence</p>
+                  <ul className="space-y-1.5">
+                    {context.recommendations.evidence.map(item => {
+                      const rawPath = (item.sourcePath || (isPathLike(item.value) ? item.value : '')).trim();
+                      const parsed = parseEvidenceToken(item.value);
+                      const structuredLabel = rawPath
+                        ? (humanizeEvidenceKey(parsed.key) || 'Document')
+                        : (humanizeEvidenceKey(parsed.key) || item.label?.trim() || 'Evidence');
+                      const structuredValue = parsed.key ? parsed.tokenValue : item.value;
+                      const displayValue = rawPath ? fileNameFromPath(rawPath) : structuredValue;
+                      const tooltipValue = rawPath || structuredValue || item.value;
+                      const clickableToken = rawPath || (parsed.key ? `${parsed.key}:${parsed.tokenValue}` : item.value);
+                      const isClickable = Boolean(rawPath)
+                        || parsed.key === 'feature'
+                        || parsed.key === 'active_phase'
+                        || parsed.key === 'next_phase'
+                        || parsed.key === 'highest_completed_phase';
+                      return (
+                        <li key={item.id} className="text-xs text-slate-300 flex items-center gap-2 min-w-0">
+                          <span className="shrink-0 max-w-[140px] truncate text-[11px] text-slate-500" title={structuredLabel}>
+                            {structuredLabel}:
                           </span>
-                        )}
-                        <span className="shrink-0 max-w-[96px] truncate text-[10px] uppercase text-slate-500" title={item.sourceType}>
-                          {item.sourceType}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+                          {isClickable ? (
+                            <button
+                              onClick={() => openEvidenceLink(clickableToken)}
+                              title={tooltipValue}
+                              className="min-w-0 flex-1 truncate text-left text-cyan-200 hover:text-cyan-100"
+                            >
+                              {displayValue}
+                            </button>
+                          ) : (
+                            <span className="min-w-0 flex-1 truncate" title={tooltipValue}>
+                              {displayValue}
+                            </span>
+                          )}
+                          <span className="shrink-0 max-w-[96px] truncate text-[10px] uppercase text-slate-500" title={item.sourceType}>
+                            {item.sourceType}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              </section>
 
-            </section>
+              {isAnalyticsTabActive && stackRecommendationsAvailable && (
+                <RecommendedStackPreviewCard
+                  recommendedStack={context.recommendedStack}
+                  stackAlternatives={context.stackAlternatives}
+                  stackEvidence={context.stackEvidence}
+                  definitionResolutionWarnings={context.definitionResolutionWarnings}
+                  onOpenSession={openSession}
+                  onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
+                />
+              )}
+            </div>
 
-            <section className="min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-4 min-h-[42rem] h-[clamp(42rem,74vh,58rem)] flex flex-col">
+            <section className={`min-w-0 rounded-xl border border-slate-800 bg-slate-900 p-4 ${isAnalyticsTabActive ? 'min-h-[42rem]' : 'min-h-[42rem] h-[clamp(42rem,74vh,58rem)] overflow-hidden flex flex-col'}`}>
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
                 {visibleTabItems.map(tab => (
                   <button
@@ -1967,7 +1981,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 ))}
               </div>
 
-              <div className="mt-4 min-h-0 flex-1 overflow-hidden">
+              <div className={`mt-4 ${isAnalyticsTabActive ? '' : 'min-h-0 flex-1 overflow-hidden'}`}>
               {activeTab === 'overview' && featureDetail && (
                 <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 xl:grid xl:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] xl:overflow-hidden xl:pr-0">
                   <div className="space-y-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
@@ -2421,7 +2435,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
 
               {activeTab === 'analytics' && (
-                <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+                <div className="flex flex-col gap-4">
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                       <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
@@ -2454,7 +2468,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="min-h-0 overflow-hidden">
+                  <div>
                     {workflowAnalyticsAvailable ? (
                       <WorkflowEffectivenessSurface
                         embedded
@@ -2471,7 +2485,14 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
 
                   {workflowAnalyticsAvailable && (
-                    <div className="flex justify-end">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        onClick={() => navigate('/workflows')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                      >
+                        <Layers size={13} />
+                        Open Workflow Registry
+                      </button>
                       <button
                         onClick={() => navigate('/analytics?tab=workflow_intelligence')}
                         className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
@@ -2505,7 +2526,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
             </section>
             </div>
 
-            {stackRecommendationsAvailable ? (
+            {!isAnalyticsTabActive && stackRecommendationsAvailable ? (
               <RecommendedStackCard
                 recommendedStack={context.recommendedStack}
                 stackAlternatives={context.stackAlternatives}
@@ -2514,12 +2535,12 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 onOpenSession={openSession}
                 onOpenFeature={(featureId) => openBoardFeature(featureId, 'overview')}
               />
-            ) : (
+            ) : !isAnalyticsTabActive ? (
               <IntelligenceDisabledNotice
                 title="Recommended Stack Disabled"
                 message="Project settings have disabled historical stack recommendations. Command guidance and execution runs remain available."
               />
-            )}
+            ) : null}
           </div>
         </div>
       )}

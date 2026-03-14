@@ -40,6 +40,7 @@ class ProjectManagerTests(unittest.TestCase):
             self.assertIn("pathConfig", persisted)
             self.assertEqual(persisted["pathConfig"]["planDocs"]["sourceKind"], "project_root")
             self.assertEqual(persisted["skillMeat"]["collectionId"], "")
+            self.assertEqual(persisted["skillMeat"]["webBaseUrl"], "")
 
     def test_load_migrates_legacy_workspace_id_to_collection_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

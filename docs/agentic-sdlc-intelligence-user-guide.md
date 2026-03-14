@@ -1,6 +1,6 @@
 # Agentic SDLC Intelligence User Guide
 
-Last updated: 2026-03-12
+Last updated: 2026-03-14
 
 Use the agentic SDLC intelligence surfaces to understand which workflow stacks are working, why they work, and where failure patterns are repeating.
 
@@ -13,6 +13,10 @@ Use the agentic SDLC intelligence surfaces to understand which workflow stacks a
   - cross-project workflow, agent, skill, context, and stack leaderboard
   - ranked failure-pattern list with representative session evidence
   - attributed token, cost, coverage, and cache-share summaries when usage attribution is enabled
+- `/workflows`
+  - dedicated workflow identity and correlation hub
+  - searchable catalog with correlation-state filters
+  - composition, effectiveness, issue, and action drill-down for one workflow at a time
 - `/analytics?tab=attribution`
   - direct entity-level attribution leaderboard and calibration view
 - `Settings > Integrations > SkillMeat`
@@ -61,6 +65,13 @@ The workflow intelligence surface helps compare what has historically performed 
 
 Use the feature-level embedded view in `/execution` when deciding what to do next for one feature. Use the full `/analytics` tab when you want to compare patterns across the active project.
 
+Use `/workflows` when you need to inspect one workflow deeply instead of comparing many rows:
+
+- confirm whether the workflow is truly SkillMeat-backed or only command-backed
+- inspect composition metadata such as stages, context modules, and bundle alignment
+- review issue cards that explain unresolved or weak correlation states
+- open the exact SkillMeat or CCDash object that explains the workflow’s current state
+
 Use `/analytics?tab=attribution` when you want entity-first token ownership rather than outcome-first workflow ranking.
 
 ## Disabled states
@@ -105,3 +116,4 @@ Use `Settings > Integrations > SkillMeat`.
 8. If SkillMeat is temporarily unavailable, continue using cached recommendations and previously computed rollups until the source comes back.
 9. Review `/analytics?tab=attribution` to validate entity ownership and confidence before making workflow changes.
 10. Review `/analytics?tab=workflow_intelligence` after a few sessions to spot patterns that should be standardized or retired.
+11. Open `/workflows` to inspect the identity, evidence, and next-hop actions for any workflow that looks ambiguous or unusually effective.

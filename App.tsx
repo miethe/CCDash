@@ -14,6 +14,7 @@ import { OpsPanel } from './components/OpsPanel';
 import { CodebaseExplorer } from './components/CodebaseExplorer';
 import { FeatureExecutionWorkbench } from './components/FeatureExecutionWorkbench';
 import { TestingPage } from './components/TestVisualizer/TestingPage';
+import { WorkflowRegistryPage } from './components/Workflows/WorkflowRegistryPage';
 
 const App: React.FC = () => {
   return (
@@ -29,6 +30,8 @@ const App: React.FC = () => {
               <Route path="/execution" element={<FeatureExecutionWorkbench />} />
               <Route path="/tests" element={<TestingPage />} />
               <Route path="/analytics" element={<AnalyticsDashboard />} />
+              <Route path="/workflows" element={<WorkflowRegistryPage />} />
+              <Route path="/workflows/:workflowId" element={<WorkflowRegistryPage />} />
               <Route path="/session-mappings" element={<SessionMappings />} />
               <Route path="/ops" element={<OpsPanel />} />
               <Route path="/codebase" element={<CodebaseExplorer />} />
