@@ -2273,6 +2273,12 @@ async def workflow_registry(
     if not project:
         return WorkflowRegistryListResponse(
             projectId="",
+            correlationCounts={
+                "strong": 0,
+                "hybrid": 0,
+                "weak": 0,
+                "unresolved": 0,
+            },
             total=0,
             offset=offset,
             limit=limit,

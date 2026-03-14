@@ -292,6 +292,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                     "lastObservedAt": "2026-03-14T00:00:00+00:00",
                 }
             ],
+            "correlationCounts": {
+                "strong": 1,
+                "hybrid": 0,
+                "weak": 0,
+                "unresolved": 0,
+            },
             "total": 1,
             "offset": 0,
             "limit": 20,
@@ -309,6 +315,7 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].id, "workflow:phase-execution")
         self.assertEqual(response.items[0].identity.displayLabel, "Phase Execution")
         self.assertEqual(response.items[0].correlationState, "strong")
+        self.assertEqual(response.correlationCounts["strong"], 1)
 
     async def test_workflow_registry_detail_endpoint_wraps_service_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")

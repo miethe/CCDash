@@ -71,7 +71,6 @@ export const WorkflowRegistryPage: React.FC = () => {
     try {
       const payload = await workflowRegistryService.list({
         search: deferredSearch || undefined,
-        correlationState: activeFilter,
         offset: 0,
         limit: 200,
       });
@@ -118,7 +117,7 @@ export const WorkflowRegistryPage: React.FC = () => {
       return;
     }
     void loadCatalog();
-  }, [activeProject?.id, deferredSearch, activeFilter, workflowAnalyticsAvailable]);
+  }, [activeProject?.id, deferredSearch, workflowAnalyticsAvailable]);
 
   useEffect(() => {
     if (!selectedWorkflowId || !workflowAnalyticsAvailable || !activeProject?.id) {
@@ -152,16 +151,40 @@ export const WorkflowRegistryPage: React.FC = () => {
   }, []);
 
   const catalogItems = catalogPayload?.items || [];
+  const correlationCounts = catalogPayload?.correlationCounts || {
+    strong: 0,
+    hybrid: 0,
+    weak: 0,
+    unresolved: 0,
+  };
+  const visibleCatalogItems = useMemo(
+    () => (
+      activeFilter === 'all'
+        ? catalogItems
+        : catalogItems.filter(item => item.correlationState === activeFilter)
+    ),
+    [activeFilter, catalogItems],
+  );
+  const catalogFilterCounts = useMemo(
+    () => ({
+      all: catalogPayload?.total || 0,
+      strong: correlationCounts.strong,
+      hybrid: correlationCounts.hybrid,
+      weak: correlationCounts.weak,
+      unresolved: correlationCounts.unresolved,
+    }),
+    [catalogPayload?.total, correlationCounts.hybrid, correlationCounts.strong, correlationCounts.unresolved, correlationCounts.weak],
+  );
   const summary = useMemo(() => {
-    const strong = catalogItems.filter(item => item.correlationState === 'strong').length;
-    const unresolved = catalogItems.filter(item => item.correlationState === 'unresolved').length;
-    const hybrid = catalogItems.filter(item => item.correlationState === 'hybrid').length;
+    const strong = correlationCounts.strong;
+    const unresolved = correlationCounts.unresolved;
+    const hybrid = correlationCounts.hybrid;
     return {
       strong,
       unresolved,
       hybrid,
     };
-  }, [catalogItems]);
+  }, [correlationCounts.hybrid, correlationCounts.strong, correlationCounts.unresolved]);
 
   const handleSelectWorkflow = (registryId: string) => {
     navigate(buildWorkflowRegistryPath(registryId));
@@ -219,7 +242,8 @@ export const WorkflowRegistryPage: React.FC = () => {
             <WorkflowCatalog
               searchQuery={searchQuery}
               activeFilter={activeFilter}
-              items={catalogItems}
+              items={visibleCatalogItems}
+              counts={catalogFilterCounts}
               total={catalogPayload?.total || 0}
               loading={catalogLoading}
               error={catalogError}

@@ -1,4 +1,4 @@
-import React, { RefObject, useEffect, useMemo, useState } from 'react';
+import React, { RefObject, useEffect, useState } from 'react';
 import { RefreshCcw, Search } from 'lucide-react';
 
 import {
@@ -13,6 +13,7 @@ interface WorkflowCatalogProps {
   searchQuery: string;
   activeFilter: WorkflowRegistryCorrelationState | 'all';
   items: WorkflowRegistryItem[];
+  counts: Partial<Record<WorkflowRegistryCorrelationState | 'all', number>>;
   total: number;
   loading: boolean;
   error: string;
@@ -52,6 +53,7 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
   searchQuery,
   activeFilter,
   items,
+  counts,
   total,
   loading,
   error,
@@ -75,15 +77,14 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
     }
   }, [activeId, items, selectedId]);
 
-  const filterCounts = useMemo(() => {
-    const counts: Partial<Record<WorkflowRegistryCorrelationState | 'all', number>> = {
-      all: total,
-    };
-    items.forEach(item => {
-      counts[item.correlationState] = (counts[item.correlationState] || 0) + 1;
-    });
-    return counts;
-  }, [items, total]);
+  const visibleTotal = items.length;
+  const matchingTotal = activeFilter === 'all' ? total : (counts[activeFilter] ?? 0);
+  const entityLabel = (count: number, singular: string, plural: string): string => (
+    count === 1 ? singular : plural
+  );
+  const entitySummary = visibleTotal === matchingTotal
+    ? `${formatInteger(visibleTotal)} ${activeFilter === 'all' ? entityLabel(visibleTotal, 'workflow entity', 'workflow entities') : entityLabel(visibleTotal, 'matching workflow', 'matching workflows')}`
+    : `${formatInteger(visibleTotal)} of ${formatInteger(matchingTotal)} ${activeFilter === 'all' ? entityLabel(matchingTotal, 'workflow entity', 'workflow entities') : entityLabel(matchingTotal, 'matching workflow', 'matching workflows')}`;
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!items.length) return;
@@ -143,12 +144,12 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
 
         <CatalogFilterBar
           activeFilter={activeFilter}
-          counts={filterCounts}
+          counts={counts}
           onChange={onActiveFilterChange}
         />
 
         <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-          <span>{formatInteger(total)} workflow entities</span>
+          <span>{entitySummary}</span>
           <span>Arrow keys move, Enter opens, `/` focuses search</span>
         </div>
       </div>

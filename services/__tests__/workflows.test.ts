@@ -35,6 +35,12 @@ describe('workflow registry service helpers', () => {
         JSON.stringify({
           projectId: 'project-1',
           items: [],
+          correlationCounts: {
+            strong: 0,
+            hybrid: 0,
+            weak: 0,
+            unresolved: 0,
+          },
           total: 0,
           offset: 0,
           limit: 25,

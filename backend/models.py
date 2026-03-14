@@ -1645,6 +1645,14 @@ class WorkflowRegistryDetail(WorkflowRegistryItem):
 class WorkflowRegistryListResponse(BaseModel):
     projectId: str
     items: list[WorkflowRegistryItem] = Field(default_factory=list)
+    correlationCounts: dict[WorkflowRegistryCorrelationState, int] = Field(
+        default_factory=lambda: {
+            "strong": 0,
+            "hybrid": 0,
+            "weak": 0,
+            "unresolved": 0,
+        }
+    )
     total: int = 0
     offset: int = 0
     limit: int = 0

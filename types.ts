@@ -1283,6 +1283,7 @@ export interface WorkflowRegistryDetail extends WorkflowRegistryItem {
 export interface WorkflowRegistryListResponse {
   projectId: string;
   items: WorkflowRegistryItem[];
+  correlationCounts: Record<WorkflowRegistryCorrelationState, number>;
   total: number;
   offset: number;
   limit: number;

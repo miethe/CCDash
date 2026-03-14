@@ -397,6 +397,15 @@ class WorkflowRegistryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(states["/dev:quick-feature"], "weak")
         self.assertEqual(states["/dev:mystery-flow"], "unresolved")
         self.assertEqual(states["Empty Workflow"], "strong")
+        self.assertEqual(
+            payload["correlationCounts"],
+            {
+                "strong": 2,
+                "hybrid": 1,
+                "weak": 1,
+                "unresolved": 1,
+            },
+        )
 
     async def test_registry_detail_enriches_composition_effectiveness_and_actions(self) -> None:
         detail = await get_workflow_registry_detail(self.db, self.project, registry_id="workflow:phase-execution")
@@ -440,6 +449,15 @@ class WorkflowRegistryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item["identity"]["displayLabel"] for item in search_payload["items"]], ["/dev:quick-feature"])
         self.assertEqual([item["identity"]["displayLabel"] for item in state_payload["items"]], ["Phase Execution"])
+        self.assertEqual(
+            state_payload["correlationCounts"],
+            {
+                "strong": 2,
+                "hybrid": 1,
+                "weak": 1,
+                "unresolved": 1,
+            },
+        )
 
 
 if __name__ == "__main__":

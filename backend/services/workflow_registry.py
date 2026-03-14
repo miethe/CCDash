@@ -990,6 +990,16 @@ async def list_workflow_registry(
     details = await _load_registry_details(db, project)
     if search:
         details = [detail for detail in details if _matches_search(detail, search)]
+    correlation_counts = {
+        "strong": 0,
+        "hybrid": 0,
+        "weak": 0,
+        "unresolved": 0,
+    }
+    for detail in details:
+        state = str(detail.get("correlationState") or "unresolved")
+        if state in correlation_counts:
+            correlation_counts[state] += 1
     if correlation_state:
         details = [
             detail for detail in details
@@ -1000,6 +1010,7 @@ async def list_workflow_registry(
     return {
         "projectId": project_id,
         "items": items[offset : offset + limit],
+        "correlationCounts": correlation_counts,
         "total": total,
         "offset": offset,
         "limit": limit,

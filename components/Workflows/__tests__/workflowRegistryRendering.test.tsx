@@ -138,7 +138,8 @@ describe('workflow registry rendering smoke tests', () => {
         searchQuery="phase"
         activeFilter="hybrid"
         items={[sampleItem]}
-        total={1}
+        counts={{ all: 3, strong: 1, hybrid: 1, weak: 1, unresolved: 0 }}
+        total={3}
         loading={false}
         error=""
         selectedId="workflow:phase-execution"
@@ -154,6 +155,7 @@ describe('workflow registry rendering smoke tests', () => {
     expect(html).toContain('Workflow Registry');
     expect(html).toContain('Phase Execution');
     expect(html).toContain('Hybrid');
+    expect(html).toContain('1 matching workflow');
     expect(html).toContain('/dev:execute-phase docs/plan.md');
   });
 
