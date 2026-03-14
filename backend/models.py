@@ -1522,6 +1522,141 @@ class WorkflowEffectivenessResponse(BaseModel):
     generatedAt: str = ""
 
 
+WorkflowRegistryCorrelationState = Literal["strong", "hybrid", "weak", "unresolved"]
+WorkflowRegistryResolutionKind = Literal["workflow_definition", "command_artifact", "dual_backed", "none"]
+WorkflowRegistryIssueSeverity = Literal["info", "warning", "error"]
+WorkflowRegistryActionTarget = Literal["external", "internal"]
+
+
+class WorkflowRegistryIssue(BaseModel):
+    code: str
+    severity: WorkflowRegistryIssueSeverity = "info"
+    title: str = ""
+    message: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRegistryIdentity(BaseModel):
+    registryId: str
+    observedWorkflowFamilyRef: str = ""
+    observedAliases: list[str] = Field(default_factory=list)
+    displayLabel: str = ""
+    resolvedWorkflowId: str = ""
+    resolvedWorkflowLabel: str = ""
+    resolvedWorkflowSourceUrl: str = ""
+    resolvedCommandArtifactId: str = ""
+    resolvedCommandArtifactLabel: str = ""
+    resolvedCommandArtifactSourceUrl: str = ""
+    resolutionKind: WorkflowRegistryResolutionKind = "none"
+    correlationState: WorkflowRegistryCorrelationState = "unresolved"
+
+
+class WorkflowRegistryBundleAlignment(BaseModel):
+    bundleId: str = ""
+    bundleName: str = ""
+    matchScore: float = 0.0
+    matchedRefs: list[str] = Field(default_factory=list)
+    sourceUrl: str = ""
+
+
+class WorkflowRegistryContextModule(BaseModel):
+    contextRef: str = ""
+    moduleId: str = ""
+    moduleName: str = ""
+    status: str = ""
+    sourceUrl: str = ""
+    previewTokens: int = 0
+
+
+class WorkflowRegistryCompositionSummary(BaseModel):
+    artifactRefs: list[str] = Field(default_factory=list)
+    contextRefs: list[str] = Field(default_factory=list)
+    resolvedContextModules: list[WorkflowRegistryContextModule] = Field(default_factory=list)
+    planSummary: dict[str, Any] = Field(default_factory=dict)
+    stageOrder: list[str] = Field(default_factory=list)
+    gateCount: int = 0
+    fanOutCount: int = 0
+    bundleAlignment: Optional[WorkflowRegistryBundleAlignment] = None
+
+
+class WorkflowRegistryEffectivenessSummary(BaseModel):
+    scopeType: str = ""
+    scopeId: str = ""
+    scopeLabel: str = ""
+    sampleSize: int = 0
+    successScore: float = 0.0
+    efficiencyScore: float = 0.0
+    qualityScore: float = 0.0
+    riskScore: float = 0.0
+    attributionCoverage: float = 0.0
+    averageAttributionConfidence: float = 0.0
+    evidenceSummary: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRegistryAction(BaseModel):
+    id: str
+    label: str
+    target: WorkflowRegistryActionTarget = "external"
+    href: str = ""
+    disabled: bool = False
+    reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRegistrySessionEvidence(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    title: str = ""
+    status: str = ""
+    workflowRef: str = ""
+    startedAt: str = ""
+    endedAt: str = ""
+    href: str = ""
+
+
+class WorkflowRegistryExecutionEvidence(BaseModel):
+    executionId: str = ""
+    status: str = ""
+    startedAt: str = ""
+    sourceUrl: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRegistryItem(BaseModel):
+    id: str
+    identity: WorkflowRegistryIdentity
+    correlationState: WorkflowRegistryCorrelationState = "unresolved"
+    issueCount: int = 0
+    issues: list[WorkflowRegistryIssue] = Field(default_factory=list)
+    effectiveness: Optional[WorkflowRegistryEffectivenessSummary] = None
+    observedCommandCount: int = 0
+    representativeCommands: list[str] = Field(default_factory=list)
+    sampleSize: int = 0
+    lastObservedAt: str = ""
+
+
+class WorkflowRegistryDetail(WorkflowRegistryItem):
+    composition: WorkflowRegistryCompositionSummary = Field(default_factory=WorkflowRegistryCompositionSummary)
+    representativeSessions: list[WorkflowRegistrySessionEvidence] = Field(default_factory=list)
+    recentExecutions: list[WorkflowRegistryExecutionEvidence] = Field(default_factory=list)
+    actions: list[WorkflowRegistryAction] = Field(default_factory=list)
+
+
+class WorkflowRegistryListResponse(BaseModel):
+    projectId: str
+    items: list[WorkflowRegistryItem] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    generatedAt: str = ""
+
+
+class WorkflowRegistryDetailResponse(BaseModel):
+    projectId: str
+    item: WorkflowRegistryDetail
+    generatedAt: str = ""
+
+
 class FailurePatternRecord(BaseModel):
     id: str
     patternType: str
