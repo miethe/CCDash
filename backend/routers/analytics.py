@@ -27,6 +27,8 @@ from backend.models import (
     SessionUsageCalibrationSummary,
     SessionUsageDrilldownResponse,
     Notification,
+    WorkflowRegistryDetailResponse,
+    WorkflowRegistryListResponse,
     WorkflowEffectivenessResponse,
 )
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
@@ -49,6 +51,7 @@ from backend.services.session_usage_analytics import (
     get_usage_attribution_rollup,
 )
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
+from backend.services.workflow_registry import get_workflow_registry_detail, list_workflow_registry
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
@@ -2257,6 +2260,60 @@ async def workflow_effectiveness(
         recompute=recompute,
     )
     return WorkflowEffectivenessResponse(**payload)
+
+
+@analytics_router.get("/workflow-registry", response_model=WorkflowRegistryListResponse)
+async def workflow_registry(
+    search: str | None = Query(None),
+    correlation_state: str | None = Query(None, alias="correlationState", pattern="^(strong|hybrid|weak|unresolved)$"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        return WorkflowRegistryListResponse(
+            projectId="",
+            total=0,
+            offset=offset,
+            limit=limit,
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+    require_workflow_analytics_enabled(project)
+
+    db = await connection.get_connection()
+    payload = await list_workflow_registry(
+        db,
+        project,
+        search=search,
+        correlation_state=correlation_state,
+        limit=limit,
+        offset=offset,
+    )
+    return WorkflowRegistryListResponse(**payload)
+
+
+@analytics_router.get("/workflow-registry/detail", response_model=WorkflowRegistryDetailResponse)
+async def workflow_registry_detail(
+    registry_id: str = Query(..., alias="registryId"),
+):
+    project = project_manager.get_active_project()
+    if not project:
+        raise HTTPException(status_code=404, detail="No active project")
+    require_workflow_analytics_enabled(project)
+
+    db = await connection.get_connection()
+    detail = await get_workflow_registry_detail(
+        db,
+        project,
+        registry_id=registry_id,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Workflow registry item '{registry_id}' not found")
+    return WorkflowRegistryDetailResponse(
+        projectId=str(getattr(project, "id", "") or ""),
+        item=detail,
+        generatedAt=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @analytics_router.get("/failure-patterns", response_model=FailurePatternResponse)
