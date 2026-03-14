@@ -8,16 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/workflow-registry-and-correlation
 plan_ref: /docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
 phase: 5
 title: New Workflow page and navigation
-status: in_progress
+status: completed
 started: '2026-03-14'
-completed: null
-commit_refs: []
+completed: '2026-03-14'
+commit_refs:
+- 8964e3c
 pr_refs: []
-overall_progress: 85
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 4
-in_progress_tasks: 1
+completed_tasks: 5
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -63,7 +64,7 @@ tasks:
   priority: high
 - id: UI-5.5
   description: Finish the master-detail responsive shell, empty/loading/disabled states, and deep-link selection handling.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -107,7 +108,7 @@ files_modified:
 - components/Workflows/detail/WorkflowDetailPanel.tsx
 - components/Workflows/workflowRegistryUtils.ts
 - services/workflows.ts
-progress: 85
+progress: 100
 updated: '2026-03-14'
 ---
 

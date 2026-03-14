@@ -2485,7 +2485,14 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
 
                   {workflowAnalyticsAvailable && (
-                    <div className="flex justify-end">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        onClick={() => navigate('/workflows')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                      >
+                        <Layers size={13} />
+                        Open Workflow Registry
+                      </button>
                       <button
                         onClick={() => navigate('/analytics?tab=workflow_intelligence')}
                         className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"

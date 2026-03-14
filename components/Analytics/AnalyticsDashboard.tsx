@@ -687,11 +687,22 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'workflow_intelligence' && (
                 workflowAnalyticsAvailable ? (
-                    <WorkflowEffectivenessSurface
-                        title="Workflow Effectiveness"
-                        description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
-                        onOpenSession={(sessionId) => openSession(sessionId)}
-                    />
+                    <div className="space-y-4">
+                        <WorkflowEffectivenessSurface
+                            title="Workflow Effectiveness"
+                            description="Rank workflow, agent, skill, context, and stack patterns with real delivery outcomes and failure signals."
+                            onOpenSession={(sessionId) => openSession(sessionId)}
+                        />
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => navigate('/workflows')}
+                                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                            >
+                                <Sparkles size={13} />
+                                Open Workflow Registry
+                            </button>
+                        </div>
+                    </div>
                 ) : (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                         <p className="font-semibold">Workflow Intelligence Disabled</p>

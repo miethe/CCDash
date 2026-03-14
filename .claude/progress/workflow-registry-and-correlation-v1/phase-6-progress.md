@@ -8,15 +8,16 @@ prd_ref: /docs/project_plans/PRDs/enhancements/workflow-registry-and-correlation
 plan_ref: /docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
 phase: 6
 title: Cross-surface integration and actions
-status: planning
+status: completed
 started: '2026-03-14'
-completed: null
-commit_refs: []
+completed: '2026-03-14'
+commit_refs:
+- 8964e3c
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -28,7 +29,7 @@ contributors:
 tasks:
 - id: INT-6.1
   description: Reuse existing action and artifact-reference patterns inside workflow detail interactions where helpful.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies: []
@@ -36,7 +37,7 @@ tasks:
   priority: high
 - id: INT-6.2
   description: Wire workflow detail actions for SkillMeat definitions, executions, bundles, context memory, and representative sessions.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -45,7 +46,7 @@ tasks:
   priority: high
 - id: INT-6.3
   description: Add workflow hub backlinks from analytics and execution surfaces.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies: []
@@ -53,7 +54,7 @@ tasks:
   priority: medium
 - id: INT-6.4
   description: Validate navigation flows, refine empty/error states, and record completion in tracking artifacts.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -85,7 +86,8 @@ files_modified:
 - components/FeatureExecutionWorkbench.tsx
 - components/Workflows/detail/ActionsRow.tsx
 - components/Workflows/detail/WorkflowDetailPanel.tsx
-progress: 0
+- components/Workflows/WorkflowRegistryPage.tsx
+progress: 100
 updated: '2026-03-14'
 ---
 
