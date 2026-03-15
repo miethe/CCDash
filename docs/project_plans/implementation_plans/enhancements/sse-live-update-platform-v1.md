@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: "Implementation Plan: SSE Live Update Platform V1"
 description: "Implement a reusable server-sent events transport, broker, and frontend subscription layer that can replace hot polling loops across CCDash."
@@ -12,7 +12,7 @@ summary: "Sequence live-update work through broker/contract foundations, stream 
 author: codex
 audience: [ai-agents, developers, platform-engineering, frontend-engineering]
 created: 2026-03-11
-updated: 2026-03-14
+updated: 2026-03-15
 tags: [implementation, sse, live-updates, transport, polling, realtime]
 priority: high
 risk_level: medium
@@ -33,6 +33,7 @@ related_documents:
   - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
   - docs/project_plans/implementation_plans/live-update-animations-v1.md
   - docs/execution-workbench-developer-reference.md
+  - docs/live-update-platform-developer-reference.md
   - docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
 context_files:
   - backend/main.py
@@ -54,6 +55,25 @@ context_files:
 ## Objective
 
 Implement a reusable live-update substrate for CCDash that delivers scoped server-sent events to the frontend, supports reconnect and targeted recovery, and can be adopted incrementally by execution, sessions, features, tests, and ops surfaces. The implementation must reduce polling pressure without forcing a risky all-at-once state-management rewrite.
+
+## Delivery Status
+
+Status: completed on 2026-03-15
+
+Delivered in phases 1-6:
+
+1. shared contracts, broker, replay, heartbeat, and frontend connection management
+2. execution stream append delivery and stream-first workbench recovery
+3. session live invalidation and targeted REST recovery without the old 5s polling loop as the primary path
+4. feature board/modal invalidation topics and global feature refresh cues
+5. test visualizer and ops panel stream-first invalidation with polling fallback
+6. broker observability, rollout flags, and developer documentation
+
+Residual risk carried from phases 3-4:
+
+1. session live updates currently use invalidation plus targeted REST refresh rather than transcript append deltas
+2. that still satisfies the V1 migration goal because the old 5s session polling loop is no longer the primary live path
+3. transcript append streaming remains the clearest follow-up if session traffic or payload size grows materially
 
 ## Fixed Decisions
 

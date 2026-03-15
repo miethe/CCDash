@@ -1,6 +1,6 @@
 # Operations Panel Developer Reference
 
-Last updated: 2026-02-25
+Last updated: 2026-03-15
 
 This reference documents the Ops page implementation and backend endpoints it uses.
 
@@ -89,6 +89,18 @@ Router integration:
 - `activePaths.docsDir`
 - `activePaths.progressDir`
 - `operations` snapshot object
+- `liveUpdates` broker snapshot (`active_subscribers`, `buffered_topics`, `replay_gaps`, `dropped_events`, etc.)
+
+## Live invalidation path
+
+- Frontend rollout gate: `VITE_CCDASH_LIVE_OPS_ENABLED`
+- Topic: `project.{project_id}.ops`
+- Frontend subscription helper: `/Users/miethe/dev/homelab/development/CCDash/services/live/useLiveInvalidation.ts`
+- Backend publishers:
+  - `/Users/miethe/dev/homelab/development/CCDash/backend/db/sync_engine.py`
+  - `/Users/miethe/dev/homelab/development/CCDash/backend/application/live_updates/domain_events.py`
+
+The panel now uses stream-first invalidation and only falls back to interval polling while the connection is disabled, closed, or in backoff.
 
 ## Tests
 

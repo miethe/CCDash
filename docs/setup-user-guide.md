@@ -24,8 +24,13 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_PYTHON` (optional explicit Python path)
 - `CCDASH_TEST_VISUALIZER_ENABLED` (default `false`; global gate for `/api/tests/*` and `/tests`)
 - `CCDASH_INTEGRITY_SIGNALS_ENABLED` (default `false`; integrity signal features)
-- `CCDASH_LIVE_TEST_UPDATES_ENABLED` (default `false`; live update polling features)
+- `CCDASH_LIVE_TEST_UPDATES_ENABLED` (default `false`; backend gate for test live invalidation)
 - `CCDASH_SEMANTIC_MAPPING_ENABLED` (default `false`; semantic mapping features)
+- `VITE_CCDASH_LIVE_EXECUTION_ENABLED` (default `true`; execution live updates)
+- `VITE_CCDASH_LIVE_SESSIONS_ENABLED` (default `true`; session live updates)
+- `VITE_CCDASH_LIVE_FEATURES_ENABLED` (default `false`; feature board/modal live invalidation)
+- `VITE_CCDASH_LIVE_TESTS_ENABLED` (default `false`; test visualizer live invalidation)
+- `VITE_CCDASH_LIVE_OPS_ENABLED` (default `false`; Ops panel live invalidation)
 - `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
 - `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`; startup runs a light sync first)
 - `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`; delay before startup sync begins)
@@ -104,6 +109,15 @@ npm run start:frontend
 For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. `backend.main:app` should stay stateless for hosted API deployments; `backend.worker` owns startup sync and scheduled/background job execution.
 
 ## Troubleshooting
+
+### Live updates do not activate
+
+Check both layers of rollout:
+
+1. backend env/project gates for the domain (`CCDASH_LIVE_TEST_UPDATES_ENABLED`, project testing flags, etc.)
+2. matching frontend `VITE_CCDASH_LIVE_*` toggle for the surface you expect to stream
+
+Feature, test, and ops live invalidation stay on their polling fallback paths when either gate is off.
 
 ### `ECONNREFUSED` for `/api/*` in Vite
 
