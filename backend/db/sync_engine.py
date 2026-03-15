@@ -56,6 +56,7 @@ from backend.document_linking import (
     normalize_ref_path,
     slug_from_path,
 )
+from backend.application.live_updates.domain_events import publish_session_snapshot
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
 from backend.session_mappings import (
     load_session_mappings,
@@ -3507,6 +3508,7 @@ class SyncEngine:
                         files,
                         source="sync",
                     )
+                    await publish_session_snapshot(session_dict, log_count=len(logs), source="sync")
 
                     model = _first_non_empty(session_dict, "model")
                     feature_id = _first_non_empty(session_dict, "featureId", "feature_id")

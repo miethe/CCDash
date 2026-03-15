@@ -11,6 +11,7 @@ from backend.adapters.live_updates import InMemoryLiveEventBroker
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState
 from backend.application.context import RequestContext, RequestMetadata, TraceContext
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
+from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
 from backend import config
 from backend.db import connection, migrations, sync_engine
@@ -45,6 +46,7 @@ class RuntimeContainer:
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
         self.live_event_publisher = BrokerLiveEventPublisher(self.live_event_broker)
+        set_live_event_publisher(self.live_event_publisher)
         app.state.live_event_broker = self.live_event_broker
         app.state.live_event_publisher = self.live_event_publisher
 
@@ -74,6 +76,7 @@ class RuntimeContainer:
         if self.live_event_broker is not None:
             await self.live_event_broker.close()
             self.live_event_broker = None
+        set_live_event_publisher(None)
         self.live_event_publisher = None
 
         shutdown_observability(app)

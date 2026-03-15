@@ -21,6 +21,12 @@ import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tok
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
+import {
+    isSessionLiveUpdatesEnabled,
+    sessionTopic,
+    sharedLiveConnectionManager,
+    type LiveConnectionStatus,
+} from '../services/live';
 
 const MAIN_SESSION_AGENT = 'Main Session';
 const SHORT_COMMIT_LENGTH = 7;
@@ -8028,7 +8034,9 @@ export const SessionInspector: React.FC = () => {
     const [activeSessionTab, setActiveSessionTab] = useState<SessionInspectorTab>('transcript');
     const [sessionOpenLoading, setSessionOpenLoading] = useState(false);
     const [sessionOpenError, setSessionOpenError] = useState<string | null>(null);
+    const [selectedSessionLiveStatus, setSelectedSessionLiveStatus] = useState<LiveConnectionStatus>('idle');
     const openSessionRequestRef = useRef(0);
+    const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
 
     const updateSessionSearchParams = useCallback((
         sessionId: string | null,
@@ -8106,8 +8114,54 @@ export const SessionInspector: React.FC = () => {
         setSessionOpenError(`Unable to load session ${normalizedSessionId}.`);
     }, [activeSessionTab, getSessionById, selectedSession, updateSessionSearchParams]);
 
+    const refreshSelectedSessionDetail = useCallback(async (sessionId: string) => {
+        const refreshed = await getSessionById(sessionId, { force: true });
+        if (!refreshed) return;
+        setSelectedSession(current => {
+            if (!current || current.id !== refreshed.id) return current;
+            if (
+                current.status === refreshed.status
+                && current.updatedAt === refreshed.updatedAt
+                && current.logs.length === refreshed.logs.length
+            ) {
+                return current;
+            }
+            return refreshed;
+        });
+    }, [getSessionById]);
+
+    useEffect(() => {
+        if (!sessionLiveEnabled || !selectedSession || selectedSession.status !== 'active') {
+            setSelectedSessionLiveStatus(prev => (prev === 'idle' ? prev : 'idle'));
+            return undefined;
+        }
+
+        const sessionId = selectedSession.id;
+        return sharedLiveConnectionManager.subscribe({
+            topic: sessionTopic(sessionId),
+            pauseWhenHidden: true,
+            onStatusChange: status => {
+                setSelectedSessionLiveStatus(status);
+            },
+            onEvent: event => {
+                if (event.kind !== 'invalidate' || event.payload.resource !== 'session') return;
+                void refreshSelectedSessionDetail(sessionId).catch(() => {
+                    // Polling fallback handles transient errors.
+                });
+            },
+            onSnapshotRequired: () => {
+                void refreshSelectedSessionDetail(sessionId).catch(() => {
+                    // Polling fallback handles transient errors.
+                });
+            },
+        });
+    }, [refreshSelectedSessionDetail, selectedSession, sessionLiveEnabled]);
+
     useEffect(() => {
         if (!selectedSession || selectedSession.status !== 'active') {
+            return undefined;
+        }
+        if (sessionLiveEnabled && !['backoff', 'closed'].includes(selectedSessionLiveStatus)) {
             return undefined;
         }
 
@@ -8137,7 +8191,7 @@ export const SessionInspector: React.FC = () => {
             cancelled = true;
             window.clearInterval(interval);
         };
-    }, [getSessionById, selectedSession?.id, selectedSession?.status]);
+    }, [getSessionById, selectedSession, selectedSessionLiveStatus, sessionLiveEnabled]);
 
     const handleBackFromSession = useCallback(() => {
         if (sessionBackStack.length === 0) {

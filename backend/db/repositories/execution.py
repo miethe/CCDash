@@ -8,6 +8,11 @@ from typing import Any
 
 import aiosqlite
 
+from backend.application.live_updates.domain_events import (
+    publish_execution_run_events,
+    publish_execution_run_snapshot,
+)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -105,6 +110,7 @@ class SqliteExecutionRepository:
         )
         await self._commit_with_retry()
         created = await self.get_run(str(run_data.get("id") or ""))
+        await publish_execution_run_snapshot(created)
         return created or {}
 
     async def update_run(self, run_id: str, updates: dict) -> dict | None:
@@ -130,7 +136,9 @@ class SqliteExecutionRepository:
             tuple(params),
         )
         await self._commit_with_retry()
-        return await self.get_run(run_id)
+        updated = await self.get_run(run_id)
+        await publish_execution_run_snapshot(updated)
+        return updated
 
     async def get_run(self, run_id: str) -> dict | None:
         async with self.db.execute("SELECT * FROM execution_runs WHERE id = ?", (run_id,)) as cur:
@@ -208,6 +216,7 @@ class SqliteExecutionRepository:
                     }
                 )
             await self._commit_with_retry()
+            await publish_execution_run_events(run_id, inserted)
             return inserted
 
     async def list_events_after_sequence(

@@ -64,6 +64,13 @@ import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
+import {
+  executionRunTopic,
+  isExecutionLiveUpdatesEnabled,
+  sharedLiveConnectionManager,
+  type LiveConnectionStatus,
+  type LiveEventEnvelope,
+} from '../services/live';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);
 const SHORT_COMMIT_LENGTH = 7;
@@ -250,6 +257,35 @@ const toEpoch = (value?: string): number => {
 const formatStatus = (value: string): string => {
   const normalized = (value || 'unknown').replace(/-/g, ' ');
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
+const mergeExecutionRunEvents = (
+  current: ExecutionRunEvent[],
+  incoming: ExecutionRunEvent[],
+): ExecutionRunEvent[] => {
+  if (incoming.length === 0) return current;
+  const bySequence = new Map<number, ExecutionRunEvent>();
+  current.forEach(event => bySequence.set(event.sequenceNo, event));
+  incoming.forEach(event => bySequence.set(event.sequenceNo, event));
+  return Array.from(bySequence.values()).sort((a, b) => a.sequenceNo - b.sequenceNo);
+};
+
+const toLiveExecutionRunEvent = (event: LiveEventEnvelope): ExecutionRunEvent | null => {
+  if (event.kind !== 'append') return null;
+  const payload = event.payload || {};
+  const runId = typeof payload.runId === 'string' ? payload.runId : '';
+  const sequenceNo = typeof payload.sequenceNo === 'number' ? payload.sequenceNo : 0;
+  if (!runId || sequenceNo <= 0) return null;
+  return {
+    id: null,
+    runId,
+    sequenceNo,
+    stream: typeof payload.stream === 'string' ? payload.stream as ExecutionRunEvent['stream'] : 'system',
+    eventType: typeof payload.eventType === 'string' ? payload.eventType : 'status',
+    payloadText: typeof payload.payloadText === 'string' ? payload.payloadText : '',
+    payload: payload.payload && typeof payload.payload === 'object' ? payload.payload as Record<string, unknown> : {},
+    occurredAt: typeof payload.occurredAt === 'string' ? payload.occurredAt : event.occurredAt,
+  };
 };
 
 const getFeatureCoverageSummary = (feature: Feature): string => {
@@ -564,6 +600,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [selectedRunEvents, setSelectedRunEvents] = useState<ExecutionRunEvent[]>([]);
   const [selectedRunEventsLoading, setSelectedRunEventsLoading] = useState(false);
   const [selectedRunNextSequence, setSelectedRunNextSequence] = useState(0);
+  const [selectedRunLiveStatus, setSelectedRunLiveStatus] = useState<LiveConnectionStatus>('idle');
   const [runActionLoading, setRunActionLoading] = useState(false);
   const [runActionError, setRunActionError] = useState('');
   const [reviewCommand, setReviewCommand] = useState('');
@@ -578,6 +615,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const selectedRunNextSequenceRef = useRef(0);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
   const isAnalyticsTabActive = activeTab === 'analytics';
+  const executionLiveEnabled = isExecutionLiveUpdatesEnabled();
 
   useEffect(() => {
     if (features.length === 0) {
@@ -702,6 +740,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     if (!selectedRunId) {
       setSelectedRunEvents([]);
       setSelectedRunNextSequence(0);
+      setSelectedRunLiveStatus('idle');
       selectedRunNextSequenceRef.current = 0;
       return;
     }
@@ -732,6 +771,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
   useEffect(() => {
     if (!selectedRun || (selectedRun.status !== 'queued' && selectedRun.status !== 'running')) return;
+    if (executionLiveEnabled && !['backoff', 'closed'].includes(selectedRunLiveStatus)) return;
 
     let cancelled = false;
     const runId = selectedRun.id;
@@ -747,7 +787,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         if (cancelled) return;
         upsertExecutionRun(latestRun);
         if (page.items.length > 0) {
-          setSelectedRunEvents(prev => [...prev, ...page.items]);
+          setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, page.items));
           setSelectedRunNextSequence(page.nextSequence);
           selectedRunNextSequenceRef.current = page.nextSequence;
         }
@@ -765,7 +805,61 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedRun, upsertExecutionRun]);
+  }, [executionLiveEnabled, selectedRun, selectedRunLiveStatus, upsertExecutionRun]);
+
+  const recoverSelectedRunLiveState = useCallback(async (runId: string) => {
+    const [latestRun, page] = await Promise.all([
+      getExecutionRun(runId),
+      listExecutionRunEvents(runId, { afterSequence: 0, limit: 400 }),
+    ]);
+    upsertExecutionRun(latestRun);
+    setSelectedRunEvents(page.items);
+    setSelectedRunNextSequence(page.nextSequence);
+    selectedRunNextSequenceRef.current = page.nextSequence;
+  }, [upsertExecutionRun]);
+
+  useEffect(() => {
+    if (!executionLiveEnabled || !selectedRun || (selectedRun.status !== 'queued' && selectedRun.status !== 'running')) {
+      setSelectedRunLiveStatus(prev => (prev === 'idle' ? prev : 'idle'));
+      return undefined;
+    }
+
+    const runId = selectedRun.id;
+    return sharedLiveConnectionManager.subscribe({
+      topic: executionRunTopic(runId),
+      pauseWhenHidden: true,
+      onStatusChange: status => {
+        setSelectedRunLiveStatus(status);
+      },
+      onEvent: event => {
+        if (event.kind === 'append') {
+          const nextEvent = toLiveExecutionRunEvent(event);
+          if (!nextEvent || nextEvent.runId !== runId) return;
+          setSelectedRunEvents(prev => mergeExecutionRunEvents(prev, [nextEvent]));
+          setSelectedRunNextSequence(prev => {
+            const next = Math.max(prev, nextEvent.sequenceNo);
+            selectedRunNextSequenceRef.current = next;
+            return next;
+          });
+          return;
+        }
+        if (event.kind === 'invalidate' && event.payload.resource === 'run') {
+          void getExecutionRun(runId)
+            .then(latestRun => {
+              upsertExecutionRun(latestRun);
+            })
+            .catch(() => {
+              // Fallback polling handles transient errors.
+            });
+        }
+      },
+      onSnapshotRequired: () => {
+        void recoverSelectedRunLiveState(runId).catch(() => {
+          // Fallback polling handles transient errors.
+        });
+      },
+    });
+  }, [executionLiveEnabled, recoverSelectedRunLiveState, selectedRun, upsertExecutionRun]);
 
   const openRunReview = useCallback(async (command: string, ruleId: string) => {
     setReviewCommand(command);
@@ -1171,6 +1265,14 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const phases = useMemo(
     () => featureDetail?.phases || [],
     [featureDetail],
+  );
+  const blockedByRelations = useMemo(
+    () => (featureDetail?.linkedFeatures || []).filter(relation => (relation.type || '').toLowerCase() === 'blocked_by'),
+    [featureDetail],
+  );
+  const sequenceDocs = useMemo(
+    () => (context?.documents || []).filter(doc => typeof doc.sequenceOrder === 'number'),
+    [context?.documents],
   );
 
   const phaseSessionLinks = useMemo(() => {
@@ -2027,6 +2129,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{featureDetail.riskLevel || '-'}</span></div>
                         <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{featureDetail.complexity || '-'}</span></div>
                         <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{featureDetail.track || '-'}</span></div>
+                        <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
                         <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{featureDetail.executionReadiness || '-'}</span></div>
                         <div className="text-slate-400">Coverage <span className="text-slate-200 ml-1">{getFeatureCoverageSummary(featureDetail)}</span></div>
                       </div>
@@ -2038,6 +2141,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         <div className="text-slate-400">Related IDs <span className="text-slate-200 ml-1">{featureDetail.relatedFeatures.length}</span></div>
                         <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.blockerCount ?? 0}</span></div>
                         <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                        <div className="text-slate-400">Blocked By <span className="text-slate-200 ml-1">{blockedByRelations.length}</span></div>
+                        <div className="text-slate-400">Sequenced Docs <span className="text-slate-200 ml-1">{sequenceDocs.length}</span></div>
                       </div>
                       {(featureDetail.qualitySignals?.integritySignalRefs || []).length > 0 && (
                         <p className="text-[11px] text-slate-500 mt-2">
@@ -2094,6 +2199,40 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         <p className="text-sm text-slate-500">No secondary related feature IDs were attached.</p>
                       )}
                     </div>
+                    {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
+                      <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Execution Ordering</p>
+                        <div className="space-y-2 text-xs">
+                          <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
+                          {blockedByRelations.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {blockedByRelations.map((relation, index) => (
+                                <button
+                                  key={`blocked-by-${relation.feature}-${index}`}
+                                  onClick={() => openBoardFeature(relation.feature, 'overview')}
+                                  className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-200"
+                                >
+                                  Blocked by {relation.feature}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {sequenceDocs.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {sequenceDocs.slice(0, 6).map(doc => (
+                                <button
+                                  key={`sequence-doc-${doc.id}`}
+                                  onClick={() => openLinkedDoc(doc)}
+                                  className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-200"
+                                >
+                                  #{doc.sequenceOrder} {doc.title}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -2289,6 +2428,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     >
                       <p className="text-sm text-slate-100 font-medium">{doc.title}</p>
                       <p className="text-xs text-slate-400 mt-1 truncate">{doc.docType} · {doc.filePath}</p>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                        {doc.featureFamily && (
+                          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-slate-300">
+                            {doc.featureFamily}
+                          </span>
+                        )}
+                        {typeof doc.sequenceOrder === 'number' && (
+                          <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-indigo-200">
+                            Seq {doc.sequenceOrder}
+                          </span>
+                        )}
+                        {(doc.blockedBy || []).map(featureId => (
+                          <span key={`${doc.id}-blocked-${featureId}`} className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                            Blocked by {featureId}
+                          </span>
+                        ))}
+                      </div>
                     </button>
                   ))}
                 </div>

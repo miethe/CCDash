@@ -20,6 +20,12 @@ from backend.application.live_updates.publisher import (
     BrokerLiveEventPublisher,
     LiveEventPublisher,
 )
+from backend.application.live_updates.runtime_state import (
+    get_live_event_publisher,
+    publish_live_append,
+    publish_live_invalidation,
+    set_live_event_publisher,
+)
 
 __all__ = [
     "BrokerLiveEventPublisher",
@@ -34,6 +40,10 @@ __all__ = [
     "LiveReplayGap",
     "LiveReplayRequest",
     "LiveSubscriptionStart",
+    "get_live_event_publisher",
+    "publish_live_append",
+    "publish_live_invalidation",
+    "set_live_event_publisher",
     "LiveTopicAuthorization",
     "LiveTopicCursor",
 ]
