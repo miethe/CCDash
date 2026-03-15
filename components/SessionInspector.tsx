@@ -8,13 +8,15 @@ import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLe
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
-import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle, formatModelDisplayName } from './SessionCard';
+import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SessionTestStatusView } from './TestVisualizer/SessionTestStatusView';
 import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccentColor, mappedTranscriptIcon } from './TranscriptMappedMessageCard';
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
+import { Badge, ModelBadge, StableBadge } from './ui/badge';
+import { formatModelDisplayName } from '../lib/modelIdentity';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
@@ -277,6 +279,7 @@ const asCountEntries = (value: unknown, limit = 8): Array<{ key: string; count: 
 
 const TASK_ID_TEXT_PATTERN = /\b([A-Za-z]+(?:-[A-Za-z0-9]+)*-\d+(?:\.\d+)?)\b/;
 const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent']);
+const TASK_MUTATION_TOOL_NAMES = new Set(['taskcreate', 'taskupdate']);
 
 const toTextBlob = (value: unknown): string => {
     if (typeof value === 'string') {
@@ -289,6 +292,22 @@ const toTextBlob = (value: unknown): string => {
         return JSON.stringify(value).trim();
     } catch {
         return String(value).trim();
+    }
+};
+
+const parseJsonLikeValue = (value: unknown): unknown => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const looksJson = (
+        (trimmed.startsWith('{') && trimmed.endsWith('}'))
+        || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    );
+    if (!looksJson) return value;
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return value;
     }
 };
 
@@ -314,6 +333,32 @@ interface TaskToolDetails {
     model: string | null;
     runInBackground: boolean | null;
     args: Record<string, unknown> | null;
+}
+
+interface TaskMutationToolDetails {
+    toolName: string;
+    taskId: string | null;
+    subject: string | null;
+    description: string | null;
+    status: string | null;
+    activeForm: string | null;
+    taskType: string | null;
+    blockedByAdded: string[];
+    blockedByRemoved: string[];
+    args: Record<string, unknown> | null;
+    outputText: string | null;
+    outputData: Record<string, unknown>;
+}
+
+interface TaskInvocationDisplayContext {
+    subagentLabel: string | null;
+    model: {
+        raw: string;
+        displayName?: string;
+        provider?: string;
+        family?: string;
+        version?: string;
+    } | null;
 }
 
 interface TestRunDetails {
@@ -370,6 +415,9 @@ const GREP_OUTPUT_LINE_PATTERN = /^(.*?):(\d+):(.*)$/;
 const isSubagentToolCallName = (name?: string | null): boolean =>
     SUBAGENT_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
 
+const isTaskMutationToolCallName = (name?: string | null): boolean =>
+    TASK_MUTATION_TOOL_NAMES.has(String(name || '').trim().toLowerCase());
+
 const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
     if (log.type !== 'tool' || !isSubagentToolCallName(log.toolCall?.name)) {
         return null;
@@ -416,6 +464,67 @@ const getTaskToolDetails = (log: SessionLog): TaskToolDetails | null => {
         model,
         runInBackground,
         args,
+    };
+};
+
+const getTaskMutationToolDetails = (log: SessionLog): TaskMutationToolDetails | null => {
+    if (log.type !== 'tool' || !isTaskMutationToolCallName(log.toolCall?.name)) {
+        return null;
+    }
+
+    const args = parseToolArgs(log.toolCall?.args);
+    const metadata = asRecord(log.metadata);
+    const outputData = Object.entries(metadata).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        if (!key.startsWith('toolUseResult_')) return acc;
+        acc[key.slice('toolUseResult_'.length)] = parseJsonLikeValue(value);
+        return acc;
+    }, {});
+    const taskResult = asRecord(outputData.task);
+
+    return {
+        toolName: takeString(log.toolCall?.name) || 'TaskUpdate',
+        taskId: takeString(
+            args?.taskId,
+            args?.task_id,
+            taskResult.id,
+            extractTaskIdFromText(log.toolCall?.output),
+        ),
+        subject: takeString(args?.subject, args?.title, taskResult.subject, taskResult.title),
+        description: takeString(args?.description, args?.details, taskResult.description),
+        status: takeString(args?.status, taskResult.status),
+        activeForm: takeString(args?.activeForm, args?.active_form),
+        taskType: takeString(args?.taskType, args?.task_type, taskResult.type),
+        blockedByAdded: asStringArray(args?.addBlockedBy ?? args?.add_blocked_by),
+        blockedByRemoved: asStringArray(args?.removeBlockedBy ?? args?.remove_blocked_by),
+        args,
+        outputText: takeString(log.toolCall?.output),
+        outputData,
+    };
+};
+
+const resolveTaskInvocationDisplayContext = (
+    log: SessionLog,
+    taskToolDetails: TaskToolDetails | null,
+    threadSessionDetails: Record<string, AgentSession>,
+    subagentNameBySessionId: Map<string, string>,
+): TaskInvocationDisplayContext => {
+    const linkedSession = log.linkedSessionId ? threadSessionDetails[log.linkedSessionId] || null : null;
+    const subagentLabel = taskToolDetails?.subagentType
+        || (log.linkedSessionId ? subagentNameBySessionId.get(log.linkedSessionId) || null : null)
+        || null;
+    const rawModel = taskToolDetails?.model || linkedSession?.model || '';
+
+    return {
+        subagentLabel,
+        model: rawModel
+            ? {
+                raw: rawModel,
+                displayName: linkedSession?.modelDisplayName,
+                provider: linkedSession?.modelProvider,
+                family: linkedSession?.modelFamily,
+                version: linkedSession?.modelVersion,
+            }
+            : null,
     };
 };
 
@@ -1088,12 +1197,17 @@ const LogItemBlurb: React.FC<{
     artifactCount?: number;
     onShowFiles?: () => void;
     onShowArtifacts?: () => void;
+    threadSessionDetails: Record<string, AgentSession>;
+    subagentNameBySessionId: Map<string, string>;
     onOpenThread?: (threadId: string) => void;
-}> = ({ log, formattedMessage, isSelected, onClick, fileCount = 0, artifactCount = 0, onShowFiles, onShowArtifacts, onOpenThread }) => {
+}> = ({ log, formattedMessage, isSelected, onClick, fileCount = 0, artifactCount = 0, onShowFiles, onShowArtifacts, threadSessionDetails, subagentNameBySessionId, onOpenThread }) => {
     const isAgent = log.speaker === 'agent';
     const isUser = log.speaker === 'user';
     const isSystem = log.speaker === 'system';
     const isForkStartEvent = isForkStartSystemLog(log);
+    const taskToolDetails = getTaskToolDetails(log);
+    const taskMutationDetails = getTaskMutationToolDetails(log);
+    const taskDisplayContext = resolveTaskInvocationDisplayContext(log, taskToolDetails, threadSessionDetails, subagentNameBySessionId);
 
     const renderMessagePreview = () => {
         const parsed = formattedMessage || parseTranscriptMessage(log.content);
@@ -1293,7 +1407,6 @@ const LogItemBlurb: React.FC<{
     )
         ? mappedAccentColor(formattedMessage.mapped.color, formattedMessage.kind)
         : null;
-    const taskToolDetails = getTaskToolDetails(log);
     const testToolDetails = getTestRunDetails(log);
 
     return (
@@ -1314,12 +1427,53 @@ const LogItemBlurb: React.FC<{
                         <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
                             {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Subagent tool call'}
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
-                            {taskToolDetails.taskId && <span className="font-mono">{taskToolDetails.taskId}</span>}
-                            {taskToolDetails.subagentType && <span>{taskToolDetails.subagentType}</span>}
-                            {taskToolDetails.model && <span>{taskToolDetails.model}</span>}
+                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                            {taskToolDetails.taskId && (
+                                <StableBadge value={taskToolDetails.taskId} namespace="task" mono />
+                            )}
+                            {taskDisplayContext.subagentLabel && (
+                                <StableBadge value={taskDisplayContext.subagentLabel} namespace="subagent" />
+                            )}
+                            {taskDisplayContext.model && (
+                                <ModelBadge
+                                    raw={taskDisplayContext.model.raw}
+                                    displayName={taskDisplayContext.model.displayName}
+                                    provider={taskDisplayContext.model.provider}
+                                    family={taskDisplayContext.model.family}
+                                    version={taskDisplayContext.model.version}
+                                />
+                            )}
                             {typeof taskToolDetails.runInBackground === 'boolean' && (
-                                <span>{taskToolDetails.runInBackground ? 'background' : 'foreground'}</span>
+                                <Badge className="border-slate-700 bg-slate-900 text-slate-400">
+                                    {taskToolDetails.runInBackground ? 'background' : 'foreground'}
+                                </Badge>
+                            )}
+                        </div>
+                    </div>
+                ) : taskMutationDetails ? (
+                    <div className="min-w-0 space-y-0.5">
+                        <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-sky-400'}`}>
+                            {taskMutationDetails.toolName}
+                        </div>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                            {taskMutationDetails.subject || taskMutationDetails.description || taskMutationDetails.outputText || 'Task mutation'}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                            {taskMutationDetails.taskId && (
+                                <StableBadge value={taskMutationDetails.taskId} namespace="task" mono />
+                            )}
+                            {taskMutationDetails.status && (
+                                <StableBadge value={taskMutationDetails.status} namespace="task-status" />
+                            )}
+                            {taskMutationDetails.blockedByAdded.length > 0 && (
+                                <Badge className="border-amber-500/35 bg-amber-500/10 text-amber-200">
+                                    +blockedBy {taskMutationDetails.blockedByAdded.length}
+                                </Badge>
+                            )}
+                            {taskMutationDetails.blockedByRemoved.length > 0 && (
+                                <Badge className="border-rose-500/35 bg-rose-500/10 text-rose-200">
+                                    -blockedBy {taskMutationDetails.blockedByRemoved.length}
+                                </Badge>
                             )}
                         </div>
                     </div>
@@ -1403,8 +1557,10 @@ const DetailPane: React.FC<{
     log: SessionLog;
     formattedMessage?: TranscriptFormattedMessage;
     commandArtifacts?: SessionArtifact[];
+    threadSessionDetails: Record<string, AgentSession>;
+    subagentNameBySessionId: Map<string, string>;
     onOpenArtifacts?: () => void;
-}> = ({ log, formattedMessage, commandArtifacts = [], onOpenArtifacts }) => {
+}> = ({ log, formattedMessage, commandArtifacts = [], threadSessionDetails, subagentNameBySessionId, onOpenArtifacts }) => {
     const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
     const toggleSection = (id: string) => {
@@ -1416,13 +1572,16 @@ const DetailPane: React.FC<{
 
     const parsedMessage = formattedMessage || parseTranscriptMessage(getTranscriptSourceText(log));
     const taskToolDetails = getTaskToolDetails(log);
+    const taskMutationDetails = getTaskMutationToolDetails(log);
     const testToolDetails = getTestRunDetails(log);
     const readToolDetails = getReadToolDetails(log);
     const grepToolDetails = getGrepToolDetails(log);
+    const taskDisplayContext = resolveTaskInvocationDisplayContext(log, taskToolDetails, threadSessionDetails, subagentNameBySessionId);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
         if (log.type === 'subagent') return 'Subagent Thread';
         if (log.type === 'tool' && taskToolDetails) return `${taskToolDetails.toolName} Invocation`;
+        if (log.type === 'tool' && taskMutationDetails) return `${taskMutationDetails.toolName} Operation`;
         if (log.type === 'tool' && testToolDetails) return `${testToolDetails.framework} Test Run`;
         if (log.type === 'tool') return 'Tool Execution';
         if (log.type === 'subagent_start') return 'Subagent Start';
@@ -1607,22 +1766,28 @@ const DetailPane: React.FC<{
                                                 <div className="text-slate-200">{taskToolDetails.description || taskToolDetails.name}</div>
                                             </div>
                                         )}
-                                        {taskToolDetails.subagentType && (
+                                        {taskDisplayContext.subagentLabel && (
                                             <div>
                                                 <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Subagent</div>
-                                                <div className="text-slate-300">{taskToolDetails.subagentType}</div>
+                                                <StableBadge value={taskDisplayContext.subagentLabel} namespace="subagent" />
+                                            </div>
+                                        )}
+                                        {taskDisplayContext.model && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Model</div>
+                                                <ModelBadge
+                                                    raw={taskDisplayContext.model.raw}
+                                                    displayName={taskDisplayContext.model.displayName}
+                                                    provider={taskDisplayContext.model.provider}
+                                                    family={taskDisplayContext.model.family}
+                                                    version={taskDisplayContext.model.version}
+                                                />
                                             </div>
                                         )}
                                         {taskToolDetails.mode && (
                                             <div>
                                                 <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Mode</div>
                                                 <div className="text-slate-300">{taskToolDetails.mode}</div>
-                                            </div>
-                                        )}
-                                        {taskToolDetails.model && (
-                                            <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Model</div>
-                                                <div className="text-slate-300">{taskToolDetails.model}</div>
                                             </div>
                                         )}
                                         {typeof taskToolDetails.runInBackground === 'boolean' && (
@@ -1657,6 +1822,98 @@ const DetailPane: React.FC<{
                                             <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                 {JSON.stringify(taskToolDetails.args, null, 2)}
                                             </pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {taskMutationDetails && (
+                                <div className="p-4 border-b border-slate-800 bg-sky-500/5">
+                                    <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">{taskMutationDetails.toolName} Details</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                        {taskMutationDetails.taskId && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task ID</div>
+                                                <StableBadge value={taskMutationDetails.taskId} namespace="task" mono />
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.status && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Status</div>
+                                                <StableBadge value={taskMutationDetails.status} namespace="task-status" />
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.subject && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Subject</div>
+                                                <div className="text-slate-200">{taskMutationDetails.subject}</div>
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.description && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-slate-300 whitespace-pre-wrap break-words">{taskMutationDetails.description}</div>
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.taskType && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task Type</div>
+                                                <div className="text-slate-300">{taskMutationDetails.taskType}</div>
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.activeForm && (
+                                            <div>
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Active Form</div>
+                                                <div className="text-slate-300">{taskMutationDetails.activeForm}</div>
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.blockedByAdded.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Blocked By Added</div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {taskMutationDetails.blockedByAdded.map(item => (
+                                                        <StableBadge key={`blocked-by-add-${item}`} value={item} namespace="dependency" mono />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {taskMutationDetails.blockedByRemoved.length > 0 && (
+                                            <div className="sm:col-span-2">
+                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Blocked By Removed</div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {taskMutationDetails.blockedByRemoved.map(item => (
+                                                        <StableBadge key={`blocked-by-remove-${item}`} value={item} namespace="dependency" mono />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {taskMutationDetails.args && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Arguments</div>
+                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                {JSON.stringify(taskMutationDetails.args, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                    {(taskMutationDetails.outputText || Object.keys(taskMutationDetails.outputData).length > 0) && (
+                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3 space-y-3">
+                                            {taskMutationDetails.outputText && (
+                                                <div>
+                                                    <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Output Text</div>
+                                                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
+                                                        {taskMutationDetails.outputText}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                            {Object.keys(taskMutationDetails.outputData).length > 0 && (
+                                                <div>
+                                                    <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Output Data</div>
+                                                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                        {JSON.stringify(taskMutationDetails.outputData, null, 2)}
+                                                    </pre>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -2000,13 +2257,14 @@ const TranscriptView: React.FC<{
     setSelectedLogId: (id: string | null) => void;
     filterAgent?: string | null;
     threadSessions: AgentSession[];
+    threadSessionDetails: Record<string, AgentSession>;
     subagentNameBySessionId: Map<string, string>;
     onOpenThread: (sessionId: string) => void;
     onShowLinked: (tab: 'activity' | 'artifacts', sourceLogId: string) => void;
     primaryFeatureLink?: SessionFeatureLink | null;
     onOpenFeature?: (featureId: string) => void;
     onOpenForensics?: () => void;
-}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature, onOpenForensics }) => {
+}> = ({ session, selectedLogId, setSelectedLogId, filterAgent, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenThread, onShowLinked, primaryFeatureLink, onOpenFeature, onOpenForensics }) => {
 
     const logs = filterAgent
         ? session.logs.filter(l => l.agentName === filterAgent || l.speaker === 'user' || l.speaker === 'system')
@@ -2285,6 +2543,8 @@ const TranscriptView: React.FC<{
                                         artifactCount={(artifactsByLogId.get(log.id) || []).length}
                                         onShowFiles={() => onShowLinked('activity', log.id)}
                                         onShowArtifacts={() => onShowLinked('artifacts', log.id)}
+                                        threadSessionDetails={threadSessionDetails}
+                                        subagentNameBySessionId={subagentNameBySessionId}
                                         onOpenThread={onOpenThread}
                                     />
                                 </motion.div>
@@ -2357,6 +2617,8 @@ const TranscriptView: React.FC<{
                                 log={selectedLog}
                                 formattedMessage={formattedMessagesByLogId.get(selectedLog.id)}
                                 commandArtifacts={selectedCommandArtifacts}
+                                threadSessionDetails={threadSessionDetails}
+                                subagentNameBySessionId={subagentNameBySessionId}
                                 onOpenArtifacts={() => onShowLinked('artifacts', selectedLog.id)}
                             />
                         )}
@@ -2461,12 +2723,14 @@ const TranscriptView: React.FC<{
                         )}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-xs text-slate-400"><Code size={14} /> Base Model</div>
-                            <span
-                                className="text-[10px] font-mono text-indigo-400 truncate max-w-[140px]"
-                                title={session.model}
-                            >
-                                {formatModelDisplayName(session.model, session.modelDisplayName)}
-                            </span>
+                            <ModelBadge
+                                raw={session.model}
+                                displayName={session.modelDisplayName}
+                                provider={session.modelProvider}
+                                family={session.modelFamily}
+                                version={session.modelVersion}
+                                className="max-w-[160px] truncate"
+                            />
                         </div>
                         <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 text-xs text-slate-400"><Cpu size={14} /> Platform</div>
@@ -7438,6 +7702,13 @@ const SessionDetail: React.FC<{
                             <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
                             <div className="flex flex-wrap items-center gap-3 mt-0.5">
                                 <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
+                                <ModelBadge
+                                    raw={session.model}
+                                    displayName={session.modelDisplayName}
+                                    provider={session.modelProvider}
+                                    family={session.modelFamily}
+                                    version={session.modelVersion}
+                                />
                                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
                                     {session.status}
                                 </span>
@@ -7649,6 +7920,7 @@ const SessionDetail: React.FC<{
                         setSelectedLogId={setSelectedLogId}
                         filterAgent={filterAgent}
                         threadSessions={threadSessions}
+                        threadSessionDetails={threadSessionDetails}
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenThread={onOpenSession}
                         onShowLinked={handleShowLinked}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Calendar, ChevronDown, ChevronRight, Terminal } from 'lucide-react';
-import { useModelColors } from '../contexts/ModelColorsContext';
+import { Badge, ModelBadge, StableBadge } from './ui/badge';
+import { formatModelDisplayName } from '../lib/modelIdentity';
 
 export interface SessionCardMetadata {
   sessionTypeLabel?: string;
@@ -23,123 +24,6 @@ export interface SessionCardDetailSection {
   label: string;
   items: string[];
 }
-
-const titleCase = (value: string): string =>
-  value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-
-export const formatModelDisplayName = (rawModel: string, provided?: string): string => {
-  const providedLabel = (provided || '').trim();
-  if (providedLabel) return providedLabel;
-
-  const raw = (rawModel || '').trim();
-  if (!raw) return 'Unknown Model';
-  const tokens = raw.toLowerCase().split(/[-_\s]+/).filter(Boolean);
-  if (tokens.length === 0) return raw;
-
-  const provider = tokens[0] === 'claude'
-    ? 'Claude'
-    : tokens[0] === 'gpt' || tokens[0] === 'openai'
-      ? 'OpenAI'
-      : tokens[0] === 'gemini'
-        ? 'Gemini'
-        : titleCase(tokens[0]);
-  const family = tokens[1] ? titleCase(tokens[1]) : '';
-
-  let version = '';
-  const nums = tokens.slice(2).filter(token => /^\d+$/.test(token));
-  if (nums.length >= 2) {
-    version = `${nums[0]}.${nums[1]}`;
-  } else if (nums.length === 1) {
-    version = nums[0];
-  }
-
-  if (family && version) return `${provider} ${family} ${version}`;
-  if (family) return `${provider} ${family}`;
-  return provider || raw;
-};
-
-const extractModelIdentity = (
-  model: SessionCardModel,
-): { displayName: string; provider: string; family: string; version: string } => {
-  const displayName = formatModelDisplayName(model.raw, model.displayName);
-  const raw = (model.raw || '').toLowerCase();
-  const providedProvider = (model.provider || '').trim();
-  const providedFamily = (model.family || '').trim();
-  const providedVersion = (model.version || '').trim();
-
-  const provider = providedProvider || (
-    raw.includes('claude')
-      ? 'Claude'
-      : raw.includes('gpt') || raw.includes('openai')
-        ? 'OpenAI'
-        : raw.includes('gemini')
-          ? 'Gemini'
-          : displayName.split(/\s+/)[0] || 'Model'
-  );
-
-  let family = providedFamily;
-  if (!family) {
-    if (raw.includes('opus')) family = 'Opus';
-    else if (raw.includes('sonnet')) family = 'Sonnet';
-    else if (raw.includes('haiku')) family = 'Haiku';
-    else if (raw.includes('gpt-5')) family = 'GPT-5';
-    else if (raw.includes('gpt-4o')) family = 'GPT-4o';
-    else if (raw.includes('gpt-4')) family = 'GPT-4';
-    else if (raw.includes('gemini')) family = 'Gemini';
-  }
-
-  let version = providedVersion;
-  if (!version) {
-    const claudeNamed = raw.match(/(?:opus|sonnet|haiku)-(\d+)-(\d+)/);
-    const claudeNumeric = raw.match(/claude-(\d+)-(\d+)-(?:opus|sonnet|haiku)/);
-    const gpt = raw.match(/gpt-(\d+(?:\.\d+)?[a-z0-9-]*)/);
-    if (claudeNumeric) version = `${claudeNumeric[1]}.${claudeNumeric[2]}`;
-    else if (claudeNamed) version = `${claudeNamed[1]}.${claudeNamed[2]}`;
-    else if (gpt) version = gpt[1].toUpperCase();
-  }
-
-  if (!family) family = provider;
-  if (!version && providedVersion) version = providedVersion;
-
-  return {
-    displayName,
-    provider,
-    family,
-    version,
-  };
-};
-
-const providerGlyph = (provider: string) => {
-  const normalized = (provider || '').toLowerCase();
-  if (normalized.includes('claude') || normalized.includes('anthropic')) {
-    return (
-      <svg viewBox="0 0 16 16" className="h-3 w-3 fill-current" aria-hidden="true">
-        <path d="M8 2 13 14h-2l-1.1-2.8H6.1L5 14H3L8 2Zm0 3.2L6.8 8.6h2.4L8 5.2Z" />
-      </svg>
-    );
-  }
-  if (normalized.includes('openai') || normalized.includes('gpt')) {
-    return (
-      <svg viewBox="0 0 16 16" className="h-3 w-3 fill-none stroke-current stroke-[1.4]" aria-hidden="true">
-        <path d="M8 2.2 12.5 4.8V10.9L8 13.8 3.5 10.9V4.8L8 2.2Z" />
-        <path d="M5.3 6.1 8 4.6l2.7 1.5v3.1L8 10.8 5.3 9.2V6.1Z" />
-      </svg>
-    );
-  }
-  if (normalized.includes('gemini')) {
-    return (
-      <svg viewBox="0 0 16 16" className="h-3 w-3 fill-current" aria-hidden="true">
-        <path d="m8 1.8 1.4 3.2 3.2 1.4-3.2 1.4L8 11 6.6 7.8 3.4 6.4 6.6 5 8 1.8Z" />
-        <circle cx="12.5" cy="11.8" r="1.2" />
-      </svg>
-    );
-  }
-  return <span className="inline-block h-2 w-2 rounded-full bg-current" aria-hidden="true" />;
-};
 
 export const formatPhaseIndicator = (phase: string): string => {
   const normalized = (phase || '').trim();
@@ -249,7 +133,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onClick,
   children,
 }) => {
-  const { getBadgeStyleForModel } = useModelColors();
   const [openDetailsId, setOpenDetailsId] = React.useState<string | null>(null);
   const detailsContainerRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -316,27 +199,27 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               {hasIndicators && (
                 <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                   {sessionTypeLabel && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 font-semibold uppercase tracking-wide">
+                    <Badge className="border-emerald-500/40 bg-emerald-500/10 text-emerald-200 uppercase tracking-wide">
                       {sessionTypeLabel}
-                    </span>
+                    </Badge>
                   )}
                   {relatedCommand && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-500/35 text-cyan-200 bg-cyan-500/10 font-mono">
+                    <Badge mono className="border-cyan-500/35 bg-cyan-500/10 text-cyan-200">
                       {relatedCommand}
-                    </span>
+                    </Badge>
                   )}
                   {relatedPhases.map(phase => (
-                    <span key={`${sessionId}-phase-${phase}`} className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-200 bg-amber-500/10 font-semibold">
+                    <Badge key={`${sessionId}-phase-${phase}`} className="border-amber-500/40 bg-amber-500/10 text-amber-200">
                       {formatPhaseIndicator(phase)}
-                    </span>
+                    </Badge>
                   ))}
                   {relatedFileName && (
-                    <span
+                    <Badge
                       className="text-[10px] px-1.5 py-0.5 rounded border border-fuchsia-500/35 text-fuchsia-200 bg-fuchsia-500/10 font-mono"
                       title={relatedFilePath}
                     >
                       {relatedFileName}
-                    </span>
+                    </Badge>
                   )}
                 </div>
               )}
@@ -361,29 +244,15 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {modelBadges.length > 0 ? modelBadges.map((entry) => {
-                  const identity = extractModelIdentity(entry);
-                  const versionText = identity.version && identity.version.toLowerCase().startsWith(identity.family.toLowerCase())
-                    ? identity.version.slice(identity.family.length).trim()
-                    : identity.version;
                   return (
-                    <span
+                    <ModelBadge
                       key={`${sessionId}-model-${entry.raw}`}
-                      className="inline-flex items-center gap-1.5 text-[10px] px-1.5 py-0.5 rounded border font-semibold"
-                      style={getBadgeStyleForModel({ model: entry.raw || identity.displayName, family: identity.family })}
-                      title={entry.raw || identity.displayName}
-                    >
-                      <span
-                        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-black/20"
-                        title={identity.provider}
-                        aria-label={identity.provider}
-                      >
-                        {providerGlyph(identity.provider)}
-                      </span>
-                      <span>{identity.family}</span>
-                      {versionText && (
-                        <span className="font-mono opacity-90">{versionText}</span>
-                      )}
-                    </span>
+                      raw={entry.raw}
+                      displayName={entry.displayName}
+                      provider={entry.provider}
+                      family={entry.family}
+                      version={entry.version}
+                    />
                   );
                 }) : (
                   <span className="text-[10px] text-slate-500 font-mono truncate" title={model.raw || modelDisplay}>
@@ -401,26 +270,24 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             {agentBadges.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {agentBadges.map(agent => (
-                  <span
+                  <StableBadge
                     key={`${sessionId}-agent-${agent}`}
-                    className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-fuchsia-500/35 text-fuchsia-200 bg-fuchsia-500/10"
-                    title={agent}
-                  >
-                    Agent: {agent}
-                  </span>
+                    value={agent}
+                    namespace="agent"
+                    prefix="Agent"
+                  />
                 ))}
               </div>
             )}
             {skillBadges.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {skillBadges.map(skill => (
-                  <span
+                  <StableBadge
                     key={`${sessionId}-skill-${skill}`}
-                    className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/35 text-emerald-200 bg-emerald-500/10"
-                    title={skill}
-                  >
-                    Skill: {skill}
-                  </span>
+                    value={skill}
+                    namespace="skill"
+                    prefix="Skill"
+                  />
                 ))}
               </div>
             )}

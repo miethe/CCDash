@@ -95,13 +95,21 @@ const withAlpha = (rgb: { r: number; g: number; b: number }, alpha: number): str
 const brighten = (channel: number, amount: number): number =>
   Math.max(0, Math.min(255, Math.round(channel + (255 - channel) * amount)));
 
-export const toModelBadgeStyle = (color: string): CSSProperties => {
+export const toColorBadgeStyle = (color: string): CSSProperties => {
   const rgb = hexToRgb(color) || hexToRgb(DEFAULT_COLOR)!;
   return {
     color: `rgb(${brighten(rgb.r, 0.35)}, ${brighten(rgb.g, 0.35)}, ${brighten(rgb.b, 0.35)})`,
     borderColor: withAlpha(rgb, 0.45),
     backgroundColor: withAlpha(rgb, 0.17),
   };
+};
+
+export const toModelBadgeStyle = (color: string): CSSProperties => toColorBadgeStyle(color);
+
+export const resolveStablePaletteColor = (value: string, namespace = 'badge'): string => {
+  const key = normalizeModelToken(value);
+  if (!key) return DEFAULT_COLOR;
+  return pickPaletteColor(`${namespace}:${key}`);
 };
 
 export const emptyModelColorRegistry: ModelColorRegistry = {

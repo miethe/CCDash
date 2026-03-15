@@ -39,6 +39,7 @@ import {
     YAxis,
 } from 'recharts';
 import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
+import { Badge, ModelBadge } from '../ui/badge';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
 import { costProvenanceLabel } from '../../lib/sessionSemantics';
 
@@ -69,19 +70,6 @@ const formatDurationSeconds = (seconds: number): string => {
     if (total >= 3600) return `${(total / 3600).toFixed(1)}h`;
     if (total >= 60) return `${(total / 60).toFixed(1)}m`;
     return `${Math.round(total)}s`;
-};
-
-const ModelBadge: React.FC<{ model: string; family?: string }> = ({ model, family }) => {
-    const { getBadgeStyleForModel } = useModelColors();
-    return (
-        <span
-            className="inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[11px]"
-            style={getBadgeStyleForModel({ model, family })}
-            title={model || 'unknown'}
-        >
-            {model || 'unknown'}
-        </span>
-    );
 };
 
 const MetricCard: React.FC<{ label: string; value: string; subtitle: string }> = ({ label, value, subtitle }) => (
@@ -808,7 +796,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 <tbody>
                                     {(artifacts?.modelArtifact || []).slice(0, 24).map((row, idx) => (
                                         <tr key={`${row.model}-${row.artifactType}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                            <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                            <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
@@ -842,7 +830,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                                 <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
                                             </td>
                                             <td className="py-2 pr-3">
-                                                <div><ModelBadge model={row.model} family={row.modelFamily} /></div>
+                                                <div><ModelBadge raw={row.model} family={row.modelFamily} /></div>
                                                 {row.modelFamily && <div className="text-[11px] text-slate-500">{row.modelFamily}</div>}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
@@ -940,12 +928,12 @@ export const AnalyticsDashboard: React.FC = () => {
                                     {(artifacts?.modelFamilies || []).slice(0, 12).map((row, idx) => (
                                         <tr key={`${row.modelFamily}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                             <td className="py-2 pr-3">
-                                                <span
-                                                    className="inline-flex items-center rounded border px-1.5 py-0.5 text-xs"
+                                                <Badge
+                                                    className="text-xs"
                                                     style={getBadgeStyleForModel({ family: row.modelFamily })}
                                                 >
                                                     {row.modelFamily}
-                                                </span>
+                                                </Badge>
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
@@ -976,12 +964,12 @@ export const AnalyticsDashboard: React.FC = () => {
                                 <tbody>
                                         {(artifacts?.modelArtifactTool || []).slice(0, 30).map((row, idx) => (
                                             <tr key={`${row.model}-${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                            <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
-                                            <td className="py-2 pr-3 text-xs">
-                                                {row.modelFamily
-                                                    ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
+                                                <td className="py-2 pr-3 text-xs">
+                                                    {row.modelFamily
+                                                    ? <Badge style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</Badge>
                                                     : '-'}
-                                            </td>
+                                                </td>
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 font-mono text-xs">{row.toolName}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -1012,10 +1000,10 @@ export const AnalyticsDashboard: React.FC = () => {
                                         {(artifacts?.commandModel || []).slice(0, 24).map((row, idx) => (
                                             <tr key={`${row.command}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                                 <td className="py-2 pr-3 font-mono text-xs">{row.command}</td>
-                                                <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                                <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                                 <td className="py-2 pr-3 text-xs">
                                                     {row.modelFamily
-                                                        ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                        ? <Badge style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</Badge>
                                                         : '-'}
                                                 </td>
                                                 <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -1044,10 +1032,10 @@ export const AnalyticsDashboard: React.FC = () => {
                                         {(artifacts?.agentModel || []).slice(0, 24).map((row, idx) => (
                                             <tr key={`${row.agent}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
                                                 <td className="py-2 pr-3">{row.agent}</td>
-                                                <td className="py-2 pr-3"><ModelBadge model={row.model} family={row.modelFamily} /></td>
+                                                <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                                 <td className="py-2 pr-3 text-xs">
                                                     {row.modelFamily
-                                                        ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                        ? <Badge style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</Badge>
                                                         : '-'}
                                                 </td>
                                                 <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -1234,10 +1222,10 @@ export const AnalyticsDashboard: React.FC = () => {
                                                 {Number(row.costMismatchPct || 0) > 0 ? ` · ${(Number(row.costMismatchPct || 0) * 100).toFixed(1)}%` : ''}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatDurationSeconds(Number(row.durationSeconds || 0))}</td>
-                                            <td className="py-2 pr-3">{row.model ? <ModelBadge model={row.model} family={row.modelFamily} /> : <span className="text-slate-500">-</span>}</td>
+                                            <td className="py-2 pr-3">{row.model ? <ModelBadge raw={row.model} family={row.modelFamily} /> : <span className="text-slate-500">-</span>}</td>
                                             <td className="py-2 pr-3 text-xs">
                                                 {row.modelFamily
-                                                    ? <span className="inline-flex rounded border px-1.5 py-0.5" style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</span>
+                                                    ? <Badge style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</Badge>
                                                     : '-'}
                                             </td>
                                             <td className="py-2 text-xs text-slate-400">{row.linkStrategy || '-'}</td>
