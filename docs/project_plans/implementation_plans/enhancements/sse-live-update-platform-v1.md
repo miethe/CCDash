@@ -34,6 +34,7 @@ related_documents:
   - docs/project_plans/implementation_plans/live-update-animations-v1.md
   - docs/execution-workbench-developer-reference.md
   - docs/live-update-platform-developer-reference.md
+  - docs/project_plans/designs/session-transcript-append-deltas-v1.md
   - docs/project_plans/PRDs/refactors/ccdash-hexagonal-foundation-v1.md
 context_files:
   - backend/main.py
