@@ -21,6 +21,7 @@ import {
   SyncOperation,
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
 import { refreshSkillMeatCache } from '../services/skillmeat';
 
 const API_BASE = '/api';
@@ -487,7 +488,18 @@ export const OpsPanel: React.FC = () => {
     };
   }, []);
 
+  const opsLiveEnabled = Boolean(activeProject?.id && isOpsLiveUpdatesEnabled());
+  const opsLiveStatus = useLiveInvalidation({
+    topics: opsLiveEnabled && activeProject?.id ? [projectOpsTopic(activeProject.id)] : [],
+    enabled: opsLiveEnabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => loadOverview(),
+  });
+
   useEffect(() => {
+    if (opsLiveEnabled && !['backoff', 'closed'].includes(opsLiveStatus)) {
+      return undefined;
+    }
     let timer: number | undefined;
     const hasActiveOps = (status?.operations?.activeOperationCount || 0) > 0;
     const intervalMs = hasActiveOps ? 2500 : 15000;
@@ -503,7 +515,7 @@ export const OpsPanel: React.FC = () => {
     return () => {
       if (timer) window.clearInterval(timer);
     };
-  }, [status?.operations?.activeOperationCount, selectedOperationId]);
+  }, [opsLiveEnabled, opsLiveStatus, selectedOperationId, status?.operations?.activeOperationCount]);
 
   useEffect(() => {
     let isMounted = true;
@@ -735,7 +747,7 @@ export const OpsPanel: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Backend Health</p>
               <p className="text-slate-100 mt-1">{health?.status || 'unknown'}</p>
@@ -747,6 +759,19 @@ export const OpsPanel: React.FC = () => {
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Watcher</p>
               <p className="text-slate-100 mt-1">{status?.watcher || health?.watcher || 'unknown'}</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Live Updates</p>
+              <p className="text-slate-100 mt-1">
+                {status?.liveUpdates
+                  ? `${status.liveUpdates.active_subscribers} subs / ${status.liveUpdates.buffered_topics} buffers`
+                  : 'n/a'}
+              </p>
+              {status?.liveUpdates && (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  replay gaps {status.liveUpdates.replay_gaps} • dropped {status.liveUpdates.dropped_events}
+                </p>
+              )}
             </div>
           </div>
         </section>

@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildLiveStreamUrl } from '../live/client';
 import { LiveConnectionManager } from '../live/connectionManager';
+import {
+  featureTopic,
+  projectFeaturesTopic,
+  projectOpsTopic,
+  projectTestsTopic,
+} from '../live/topics';
 import type { EventSourceLike } from '../live/types';
 
 class FakeEventSource implements EventSourceLike {
@@ -61,6 +67,15 @@ describe('buildLiveStreamUrl', () => {
     );
 
     expect(url).toBe('/api/live/stream?topic=execution.run.run-1&topic=session.session-1&cursor=cursor-1');
+  });
+});
+
+describe('live topic helpers', () => {
+  it('builds normalized feature, test, and ops topics', () => {
+    expect(featureTopic('Feature-1')).toBe('feature.feature-1');
+    expect(projectFeaturesTopic('Project-1')).toBe('project.project-1.features');
+    expect(projectTestsTopic('Project-1')).toBe('project.project-1.tests');
+    expect(projectOpsTopic('Project-1')).toBe('project.project-1.ops');
   });
 });
 

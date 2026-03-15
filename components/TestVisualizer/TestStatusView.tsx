@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
 import { FeatureTestTimeline, TestDefinition, TestRun, TestRunDetail, TestStatus } from '../../types';
+import { isTestLiveUpdatesEnabled } from '../../services/live';
 import {
   getFeatureTimeline,
   getIntegrityAlerts,
@@ -110,12 +111,17 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   const [resultSortKey, setResultSortKey] = useState<'status' | 'duration' | 'name' | 'test_id'>('status');
   const [resultSortOrder, setResultSortOrder] = useState<'asc' | 'desc'>('asc');
   const [localRefreshToken, setLocalRefreshToken] = useState(0);
+  const lastLiveUpdateRef = useRef<number>(0);
   const runResultsRequestIdRef = useRef(0);
   const effectiveRefreshToken = refreshToken + localRefreshToken;
   const effectiveDomainId = filter?.domainId ?? selectedDomainId ?? undefined;
+  const liveEnabled = Boolean(isLive && isTestLiveUpdatesEnabled());
 
   const shouldFetchStatus = showDomainTree || !hideHeader;
-  const status = useTestStatus(projectId, { enabled: Boolean(projectId && shouldFetchStatus) });
+  const status = useTestStatus(projectId, {
+    enabled: Boolean(projectId && shouldFetchStatus),
+    liveEnabled,
+  });
   const runs = useTestRuns(projectId, {
     featureId: filter?.featureId,
     domainId: effectiveDomainId,
@@ -123,6 +129,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
     limit: mode === 'compact' ? 3 : 12,
   }, {
     refreshToken: effectiveRefreshToken,
+    liveEnabled,
   });
   const live = useLiveTestUpdates(
     projectId,
@@ -132,9 +139,26 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
       sessionId: filter?.sessionId,
     },
     {
-      enabled: isLive,
+      enabled: liveEnabled,
     },
   );
+
+  useEffect(() => {
+    const liveUpdatedAt = live.lastUpdated?.getTime() ?? 0;
+    if (!liveUpdatedAt) {
+      return;
+    }
+    if (lastLiveUpdateRef.current === 0) {
+      lastLiveUpdateRef.current = liveUpdatedAt;
+      return;
+    }
+    if (liveUpdatedAt === lastLiveUpdateRef.current) {
+      return;
+    }
+    lastLiveUpdateRef.current = liveUpdatedAt;
+    invalidateTestVisualizerProjectCache(projectId, 'live_refresh_token');
+    setLocalRefreshToken(prev => prev + 1);
+  }, [live.lastUpdated, projectId]);
 
   useEffect(() => {
     setSelectedDomainId(filter?.domainId ?? null);

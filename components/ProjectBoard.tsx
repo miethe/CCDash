@@ -20,6 +20,12 @@ import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
+import {
+  featureTopic,
+  isFeatureLiveUpdatesEnabled,
+  projectFeaturesTopic,
+  useLiveInvalidation,
+} from '../services/live';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -1286,7 +1292,26 @@ const FeatureModal = ({
     }
   }, [activeTab, featureTestHealth]);
 
+  const featureLiveEnabled = Boolean(activeProject?.id && isFeatureLiveUpdatesEnabled());
+  const featureLiveStatus = useLiveInvalidation({
+    topics: featureLiveEnabled && activeProject?.id ? [featureTopic(feature.id), projectFeaturesTopic(activeProject.id)] : [],
+    enabled: featureLiveEnabled,
+    pauseWhenHidden: true,
+    onInvalidate: async () => {
+      await Promise.all([
+        refreshFeatureDetail(),
+        (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history')
+          ? refreshLinkedSessions()
+          : Promise.resolve(),
+        activeTab === 'test-status' ? refreshFeatureTestHealth() : Promise.resolve(),
+      ]);
+    },
+  });
+
   useEffect(() => {
+    if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
+      return undefined;
+    }
     const interval = setInterval(() => {
       void refreshFeatureDetail();
       if (activeTab === 'phases' || activeTab === 'sessions' || activeTab === 'history') {
@@ -1297,7 +1322,7 @@ const FeatureModal = ({
       }
     }, FEATURE_MODAL_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [activeTab, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
+  }, [activeTab, featureLiveEnabled, featureLiveStatus, refreshFeatureDetail, refreshFeatureTestHealth, refreshLinkedSessions]);
 
   const togglePhase = (phaseKey: string) => {
     setExpandedPhases(prev => {

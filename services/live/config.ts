@@ -14,3 +14,14 @@ export const isSessionLiveUpdatesEnabled = (): boolean => (
   readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_SESSIONS_ENABLED, true)
 );
 
+export const isFeatureLiveUpdatesEnabled = (): boolean => (
+  readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_FEATURES_ENABLED, false)
+);
+
+export const isTestLiveUpdatesEnabled = (): boolean => (
+  readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_TESTS_ENABLED, false)
+);
+
+export const isOpsLiveUpdatesEnabled = (): boolean => (
+  readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_OPS_ENABLED, false)
+);

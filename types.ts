@@ -2317,6 +2317,17 @@ export interface CacheStatusResponse {
     recentOperations: SyncOperation[];
     trackedOperationCount: number;
   };
+  liveUpdates?: {
+    active_subscribers: number;
+    buffered_topics: number;
+    active_topic_subscriptions: number;
+    published_events: number;
+    dropped_events: number;
+    buffer_evictions: number;
+    replay_gaps: number;
+    subscription_opens: number;
+    subscription_closes: number;
+  } | null;
 }
 
 export interface LinkAuditSuspect {
