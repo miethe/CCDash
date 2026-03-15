@@ -4,7 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 from backend.application.live_updates.runtime_state import publish_live_append, publish_live_invalidation
-from backend.application.live_updates.topics import execution_run_topic, session_topic
+from backend.application.live_updates.topics import (
+    execution_run_topic,
+    feature_topic,
+    project_features_topic,
+    project_ops_topic,
+    project_tests_topic,
+    session_topic,
+)
 
 
 def _as_text(value: Any) -> str:
@@ -69,3 +76,88 @@ async def publish_session_snapshot(session_row: dict[str, Any], *, log_count: in
         },
     )
 
+
+async def publish_feature_invalidation(
+    project_id: str,
+    *,
+    feature_id: str | None = None,
+    reason: str,
+    source: str,
+    payload: dict[str, Any] | None = None,
+    occurred_at: str | None = None,
+) -> None:
+    normalized_project_id = _as_text(project_id)
+    normalized_feature_id = _as_text(feature_id)
+    base_payload = {
+        "resource": "feature",
+        "projectId": normalized_project_id,
+        "featureId": normalized_feature_id,
+        "reason": reason,
+        "source": source,
+    }
+    if payload:
+        base_payload.update(payload)
+    if normalized_feature_id:
+        await publish_live_invalidation(
+            topic=feature_topic(normalized_feature_id),
+            occurred_at=occurred_at,
+            payload=base_payload,
+        )
+    if normalized_project_id:
+        await publish_live_invalidation(
+            topic=project_features_topic(normalized_project_id),
+            occurred_at=occurred_at,
+            payload=base_payload,
+        )
+
+
+async def publish_test_invalidation(
+    project_id: str,
+    *,
+    reason: str,
+    source: str,
+    payload: dict[str, Any] | None = None,
+    occurred_at: str | None = None,
+) -> None:
+    normalized_project_id = _as_text(project_id)
+    if not normalized_project_id:
+        return
+    base_payload = {
+        "resource": "tests",
+        "projectId": normalized_project_id,
+        "reason": reason,
+        "source": source,
+    }
+    if payload:
+        base_payload.update(payload)
+    await publish_live_invalidation(
+        topic=project_tests_topic(normalized_project_id),
+        occurred_at=occurred_at,
+        payload=base_payload,
+    )
+
+
+async def publish_ops_invalidation(
+    project_id: str,
+    *,
+    reason: str,
+    source: str,
+    payload: dict[str, Any] | None = None,
+    occurred_at: str | None = None,
+) -> None:
+    normalized_project_id = _as_text(project_id)
+    if not normalized_project_id:
+        return
+    base_payload = {
+        "resource": "ops",
+        "projectId": normalized_project_id,
+        "reason": reason,
+        "source": source,
+    }
+    if payload:
+        base_payload.update(payload)
+    await publish_live_invalidation(
+        topic=project_ops_topic(normalized_project_id),
+        occurred_at=occurred_at,
+        payload=base_payload,
+    )

@@ -104,6 +104,7 @@ class InMemoryLiveEventBroker:
                 next_stats,
                 active_subscribers=len(self._subscriptions),
                 buffered_topics=len(self._buffers),
+                active_topic_subscriptions=sum(len(subscribers) for subscribers in self._subscriptions_by_topic.values()),
                 dropped_events=dropped_events,
             )
             return envelope
@@ -120,7 +121,14 @@ class InMemoryLiveEventBroker:
             for topic in topics:
                 self._subscriptions_by_topic[topic].add(subscription)
             replay_events, replay_gaps = self._collect_replay(topics, request.cursors)
-            self._stats = replace(self._stats, active_subscribers=len(self._subscriptions), buffered_topics=len(self._buffers))
+            self._stats = replace(
+                self._stats,
+                active_subscribers=len(self._subscriptions),
+                buffered_topics=len(self._buffers),
+                active_topic_subscriptions=sum(len(subscribers) for subscribers in self._subscriptions_by_topic.values()),
+                replay_gaps=self._stats.replay_gaps + len(replay_gaps),
+                subscription_opens=self._stats.subscription_opens + 1,
+            )
         return LiveSubscriptionStart(
             subscription=subscription,
             replay_events=tuple(replay_events),
@@ -185,4 +193,10 @@ class InMemoryLiveEventBroker:
                 subscribers.discard(subscription)
                 if not subscribers:
                     self._subscriptions_by_topic.pop(topic, None)
-            self._stats = replace(self._stats, active_subscribers=len(self._subscriptions), buffered_topics=len(self._buffers))
+            self._stats = replace(
+                self._stats,
+                active_subscribers=len(self._subscriptions),
+                buffered_topics=len(self._buffers),
+                active_topic_subscriptions=sum(len(subscribers) for subscribers in self._subscriptions_by_topic.values()),
+                subscription_closes=self._stats.subscription_closes + 1,
+            )

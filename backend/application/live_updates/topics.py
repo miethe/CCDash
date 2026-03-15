@@ -94,3 +94,19 @@ def execution_run_topic(run_id: str) -> str:
 
 def session_topic(session_id: str) -> str:
     return join_topic("session", session_id)
+
+
+def feature_topic(feature_id: str) -> str:
+    return join_topic("feature", feature_id)
+
+
+def project_features_topic(project_id: str) -> str:
+    return join_topic("project", project_id, "features")
+
+
+def project_tests_topic(project_id: str) -> str:
+    return join_topic("project", project_id, "tests")
+
+
+def project_ops_topic(project_id: str) -> str:
+    return join_topic("project", project_id, "ops")

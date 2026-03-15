@@ -27,9 +27,13 @@ class LiveReplayGap:
 class LiveBrokerStats:
     active_subscribers: int = 0
     buffered_topics: int = 0
+    active_topic_subscriptions: int = 0
     published_events: int = 0
     dropped_events: int = 0
     buffer_evictions: int = 0
+    replay_gaps: int = 0
+    subscription_opens: int = 0
+    subscription_closes: int = 0
 
 
 @runtime_checkable

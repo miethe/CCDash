@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from backend import config
+from backend.application.live_updates.domain_events import publish_test_invalidation
 from backend.db import connection
 from backend.db.factory import (
     get_test_definition_repository,
@@ -827,6 +828,16 @@ async def _run_backfill_mappings_background(
             status="completed",
             stats=stats,
         )
+        await publish_test_invalidation(
+            body.project_id,
+            reason="mapping_backfill_completed",
+            source="tests_api",
+            payload={
+                "operationId": operation_id,
+                "runsProcessed": int(payload.runs_processed),
+                "mappingsStored": int(payload.mappings_stored),
+            },
+        )
     except Exception as exc:
         error = str(exc) or "Unknown mapping backfill failure"
         logger.exception("Background mapping backfill failed operation_id=%s: %s", operation_id, error)
@@ -841,6 +852,12 @@ async def _run_backfill_mappings_background(
                 operation_id,
                 status="failed",
                 error=error,
+            )
+            await publish_test_invalidation(
+                body.project_id,
+                reason="mapping_backfill_failed",
+                source="tests_api",
+                payload={"operationId": operation_id, "error": error},
             )
         except Exception:
             logger.exception("Failed to finalize mapping backfill operation state operation_id=%s", operation_id)
@@ -895,6 +912,12 @@ async def sync_test_sources_endpoint(request: Request, body: SyncTestsRequest) -
         force=body.force,
         max_files_per_scan=project.testConfig.maxFilesPerScan,
         max_parse_concurrency=project.testConfig.maxParseConcurrency,
+    )
+    await publish_test_invalidation(
+        project.id,
+        reason="sync_test_sources",
+        source="tests_api",
+        payload={"stats": stats},
     )
     return SyncTestsResponse(project_id=project.id, stats=stats, sources=_source_status_rows(project, request))
 
@@ -955,13 +978,25 @@ async def ingest_test_run(request: Request) -> IngestRunResponse:
             logger.warning("Failed to queue integrity check: %s", exc)
             errors.append(f"Failed to queue integrity check: {exc}")
 
-    return response.model_copy(
+    updated_response = response.model_copy(
         update={
             "mapping_trigger_queued": mapping_queued,
             "integrity_check_queued": integrity_queued,
             "errors": errors,
         }
     )
+    await publish_test_invalidation(
+        payload.project_id,
+        reason="ingest_run",
+        source="tests_api",
+        payload={
+            "runId": payload.run_id,
+            "mappingQueued": mapping_queued,
+            "integrityQueued": integrity_queued,
+            "status": response.status,
+        },
+    )
+    return updated_response
 
 
 @test_visualizer_router.get("/health/domains", response_model=list[DomainHealthRollupDTO])
@@ -1314,6 +1349,12 @@ async def start_backfill_mappings(
         message="Mapping backfill queued",
         progress={"percent": 0, "runsScanned": 0, "runsTotal": 0, "runsProcessed": 0},
         counters={"runLimit": int(body.run_limit)},
+    )
+    await publish_test_invalidation(
+        body.project_id,
+        reason="mapping_backfill_started",
+        source="tests_api",
+        payload={"operationId": operation_id, "runLimit": int(body.run_limit)},
     )
     background_tasks.add_task(_run_backfill_mappings_background, body, sync_engine, operation_id)
     return {

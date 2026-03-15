@@ -2,9 +2,12 @@ import unittest
 
 from backend.application.live_updates import set_live_event_publisher
 from backend.application.live_updates.domain_events import (
+    publish_feature_invalidation,
+    publish_ops_invalidation,
     publish_execution_run_events,
     publish_execution_run_snapshot,
     publish_session_snapshot,
+    publish_test_invalidation,
 )
 
 
@@ -86,3 +89,36 @@ class LiveDomainPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["topic"], "session.session-1")
         self.assertEqual(call["payload"]["logCount"], 42)
         self.assertEqual(call["payload"]["source"], "sync")
+
+    async def test_publish_feature_invalidation_emits_feature_and_project_topics(self) -> None:
+        await publish_feature_invalidation(
+            "project-1",
+            feature_id="feature-1",
+            reason="feature_status_updated",
+            source="features_api",
+            payload={"status": "in-progress"},
+        )
+
+        self.assertEqual(len(self.publisher.invalidate_calls), 2)
+        topics = {call["topic"] for call in self.publisher.invalidate_calls}
+        self.assertEqual(topics, {"feature.feature-1", "project.project-1.features"})
+
+    async def test_publish_test_and_ops_invalidations_emit_project_topics(self) -> None:
+        await publish_test_invalidation(
+            "project-1",
+            reason="ingest_run",
+            source="tests_api",
+            payload={"runId": "run-1"},
+        )
+        await publish_ops_invalidation(
+            "project-1",
+            reason="operation_finished",
+            source="sync_engine",
+            payload={"operationId": "OP-1"},
+        )
+
+        self.assertEqual(len(self.publisher.invalidate_calls), 2)
+        self.assertEqual(self.publisher.invalidate_calls[0]["topic"], "project.project-1.tests")
+        self.assertEqual(self.publisher.invalidate_calls[0]["payload"]["runId"], "run-1")
+        self.assertEqual(self.publisher.invalidate_calls[1]["topic"], "project.project-1.ops")
+        self.assertEqual(self.publisher.invalidate_calls[1]["payload"]["operationId"], "OP-1")

@@ -56,7 +56,11 @@ from backend.document_linking import (
     normalize_ref_path,
     slug_from_path,
 )
-from backend.application.live_updates.domain_events import publish_session_snapshot
+from backend.application.live_updates.domain_events import (
+    publish_feature_invalidation,
+    publish_ops_invalidation,
+    publish_session_snapshot,
+)
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
 from backend.session_mappings import (
     load_session_mappings,
@@ -2313,6 +2317,19 @@ class SyncEngine:
                     self._operations.pop(stale_id, None)
                     self._active_operation_ids.discard(stale_id)
         logger.info("Operation started [%s] %s (project=%s trigger=%s)", op_id, kind, project_id, trigger)
+        await publish_ops_invalidation(
+            project_id,
+            reason="operation_started",
+            source="sync_engine",
+            payload={
+                "operationId": op_id,
+                "kind": kind,
+                "status": "running",
+                "phase": "queued",
+                "trigger": trigger,
+            },
+            occurred_at=now,
+        )
         return op_id
 
     async def _update_operation(
@@ -2335,6 +2352,9 @@ class SyncEngine:
             operation = self._operations.get(operation_id)
             if not operation:
                 return
+            project_id = str(operation.get("projectId") or "")
+            kind = str(operation.get("kind") or "")
+            current_status = str(operation.get("status") or "")
             if phase and phase != operation.get("phase"):
                 operation["phase"] = phase
                 log_needed = True
@@ -2357,6 +2377,19 @@ class SyncEngine:
                 logger.info("Operation update [%s] %s - %s", operation_id, log_phase or "progress", log_message)
             else:
                 logger.info("Operation update [%s] %s", operation_id, log_phase)
+        await publish_ops_invalidation(
+            project_id,
+            reason="operation_updated",
+            source="sync_engine",
+            payload={
+                "operationId": operation_id,
+                "kind": kind,
+                "status": current_status,
+                "phase": phase or log_phase or "",
+                "message": message if message is not None else log_message,
+            },
+            occurred_at=now,
+        )
 
     async def _finish_operation(
         self,
@@ -2373,6 +2406,8 @@ class SyncEngine:
             operation = self._operations.get(operation_id)
             if not operation:
                 return
+            project_id = str(operation.get("projectId") or "")
+            kind = str(operation.get("kind") or "")
             operation["status"] = status
             operation["updatedAt"] = now
             operation["finishedAt"] = now
@@ -2395,6 +2430,18 @@ class SyncEngine:
             logger.error("Operation failed [%s]: %s", operation_id, error)
         else:
             logger.info("Operation finished [%s] status=%s", operation_id, status)
+        await publish_ops_invalidation(
+            project_id,
+            reason="operation_finished",
+            source="sync_engine",
+            payload={
+                "operationId": operation_id,
+                "kind": kind,
+                "status": status,
+                "error": error,
+            },
+            occurred_at=now,
+        )
 
     async def sync_project(
         self,
@@ -2617,6 +2664,22 @@ class SyncEngine:
                 f"{stats['links_created']} links "
                 f"in {elapsed}ms"
             )
+            if any(
+                int(stats.get(key, 0) or 0) > 0
+                for key in ("documents_synced", "tasks_synced", "features_synced", "links_created")
+            ):
+                await publish_feature_invalidation(
+                    project.id,
+                    reason="sync_project_completed",
+                    source="sync_engine",
+                    payload={
+                        "documentsSynced": int(stats.get("documents_synced", 0) or 0),
+                        "tasksSynced": int(stats.get("tasks_synced", 0) or 0),
+                        "featuresSynced": int(stats.get("features_synced", 0) or 0),
+                        "linksCreated": int(stats.get("links_created", 0) or 0),
+                        "operationId": operation_id,
+                    },
+                )
             return stats
         except Exception as exc:
             if should_finalize_operation:
@@ -2694,6 +2757,16 @@ class SyncEngine:
             )
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
+            if int(stats.get("created", 0) or 0) > 0:
+                await publish_feature_invalidation(
+                    project_id,
+                    reason="rebuild_links_completed",
+                    source="sync_engine",
+                    payload={
+                        "linksCreated": int(stats.get("created", 0) or 0),
+                        "operationId": operation_id,
+                    },
+                )
             return stats
         except Exception as exc:
             if should_finalize_operation:
@@ -3354,6 +3427,19 @@ class SyncEngine:
                 )
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
+            if any(int(stats.get(key, 0) or 0) > 0 for key in ("documents", "tasks", "features", "links_created")):
+                await publish_feature_invalidation(
+                    project_id,
+                    reason="sync_changed_files_completed",
+                    source="sync_engine",
+                    payload={
+                        "documentsSynced": int(stats.get("documents", 0) or 0),
+                        "tasksSynced": int(stats.get("tasks", 0) or 0),
+                        "featuresSynced": int(stats.get("features", 0) or 0),
+                        "linksCreated": int(stats.get("links_created", 0) or 0),
+                        "operationId": operation_id,
+                    },
+                )
             return stats
         except Exception as exc:
             if should_finalize_operation:

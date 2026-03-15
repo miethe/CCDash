@@ -1,11 +1,30 @@
 import types
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import BackgroundTasks, HTTPException
 
 from backend.routers import cache as cache_router
+
+
+@dataclass
+class _FakeLiveBrokerStats:
+    active_subscribers: int = 2
+    buffered_topics: int = 3
+    active_topic_subscriptions: int = 4
+    published_events: int = 12
+    dropped_events: int = 1
+    buffer_evictions: int = 0
+    replay_gaps: int = 2
+    subscription_opens: int = 5
+    subscription_closes: int = 3
+
+
+class _FakeLiveBroker:
+    def stats(self):
+        return _FakeLiveBrokerStats()
 
 
 class _FakeSyncEngine:
@@ -74,10 +93,10 @@ class _FakeSyncEngine:
 
 
 class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
-    def _request(self, engine: _FakeSyncEngine):
+    def _request(self, engine: _FakeSyncEngine, live_broker: _FakeLiveBroker | None = None):
         return types.SimpleNamespace(
             app=types.SimpleNamespace(
-                state=types.SimpleNamespace(sync_engine=engine)
+                state=types.SimpleNamespace(sync_engine=engine, live_event_broker=live_broker)
             )
         )
 
@@ -95,6 +114,19 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["projectName"], "Project One")
         self.assertEqual(payload["activePaths"]["docsDir"], "/tmp/project/docs")
         self.assertIn("operations", payload)
+        self.assertIsNone(payload["liveUpdates"])
+
+    async def test_status_includes_live_update_stats_when_available(self) -> None:
+        engine = _FakeSyncEngine()
+        request = self._request(engine, _FakeLiveBroker())
+        project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
+        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
+
+        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
+            payload = await cache_router.get_cache_status(request)
+
+        self.assertEqual(payload["liveUpdates"]["published_events"], 12)
+        self.assertEqual(payload["liveUpdates"]["replay_gaps"], 2)
 
     async def test_sync_background_returns_operation_id(self) -> None:
         engine = _FakeSyncEngine()
