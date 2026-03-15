@@ -16,6 +16,7 @@ from backend.routers.codebase import codebase_router
 from backend.routers.execution import execution_router
 from backend.routers.features import features_router
 from backend.routers.integrations import github_integrations_router, integrations_router
+from backend.routers.live import live_router
 from backend.routers.pricing import pricing_router
 from backend.routers.projects import projects_router
 from backend.routers.session_mappings import session_mappings_router
@@ -89,6 +90,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(codebase_router)
     app.include_router(test_visualizer_router)
     app.include_router(execution_router)
+    app.include_router(live_router)
     app.include_router(integrations_router)
     app.include_router(github_integrations_router)
     app.include_router(pricing_router)

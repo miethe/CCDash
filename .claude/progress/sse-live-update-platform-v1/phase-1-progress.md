@@ -10,11 +10,11 @@ phase: 1
 title: Event Contract and Broker Foundation
 status: completed
 started: '2026-03-14'
-completed: null
+completed: '2026-03-14'
 commit_refs: []
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
 completed_tasks: 3
 in_progress_tasks: 0
@@ -100,3 +100,9 @@ python .claude/skills/artifact-tracking/scripts/update-status.py --file .claude/
 ## Objective
 
 Establish the reusable backend live-update contract and local broker seam before transport delivery work begins.
+
+## Completion Notes
+
+- Added a transport-agnostic live event contract, cursor helpers, and domain-facing publisher API under `backend/application/live_updates/`.
+- Implemented an in-memory broker with bounded replay, atomic subscription open, and subscriber backpressure/drop accounting.
+- Added backend unit tests covering cursor parsing, replay delivery, snapshot-required gaps, and queue overflow behavior.
