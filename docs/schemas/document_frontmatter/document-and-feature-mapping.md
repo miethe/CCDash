@@ -1,6 +1,6 @@
 # Document And Feature Mapping
 
-Last updated: 2026-03-05
+Last updated: 2026-03-14
 Status: Canonical
 
 This spec defines:
@@ -40,6 +40,7 @@ Always show:
 - Ownership: `owner`, `owners`, `contributors`, `reviewers`, `approvers`, `audience`
 - Classification: `category`, `priority`, `risk_level`, `complexity`, `track`, `target_release`, `milestone`
 - Feature anchors: `feature_slug`, `feature_family`, `feature_version`
+- Execution ordering: `sequence_order`
 - Cross-doc anchors: `prd_ref`, `plan_ref`, `implementation_plan_ref`
 - Summary copy: `description`, `summary`
 
@@ -57,6 +58,7 @@ Shared sections:
 Shared sections:
 
 - `Features`: `linked_features[]`
+- `Hard dependencies`: `blocked_by[]`
 - `Documents`: `related_documents`, `prd_ref`, `plan_ref`, `implementation_plan_ref`
 - `Sessions / Tasks / Delivery`: `linked_sessions`, `linked_tasks`, `request_log_ids`, `commit_refs`, `pr_refs`
 - `Lineage`: `lineage_family`, `lineage_parent`, `lineage_children`, `lineage_type`
@@ -138,6 +140,7 @@ Card/List display:
 - Title
 - Status
 - Complexity / track / timeline estimate
+- `feature_family` / `sequence_order` when present
 - Phase count
 - Linked feature chips
 
@@ -164,8 +167,18 @@ Card/List display:
 
 - Phase number and title
 - Status
+- `feature_family` / `sequence_order` when present
 - Task counts
 - Linked parent plan
+
+## 4. Follow-on plan for dependency/family logic
+
+The current implementation should capture and display `blocked_by`, `feature_family`, and `sequence_order` without changing execution or status semantics. The next wiring pass should:
+
+1. Use `blocked_by` to mark documents/features as blocked in board, catalog, and execution recommendation surfaces.
+2. Show blocking feature status and resolution evidence anywhere a blocked dependency is rendered.
+3. Add a feature-family timeline/sequence surface that groups sibling docs by `feature_family` and orders them by `sequence_order`, similar to phase lists.
+4. Feed `blocked_by` and `sequence_order` into execution recommendation logic so "next work" respects hard dependencies and family ordering.
 
 ### 3.4 Progress
 
@@ -495,4 +508,3 @@ Derived rollup:
 - report findings severity summary
 - integrity signal refs
 - test status summary
-

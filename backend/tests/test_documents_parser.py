@@ -143,6 +143,47 @@ Body
             self.assertIn("abc1234", doc.frontmatter.commitRefs)
             self.assertIn("321", doc.frontmatter.prRefs)
 
+    def test_parse_blocked_by_and_sequence_order_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans" / "implementation_plans" / "features"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            path = docs_dir / "feature-delta-v2.md"
+            path.write_text(
+                """---
+title: Feature Delta Plan
+status: blocked
+feature_slug: feature-delta-v2
+feature_family: feature-delta
+blocked_by:
+  - feature-alpha-v1
+  - docs/project_plans/implementation_plans/features/feature-beta-v2.md
+sequence_order: 2
+---
+Body
+""",
+                encoding="utf-8",
+            )
+
+            doc = parse_document_file(path, root / "docs" / "project_plans", project_root=root)
+            self.assertIsNotNone(doc)
+            assert doc is not None
+            self.assertEqual(doc.featureFamily, "feature-delta")
+            self.assertEqual(doc.sequenceOrder, 2)
+            self.assertEqual(doc.metadata.sequenceOrder, 2)
+            self.assertEqual(doc.frontmatter.sequenceOrder, 2)
+            self.assertEqual(doc.blockedBy, ["feature-alpha-v1", "feature-beta-v2"])
+            self.assertEqual(doc.metadata.blockedBy, ["feature-alpha-v1", "feature-beta-v2"])
+            self.assertEqual(doc.frontmatter.blockedBy, ["feature-alpha-v1", "feature-beta-v2"])
+            self.assertTrue(
+                any(
+                    ref.feature == "feature-alpha-v1"
+                    and ref.type == "blocked_by"
+                    and ref.source == "blocked_by"
+                    for ref in doc.frontmatter.linkedFeatureRefs
+                )
+            )
+
     def test_parse_legacy_alias_fields_for_backfill_compatibility(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

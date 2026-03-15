@@ -569,6 +569,10 @@ const getDocPhaseNumber = (doc: LinkedDocument): number | null => {
   return parsePhaseNumber(doc.filePath || '', false);
 };
 
+const getDocSequenceOrder = (doc: LinkedDocument): number | null => (
+  typeof doc.sequenceOrder === 'number' ? doc.sequenceOrder : null
+);
+
 const compareDocsByTitle = (a: LinkedDocument, b: LinkedDocument): number => {
   const titleDiff = (a.title || '').localeCompare((b.title || ''), undefined, { numeric: true, sensitivity: 'base' });
   if (titleDiff !== 0) return titleDiff;
@@ -587,6 +591,13 @@ const initialPlanningDocPriority = (doc: LinkedDocument): number => {
 
 const sortDocsWithinGroup = (groupId: DocGroupId, docs: LinkedDocument[]): LinkedDocument[] => {
   return [...docs].sort((a, b) => {
+    const aSequence = getDocSequenceOrder(a);
+    const bSequence = getDocSequenceOrder(b);
+    if (aSequence !== null || bSequence !== null) {
+      const normalizedA = aSequence ?? Number.POSITIVE_INFINITY;
+      const normalizedB = bSequence ?? Number.POSITIVE_INFINITY;
+      if (normalizedA !== normalizedB) return normalizedA - normalizedB;
+    }
     if (groupId === 'initialPlanning') {
       const priorityDiff = initialPlanningDocPriority(a) - initialPlanningDocPriority(b);
       if (priorityDiff !== 0) return priorityDiff;
@@ -2071,6 +2082,14 @@ const FeatureModal = ({
     (primary?.progressDocs || []).forEach(pushDoc);
     return ids;
   }, [activeFeature.primaryDocuments]);
+  const blockedByRelations = useMemo(
+    () => (activeFeature.linkedFeatures || []).filter(relation => (relation.type || '').toLowerCase() === 'blocked_by'),
+    [activeFeature.linkedFeatures]
+  );
+  const sequenceDocs = useMemo(
+    () => linkedDocs.filter(doc => typeof doc.sequenceOrder === 'number'),
+    [linkedDocs]
+  );
 
   const toggleCoreSessionGroup = (groupId: CoreSessionGroupId) => {
     setCoreSessionGroupExpanded(prev => ({ ...prev, [groupId]: !prev[groupId] }));
@@ -2433,6 +2452,7 @@ const FeatureModal = ({
                     <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{activeFeature.riskLevel || '-'}</span></div>
                     <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{activeFeature.complexity || '-'}</span></div>
                     <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{activeFeature.track || '-'}</span></div>
+                    <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
                     <div className="text-slate-400">Target <span className="text-slate-200 ml-1">{activeFeature.targetRelease || '-'}</span></div>
                     <div className="text-slate-400">Milestone <span className="text-slate-200 ml-1">{activeFeature.milestone || '-'}</span></div>
                     <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{activeFeature.executionReadiness || '-'}</span></div>
@@ -2444,6 +2464,7 @@ const FeatureModal = ({
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.blockerCount ?? 0}</span></div>
                     <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                    <div className="text-slate-400">Blocked By <span className="text-slate-200 ml-1">{blockedByRelations.length}</span></div>
                     <div className="text-slate-400">Test Impact <span className="text-slate-200 ml-1">{activeFeature.testImpact || activeFeature.qualitySignals?.testImpact || '-'}</span></div>
                     <div className="text-slate-400">Relations <span className="text-slate-200 ml-1">{getFeatureLinkedFeatureCount(activeFeature)}</span></div>
                   </div>
@@ -2474,6 +2495,46 @@ const FeatureModal = ({
                   ))}
                 </div>
               </div>
+
+              {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                    <h3 className="text-sm font-semibold text-slate-200 mb-3">Hard Dependencies</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {blockedByRelations.map((relation, index) => (
+                        <button
+                          key={`${relation.feature}-${index}`}
+                          onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                          className="text-[10px] font-semibold rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200"
+                        >
+                          {relation.feature}
+                        </button>
+                      ))}
+                      {blockedByRelations.length === 0 && <span className="text-xs text-slate-500 italic">No hard feature dependencies captured.</span>}
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
+                    <h3 className="text-sm font-semibold text-slate-200 mb-3">Family Sequence</h3>
+                    <div className="space-y-2 text-xs">
+                      <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
+                      <div className="text-slate-400">Sequenced docs <span className="text-slate-200 ml-1">{sequenceDocs.length}</span></div>
+                    </div>
+                    {sequenceDocs.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {sequenceDocs.slice(0, 6).map(doc => (
+                          <button
+                            key={`seq-doc-${doc.id}`}
+                            onClick={() => handleDocClick(doc)}
+                            className="rounded-full border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] text-slate-300 hover:border-indigo-500/40"
+                          >
+                            #{doc.sequenceOrder} {doc.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Linked Documents — clickable */}
               {linkedDocs.length > 0 && (
@@ -2830,6 +2891,23 @@ const FeatureModal = ({
                           <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
                             <FolderOpen size={12} />
                             {doc.filePath}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                            {doc.featureFamily && (
+                              <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-300">
+                                {doc.featureFamily}
+                              </span>
+                            )}
+                            {typeof doc.sequenceOrder === 'number' && (
+                              <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-indigo-200">
+                                Seq {doc.sequenceOrder}
+                              </span>
+                            )}
+                            {(doc.blockedBy || []).map(featureId => (
+                              <span key={`${doc.id}-blocked-${featureId}`} className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                                Blocked by {featureId}
+                              </span>
+                            ))}
                           </div>
                           {(doc.prdRef || '').trim() && (
                             <div className="mt-2 text-[11px] text-slate-400">

@@ -117,6 +117,8 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
    primaryDocRole: raw.primaryDocRole ?? fallback.primaryDocRole,
    featureSlug: raw.featureSlug ?? fallback.featureSlug,
    featureFamily: raw.featureFamily ?? fallback.featureFamily,
+   blockedBy: raw.blockedBy ?? fallback.blockedBy ?? [],
+   sequenceOrder: raw.sequenceOrder ?? fallback.sequenceOrder,
    featureVersion: raw.featureVersion ?? fallback.featureVersion,
    planRef: raw.planRef ?? fallback.planRef,
    implementationPlanRef: raw.implementationPlanRef ?? fallback.implementationPlanRef,
@@ -155,8 +157,14 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       decisionStatus: raw.metadata?.decisionStatus ?? fallback.metadata?.decisionStatus ?? '',
       executionReadiness: raw.metadata?.executionReadiness ?? fallback.metadata?.executionReadiness ?? '',
       testImpact: raw.metadata?.testImpact ?? fallback.metadata?.testImpact ?? '',
+      primaryDocRole: raw.metadata?.primaryDocRole ?? fallback.metadata?.primaryDocRole ?? '',
+      featureSlug: raw.metadata?.featureSlug ?? fallback.metadata?.featureSlug ?? '',
+      featureFamily: raw.metadata?.featureFamily ?? fallback.metadata?.featureFamily ?? '',
+      featureVersion: raw.metadata?.featureVersion ?? fallback.metadata?.featureVersion ?? '',
       planRef: raw.metadata?.planRef ?? fallback.metadata?.planRef ?? '',
       implementationPlanRef: raw.metadata?.implementationPlanRef ?? fallback.metadata?.implementationPlanRef ?? '',
+      blockedBy: raw.metadata?.blockedBy ?? fallback.metadata?.blockedBy ?? [],
+      sequenceOrder: raw.metadata?.sequenceOrder ?? fallback.metadata?.sequenceOrder,
       requestLogIds: raw.metadata?.requestLogIds ?? fallback.metadata?.requestLogIds ?? [],
       commitRefs: raw.metadata?.commitRefs ?? fallback.metadata?.commitRefs ?? [],
       prRefs: raw.metadata?.prRefs ?? fallback.metadata?.prRefs ?? [],
@@ -184,6 +192,8 @@ const normalizeDoc = (raw: Partial<PlanDocument>, fallback: PlanDocument): PlanD
       tags: Array.isArray(raw.frontmatter?.tags) ? raw.frontmatter.tags : (fallback.frontmatter?.tags || []),
       linkedFeatures: Array.isArray(raw.frontmatter?.linkedFeatures) ? raw.frontmatter.linkedFeatures : (fallback.frontmatter?.linkedFeatures || []),
       linkedFeatureRefs: Array.isArray(raw.frontmatter?.linkedFeatureRefs) ? raw.frontmatter.linkedFeatureRefs : (fallback.frontmatter?.linkedFeatureRefs || []),
+      blockedBy: Array.isArray(raw.frontmatter?.blockedBy) ? raw.frontmatter.blockedBy : (fallback.frontmatter?.blockedBy || []),
+      sequenceOrder: raw.frontmatter?.sequenceOrder ?? fallback.frontmatter?.sequenceOrder,
       linkedSessions: Array.isArray(raw.frontmatter?.linkedSessions) ? raw.frontmatter.linkedSessions : (fallback.frontmatter?.linkedSessions || []),
       linkedTasks: Array.isArray(raw.frontmatter?.linkedTasks) ? raw.frontmatter.linkedTasks : (fallback.frontmatter?.linkedTasks || []),
       lineageFamily: raw.frontmatter?.lineageFamily ?? fallback.frontmatter?.lineageFamily,
@@ -370,6 +380,18 @@ export const DocumentModal = ({
 
       return Array.from(merged.values());
    }, [features, links?.features, doc.frontmatter.linkedFeatures]);
+   const blockedByFeatures = React.useMemo(() => {
+      const blockedIds = new Set(
+         [
+            ...(doc.blockedBy || []),
+            ...(doc.metadata?.blockedBy || []),
+            ...(doc.frontmatter.blockedBy || []),
+         ]
+            .map(value => String(value || '').trim().toLowerCase())
+            .filter(Boolean)
+      );
+      return linkedFeatures.filter(feature => blockedIds.has(feature.id.toLowerCase()));
+   }, [doc.blockedBy, doc.metadata?.blockedBy, doc.frontmatter.blockedBy, linkedFeatures]);
    const linkedTasks = links?.tasks || [];
    const linkedSessions = React.useMemo(() => {
       if (links?.sessions && links.sessions.length > 0) return links.sessions;
@@ -603,9 +625,12 @@ export const DocumentModal = ({
                            <h3 className="text-sm font-semibold text-slate-200 mb-3">Anchors</h3>
                            <div className="space-y-2 text-xs">
                               <div className="flex justify-between text-slate-400"><span>Feature</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Family</span><span className="text-slate-200 font-mono">{doc.featureFamily || doc.metadata?.featureFamily || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Sequence</span><span className="text-slate-200">{doc.sequenceOrder ?? doc.metadata?.sequenceOrder ?? doc.frontmatter.sequenceOrder ?? '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>PRD Ref</span><span className="text-slate-200 font-mono">{doc.prdRef || doc.frontmatter.prd || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Plan Ref</span><span className="text-slate-200 font-mono">{doc.planRef || doc.metadata?.planRef || '-'}</span></div>
                               <div className="flex justify-between text-slate-400"><span>Implementation Plan Ref</span><span className="text-slate-200 font-mono">{doc.implementationPlanRef || doc.metadata?.implementationPlanRef || '-'}</span></div>
+                              <div className="flex justify-between text-slate-400"><span>Blocked By</span><span className="text-slate-200 font-mono text-right">{(doc.frontmatter.blockedBy || doc.metadata?.blockedBy || doc.blockedBy || []).join(', ') || '-'}</span></div>
                            </div>
                         </div>
                      </div>
@@ -656,6 +681,30 @@ export const DocumentModal = ({
                               })}
                               {linkedFeatures.length === 0 && <span className="text-xs text-slate-500 italic">No linked features.</span>}
                            </div>
+                           {(doc.frontmatter.blockedBy || doc.metadata?.blockedBy || doc.blockedBy || []).length > 0 && (
+                              <div className="mt-3 border-t border-slate-800 pt-3">
+                                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Hard Dependencies</div>
+                                 <div className="flex flex-wrap gap-2">
+                                    {blockedByFeatures.map(feature => {
+                                       const style = getFeatureStatusStyle(feature.status);
+                                       return (
+                                          <button
+                                             key={`blocked-by-${feature.id}`}
+                                             onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(feature.id)}`); }}
+                                             className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${style.badge}`}
+                                          >
+                                             {feature.id}
+                                          </button>
+                                       );
+                                    })}
+                                    {blockedByFeatures.length === 0 && (doc.frontmatter.blockedBy || doc.metadata?.blockedBy || doc.blockedBy || []).map(featureId => (
+                                       <span key={`blocked-by-fallback-${featureId}`} className="text-[10px] font-mono rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                                          {featureId}
+                                       </span>
+                                    ))}
+                                 </div>
+                              </div>
+                           )}
                         </div>
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
                            <h3 className="text-sm font-semibold text-slate-200 mb-3">Lineage</h3>

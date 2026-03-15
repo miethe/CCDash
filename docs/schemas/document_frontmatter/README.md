@@ -1,6 +1,6 @@
 # CCDash Document Schema Catalog
 
-Last updated: 2026-03-06
+Last updated: 2026-03-14
 Status: Canonical
 
 This directory is the active source of truth for CCDash document frontmatter and document-to-feature mapping.
@@ -66,6 +66,8 @@ Notes:
   - `archived`
 - `feature_slug` is the owning feature slug for PRDs, plans, and progress docs.
 - `feature_family` is the versionless family slug.
+- `blocked_by` is a list of hard feature dependencies expressed as `feature_slug` values.
+- `sequence_order` is a 0-based execution slot within a `feature_family`.
 - `linked_features` is now a structured relationship field. Legacy string arrays remain accepted during migration.
 - `related_documents`, `linked_sessions`, `linked_tasks`, `request_log_ids`, `commit_refs`, and `pr_refs` should prefer stable ids or canonical project-relative paths.
 
@@ -88,6 +90,8 @@ These were either missing from the older specs or only partially implemented in 
 - `test_impact`
 - `integrity_signal_refs`
 - `primary_doc_role`
+- `blocked_by`
+- `sequence_order`
 
 ## Migration intent
 

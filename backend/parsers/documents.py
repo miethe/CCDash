@@ -345,6 +345,24 @@ def _to_optional_float(value: Any) -> float | None:
     return None
 
 
+def _to_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        try:
+            return int(float(token))
+        except Exception:
+            return None
+    return None
+
+
 def _normalize_status(status: str) -> str:
     token = (status or "").strip().lower()
     if not token:
@@ -694,6 +712,32 @@ def parse_document_file(
         fm.get("feature_family") or fm.get("lineage_family"),
         canonicalize=True,
     )
+    blocked_by = _normalize_feature_ref_list(_to_string_list(fm.get("blocked_by")))
+    if blocked_by:
+        existing_relation_keys = {
+            (
+                str(ref.get("feature") or ""),
+                str(ref.get("type") or ""),
+                str(ref.get("source") or ""),
+            )
+            for ref in typed_linked_feature_refs
+        }
+        for dependency in blocked_by:
+            relation_key = (dependency, "blocked_by", "blocked_by")
+            if relation_key in existing_relation_keys:
+                continue
+            existing_relation_keys.add(relation_key)
+            typed_linked_feature_refs.append(
+                {
+                    "feature": dependency,
+                    "type": "blocked_by",
+                    "source": "blocked_by",
+                    "confidence": 1.0,
+                    "notes": "",
+                    "evidence": [],
+                }
+            )
+    sequence_order = _to_optional_int(fm.get("sequence_order"))
     feature_version = _first_non_empty(fm.get("feature_version"), fm.get("version"))
     plan_ref = _first_non_empty(fm.get("plan_ref"))
     implementation_plan_ref = _first_non_empty(fm.get("implementation_plan_ref"))
@@ -741,6 +785,7 @@ def parse_document_file(
         {
             *linked_feature_refs,
             *[str(ref.get("feature") or "") for ref in typed_linked_feature_refs],
+            *blocked_by,
             *([lineage_parent] if lineage_parent else []),
             *lineage_children,
         }
@@ -797,6 +842,8 @@ def parse_document_file(
         primaryDocRole=primary_doc_role,
         featureSlug=feature_slug,
         featureFamily=feature_family,
+        blockedBy=blocked_by,
+        sequenceOrder=sequence_order,
         featureVersion=feature_version,
         planRef=plan_ref,
         implementationPlanRef=implementation_plan_ref,
@@ -863,6 +910,8 @@ def parse_document_file(
         primaryDocRole=primary_doc_role,
         featureSlug=feature_slug,
         featureFamily=feature_family,
+        blockedBy=blocked_by,
+        sequenceOrder=sequence_order,
         featureVersion=feature_version,
         planRef=plan_ref,
         implementationPlanRef=implementation_plan_ref,
@@ -876,6 +925,8 @@ def parse_document_file(
             tags=tags,
             linkedFeatures=all_linked_feature_refs,
             linkedFeatureRefs=typed_linked_feature_refs,
+            blockedBy=blocked_by,
+            sequenceOrder=sequence_order,
             linkedSessions=linked_session_refs,
             linkedTasks=linked_task_refs,
             lineageFamily=lineage_family,

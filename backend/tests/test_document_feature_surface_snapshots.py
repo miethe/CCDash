@@ -49,6 +49,8 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                             "confidence": 0.9,
                         }
                     ],
+                    "blockedBy": ["feature-blocker-v1"],
+                    "sequenceOrder": 2,
                     "relatedRefs": ["docs/project_plans/specs/shared-contract.md"],
                 }
             ),
@@ -65,6 +67,9 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     "milestone": "Milestone A",
                     "executionReadiness": "ready",
                     "testImpact": "high",
+                    "featureFamily": "snapshot",
+                    "blockedBy": ["feature-blocker-v1"],
+                    "sequenceOrder": 2,
                     "requestLogIds": ["REQ-20260301-snapshot-1"],
                     "commitRefs": ["abc1234"],
                     "prRefs": ["451"],
@@ -100,6 +105,8 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                 "riskLevel": doc.riskLevel,
                 "complexity": doc.complexity,
                 "track": doc.track,
+                "featureFamily": doc.featureFamily,
+                "sequenceOrder": doc.sequenceOrder,
             },
             "delivery": {
                 "timelineEstimate": doc.timelineEstimate,
@@ -107,6 +114,7 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                 "testImpact": doc.testImpact,
                 "targetRelease": doc.targetRelease,
                 "milestone": doc.milestone,
+                "blockedBy": doc.blockedBy,
                 "docTypeFieldKeys": sorted(doc.metadata.docTypeFields.keys()),
             },
             "relationships": {
@@ -115,6 +123,7 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     ref.model_dump(mode="json")
                     for ref in doc.frontmatter.linkedFeatureRefs
                 ],
+                "blockedBy": doc.frontmatter.blockedBy,
                 "relatedRefs": doc.frontmatter.relatedRefs,
                 "requestLogIds": doc.metadata.requestLogIds,
                 "commitRefs": doc.metadata.commitRefs,
@@ -137,6 +146,8 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     "riskLevel": "medium",
                     "complexity": "high",
                     "track": "migration",
+                    "featureFamily": "snapshot",
+                    "sequenceOrder": 2,
                 },
                 "delivery": {
                     "timelineEstimate": "2 weeks",
@@ -144,6 +155,7 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     "testImpact": "high",
                     "targetRelease": "2026-Q2",
                     "milestone": "Milestone A",
+                    "blockedBy": ["feature-blocker-v1"],
                     "docTypeFieldKeys": ["objective"],
                 },
                 "relationships": {
@@ -158,6 +170,7 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                             "evidence": [],
                         }
                     ],
+                    "blockedBy": ["feature-blocker-v1"],
                     "relatedRefs": ["docs/project_plans/specs/shared-contract.md"],
                     "requestLogIds": ["REQ-20260301-snapshot-1"],
                     "commitRefs": ["abc1234"],
@@ -182,6 +195,9 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     "title": "Plan Snapshot",
                     "filePath": "docs/project_plans/implementation_plans/features/snapshot-v1.md",
                     "docType": "implementation_plan",
+                    "featureFamily": "snapshot",
+                    "sequenceOrder": 1,
+                    "blockedBy": ["feature-alpha-v1"],
                 },
                 "phasePlans": [
                     {
@@ -189,6 +205,8 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                         "title": "Phase 1",
                         "filePath": "docs/project_plans/implementation_plans/features/snapshot-v1/phase-1-core.md",
                         "docType": "phase_plan",
+                        "featureFamily": "snapshot",
+                        "sequenceOrder": 2,
                     }
                 ],
                 "progressDocs": [
@@ -244,6 +262,12 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                 ),
                 "phasePlanCount": len(primary["phasePlans"]),
                 "progressDocCount": len(primary["progressDocs"]),
+                "implementationPlanSequence": (
+                    primary["implementationPlan"].sequenceOrder if primary["implementationPlan"] else None
+                ),
+                "implementationPlanBlockedBy": (
+                    primary["implementationPlan"].blockedBy if primary["implementationPlan"] else []
+                ),
                 "supportingDocTypes": [doc.docType for doc in primary["supportingDocs"]],
             },
             "coverage": coverage,
@@ -258,6 +282,8 @@ class DocumentFeatureSurfaceSnapshotTests(unittest.TestCase):
                     "implementationPlanType": "implementation_plan",
                     "phasePlanCount": 1,
                     "progressDocCount": 1,
+                    "implementationPlanSequence": 1,
+                    "implementationPlanBlockedBy": ["feature-alpha-v1"],
                     "supportingDocTypes": ["report", "spec"],
                 },
                 "coverage": {
