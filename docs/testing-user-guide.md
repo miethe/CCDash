@@ -8,8 +8,9 @@ This guide explains how to configure a Project so the `/tests` page ingests and 
 2. Ensure environment kill switches are enabled when you want testing features active:
    - `CCDASH_TEST_VISUALIZER_ENABLED=true`
    - `CCDASH_INTEGRITY_SIGNALS_ENABLED=true` (optional, for integrity alerts)
-   - `CCDASH_LIVE_TEST_UPDATES_ENABLED=true` (optional, for live updates)
+   - `CCDASH_LIVE_TEST_UPDATES_ENABLED=true` (optional, backend live-update gate)
    - `CCDASH_SEMANTIC_MAPPING_ENABLED=true` (optional, for semantic mapping)
+   - `VITE_CCDASH_LIVE_TESTS_ENABLED=true` (optional, frontend live-update rollout)
 
 Effective behavior is `env_flag && project_flag`. If env is `false`, project settings cannot override it.
 
@@ -123,7 +124,7 @@ The frontend includes a circuit breaker for `feature_disabled` responses to prev
 
 ### High CPU or constant polling previously observed
 
-Current behavior gates polling by effective project config and halts retry loops on `feature_disabled` 503 responses. If you still see churn, re-check env/project flags and browser console errors.
+Current behavior uses stream-first invalidation when both backend and frontend live gates are enabled, then falls back to polling on disconnect/backoff. If you still see churn, re-check env/project flags and browser console errors.
 
 ## 9) Mapping Coverage and Reuse Workflow
 

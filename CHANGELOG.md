@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-03-15
+
+### Added
+
+- Phase 5-6 SSE live-update rollout for invalidation-oriented surfaces:
+  - feature board and feature modal subscriptions behind `VITE_CCDASH_LIVE_FEATURES_ENABLED`
+  - test visualizer subscriptions behind `VITE_CCDASH_LIVE_TESTS_ENABLED`
+  - ops panel subscriptions behind `VITE_CCDASH_LIVE_OPS_ENABLED`
+- Shared frontend invalidation hook:
+  - `services/live/useLiveInvalidation.ts`
+- Live-update platform developer reference:
+  - `docs/live-update-platform-developer-reference.md`
+
+### Changed
+
+- Sync, feature, test, and ops backend paths now publish project-scoped live invalidation topics in addition to the existing execution/session topics.
+- `GET /api/cache/status` now exposes live broker metrics, and the Ops panel renders subscriber/buffer/replay-gap health at a glance.
+- Test visualizer hooks now prefer live invalidation and fall back to polling on backoff/closed connections.
+- SSE live-update platform tracking now completes phases 5-6 and marks the implementation plan complete.
+- Remaining V1 risk is explicitly documented: session live updates still use invalidation plus targeted REST recovery instead of transcript append deltas.
+
+### Docs
+
+- Added:
+  - `docs/live-update-platform-developer-reference.md`
+- Updated:
+  - `.env.example`
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/ops-panel-developer-reference.md`
+  - `docs/ops-panel-user-guide.md`
+  - `docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md`
+  - `docs/setup-user-guide.md`
+  - `docs/testing-user-guide.md`
+
 ## 2026-03-14
 
 ### Added

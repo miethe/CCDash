@@ -498,6 +498,8 @@ class DocumentFrontmatter(BaseModel):
     tags: list[str] = Field(default_factory=list)
     linkedFeatures: list[str] = Field(default_factory=list)
     linkedFeatureRefs: list["LinkedFeatureRef"] = Field(default_factory=list)
+    blockedBy: list[str] = Field(default_factory=list)
+    sequenceOrder: Optional[int] = None
     linkedSessions: list[str] = Field(default_factory=list)
     linkedTasks: list[str] = Field(default_factory=list)
     lineageFamily: str = ""
@@ -551,6 +553,8 @@ class DocumentMetadata(BaseModel):
     primaryDocRole: str = ""
     featureSlug: str = ""
     featureFamily: str = ""
+    blockedBy: list[str] = Field(default_factory=list)
+    sequenceOrder: Optional[int] = None
     featureVersion: str = ""
     planRef: str = ""
     implementationPlanRef: str = ""
@@ -624,6 +628,8 @@ class PlanDocument(BaseModel):
     primaryDocRole: str = ""
     featureSlug: str = ""
     featureFamily: str = ""
+    blockedBy: list[str] = Field(default_factory=list)
+    sequenceOrder: Optional[int] = None
     featureVersion: str = ""
     planRef: str = ""
     implementationPlanRef: str = ""
@@ -1116,6 +1122,10 @@ class LinkedDocument(BaseModel):
     category: str = ""
     slug: str = ""
     canonicalSlug: str = ""
+    featureFamily: str = ""
+    primaryDocRole: str = ""
+    blockedBy: list[str] = Field(default_factory=list)
+    sequenceOrder: Optional[int] = None
     frontmatterKeys: list[str] = Field(default_factory=list)
     relatedRefs: list[str] = Field(default_factory=list)
     prdRef: str = ""
@@ -1189,6 +1199,7 @@ class Feature(BaseModel):
     prRefs: list[str] = Field(default_factory=list)
     executionReadiness: str = ""
     testImpact: str = ""
+    featureFamily: str = ""
     updatedAt: str = ""
     plannedAt: str = ""
     startedAt: str = ""

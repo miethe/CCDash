@@ -162,9 +162,14 @@ const getSecondaryMetadataLine = (doc: PlanDocument): string => {
     if (normalizedType === 'implementation_plan') {
         const phaseCount = Number(doc.metadata?.docTypeFields?.phases?.length || 0);
         const parts = [
+            doc.featureFamily || doc.metadata?.featureFamily,
+            doc.sequenceOrder !== undefined && doc.sequenceOrder !== null ? `seq ${doc.sequenceOrder}` : '',
             doc.complexity || doc.metadata?.complexity,
             doc.track || doc.metadata?.track,
             phaseCount > 0 ? `${phaseCount} phases` : '',
+            (doc.frontmatter?.blockedBy?.length || doc.metadata?.blockedBy?.length || doc.blockedBy?.length || 0) > 0
+                ? `${doc.frontmatter?.blockedBy?.length || doc.metadata?.blockedBy?.length || doc.blockedBy?.length || 0} blocked by`
+                : '',
         ].filter(Boolean);
         return parts.length > 0 ? parts.join(' • ') : 'Implementation plan metadata unavailable';
     }
@@ -172,7 +177,12 @@ const getSecondaryMetadataLine = (doc: PlanDocument): string => {
         const phaseToken = doc.phaseToken || doc.metadata?.phase || '';
         const counts = doc.metadata?.taskCounts;
         const taskText = counts ? `${counts.completed}/${counts.total} tasks` : '';
-        const parts = [phaseToken ? `Phase ${phaseToken}` : '', taskText].filter(Boolean);
+        const parts = [
+            phaseToken ? `Phase ${phaseToken}` : '',
+            doc.featureFamily || doc.metadata?.featureFamily,
+            doc.sequenceOrder !== undefined && doc.sequenceOrder !== null ? `seq ${doc.sequenceOrder}` : '',
+            taskText,
+        ].filter(Boolean);
         return parts.length > 0 ? parts.join(' • ') : 'Phase metadata unavailable';
     }
     if (normalizedType === 'progress') {

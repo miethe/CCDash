@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 import aiosqlite
@@ -59,12 +60,35 @@ def _normalize_doc_type(value: str) -> str:
 
 
 def _document_to_linked(row: dict[str, Any]) -> LinkedDocument:
+    metadata = row.get("metadata_json")
+    frontmatter = row.get("frontmatter_json")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if isinstance(frontmatter, str):
+        try:
+            frontmatter = json.loads(frontmatter)
+        except Exception:
+            frontmatter = {}
+    if not isinstance(frontmatter, dict):
+        frontmatter = {}
     return LinkedDocument(
         id=str(row.get("id") or ""),
         title=str(row.get("title") or row.get("file_path") or "Untitled"),
         filePath=str(row.get("file_path") or ""),
         docType=str(row.get("doc_type") or "").strip() or "spec",
         category=str(row.get("category") or ""),
+        featureFamily=str(metadata.get("featureFamily") or ""),
+        primaryDocRole=str(metadata.get("primaryDocRole") or ""),
+        blockedBy=[str(v) for v in (frontmatter.get("blockedBy") or frontmatter.get("blocked_by") or []) if isinstance(v, str)],
+        sequenceOrder=metadata.get(
+            "sequenceOrder",
+            frontmatter.get("sequenceOrder") if frontmatter.get("sequenceOrder") is not None else frontmatter.get("sequence_order"),
+        ),
         prdRef=str(row.get("prd_ref") or ""),
     )
 
@@ -320,7 +344,15 @@ async def load_execution_documents(
             continue
         deduped[key] = doc
 
-    return sorted(deduped.values(), key=lambda doc: (doc.docType, doc.filePath, doc.title))
+    return sorted(
+        deduped.values(),
+        key=lambda doc: (
+            doc.sequenceOrder if isinstance(doc.sequenceOrder, int) else 10_000,
+            doc.docType,
+            doc.filePath,
+            doc.title,
+        ),
+    )
 
 
 def _session_value(session: Any, key: str, default: Any = None) -> Any:

@@ -1,6 +1,6 @@
 # Operations Panel User Guide
 
-Last updated: 2026-02-19
+Last updated: 2026-03-15
 
 The Operations panel is the control center for long sync/rebuild runs and link-audit checks.
 
@@ -16,6 +16,7 @@ Route:
 - Run **Targeted Path Sync** for selected changed files.
 - Monitor live operation progress with phase/status updates.
 - Inspect operation details (duration, counters, metadata, errors).
+- Inspect live-update broker health (subscriber, buffer, replay-gap, and dropped-event counts).
 - Run a **Link Audit** and review suspect mapping rows.
 - Review app/project metadata (health, watcher status, paths, project list).
 
@@ -68,5 +69,6 @@ The audit table shows suspect links with:
 
 ## Notes
 
-- Polling is faster while operations are active and slower when idle.
+- Enable `VITE_CCDASH_LIVE_OPS_ENABLED=true` to use stream-first operation invalidation in the panel.
+- When live ops rollout is disabled or the stream backs off, the panel returns to its existing polling cadence.
 - Operation IDs are stable handles you can share in debugging.

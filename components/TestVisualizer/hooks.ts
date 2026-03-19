@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { DomainHealthRollup, TestRun, TestVisualizerConfig } from '../../types';
+import { projectTestsTopic, useLiveInvalidation } from '../../services/live';
 import {
   getDomainHealth,
   getTestRun,
   getTestVisualizerConfig,
+  invalidateTestVisualizerProjectCache,
   listTestRuns,
   TestRunsFilter,
   TestVisualizerApiError,
@@ -14,6 +16,7 @@ interface UseTestStatusOptions {
   since?: string;
   pollingInterval?: number;
   enabled?: boolean;
+  liveEnabled?: boolean;
 }
 
 interface UseTestStatusResult {
@@ -100,6 +103,7 @@ export function useTestVisualizerConfig(projectId: string, enabled = true): UseT
 export function useTestStatus(projectId: string, options: UseTestStatusOptions = {}): UseTestStatusResult {
   const pollingInterval = options.pollingInterval ?? 60000;
   const enabled = options.enabled ?? true;
+  const liveEnabled = Boolean(options.liveEnabled && enabled);
 
   const [domains, setDomains] = useState<DomainHealthRollup[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -112,6 +116,16 @@ export function useTestStatus(projectId: string, options: UseTestStatusOptions =
     setFeatureDisabled(false);
     setRefreshTick(prev => prev + 1);
   }, []);
+
+  const liveStatus = useLiveInvalidation({
+    topics: liveEnabled && projectId ? [projectTestsTopic(projectId)] : [],
+    enabled: liveEnabled && !featureDisabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => {
+      invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
+      refresh();
+    },
+  });
 
   useEffect(() => {
     if (!projectId || !enabled || featureDisabled) {
@@ -144,12 +158,18 @@ export function useTestStatus(projectId: string, options: UseTestStatusOptions =
 
     load();
 
+    if (liveEnabled && !['backoff', 'closed'].includes(liveStatus)) {
+      return () => {
+        alive = false;
+      };
+    }
+
     const timer = window.setInterval(load, pollingInterval);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [enabled, featureDisabled, pollingInterval, projectId, options.since, refreshTick]);
+  }, [enabled, featureDisabled, liveEnabled, liveStatus, pollingInterval, projectId, options.since, refreshTick]);
 
   return { domains, isLoading, error, lastFetchedAt, featureDisabled, refresh };
 }
@@ -157,10 +177,11 @@ export function useTestStatus(projectId: string, options: UseTestStatusOptions =
 export function useTestRuns(
   projectId: string,
   filter: Omit<TestRunsFilter, 'projectId'> = {},
-  options: { enabled?: boolean; refreshToken?: number } = {},
+  options: { enabled?: boolean; refreshToken?: number; liveEnabled?: boolean } = {},
 ): UseTestRunsResult {
   const enabled = options.enabled ?? true;
   const externalRefreshToken = options.refreshToken ?? 0;
+  const liveEnabled = Boolean(options.liveEnabled && enabled);
   const agentSessionId = filter.agentSessionId;
   const featureId = filter.featureId;
   const domainId = filter.domainId;
@@ -180,6 +201,16 @@ export function useTestRuns(
     setFeatureDisabled(false);
     setRefreshTick(prev => prev + 1);
   }, []);
+
+  const liveStatus = useLiveInvalidation({
+    topics: liveEnabled && projectId ? [projectTestsTopic(projectId)] : [],
+    enabled: liveEnabled && !featureDisabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => {
+      invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
+      refresh();
+    },
+  });
 
   const loadRuns = useCallback(
     async (cursor?: string | null) => {
@@ -231,6 +262,21 @@ export function useTestRuns(
     void loadRuns(null);
   }, [enabled, externalRefreshToken, loadRuns, refreshTick]);
 
+  useEffect(() => {
+    if (!liveEnabled || !enabled) {
+      return undefined;
+    }
+    if (!['backoff', 'closed'].includes(liveStatus)) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadRuns(null);
+    }, 30000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [enabled, liveEnabled, liveStatus, loadRuns]);
+
   const loadMore = useCallback(() => {
     if (!nextCursor || isLoading) return;
     loadRuns(nextCursor);
@@ -251,6 +297,17 @@ export function useLiveTestUpdates(
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [featureDisabled, setFeatureDisabled] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const liveStatus = useLiveInvalidation({
+    topics: enabled && projectId ? [projectTestsTopic(projectId)] : [],
+    enabled: enabled && !featureDisabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => {
+      invalidateTestVisualizerProjectCache(projectId, 'live_invalidation');
+      setRefreshTick(prev => prev + 1);
+    },
+  });
 
   useEffect(() => {
     if (!projectId || !enabled || featureDisabled) {
@@ -294,17 +351,22 @@ export function useLiveTestUpdates(
     };
 
     poll();
+    if (!['backoff', 'closed'].includes(liveStatus)) {
+      return () => {
+        alive = false;
+      };
+    }
     const timer = window.setInterval(poll, pollingInterval);
 
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [enabled, featureDisabled, filter.featureId, filter.runId, filter.sessionId, pollingInterval, projectId]);
+  }, [enabled, featureDisabled, filter.featureId, filter.runId, filter.sessionId, liveStatus, pollingInterval, projectId, refreshTick]);
 
   return {
     latestRun,
-    isLive: enabled,
+    isLive: enabled && !['backoff', 'closed'].includes(liveStatus),
     lastUpdated,
     error,
     featureDisabled,

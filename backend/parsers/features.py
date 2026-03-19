@@ -259,6 +259,24 @@ def _normalize_choice_token(raw: Any) -> str:
     return re.sub(r"_+", "_", token).strip("_")
 
 
+def _to_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        try:
+            return int(float(token))
+        except Exception:
+            return None
+    return None
+
+
 def _pick_highest_ranked(values: list[str], ranking: dict[str, int]) -> str:
     best_value = ""
     best_rank = -1
@@ -463,10 +481,27 @@ def _extract_doc_metadata(
         "canonical_slug": _base_slug(slug),
         "doc_type": classify_doc_type(project_rel, frontmatter),
         "category": classify_doc_category(project_rel, frontmatter),
+        "feature_family": canonical_slug(str(frontmatter.get("feature_family") or frontmatter.get("lineage_family") or "").strip()),
+        "primary_doc_role": str(frontmatter.get("primary_doc_role") or "").strip(),
+        "blocked_by": _normalize_feature_refs(_to_string_list(frontmatter.get("blocked_by"))),
+        "sequence_order": _to_optional_int(frontmatter.get("sequence_order")),
         "frontmatter_keys": sorted(str(key) for key in frontmatter.keys()),
         "related_refs": [str(v) for v in refs.get("relatedRefs", []) if isinstance(v, str)],
         "feature_refs": [str(v) for v in refs.get("featureRefs", []) if isinstance(v, str)],
-        "linked_feature_refs": _normalize_linked_feature_refs(refs.get("typedFeatureRefs")),
+        "linked_feature_refs": _normalize_linked_feature_refs(
+            [
+                *(_safe_list(refs.get("typedFeatureRefs"))),
+                *[
+                    {
+                        "feature": dependency,
+                        "type": "blocked_by",
+                        "source": "blocked_by",
+                        "confidence": 1.0,
+                    }
+                    for dependency in _normalize_feature_refs(_to_string_list(frontmatter.get("blocked_by")))
+                ],
+            ]
+        ),
         "prd_ref": str(refs.get("prd") or ""),
         "dates": dates,
         "timeline": timeline,
@@ -547,6 +582,10 @@ def _scan_impl_plans(
                     "slug": slug,
                     "status": status,
                     "category": doc_meta["category"],
+                    "feature_family": doc_meta.get("feature_family", ""),
+                    "primary_doc_role": doc_meta.get("primary_doc_role", ""),
+                    "blocked_by": doc_meta.get("blocked_by", []),
+                    "sequence_order": doc_meta.get("sequence_order"),
                     "frontmatter_keys": doc_meta["frontmatter_keys"],
                     "related_refs": doc_meta["related_refs"],
                     "prd_ref": doc_meta["prd_ref"],
@@ -568,6 +607,10 @@ def _scan_impl_plans(
             "tags": tags if isinstance(tags, list) else [],
             "updated": updated,
             "rel_path": rel_path,
+            "feature_family": doc_meta.get("feature_family", ""),
+            "primary_doc_role": doc_meta.get("primary_doc_role", ""),
+            "blocked_by": doc_meta.get("blocked_by", []),
+            "sequence_order": doc_meta.get("sequence_order"),
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
             "lineage_family": doc_meta.get("lineage_family", ""),
@@ -629,6 +672,10 @@ def _scan_prds(
             "tags": tags if isinstance(tags, list) else [],
             "updated": updated,
             "rel_path": rel_path,
+            "feature_family": doc_meta.get("feature_family", ""),
+            "primary_doc_role": doc_meta.get("primary_doc_role", ""),
+            "blocked_by": doc_meta.get("blocked_by", []),
+            "sequence_order": doc_meta.get("sequence_order"),
             "frontmatter_keys": doc_meta["frontmatter_keys"],
             "related_refs": doc_meta["related_refs"],
             "prd_ref": doc_meta["prd_ref"],
@@ -762,6 +809,10 @@ def _scan_progress_dirs(
                 "title": str(fm.get("title", md_file.stem.replace("-", " ").title())),
                 "slug": doc_meta["slug"],
                 "category": doc_meta["category"],
+                "feature_family": doc_meta.get("feature_family", ""),
+                "primary_doc_role": doc_meta.get("primary_doc_role", ""),
+                "blocked_by": doc_meta.get("blocked_by", []),
+                "sequence_order": doc_meta.get("sequence_order"),
                 "frontmatter_keys": doc_meta["frontmatter_keys"],
                 "related_refs": doc_meta["related_refs"],
                 "prd_ref": doc_meta["prd_ref"],
@@ -977,6 +1028,10 @@ def _scan_auxiliary_docs(
                 "category": str(metadata["category"]),
                 "slug": slug,
                 "canonicalSlug": canonical,
+                "featureFamily": str(metadata.get("feature_family") or ""),
+                "primaryDocRole": str(metadata.get("primary_doc_role") or ""),
+                "blockedBy": [str(v) for v in metadata.get("blocked_by", []) if isinstance(v, str)],
+                "sequenceOrder": metadata.get("sequence_order"),
                 "frontmatterKeys": metadata["frontmatter_keys"],
                 "relatedRefs": metadata["related_refs"],
                 "prdRef": str(metadata["prd_ref"] or ""),
@@ -1322,6 +1377,9 @@ def _extract_doc_rollup_context(
         "milestone": str(frontmatter.get("milestone") or "").strip(),
         "executionReadiness": str(frontmatter.get("execution_readiness") or "").strip(),
         "testImpact": str(frontmatter.get("test_impact") or "").strip(),
+        "featureFamily": canonical_slug(str(frontmatter.get("feature_family") or frontmatter.get("lineage_family") or "").strip()),
+        "blockedBy": _normalize_feature_refs(_to_string_list(frontmatter.get("blocked_by"))),
+        "sequenceOrder": _to_optional_int(frontmatter.get("sequence_order")),
         "owners": [str(v).strip() for v in owner_values if str(v).strip()],
         "contributors": [str(v).strip() for v in _to_string_list(frontmatter.get("contributors")) if str(v).strip()],
         "requestLogIds": [str(v).strip() for v in request_log_ids if str(v).strip()],
@@ -1420,6 +1478,12 @@ def _derive_feature_rollups(
     timeline_estimate = _first_non_empty(plan_contexts, "timelineEstimate") or _first_non_empty(prd_contexts, "timelineEstimate")
     target_release = _first_non_empty(prd_contexts, "targetRelease") or _first_non_empty(plan_contexts, "targetRelease")
     milestone = _first_non_empty(prd_contexts, "milestone") or _first_non_empty(plan_contexts, "milestone")
+    feature_family = (
+        _first_non_empty(plan_contexts, "featureFamily")
+        or _first_non_empty(prd_contexts, "featureFamily")
+        or _first_non_empty(progress_contexts, "featureFamily")
+        or _first_non_empty(phase_contexts, "featureFamily")
+    )
 
     owner_values: set[str] = set()
     contributor_values: set[str] = set()
@@ -1427,6 +1491,7 @@ def _derive_feature_rollups(
     commit_ref_values: set[str] = set()
     pr_ref_values: set[str] = set()
     integrity_signal_values: set[str] = set()
+    blocked_by_values: set[str] = set()
     explicit_readiness_values: list[str] = []
     explicit_test_impact_values: list[str] = []
     blocker_count = 0
@@ -1452,6 +1517,9 @@ def _derive_feature_rollups(
         for signal_ref in ctx.get("integritySignalRefs", []):
             if signal_ref:
                 integrity_signal_values.add(signal_ref)
+        for dependency in ctx.get("blockedBy", []):
+            if dependency:
+                blocked_by_values.add(dependency)
         readiness = str(ctx.get("executionReadiness") or "").strip()
         if readiness:
             explicit_readiness_values.append(readiness)
@@ -1527,6 +1595,8 @@ def _derive_feature_rollups(
         "timelineEstimate": timeline_estimate,
         "targetRelease": target_release,
         "milestone": milestone,
+        "featureFamily": feature_family,
+        "blockedBy": sorted(blocked_by_values),
         "owners": sorted(owner_values),
         "contributors": sorted(contributor_values),
         "requestLogIds": sorted(request_log_values),
@@ -1784,9 +1854,13 @@ def scan_features(
                     title=plan["title"],
                     filePath=plan["rel_path"],
                     docType="implementation_plan",
-                category=plan.get("category", ""),
-                slug=slug,
-                canonicalSlug=_base_slug(slug),
+                    category=plan.get("category", ""),
+                    slug=slug,
+                    canonicalSlug=_base_slug(slug),
+                    featureFamily=str(plan.get("feature_family") or ""),
+                    primaryDocRole=str(plan.get("primary_doc_role") or ""),
+                    blockedBy=[str(v) for v in plan.get("blocked_by", []) if isinstance(v, str)],
+                    sequenceOrder=plan.get("sequence_order"),
                     frontmatterKeys=plan.get("frontmatter_keys", []),
                     relatedRefs=plan.get("related_refs", []),
                     prdRef=plan.get("prd_ref", ""),
@@ -1810,6 +1884,10 @@ def scan_features(
                 category=pd.get("category", ""),
                 slug=pd["slug"],
                 canonicalSlug=_base_slug(pd["slug"]),
+                featureFamily=str(pd.get("feature_family") or ""),
+                primaryDocRole=str(pd.get("primary_doc_role") or ""),
+                blockedBy=[str(v) for v in pd.get("blocked_by", []) if isinstance(v, str)],
+                sequenceOrder=pd.get("sequence_order"),
                 frontmatterKeys=pd.get("frontmatter_keys", []),
                 relatedRefs=pd.get("related_refs", []),
                 prdRef=pd.get("prd_ref", ""),
@@ -1828,6 +1906,7 @@ def scan_features(
             status=_map_status(plan["status"]),
             category=plan["category"],
             tags=plan["tags"],
+            featureFamily=str(plan.get("feature_family") or ""),
             updatedAt=plan["updated"],
             linkedDocs=linked_docs,
         )
@@ -1868,6 +1947,10 @@ def scan_features(
                 category="PRDs",
                 slug=prd_slug,
                 canonicalSlug=_base_slug(prd_slug),
+                featureFamily=str(prd.get("feature_family") or ""),
+                primaryDocRole=str(prd.get("primary_doc_role") or ""),
+                blockedBy=[str(v) for v in prd.get("blocked_by", []) if isinstance(v, str)],
+                sequenceOrder=prd.get("sequence_order"),
                 frontmatterKeys=prd.get("frontmatter_keys", []),
                 relatedRefs=prd.get("related_refs", []),
                 prdRef=prd.get("prd_ref", ""),
@@ -1890,6 +1973,7 @@ def scan_features(
                 name=prd["title"],
                 status=_map_status(prd["status"]),
                 tags=prd.get("tags", []),
+                featureFamily=str(prd.get("feature_family") or ""),
                 updatedAt=prd.get("updated", ""),
                 linkedDocs=[LinkedDocument(
                     id=f"PRD-{prd_slug}",
@@ -1899,6 +1983,10 @@ def scan_features(
                     category="PRDs",
                     slug=prd_slug,
                     canonicalSlug=_base_slug(prd_slug),
+                    featureFamily=str(prd.get("feature_family") or ""),
+                    primaryDocRole=str(prd.get("primary_doc_role") or ""),
+                    blockedBy=[str(v) for v in prd.get("blocked_by", []) if isinstance(v, str)],
+                    sequenceOrder=prd.get("sequence_order"),
                     frontmatterKeys=prd.get("frontmatter_keys", []),
                     relatedRefs=prd.get("related_refs", []),
                     prdRef=prd.get("prd_ref", ""),
@@ -1969,6 +2057,10 @@ def scan_features(
                     category=str(progress_doc.get("category") or ""),
                     slug=doc_slug,
                     canonicalSlug=_base_slug(doc_slug),
+                    featureFamily=str(progress_doc.get("feature_family") or ""),
+                    primaryDocRole=str(progress_doc.get("primary_doc_role") or ""),
+                    blockedBy=[str(v) for v in progress_doc.get("blocked_by", []) if isinstance(v, str)],
+                    sequenceOrder=progress_doc.get("sequence_order"),
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
@@ -2000,6 +2092,10 @@ def scan_features(
                     category=str(progress_doc.get("category") or ""),
                     slug=doc_slug,
                     canonicalSlug=_base_slug(doc_slug),
+                    featureFamily=str(progress_doc.get("feature_family") or ""),
+                    primaryDocRole=str(progress_doc.get("primary_doc_role") or ""),
+                    blockedBy=[str(v) for v in progress_doc.get("blocked_by", []) if isinstance(v, str)],
+                    sequenceOrder=progress_doc.get("sequence_order"),
                     frontmatterKeys=[str(v) for v in progress_doc.get("frontmatter_keys", []) if isinstance(v, str)],
                     relatedRefs=[str(v) for v in progress_doc.get("related_refs", []) if isinstance(v, str)],
                     prdRef=str(progress_doc.get("prd_ref") or ""),
@@ -2019,6 +2115,7 @@ def scan_features(
                 completedTasks=sum(p.completedTasks for p in phases),
                 deferredTasks=sum(p.deferredTasks for p in phases),
                 phases=phases,
+                featureFamily=str(prog.get("feature_family") or ""),
                 updatedAt=prog.get("updated", ""),
                 linkedDocs=linked_docs,
             )
@@ -2041,6 +2138,10 @@ def scan_features(
                 category=str(doc.get("category") or ""),
                 slug=str(doc.get("slug") or Path(file_path).stem.lower()),
                 canonicalSlug=str(doc.get("canonicalSlug") or _base_slug(Path(file_path).stem.lower())),
+                featureFamily=str(doc.get("featureFamily") or ""),
+                primaryDocRole=str(doc.get("primaryDocRole") or ""),
+                blockedBy=[str(v) for v in doc.get("blockedBy", []) if isinstance(v, str)],
+                sequenceOrder=doc.get("sequenceOrder"),
                 frontmatterKeys=[str(v) for v in doc.get("frontmatterKeys", []) if isinstance(v, str)],
                 relatedRefs=[str(v) for v in doc.get("relatedRefs", []) if isinstance(v, str)],
                 prdRef=str(doc.get("prdRef") or ""),
@@ -2081,6 +2182,7 @@ def scan_features(
         feat.timelineEstimate = str(rollups.get("timelineEstimate") or feat.timelineEstimate or "")
         feat.targetRelease = str(rollups.get("targetRelease") or feat.targetRelease or "")
         feat.milestone = str(rollups.get("milestone") or feat.milestone or "")
+        feat.featureFamily = str(rollups.get("featureFamily") or feat.featureFamily or "")
         feat.owners = [str(v) for v in rollups.get("owners") or feat.owners]
         feat.contributors = [str(v) for v in rollups.get("contributors") or feat.contributors]
         feat.requestLogIds = [str(v) for v in rollups.get("requestLogIds") or feat.requestLogIds]

@@ -773,6 +773,88 @@ PRD body
                 )
             )
 
+    def test_blocked_by_frontmatter_bubbles_into_feature_relations_and_family(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            progress_dir.mkdir(parents=True, exist_ok=True)
+
+            (docs_dir / "implementation_plans" / "features" / "feature-blocker-v1.md").write_text(
+                """---
+title: "Implementation Plan: Blocker"
+status: completed
+feature_slug: feature-blocker-v1
+feature_family: dependency-chain
+sequence_order: 0
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-blocker-v1.md").write_text(
+                """---
+title: "PRD: Blocker"
+status: completed
+feature_slug: feature-blocker-v1
+feature_family: dependency-chain
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "implementation_plans" / "features" / "feature-dependent-v1.md").write_text(
+                """---
+title: "Implementation Plan: Dependent"
+status: blocked
+feature_slug: feature-dependent-v1
+feature_family: dependency-chain
+sequence_order: 1
+blocked_by:
+  - feature-blocker-v1
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-dependent-v1.md").write_text(
+                """---
+title: "PRD: Dependent"
+status: blocked
+feature_slug: feature-dependent-v1
+feature_family: dependency-chain
+blocked_by:
+  - feature-blocker-v1
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+
+            features = scan_features(docs_dir, progress_dir)
+            by_id = {feature.id: feature for feature in features}
+            dependent = by_id["feature-dependent-v1"]
+
+            self.assertEqual(dependent.featureFamily, "dependency-chain")
+            self.assertTrue(
+                any(
+                    ref.feature == "feature-blocker-v1"
+                    and ref.type == "blocked_by"
+                    and ref.source == "blocked_by"
+                    for ref in dependent.linkedFeatures
+                )
+            )
+            self.assertTrue(
+                any(
+                    doc.sequenceOrder == 1
+                    and doc.featureFamily == "dependency-chain"
+                    and doc.blockedBy == ["feature-blocker-v1"]
+                    for doc in dependent.linkedDocs
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

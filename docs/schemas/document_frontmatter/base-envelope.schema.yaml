@@ -76,6 +76,14 @@ properties:
     type: string
   feature_family:
     type: string
+  blocked_by:
+    type: array
+    items:
+      type: string
+  sequence_order:
+    type:
+      - integer
+      - "null"
   feature_version:
     type: string
   lineage_family:
@@ -277,4 +285,3 @@ $defs:
         type: array
         items:
           type: string
-

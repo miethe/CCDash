@@ -215,6 +215,16 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 | `CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED` | `true` | Global gate for workflow intelligence endpoints |
 | `CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED` | `true` | Global gate for attribution analytics and payloads |
 
+#### Frontend Live Rollout
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_CCDASH_LIVE_EXECUTION_ENABLED` | `true` | Stream-first execution run updates |
+| `VITE_CCDASH_LIVE_SESSIONS_ENABLED` | `true` | Stream-first active session invalidation/recovery |
+| `VITE_CCDASH_LIVE_FEATURES_ENABLED` | `false` | Feature board and feature-modal invalidation topics |
+| `VITE_CCDASH_LIVE_TESTS_ENABLED` | `false` | Test visualizer invalidation topics (requires backend test live gate too) |
+| `VITE_CCDASH_LIVE_OPS_ENABLED` | `false` | Ops panel live operation/status invalidation topics |
+
 #### Startup Tuning
 
 | Variable | Default | Description |

@@ -3,6 +3,7 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 import { useData } from '../../contexts/DataContext';
+import { isTestLiveUpdatesEnabled } from '../../services/live';
 import { getTestMetricsSummary, getTestRun, invalidateTestVisualizerProjectCache, listRunResults } from '../../services/testVisualizer';
 import { DomainHealthRollup, TestDefinition, TestResult, TestRun, TestRunDetail, TestStatus } from '../../types';
 import { SidebarFiltersPortal } from '../SidebarFilters';
@@ -107,7 +108,14 @@ export const TestingPage: React.FC = () => {
   const projectId = activeProject?.id || '';
   const testConfig = useTestVisualizerConfig(projectId, Boolean(projectId));
   const visualizerEnabled = Boolean(testConfig.config?.effectiveFlags?.testVisualizerEnabled);
-  const status = useTestStatus(projectId, { enabled: Boolean(projectId && visualizerEnabled) });
+  const liveEnabled = Boolean(
+    testConfig.config?.effectiveFlags?.liveTestUpdatesEnabled
+    && isTestLiveUpdatesEnabled(),
+  );
+  const status = useTestStatus(projectId, {
+    enabled: Boolean(projectId && visualizerEnabled),
+    liveEnabled,
+  });
   const runs = useTestRuns(
     projectId,
     {
@@ -118,6 +126,7 @@ export const TestingPage: React.FC = () => {
     {
       enabled: Boolean(projectId && visualizerEnabled),
       refreshToken: refreshNonce,
+      liveEnabled,
     },
   );
 

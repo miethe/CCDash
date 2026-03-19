@@ -1,5 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { normalizeRuntimeStatus, type RuntimeStatus } from '../services/runtimeProfile';
+import {
+  isFeatureLiveUpdatesEnabled,
+  projectFeaturesTopic,
+  useLiveInvalidation,
+} from '../services/live';
 import { useDataClient } from './DataClientContext';
 import { useAppEntityData } from './AppEntityDataContext';
 import { useAppSession } from './AppSessionContext';
@@ -94,6 +99,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     refreshFeaturesRef.current = entity.refreshFeatures;
   }, [entity.refreshFeatures]);
 
+  const featureLiveEnabled = Boolean(!isTestsRoute && session.activeProject?.id && isFeatureLiveUpdatesEnabled());
+  const featureLiveStatus = useLiveInvalidation({
+    topics: featureLiveEnabled && session.activeProject?.id ? [projectFeaturesTopic(session.activeProject.id)] : [],
+    enabled: featureLiveEnabled,
+    pauseWhenHidden: true,
+    onInvalidate: () => refreshFeaturesRef.current(),
+  });
+
   useEffect(() => {
     void refreshAllRef.current();
   }, []);
@@ -109,11 +122,14 @@ export const AppRuntimeProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (isTestsRoute) {
       return undefined;
     }
+    if (featureLiveEnabled && !['backoff', 'closed'].includes(featureLiveStatus)) {
+      return undefined;
+    }
     const interval = setInterval(() => {
       void refreshFeaturesRef.current();
     }, FEATURE_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [isTestsRoute]);
+  }, [featureLiveEnabled, featureLiveStatus, isTestsRoute]);
 
   return (
     <AppRuntimeContext.Provider

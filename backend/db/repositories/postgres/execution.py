@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from backend.application.live_updates.domain_events import (
+    publish_execution_run_events,
+    publish_execution_run_snapshot,
+)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -79,6 +84,7 @@ class PostgresExecutionRepository:
             str(run_data.get("updated_at") or now),
         )
         created = await self.get_run(str(run_data.get("id") or ""))
+        await publish_execution_run_snapshot(created)
         return created or {}
 
     async def update_run(self, run_id: str, updates: dict) -> dict | None:
@@ -104,7 +110,9 @@ class PostgresExecutionRepository:
             f"UPDATE execution_runs SET {assignments} WHERE id = ${len(params)}",
             *params,
         )
-        return await self.get_run(run_id)
+        updated = await self.get_run(run_id)
+        await publish_execution_run_snapshot(updated)
+        return updated
 
     async def get_run(self, run_id: str) -> dict | None:
         row = await self.db.fetchrow("SELECT * FROM execution_runs WHERE id = $1", run_id)
@@ -197,6 +205,7 @@ class PostgresExecutionRepository:
                         "occurred_at": occurred_at,
                     }
                 )
+            await publish_execution_run_events(run_id, inserted)
             return inserted
 
     async def list_events_after_sequence(

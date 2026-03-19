@@ -647,6 +647,8 @@ export interface PlanDocument {
   primaryDocRole?: string;
   featureSlug?: string;
   featureFamily?: string;
+  blockedBy?: string[];
+  sequenceOrder?: number | null;
   featureVersion?: string;
   planRef?: string;
   implementationPlanRef?: string;
@@ -658,6 +660,8 @@ export interface PlanDocument {
     tags: string[];
     linkedFeatures?: string[]; // IDs like T-101
     linkedFeatureRefs?: LinkedFeatureRef[];
+    blockedBy?: string[];
+    sequenceOrder?: number | null;
     linkedSessions?: string[]; // IDs like S-8821
     linkedTasks?: string[];
     lineageFamily?: string;
@@ -707,6 +711,8 @@ export interface PlanDocument {
     primaryDocRole?: string;
     featureSlug?: string;
     featureFamily?: string;
+    blockedBy?: string[];
+    sequenceOrder?: number | null;
     featureVersion?: string;
     planRef?: string;
     implementationPlanRef?: string;
@@ -1642,6 +1648,10 @@ export interface LinkedDocument {
   category?: string;
   slug?: string;
   canonicalSlug?: string;
+  featureFamily?: string;
+  primaryDocRole?: string;
+  blockedBy?: string[];
+  sequenceOrder?: number | null;
   frontmatterKeys?: string[];
   relatedRefs?: string[];
   prdRef?: string;
@@ -1691,6 +1701,7 @@ export interface Feature {
   prRefs?: string[];
   executionReadiness?: string;
   testImpact?: string;
+  featureFamily?: string;
   updatedAt: string;
   plannedAt?: string;
   startedAt?: string;
@@ -2306,6 +2317,17 @@ export interface CacheStatusResponse {
     recentOperations: SyncOperation[];
     trackedOperationCount: number;
   };
+  liveUpdates?: {
+    active_subscribers: number;
+    buffered_topics: number;
+    active_topic_subscriptions: number;
+    published_events: number;
+    dropped_events: number;
+    buffer_evictions: number;
+    replay_gaps: number;
+    subscription_opens: number;
+    subscription_closes: number;
+  } | null;
 }
 
 export interface LinkAuditSuspect {

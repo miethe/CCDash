@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -192,6 +193,7 @@ async def get_entity_tree(entity_type: str, entity_id: str):
 async def get_cache_status(request: Request):
     """Return sync engine + watcher status, including live operations."""
     sync_engine = _get_sync_engine(request)
+    live_broker = getattr(request.app.state, "live_event_broker", None)
     project = project_manager.get_active_project()
     sessions_dir = docs_dir = progress_dir = None
     if project:
@@ -209,6 +211,7 @@ async def get_cache_status(request: Request):
             "progressDir": str(progress_dir) if progress_dir else "",
         },
         "operations": observability,
+        "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
     }
 
 
