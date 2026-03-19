@@ -323,6 +323,29 @@ class CodebaseRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(detail["activity"]), 1)
         self.assertTrue(any(entry.get("artifactCount", 0) > 0 for entry in detail["activity"]))
 
+    async def test_file_content_returns_text_payload(self) -> None:
+        with (
+            patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),
+            patch.object(codebase_router.connection, "get_connection", return_value=self.db),
+        ):
+            payload = await codebase_router.get_codebase_file_content("src/app.ts")
+
+        self.assertEqual(payload["filePath"], "src/app.ts")
+        self.assertIn("export const app = 1;", payload["content"])
+        self.assertEqual(payload["sizeBytes"], len("export const app = 1;\n".encode("utf-8")))
+        self.assertFalse(payload["truncated"])
+        self.assertIsNone(payload["originalSize"])
+
+    async def test_file_content_path_traversal_rejected(self) -> None:
+        with (
+            patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),
+            patch.object(codebase_router.connection, "get_connection", return_value=self.db),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await codebase_router.get_codebase_file_content("../secret.txt")
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
     async def test_involvement_levels_follow_thresholds(self) -> None:
         with (
             patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),

@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - fallback path
 
 BUILTIN_EXCLUDES = (".git/", "node_modules/", "dist/", "coverage/", ".venv/")
 CACHE_TTL_SECONDS = 30.0
+MAX_FILE_CONTENT_BYTES = 256 * 1024
 ACTION_WEIGHTS = {
     "create": 1.00,
     "update": 0.80,
@@ -615,6 +616,28 @@ class CodebaseExplorerService:
             "features": summary.features,
             "documents": document_items,
             "activity": activity_entries,
+        }
+
+    async def get_file_content(self, file_path: str) -> dict[str, Any]:
+        rel_path, absolute_path = _resolve_safe_path(self.project_root, file_path)
+        if not absolute_path.exists() or not absolute_path.is_file():
+            raise FileNotFoundError(f"File not found: {rel_path}")
+
+        raw = absolute_path.read_bytes()
+        if b"\x00" in raw:
+            raise ValueError("Binary files are not supported by the shared content viewer")
+
+        original_size = len(raw)
+        truncated = original_size > MAX_FILE_CONTENT_BYTES
+        visible = raw[:MAX_FILE_CONTENT_BYTES]
+
+        return {
+            "filePath": rel_path,
+            "absolutePath": str(absolute_path),
+            "content": visible.decode("utf-8", errors="replace"),
+            "sizeBytes": original_size,
+            "truncated": truncated,
+            "originalSize": original_size if truncated else None,
         }
 
     async def _get_snapshot(self, *, include_untouched: bool = False) -> Snapshot:

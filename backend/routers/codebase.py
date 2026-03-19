@@ -72,6 +72,22 @@ async def get_codebase_files(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@codebase_router.get("/file-content")
+async def get_codebase_file_content(
+    path: str = Query("", description="Project-relative file path"),
+):
+    project = _get_active_project()
+    project_root = project_manager.get_project_root(project)
+    db = await connection.get_connection()
+    service = CodebaseExplorerService(db, project, project_root=project_root)
+    try:
+        return await service.get_file_content(file_path=path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @codebase_router.get("/files/{file_path:path}")
 async def get_codebase_file_detail(
     file_path: str,
