@@ -16,6 +16,15 @@ const VIEWER_EDITABLE_EXTENSIONS = new Set([
 ]);
 
 const VIEWER_MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
+const MARKDOWN_SIGNAL_PATTERNS = [
+  /^#{1,6}\s+/m,
+  /^>\s+/m,
+  /^[-*+]\s+/m,
+  /^\d+\.\s+/m,
+  /```[\s\S]*?```/m,
+  /^\|.+\|\s*$/m,
+  /^---\n[\s\S]+?\n---\n?/m,
+];
 
 export type ContentViewerMode = 'markdown' | 'text' | 'code' | 'binary';
 
@@ -51,6 +60,27 @@ export const getContentViewerMode = (path: string | null | undefined): ContentVi
   if (VIEWER_EDITABLE_EXTENSIONS.has(extension)) return 'code';
   if (!extension) return 'text';
   return 'text';
+};
+
+export const looksLikeMarkdownContent = (content: string | null | undefined): boolean => {
+  const text = String(content || '').trim();
+  if (!text) return false;
+
+  return MARKDOWN_SIGNAL_PATTERNS.some(pattern => pattern.test(text));
+};
+
+export const getReadOnlyContentViewerMode = (
+  path: string | null | undefined,
+  content: string | null | undefined,
+): ContentViewerMode => {
+  const modeFromPath = getContentViewerMode(path);
+  if (modeFromPath === 'markdown') {
+    return 'markdown';
+  }
+  if (looksLikeMarkdownContent(content)) {
+    return 'markdown';
+  }
+  return modeFromPath;
 };
 
 export const isContentViewerEditable = (path: string | null | undefined): boolean => {

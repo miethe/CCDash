@@ -19,7 +19,7 @@ import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccen
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { Badge, ModelBadge, StableBadge } from './ui/badge';
 import { formatModelDisplayName } from '../lib/modelIdentity';
-import { getInlineContentViewerPayload } from '../lib/sessionContentViewer';
+import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from '../lib/sessionContentViewer';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
@@ -1589,6 +1589,11 @@ const DetailPane: React.FC<{
         readToolDetails?.filePath,
         log.toolCall?.output,
     );
+    const taskPromptViewerPayload = getTranscriptContentViewerPayload(
+        `${log.id}-task-prompt`,
+        taskToolDetails?.prompt || null,
+    );
+    const transcriptViewerPayload = getTranscriptContentViewerPayload(log.id, log.content);
     const taskDisplayContext = resolveTaskInvocationDisplayContext(log, taskToolDetails, threadSessionDetails, subagentNameBySessionId);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
@@ -1825,9 +1830,21 @@ const DetailPane: React.FC<{
                                         )}
                                     </div>
                                     {expandedSections.has('task-full-prompt') && taskToolDetails.prompt && (
-                                        <pre className="mt-3 text-xs font-mono text-slate-300 bg-slate-900/60 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
-                                            {taskToolDetails.prompt}
-                                        </pre>
+                                        <div className="mt-3 max-h-96 animate-in slide-in-from-top-1 duration-200">
+                                            {taskPromptViewerPayload ? (
+                                                <UnifiedContentViewer
+                                                    path={taskPromptViewerPayload.path}
+                                                    content={taskPromptViewerPayload.content}
+                                                    readOnly
+                                                    className="h-full"
+                                                    ariaLabel={`Task prompt: ${taskPromptViewerPayload.path}`}
+                                                />
+                                            ) : (
+                                                <pre className="text-xs font-mono text-slate-300 bg-slate-900/60 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+                                                    {taskToolDetails.prompt}
+                                                </pre>
+                                            )}
+                                        </div>
                                     )}
                                     {taskToolDetails.args && (
                                         <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
@@ -2238,8 +2255,19 @@ const DetailPane: React.FC<{
                 {/* FALLBACK FOR REGULAR/TYPED MESSAGES */}
                 {log.type !== 'tool' && log.type !== 'subagent' && log.type !== 'skill' && (
                     <>
-                        {renderStructuredMessage()}
-                        {renderRawMessageSection()}
+                        {transcriptViewerPayload ? (
+                            <UnifiedContentViewer
+                                path={transcriptViewerPayload.path}
+                                content={transcriptViewerPayload.content}
+                                readOnly
+                                ariaLabel={`Transcript content: ${transcriptViewerPayload.path}`}
+                            />
+                        ) : (
+                            <>
+                                {renderStructuredMessage()}
+                                {renderRawMessageSection()}
+                            </>
+                        )}
                         {log.linkedSessionId && (
                             <p className="text-[11px] text-indigo-300 font-mono">Linked Thread: {log.linkedSessionId}</p>
                         )}
@@ -2249,23 +2277,34 @@ const DetailPane: React.FC<{
                 {/* SKILLS */}
                 {log.type === 'skill' && log.skillDetails && (
                     <div className="space-y-4">
-                        {isMappedTranscriptMessageKind(parsedMessage.kind) && parsedMessage.mapped && (
-                            <TranscriptMappedMessageCard
-                                message={parsedMessage}
-                                commandArtifactsCount={commandArtifacts.length}
-                                onOpenArtifacts={onOpenArtifacts}
+                        {transcriptViewerPayload ? (
+                            <UnifiedContentViewer
+                                path={transcriptViewerPayload.path}
+                                content={transcriptViewerPayload.content}
+                                readOnly
+                                ariaLabel={`Skill content: ${transcriptViewerPayload.path}`}
                             />
+                        ) : (
+                            <>
+                                {isMappedTranscriptMessageKind(parsedMessage.kind) && parsedMessage.mapped && (
+                                    <TranscriptMappedMessageCard
+                                        message={parsedMessage}
+                                        commandArtifactsCount={commandArtifacts.length}
+                                        onOpenArtifacts={onOpenArtifacts}
+                                    />
+                                )}
+                                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                                    <div className="flex items-center gap-2 text-blue-400 font-mono text-sm mb-3">
+                                        <Cpu size={16} /> {log.skillDetails.name}
+                                    </div>
+                                    <p className="text-slate-400 text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
+                                    <div className="flex items-center justify-between text-[10px] border-t border-slate-800 pt-3">
+                                        <span className="text-slate-500">Version</span>
+                                        <span className="font-mono text-slate-300">{log.skillDetails.version}</span>
+                                    </div>
+                                </div>
+                            </>
                         )}
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
-                            <div className="flex items-center gap-2 text-blue-400 font-mono text-sm mb-3">
-                                <Cpu size={16} /> {log.skillDetails.name}
-                            </div>
-                            <p className="text-slate-400 text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
-                            <div className="flex items-center justify-between text-[10px] border-t border-slate-800 pt-3">
-                                <span className="text-slate-500">Version</span>
-                                <span className="font-mono text-slate-300">{log.skillDetails.version}</span>
-                            </div>
-                        </div>
                     </div>
                 )}
             </div>

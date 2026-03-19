@@ -3,7 +3,9 @@ import {
   buildContentViewerTruncationInfo,
   getContentViewerExtension,
   getContentViewerMode,
+  getReadOnlyContentViewerMode,
   isContentViewerEditable,
+  looksLikeMarkdownContent,
   normalizeContentViewerPath,
   shouldUseContentViewer,
 } from '../contentViewer';
@@ -42,5 +44,12 @@ describe('contentViewer utilities', () => {
   it('allows viewer mode only when a path is present', () => {
     expect(shouldUseContentViewer(null, 'content')).toBe(false);
     expect(shouldUseContentViewer('docs/file.md', null)).toBe(true);
+  });
+
+  it('detects markdown-like content for read-only rendering', () => {
+    expect(looksLikeMarkdownContent('# Heading\n\n- one')).toBe(true);
+    expect(looksLikeMarkdownContent('plain text output')).toBe(false);
+    expect(getReadOnlyContentViewerMode('logs/output.txt', '# Heading\n\nParagraph')).toBe('markdown');
+    expect(getReadOnlyContentViewerMode('logs/output.txt', 'plain text output')).toBe('code');
   });
 });
