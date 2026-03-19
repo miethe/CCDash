@@ -8,18 +8,20 @@ prd_ref: null
 plan_ref: /docs/project_plans/implementation_plans/enhancements/shared-content-viewer-standardization-v1.md
 phase: 3
 title: "Session transcript and file-backed detail adoption"
-status: "in-progress"
+status: "completed"
 started: "2026-03-19"
-completed: null
-commit_refs: []
+completed: "2026-03-19"
+commit_refs:
+  - "9b887fd"
+  - "b4da5ce"
 pr_refs: []
 
-overall_progress: 0
+overall_progress: 100
 completion_estimate: "on-track"
 
 total_tasks: 4
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 4
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +31,7 @@ contributors: ["ai-agents"]
 tasks:
   - id: "TASK-3.1"
     description: "Add a safe project-relative file-content API for Session Inspector raw file-backed viewer flows."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["frontend-platform"]
     dependencies: ["phase-2-complete"]
     estimated_effort: "1pt"
@@ -37,7 +39,7 @@ tasks:
 
   - id: "TASK-3.2"
     description: "Add a lightweight shared viewer modal and content-loading helper for Session Inspector activity and files surfaces."
-    status: "pending"
+    status: "completed"
     assigned_to: ["frontend-platform"]
     dependencies: ["TASK-3.1"]
     estimated_effort: "2pt"
@@ -45,7 +47,7 @@ tasks:
 
   - id: "TASK-3.3"
     description: "Apply narrow transcript detail-pane shared viewer behavior only for file-backed or explicit file-content log payloads."
-    status: "pending"
+    status: "completed"
     assigned_to: ["frontend-platform"]
     dependencies: ["TASK-3.2"]
     estimated_effort: "2pt"
@@ -53,7 +55,7 @@ tasks:
 
   - id: "TASK-3.4"
     description: "Add regression tests for the new file-content API and Session Inspector shared-viewer adoption, then run validation."
-    status: "pending"
+    status: "completed"
     assigned_to: ["frontend-platform"]
     dependencies: ["TASK-3.3"]
     estimated_effort: "2pt"
