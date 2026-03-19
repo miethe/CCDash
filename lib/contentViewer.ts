@@ -104,3 +104,28 @@ export const buildContentViewerTruncationInfo = (
     fullFileUrl: input.fullFileUrl,
   };
 };
+
+export const resolveContentViewerFrontmatter = (
+  frontmatter: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null => {
+  if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
+    return null;
+  }
+
+  const rawFrontmatter = frontmatter.raw;
+  const candidate = (
+    rawFrontmatter
+    && typeof rawFrontmatter === 'object'
+    && !Array.isArray(rawFrontmatter)
+  ) ? rawFrontmatter as Record<string, unknown> : frontmatter;
+
+  const entries = Object.entries(candidate).filter(([key, value]) => {
+    if (key === 'raw') return false;
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  });
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+};

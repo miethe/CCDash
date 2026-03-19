@@ -184,6 +184,42 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.document.content, "# Updated\n")
         sync_engine.sync_changed_files.assert_awaited()
 
+    async def test_update_document_preserves_existing_frontmatter_when_saving_body_only(self) -> None:
+        project = self._local_project()
+        bundle = self._bundle(project)
+        sync_engine = AsyncMock()
+        self.plan_file.write_text("---\ntitle: Plan\nstatus: draft\n---\n# Initial\n", encoding="utf-8")
+        await self.db.execute(
+            """
+            UPDATE documents
+            SET has_frontmatter = 1,
+                frontmatter_type = ?,
+                frontmatter_json = ?,
+                content = ?
+            WHERE id = ?
+            """,
+            ("yaml", '{"title":"Plan","status":"draft"}', "# Initial\n", "DOC-plan"),
+        )
+        await self.db.commit()
+
+        with (
+            patch.object(api_router.connection, "get_connection", new=AsyncMock(return_value=self.db)),
+            patch.object(api_router.project_manager, "get_active_project", return_value=project),
+            patch.object(api_router.project_manager, "get_active_path_bundle", return_value=bundle),
+        ):
+            response = await api_router.update_document(
+                "DOC-plan",
+                api_router.DocumentUpdateRequest(content="# Updated\n"),
+                _make_request(sync_engine),
+            )
+
+        self.assertEqual(
+            self.plan_file.read_text(encoding="utf-8"),
+            "---\ntitle: Plan\nstatus: draft\n---\n# Updated\n",
+        )
+        self.assertEqual(response.document.content, "# Updated\n")
+        sync_engine.sync_changed_files.assert_awaited()
+
     async def test_update_document_rejects_repo_write_when_github_disabled(self) -> None:
         project = self._github_project()
         bundle = self._bundle(project)

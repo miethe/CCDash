@@ -7,6 +7,7 @@ import {
   isContentViewerEditable,
   looksLikeMarkdownContent,
   normalizeContentViewerPath,
+  resolveContentViewerFrontmatter,
   shouldUseContentViewer,
 } from '../contentViewer';
 
@@ -51,5 +52,26 @@ describe('contentViewer utilities', () => {
     expect(looksLikeMarkdownContent('plain text output')).toBe(false);
     expect(getReadOnlyContentViewerMode('logs/output.txt', '# Heading\n\nParagraph')).toBe('markdown');
     expect(getReadOnlyContentViewerMode('logs/output.txt', 'plain text output')).toBe('code');
+  });
+
+  it('prefers raw frontmatter payloads for viewer rendering', () => {
+    expect(resolveContentViewerFrontmatter({
+      title: 'Normalized',
+      raw: {
+        title: 'Original',
+        status: 'draft',
+      },
+    })).toEqual({
+      title: 'Original',
+      status: 'draft',
+    });
+  });
+
+  it('filters empty frontmatter payloads', () => {
+    expect(resolveContentViewerFrontmatter({
+      tags: [],
+      status: '',
+      raw: {},
+    })).toBeNull();
   });
 });

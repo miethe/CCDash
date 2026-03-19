@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { getFeatureStatusStyle } from './featureStatus';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { updateDocument as saveDocument } from '../services/documents';
+import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
 
 export const getFileContent = (doc: PlanDocument): string => {
    if (doc.content) return doc.content;
@@ -752,6 +753,7 @@ export const DocumentModal = ({
                         <UnifiedContentViewer
                            path={doc.canonicalPath || doc.filePath || null}
                            content={currentContent}
+                           frontmatter={resolveContentViewerFrontmatter(doc.frontmatter as Record<string, unknown> | null | undefined)}
                            readOnly={!canEditDocument}
                            isEditing={isEditing}
                            editedContent={draftContent}

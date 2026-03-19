@@ -16,6 +16,7 @@ import {
 export interface UnifiedContentViewerProps {
   path: string | null;
   content: string | null;
+  frontmatter?: Record<string, unknown> | null;
   isLoading?: boolean;
   error?: string | null;
   readOnly?: boolean;
@@ -41,6 +42,7 @@ const formatBytes = (bytes: number): string => {
 export const UnifiedContentViewer = ({
   path,
   content,
+  frontmatter = null,
   isLoading = false,
   error = null,
   readOnly = false,
@@ -59,9 +61,24 @@ export const UnifiedContentViewer = ({
   const resolvedTruncationInfo = buildContentViewerTruncationInfo(truncationInfo);
   const viewerMode = getReadOnlyContentViewerMode(normalizedPath, content);
   const canStartEdit = !resolvedReadOnly && !isEditing && typeof onEditStart === 'function';
+  const contentContainsFrontmatter = Boolean(content && detectFrontmatter(content));
+  const hasExplicitFrontmatter = Boolean(
+    frontmatter
+    && typeof frontmatter === 'object'
+    && !Array.isArray(frontmatter)
+    && Object.keys(frontmatter).length > 0,
+  );
+  const shouldRenderExplicitFrontmatter = hasExplicitFrontmatter && !contentContainsFrontmatter;
 
   const parsedContent = React.useMemo(() => {
-    if (!content || !detectFrontmatter(content)) {
+    if (shouldRenderExplicitFrontmatter) {
+      return {
+        frontmatter,
+        displayContent: content || '',
+      };
+    }
+
+    if (!content || !contentContainsFrontmatter) {
       return {
         frontmatter: null as Record<string, unknown> | null,
         displayContent: content || '',
@@ -73,31 +90,40 @@ export const UnifiedContentViewer = ({
       frontmatter: parsed.frontmatter,
       displayContent: stripFrontmatter(content),
     };
-  }, [content]);
+  }, [content, contentContainsFrontmatter, frontmatter, shouldRenderExplicitFrontmatter]);
 
   if (isEditing) {
     return (
       <div
         className={[
-          'ccdash-content-viewer min-h-0 w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/95 shadow-[0_0_0_1px_rgba(15,23,42,0.25),0_24px_80px_rgba(2,6,23,0.6)]',
+          'ccdash-content-viewer flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/95 shadow-[0_0_0_1px_rgba(15,23,42,0.25),0_24px_80px_rgba(2,6,23,0.6)]',
           className || '',
         ].filter(Boolean).join(' ')}
       >
-        <ContentPane
-          path={normalizedPath}
-          content={content}
-          isLoading={isLoading}
-          error={error}
-          readOnly={resolvedReadOnly}
-          truncationInfo={resolvedTruncationInfo}
-          isEditing={isEditing}
-          editedContent={editedContent}
-          onEditStart={onEditStart}
-          onEditChange={onEditChange}
-          onSave={onSave}
-          onCancel={onCancel}
-          ariaLabel={ariaLabel || (normalizedPath ? `File content: ${normalizedPath}` : 'File content viewer')}
-        />
+        {parsedContent.frontmatter && shouldRenderExplicitFrontmatter && (
+          <FrontmatterDisplay
+            frontmatter={parsedContent.frontmatter}
+            defaultCollapsed
+            className="m-4 mb-0 shrink-0"
+          />
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ContentPane
+            path={normalizedPath}
+            content={content}
+            isLoading={isLoading}
+            error={error}
+            readOnly={resolvedReadOnly}
+            truncationInfo={resolvedTruncationInfo}
+            isEditing={isEditing}
+            editedContent={editedContent}
+            onEditStart={onEditStart}
+            onEditChange={onEditChange}
+            onSave={onSave}
+            onCancel={onCancel}
+            ariaLabel={ariaLabel || (normalizedPath ? `File content: ${normalizedPath}` : 'File content viewer')}
+          />
+        </div>
       </div>
     );
   }

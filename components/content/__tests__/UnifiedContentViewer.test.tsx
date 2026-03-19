@@ -32,4 +32,19 @@ describe('UnifiedContentViewer', () => {
     expect(html).toContain('<h1>Heading</h1>');
     expect(html).toContain('<li>first</li>');
   });
+
+  it('renders explicit frontmatter metadata when content is already stripped to the document body', () => {
+    const html = renderToStaticMarkup(
+      <UnifiedContentViewer
+        path="./docs/example.md"
+        content={'# Heading\n\nBody copy'}
+        frontmatter={{ title: 'Example Doc', status: 'draft' }}
+        readOnly
+      />,
+    );
+
+    expect(html).toContain('Frontmatter');
+    expect(html).toContain('Show frontmatter');
+    expect(html).toContain('<h1>Heading</h1>');
+  });
 });

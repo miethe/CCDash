@@ -1,12 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FileTree } from '@miethe/ui/content-viewer';
 import { useData } from '../contexts/DataContext';
 import { PlanDocument } from '../types';
-import { FileText, Folder, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
+import { FileText, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
+import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
+import { buildDocumentFileTree } from '../lib/documentFileTree';
 
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
@@ -203,57 +206,6 @@ const getSecondaryMetadataLine = (doc: PlanDocument): string => {
     return 'Supporting document';
 };
 
-const FolderTreeItem = ({
-    name,
-    path,
-    type,
-    children,
-    level = 0,
-    onSelect,
-    activePath
-}: {
-    name: string;
-    path: string;
-    type: 'file' | 'folder';
-    children?: any[];
-    level?: number;
-    onSelect: (path: string) => void;
-    activePath: string | null;
-}) => {
-    const [isOpen, setIsOpen] = useState(true);
-    const isSelected = activePath === path;
-
-    return (
-        <div>
-            <div
-                className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-sm hover:bg-slate-800 transition-colors ${isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400'}`}
-                style={{ paddingLeft: `${level * 12 + 8}px` }}
-                onClick={() => {
-                    if (type === 'folder') setIsOpen(!isOpen);
-                    else onSelect(path);
-                }}
-            >
-                {type === 'folder' ? (
-                    isOpen ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />
-                ) : (
-                    <span className="w-3.5"></span>
-                )}
-                {type === 'folder' ? <Folder size={16} className="fill-slate-700 text-slate-500" /> : <FileText size={16} className="text-slate-500" />}
-                <span className="truncate">{name}</span>
-            </div>
-            {isOpen && children && children.map((child: any) => (
-                <FolderTreeItem
-                    key={child.path}
-                    {...child}
-                    level={level + 1}
-                    onSelect={onSelect}
-                    activePath={activePath}
-                />
-            ))}
-        </div>
-    );
-};
-
 // --- Main Page Component ---
 
 export const PlanCatalog: React.FC = () => {
@@ -431,34 +383,7 @@ export const PlanCatalog: React.FC = () => {
     ]);
 
     // Tree Building Logic
-    const fileTree = useMemo(() => {
-        const tree: any[] = [];
-        filteredDocs.forEach(doc => {
-            const parts = doc.filePath.split('/');
-            let currentLevel = tree;
-
-            parts.forEach((part, idx) => {
-                const isFile = idx === parts.length - 1;
-                const path = parts.slice(0, idx + 1).join('/');
-                const existing = currentLevel.find(n => n.name === part);
-
-                if (existing) {
-                    currentLevel = existing.children;
-                } else {
-                    const newNode = {
-                        name: part,
-                        path: path,
-                        type: isFile ? 'file' : 'folder',
-                        children: isFile ? undefined : [],
-                        doc: isFile ? doc : undefined
-                    };
-                    currentLevel.push(newNode);
-                    currentLevel = newNode.children || [];
-                }
-            });
-        });
-        return tree;
-    }, [filteredDocs]);
+    const fileTree = useMemo(() => buildDocumentFileTree(filteredDocs), [filteredDocs]);
 
     // Handle tree Selection
     const activeDoc = activeFilePath ? filteredDocs.find(d => d.filePath === activeFilePath) : null;
@@ -871,10 +796,15 @@ export const PlanCatalog: React.FC = () => {
                         {/* Left Pane: Tree */}
                         <div className="w-1/4 border-r border-slate-800 bg-slate-950 flex flex-col">
                             <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-500 uppercase">Explorer</div>
-                            <div className="flex-1 overflow-y-auto p-2">
-                                {fileTree.map(node => (
-                                    <FolderTreeItem key={node.path} {...node} onSelect={setActiveFilePath} activePath={activeFilePath} />
-                                ))}
+                            <div className="flex-1 overflow-hidden p-2">
+                                <FileTree
+                                    entityId="plan-catalog"
+                                    files={fileTree}
+                                    selectedPath={activeFilePath}
+                                    onSelect={setActiveFilePath}
+                                    readOnly
+                                    ariaLabel="Document explorer"
+                                />
                             </div>
                         </div>
 
@@ -898,6 +828,7 @@ export const PlanCatalog: React.FC = () => {
                                         <UnifiedContentViewer
                                             path={activeDoc.canonicalPath || activeDoc.filePath || null}
                                             content={getFileContent(activeDoc)}
+                                            frontmatter={resolveContentViewerFrontmatter(activeDoc.frontmatter as Record<string, unknown> | null | undefined)}
                                             readOnly
                                             className="h-full"
                                         />
