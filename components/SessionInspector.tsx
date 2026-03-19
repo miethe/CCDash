@@ -7,6 +7,8 @@ import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, Sessi
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
+import { UnifiedContentViewer } from './content/UnifiedContentViewer';
+import { ProjectFileViewerModal } from './content/ProjectFileViewerModal';
 import { TranscriptFormattedMessage, TranscriptFormattingMappingRule, parseTranscriptMessage, getReadableTagName } from './sessionTranscriptFormatting';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
@@ -17,6 +19,7 @@ import { TranscriptMappedMessageCard, isMappedTranscriptMessageKind, mappedAccen
 import { TypingIndicator, getMotionPreset, useAnimatedListDiff, useReducedMotionPreference, useSmartScrollAnchor } from './animations';
 import { Badge, ModelBadge, StableBadge } from './ui/badge';
 import { formatModelDisplayName } from '../lib/modelIdentity';
+import { getInlineContentViewerPayload } from '../lib/sessionContentViewer';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
@@ -1582,6 +1585,10 @@ const DetailPane: React.FC<{
     const testToolDetails = getTestRunDetails(log);
     const readToolDetails = getReadToolDetails(log);
     const grepToolDetails = getGrepToolDetails(log);
+    const inlineContentViewerPayload = getInlineContentViewerPayload(
+        readToolDetails?.filePath,
+        log.toolCall?.output,
+    );
     const taskDisplayContext = resolveTaskInvocationDisplayContext(log, taskToolDetails, threadSessionDetails, subagentNameBySessionId);
     const detailTitle = (() => {
         if (isMappedTranscriptMessageKind(parsedMessage.kind)) return 'Mapped Transcript Event';
@@ -2072,6 +2079,17 @@ const DetailPane: React.FC<{
                                             </pre>
                                         </div>
                                     )}
+                                    {inlineContentViewerPayload && (
+                                        <div className="mt-4">
+                                            <div className="mb-2 text-[10px] text-slate-500 uppercase tracking-wider font-bold">Shared Viewer Preview</div>
+                                            <UnifiedContentViewer
+                                                path={inlineContentViewerPayload.path}
+                                                content={inlineContentViewerPayload.content}
+                                                readOnly
+                                                ariaLabel={`Transcript file content: ${inlineContentViewerPayload.path}`}
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -2162,7 +2180,7 @@ const DetailPane: React.FC<{
                             </div>
 
                             {/* Output Section */}
-                            {log.toolCall.output && (
+                            {log.toolCall.output && !inlineContentViewerPayload && (
                                 <div className="p-4 bg-slate-900/20">
                                     <button
                                         onClick={() => toggleSection('output')}
@@ -3520,9 +3538,10 @@ const ActivityView: React.FC<{
     threadSessionDetails: Record<string, AgentSession>;
     subagentNameBySessionId: Map<string, string>;
     onOpenDoc: (doc: PlanDocument) => void;
+    onOpenFile: (filePath: string, localPath?: string | null) => void;
     onOpenThread: (sessionId: string) => void;
     highlightedSourceLogId?: string | null;
-}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, onOpenThread, highlightedSourceLogId }) => {
+}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, onOpenFile, onOpenThread, highlightedSourceLogId }) => {
     const { documents, activeProject } = useData();
     const sessionsForActivity = useMemo(
         () => collectThreadDetailSessions(session, threadSessions, threadSessionDetails),
@@ -3656,8 +3675,8 @@ const ActivityView: React.FC<{
         );
     }
 
-    const openRowFile = (row: SessionActivityItem) => {
-        if (!row.filePath || !row.localPath) return;
+    const openRowViewer = (row: SessionActivityItem) => {
+        if (!row.filePath) return;
         if (row.documentId) {
             const doc = documents.find(item => item.id === row.documentId);
             if (doc) {
@@ -3665,6 +3684,11 @@ const ActivityView: React.FC<{
                 return;
             }
         }
+        onOpenFile(row.filePath, row.localPath);
+    };
+
+    const openRowFile = (row: SessionActivityItem) => {
+        if (!row.localPath) return;
         window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
     };
 
@@ -3702,6 +3726,15 @@ const ActivityView: React.FC<{
                         </div>
                         <div className="truncate text-slate-400">{row.threadName || row.sessionId}</div>
                         <div className="flex items-center gap-1 justify-end">
+                            {row.kind === 'file' && row.filePath && (
+                                <button
+                                    onClick={() => openRowViewer(row)}
+                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    title="Open in shared viewer"
+                                >
+                                    <Maximize2 size={14} />
+                                </button>
+                            )}
                             {row.kind === 'file' && row.localPath && (
                                 <button
                                     onClick={() => openRowFile(row)}
@@ -3755,8 +3788,9 @@ const FilesView: React.FC<{
     threadSessionDetails: Record<string, AgentSession>;
     subagentNameBySessionId: Map<string, string>;
     onOpenDoc: (doc: PlanDocument) => void;
+    onOpenFile: (filePath: string, localPath?: string | null) => void;
     highlightedSourceLogId?: string | null;
-}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, highlightedSourceLogId }) => {
+}> = ({ session, threadSessions, threadSessionDetails, subagentNameBySessionId, onOpenDoc, onOpenFile, highlightedSourceLogId }) => {
     const { documents, activeProject } = useData();
     const sessionsForFiles = useMemo(
         () => collectThreadDetailSessions(session, threadSessions, threadSessionDetails),
@@ -3866,7 +3900,7 @@ const FilesView: React.FC<{
 
     return (
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
-            <div className="grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_90px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <div className="grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                 <div>File</div>
                 <div>Path</div>
                 <div>Actions</div>
@@ -3874,13 +3908,13 @@ const FilesView: React.FC<{
                 <div>Sessions</div>
                 <div>Last Touched</div>
                 <div>Net Diff</div>
-                <div>Open</div>
+                <div>Links</div>
             </div>
             <div className="flex-1 overflow-y-auto">
                 {fileRows.map(row => (
                     <div
                         key={row.key}
-                        className={`grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_90px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogIds.includes(highlightedSourceLogId) ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
+                        className={`grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogIds.includes(highlightedSourceLogId) ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
                     >
                         <div className="truncate text-slate-200 font-medium">{row.fileName}</div>
                         <div className="truncate font-mono text-[11px] text-slate-500">{row.filePath}</div>
@@ -3909,12 +3943,24 @@ const FilesView: React.FC<{
                                             return;
                                         }
                                     }
-                                    window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
+                                    onOpenFile(row.filePath, row.localPath);
                                 }}
                                 className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                title="Open in shared viewer"
                             >
-                                <ExternalLink size={14} />
+                                <Maximize2 size={14} />
                             </button>
+                            {row.localPath && (
+                                <button
+                                    onClick={() => {
+                                        window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
+                                    }}
+                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    title="Open locally"
+                                >
+                                    <ExternalLink size={14} />
+                                </button>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -7254,6 +7300,7 @@ const SessionDetail: React.FC<{
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
     const [filterAgent, setFilterAgent] = useState<string | null>(null);
     const [viewingDoc, setViewingDoc] = useState<PlanDocument | null>(null);
+    const [viewingFile, setViewingFile] = useState<{ filePath: string; localPath?: string | null } | null>(null);
     const [threadSessions, setThreadSessions] = useState<AgentSession[]>([]);
     const [threadSessionDetails, setThreadSessionDetails] = useState<Record<string, AgentSession>>({ [session.id]: session });
     const [linkedSourceLogId, setLinkedSourceLogId] = useState<string | null>(null);
@@ -7976,6 +8023,7 @@ const SessionDetail: React.FC<{
                         threadSessionDetails={threadSessionDetails}
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenDoc={setViewingDoc}
+                        onOpenFile={(filePath, localPath) => setViewingFile({ filePath, localPath })}
                         onOpenThread={onOpenSession}
                         highlightedSourceLogId={linkedSourceLogId}
                     />
@@ -7987,6 +8035,7 @@ const SessionDetail: React.FC<{
                         threadSessionDetails={threadSessionDetails}
                         subagentNameBySessionId={subagentNameBySessionId}
                         onOpenDoc={setViewingDoc}
+                        onOpenFile={(filePath, localPath) => setViewingFile({ filePath, localPath })}
                         highlightedSourceLogId={linkedSourceLogId}
                     />
                 )}
@@ -8022,6 +8071,13 @@ const SessionDetail: React.FC<{
             </div>
 
             {viewingDoc && <DocumentModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
+            {viewingFile && (
+                <ProjectFileViewerModal
+                    filePath={viewingFile.filePath}
+                    localPath={viewingFile.localPath}
+                    onClose={() => setViewingFile(null)}
+                />
+            )}
         </div>
     );
 };
