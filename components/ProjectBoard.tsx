@@ -8,6 +8,7 @@ import { trackExecutionEvent } from '../services/execution';
 import { getFeatureHealth } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { DocumentModal } from './DocumentModal';
+import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { FeatureModalTestStatus } from './TestVisualizer/FeatureModalTestStatus';
 import {
@@ -1156,7 +1157,7 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
-          {loading && (
+        {loading && (
             <div className="flex items-center justify-center h-full text-slate-500">
               <RefreshCw size={20} className="animate-spin mr-2" /> Loading source file…
             </div>
@@ -1167,8 +1168,13 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
               <p className="text-sm">{error}</p>
             </div>
           )}
-          {content && (
-            <pre className="text-sm text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">{content}</pre>
+          {content !== null && !loading && !error && (
+            <UnifiedContentViewer
+              path={task.sourceFile || null}
+              content={content}
+              readOnly
+              className="h-full"
+            />
           )}
         </div>
       </div>

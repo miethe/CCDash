@@ -1,11 +1,11 @@
 import React from 'react';
 import { ContentPane, type TruncationInfo } from '@miethe/ui/content-viewer';
-import { getContentViewerMode } from '@/lib/contentViewer';
 import {
   buildContentViewerTruncationInfo,
   isContentViewerEditable,
+  getContentViewerMode,
   normalizeContentViewerPath,
-} from '@/lib/contentViewer';
+} from '../../lib/contentViewer';
 
 export interface UnifiedContentViewerProps {
   path: string | null;

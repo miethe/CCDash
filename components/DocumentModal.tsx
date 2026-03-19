@@ -12,9 +12,8 @@ import {
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { getFeatureStatusStyle } from './featureStatus';
+import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { updateDocument as saveDocument } from '../services/documents';
 
 export const getFileContent = (doc: PlanDocument): string => {
@@ -237,7 +236,6 @@ export const DocumentModal = ({
    const [isEditing, setIsEditing] = React.useState(false);
    const [draftContent, setDraftContent] = React.useState(() => getFileContent(initialDoc));
    const [commitMessage, setCommitMessage] = React.useState('');
-   const [saveBusy, setSaveBusy] = React.useState(false);
    const [saveError, setSaveError] = React.useState<string | null>(null);
    const [saveMessage, setSaveMessage] = React.useState<string | null>(null);
 
@@ -288,7 +286,6 @@ export const DocumentModal = ({
    const doc = normalizeDoc(fullDoc || initialDoc, initialDoc);
    const canEditDocument = doc.rootKind === 'project_plans';
    const currentContent = getFileContent(doc);
-   const hasUnsavedChanges = draftContent !== currentContent;
    const isProgressDoc = doc.rootKind === 'progress' || (doc.docSubtype || '').startsWith('progress_');
 
    React.useEffect(() => {
@@ -312,19 +309,17 @@ export const DocumentModal = ({
    }, [currentContent]);
 
    const handleCancelEdit = React.useCallback(() => {
-      setDraftContent(currentContent);
       setCommitMessage('');
       setSaveError(null);
       setIsEditing(false);
-   }, [currentContent]);
+   }, []);
 
-   const handleSave = React.useCallback(async () => {
-      setSaveBusy(true);
+   const handleSave = React.useCallback(async (content: string) => {
       setSaveError(null);
       setSaveMessage(null);
       try {
          const response = await saveDocument(doc.id, {
-            content: draftContent,
+            content,
             commitMessage,
          });
          const nextDoc = normalizeDoc(response.document, doc);
@@ -338,10 +333,9 @@ export const DocumentModal = ({
          await refreshDocuments();
       } catch (error: any) {
          setSaveError(error?.message || 'Failed to save document');
-      } finally {
-         setSaveBusy(false);
+         throw error;
       }
-   }, [commitMessage, doc, draftContent, refreshDocuments]);
+   }, [commitMessage, doc, refreshDocuments]);
    const linkedFeatures = React.useMemo(() => {
       const featureById = new Map<string, { id: string; name: string; status: string; category: string }>();
       features.forEach(feature => {
@@ -511,35 +505,6 @@ export const DocumentModal = ({
                   </div>
                </div>
                <div className="flex items-center gap-2">
-                  {canEditDocument && !isEditing && (
-                     <button
-                        type="button"
-                        onClick={handleStartEdit}
-                        className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/20"
-                     >
-                        Edit Markdown
-                     </button>
-                  )}
-                  {canEditDocument && isEditing && (
-                     <>
-                        <button
-                           type="button"
-                           onClick={handleCancelEdit}
-                           disabled={saveBusy}
-                           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:border-slate-600 disabled:opacity-50"
-                        >
-                           Cancel
-                        </button>
-                        <button
-                           type="button"
-                           onClick={() => { void handleSave(); }}
-                           disabled={saveBusy || !hasUnsavedChanges}
-                           className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
-                        >
-                           {saveBusy ? 'Saving...' : 'Save'}
-                        </button>
-                     </>
-                  )}
                   <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
                      <X size={24} />
                   </button>
@@ -771,8 +736,8 @@ export const DocumentModal = ({
 
                {activeTab === 'content' && (
                   <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
-                     {isEditing ? (
-                        <div className="space-y-4">
+                     <div className="space-y-4">
+                        {canEditDocument && isEditing && (
                            <label className="block">
                               <span className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Commit Message (optional)</span>
                               <input
@@ -783,19 +748,20 @@ export const DocumentModal = ({
                                  placeholder={`ccdash: update ${doc.title}`}
                               />
                            </label>
-                           <textarea
-                              value={draftContent}
-                              onChange={event => setDraftContent(event.target.value)}
-                              className="h-[52vh] w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-[13px] text-slate-200 focus:outline-none focus:border-indigo-500"
-                           />
-                        </div>
-                     ) : (
-                        <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400">
-                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {currentContent}
-                           </ReactMarkdown>
-                        </div>
-                     )}
+                        )}
+                        <UnifiedContentViewer
+                           path={doc.canonicalPath || doc.filePath || null}
+                           content={currentContent}
+                           readOnly={!canEditDocument}
+                           isEditing={isEditing}
+                           editedContent={draftContent}
+                           onEditStart={canEditDocument && !isEditing ? handleStartEdit : undefined}
+                           onEditChange={setDraftContent}
+                           onSave={canEditDocument && isEditing ? handleSave : undefined}
+                           onCancel={canEditDocument && isEditing ? handleCancelEdit : undefined}
+                           className="h-[52vh]"
+                        />
+                     </div>
                   </div>
                )}
 

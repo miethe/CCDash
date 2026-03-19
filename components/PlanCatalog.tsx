@@ -4,10 +4,9 @@ import { useData } from '../contexts/DataContext';
 import { PlanDocument } from '../types';
 import { FileText, Folder, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
+import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
@@ -895,12 +894,13 @@ export const PlanCatalog: React.FC = () => {
                                             <Maximize2 size={12} /> Expand
                                         </button>
                                     </div>
-                                    <div className="flex-1 overflow-y-auto p-6">
-                                        <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400 [&_table]:border-collapse [&_th]:bg-slate-800 [&_th]:text-slate-300 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2 [&_td]:border-t [&_td]:border-slate-800">
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                                {getFileContent(activeDoc)}
-                                            </ReactMarkdown>
-                                        </div>
+                                    <div className="flex-1 overflow-hidden p-4">
+                                        <UnifiedContentViewer
+                                            path={activeDoc.canonicalPath || activeDoc.filePath || null}
+                                            content={getFileContent(activeDoc)}
+                                            readOnly
+                                            className="h-full"
+                                        />
                                     </div>
                                 </>
                             ) : (
