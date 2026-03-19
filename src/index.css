@@ -2,9 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  min-height: 100%;
+  background-color: hsl(var(--background));
+  color-scheme: dark;
+}
+
 body {
-  background-color: #020617; /* slate-950 */
-  color: #e2e8f0; /* slate-200 */
+  min-height: 100%;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 /* Custom Scrollbar for dashboard feel */
