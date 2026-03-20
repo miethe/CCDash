@@ -1,6 +1,6 @@
 ---
 doc_type: implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 
 title: "Implementation Plan: Shared Content Viewer Standardization V1"
