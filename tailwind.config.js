@@ -2,13 +2,14 @@
 export default {
     content: [
         "./index.html",
+        "./node_modules/@miethe/ui/dist/**/*.js",
         "./components/**/*.{tsx,ts}",
         "./contexts/**/*.{tsx,ts}",
         "./services/**/*.ts",
         "./App.tsx",
         "./index.tsx",
     ],
-    darkMode: ['class', "class"],
+    darkMode: ['class'],
     theme: {
     	extend: {
     		colors: {

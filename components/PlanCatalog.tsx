@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FileTree } from '@miethe/ui/content-viewer';
 import { useData } from '../contexts/DataContext';
 import { PlanDocument } from '../types';
-import { FileText, Folder, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
+import { FileText, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
+import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { getFeatureStatusStyle } from './featureStatus';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
+import { buildDocumentFileTree } from '../lib/documentFileTree';
 
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
@@ -204,57 +206,6 @@ const getSecondaryMetadataLine = (doc: PlanDocument): string => {
     return 'Supporting document';
 };
 
-const FolderTreeItem = ({
-    name,
-    path,
-    type,
-    children,
-    level = 0,
-    onSelect,
-    activePath
-}: {
-    name: string;
-    path: string;
-    type: 'file' | 'folder';
-    children?: any[];
-    level?: number;
-    onSelect: (path: string) => void;
-    activePath: string | null;
-}) => {
-    const [isOpen, setIsOpen] = useState(true);
-    const isSelected = activePath === path;
-
-    return (
-        <div>
-            <div
-                className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-sm hover:bg-slate-800 transition-colors ${isSelected ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400'}`}
-                style={{ paddingLeft: `${level * 12 + 8}px` }}
-                onClick={() => {
-                    if (type === 'folder') setIsOpen(!isOpen);
-                    else onSelect(path);
-                }}
-            >
-                {type === 'folder' ? (
-                    isOpen ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />
-                ) : (
-                    <span className="w-3.5"></span>
-                )}
-                {type === 'folder' ? <Folder size={16} className="fill-slate-700 text-slate-500" /> : <FileText size={16} className="text-slate-500" />}
-                <span className="truncate">{name}</span>
-            </div>
-            {isOpen && children && children.map((child: any) => (
-                <FolderTreeItem
-                    key={child.path}
-                    {...child}
-                    level={level + 1}
-                    onSelect={onSelect}
-                    activePath={activePath}
-                />
-            ))}
-        </div>
-    );
-};
-
 // --- Main Page Component ---
 
 export const PlanCatalog: React.FC = () => {
@@ -432,34 +383,7 @@ export const PlanCatalog: React.FC = () => {
     ]);
 
     // Tree Building Logic
-    const fileTree = useMemo(() => {
-        const tree: any[] = [];
-        filteredDocs.forEach(doc => {
-            const parts = doc.filePath.split('/');
-            let currentLevel = tree;
-
-            parts.forEach((part, idx) => {
-                const isFile = idx === parts.length - 1;
-                const path = parts.slice(0, idx + 1).join('/');
-                const existing = currentLevel.find(n => n.name === part);
-
-                if (existing) {
-                    currentLevel = existing.children;
-                } else {
-                    const newNode = {
-                        name: part,
-                        path: path,
-                        type: isFile ? 'file' : 'folder',
-                        children: isFile ? undefined : [],
-                        doc: isFile ? doc : undefined
-                    };
-                    currentLevel.push(newNode);
-                    currentLevel = newNode.children || [];
-                }
-            });
-        });
-        return tree;
-    }, [filteredDocs]);
+    const fileTree = useMemo(() => buildDocumentFileTree(filteredDocs), [filteredDocs]);
 
     // Handle tree Selection
     const activeDoc = activeFilePath ? filteredDocs.find(d => d.filePath === activeFilePath) : null;
@@ -872,10 +796,15 @@ export const PlanCatalog: React.FC = () => {
                         {/* Left Pane: Tree */}
                         <div className="w-1/4 border-r border-slate-800 bg-slate-950 flex flex-col">
                             <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-500 uppercase">Explorer</div>
-                            <div className="flex-1 overflow-y-auto p-2">
-                                {fileTree.map(node => (
-                                    <FolderTreeItem key={node.path} {...node} onSelect={setActiveFilePath} activePath={activeFilePath} />
-                                ))}
+                            <div className="flex-1 overflow-hidden p-2">
+                                <FileTree
+                                    entityId="plan-catalog"
+                                    files={fileTree}
+                                    selectedPath={activeFilePath}
+                                    onSelect={setActiveFilePath}
+                                    readOnly
+                                    ariaLabel="Document explorer"
+                                />
                             </div>
                         </div>
 
@@ -895,12 +824,14 @@ export const PlanCatalog: React.FC = () => {
                                             <Maximize2 size={12} /> Expand
                                         </button>
                                     </div>
-                                    <div className="flex-1 overflow-y-auto p-6">
-                                        <div className="prose prose-invert prose-sm max-w-none [&_h1]:text-slate-100 [&_h2]:text-slate-200 [&_h3]:text-slate-300 [&_p]:text-slate-400 [&_li]:text-slate-400 [&_code]:bg-slate-800 [&_code]:text-indigo-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-slate-900 [&_pre]:border [&_pre]:border-slate-800 [&_a]:text-indigo-400 [&_a:hover]:text-indigo-300 [&_blockquote]:border-l-indigo-500 [&_blockquote]:text-slate-400 [&_table]:border-collapse [&_th]:bg-slate-800 [&_th]:text-slate-300 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2 [&_td]:border-t [&_td]:border-slate-800">
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                                {getFileContent(activeDoc)}
-                                            </ReactMarkdown>
-                                        </div>
+                                    <div className="flex-1 overflow-hidden p-4">
+                                        <UnifiedContentViewer
+                                            path={activeDoc.canonicalPath || activeDoc.filePath || null}
+                                            content={getFileContent(activeDoc)}
+                                            frontmatter={resolveContentViewerFrontmatter(activeDoc.frontmatter as Record<string, unknown> | null | undefined)}
+                                            readOnly
+                                            className="h-full"
+                                        />
                                     </div>
                                 </>
                             ) : (

@@ -62,6 +62,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 ### Session Inspector & Forensics
 
 - **3-Pane Transcript**: Fluid layout with log list, detail view, and metadata sidebar
+- Shared Content Viewer: Long-form prompts, markdown-like detail payloads, and raw file-backed session rows open in the standardized viewer shell
 - **Deep Forensics**: Queue pressure, resource footprint, subagent topology, and hook signals
 - Session Analytics: Token timeline, model allocation, session block insights, and master timeline
 - Artifact Cards: Skills, commands, agents, hooks, tasks, and test-run artifacts with source correlation
@@ -92,6 +93,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **Card Grid View**: Visual overview of PRDs, RFCs, and architecture docs in scannable card format
 - Folder Explorer: 3-pane IDE-style file explorer for navigating documentation hierarchies
 - Document Modal: Tabbed modal with Summary, Delivery, Relationships, Content, and Timeline views
+- Shared Viewer Rendering: Documents, plans, reports, and task sources share the same formatted content shell with frontmatter-aware markdown rendering
 - Inline Document Editing: Edit plan documents in-modal with local save and GitHub write-back support
 
 ### Codebase Explorer
@@ -328,9 +330,11 @@ Markdown documentation with typed identity/classification metadata, canonical de
 |-------|---------|
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
 | [`docs/testing-user-guide.md`](docs/testing-user-guide.md) | Test configuration and ingestion flow |
+| [`docs/shared-content-viewer-user-guide.md`](docs/shared-content-viewer-user-guide.md) | End-user content rendering behavior across documents, task sources, and sessions |
 | [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md) | End-user execution workflow |
 | [`docs/agentic-sdlc-intelligence-user-guide.md`](docs/agentic-sdlc-intelligence-user-guide.md) | Workflow intelligence and recommended-stack usage |
 | [`docs/session-usage-attribution-user-guide.md`](docs/session-usage-attribution-user-guide.md) | Attribution semantics and interpretation |
+| [`docs/shared-content-viewer-developer-reference.md`](docs/shared-content-viewer-developer-reference.md) | Wrapper architecture, heuristics, styling, and backend support for shared viewer flows |
 | [`docs/agentic-sdlc-intelligence-developer-reference.md`](docs/agentic-sdlc-intelligence-developer-reference.md) | Implementation details and rollout commands |
 | [`docs/session-usage-attribution-developer-reference.md`](docs/session-usage-attribution-developer-reference.md) | Attribution contracts, API details, and rollout controls |
 | [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md) | Sync and rebuild operation behavior |

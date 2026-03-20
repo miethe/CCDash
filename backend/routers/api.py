@@ -83,6 +83,34 @@ def _safe_json_list(raw: str | list | None) -> list:
         return []
 
 
+def _extract_frontmatter_block(text: str) -> tuple[str, str]:
+    match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
+    if not match:
+        return "", text
+    return match.group(1), match.group(2)
+
+
+def _preserve_document_frontmatter(
+    source_file: Path,
+    content: str,
+    *,
+    has_frontmatter: bool,
+) -> str:
+    if not has_frontmatter or not content or _extract_frontmatter_block(content)[0]:
+        return content
+
+    try:
+        existing_content = source_file.read_text(encoding="utf-8")
+    except OSError:
+        return content
+
+    frontmatter_block, _ = _extract_frontmatter_block(existing_content)
+    if not frontmatter_block:
+        return content
+
+    return f"{frontmatter_block}{content}"
+
+
 def _usage_ratio(numerator: Any, denominator: Any) -> float:
     try:
         num = max(0.0, float(numerator or 0))
@@ -1637,7 +1665,12 @@ async def update_document(doc_id: str, req: DocumentUpdateRequest, request: Requ
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="The document source file is outside the resolved plan-docs path.") from exc
 
-    content = str(req.content or "").replace("\r\n", "\n")
+    request_content = str(req.content or "").replace("\r\n", "\n")
+    content = _preserve_document_frontmatter(
+        source_file,
+        request_content,
+        has_frontmatter=bool(row.get("has_frontmatter")),
+    )
     write_mode: Literal["local", "github_repo"] = "local"
     commit_hash = ""
     message = "Document saved locally."
@@ -1695,8 +1728,8 @@ async def update_document(doc_id: str, req: DocumentUpdateRequest, request: Requ
         if refreshed_row
         else _map_document_row_to_model({**dict(row), "content": content}, include_content=True, link_counts=None)
     )
-    if document.content != content:
-        document = document.model_copy(update={"content": content})
+    if document.content != request_content:
+        document = document.model_copy(update={"content": request_content})
 
     return DocumentUpdateResponse(
         document=document,

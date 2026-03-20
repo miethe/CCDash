@@ -2,9 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  min-height: 100%;
+  background-color: hsl(var(--background));
+  color-scheme: dark;
+}
+
 body {
-  background-color: #020617; /* slate-950 */
-  color: #e2e8f0; /* slate-200 */
+  min-height: 100%;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 /* Custom Scrollbar for dashboard feel */
@@ -76,5 +83,148 @@ body {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+  }
+}
+
+@layer components {
+  .ccdash-content-viewer .ccdash-markdown {
+    color: rgb(226 232 240);
+    line-height: 1.75;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h1,
+  .ccdash-content-viewer .ccdash-markdown h2,
+  .ccdash-content-viewer .ccdash-markdown h3,
+  .ccdash-content-viewer .ccdash-markdown h4,
+  .ccdash-content-viewer .ccdash-markdown h5,
+  .ccdash-content-viewer .ccdash-markdown h6 {
+    color: rgb(248 250 252);
+    font-weight: 700;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h1 {
+    font-size: 1.5rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h2 {
+    font-size: 1.25rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown h3 {
+    font-size: 1.125rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown p,
+  .ccdash-content-viewer .ccdash-markdown ul,
+  .ccdash-content-viewer .ccdash-markdown ol,
+  .ccdash-content-viewer .ccdash-markdown blockquote,
+  .ccdash-content-viewer .ccdash-markdown pre,
+  .ccdash-content-viewer .ccdash-markdown table {
+    margin-top: 0.875rem;
+    margin-bottom: 0.875rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ul,
+  .ccdash-content-viewer .ccdash-markdown ol {
+    padding-left: 1.5rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ul {
+    list-style: disc;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown ol {
+    list-style: decimal;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown li + li {
+    margin-top: 0.25rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown a {
+    color: rgb(129 140 248);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown strong {
+    color: rgb(248 250 252);
+    font-weight: 700;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown blockquote {
+    border-left: 3px solid rgb(79 70 229 / 0.55);
+    background: rgb(15 23 42 / 0.65);
+    color: rgb(191 219 254);
+    padding: 0.875rem 1rem;
+    border-radius: 0.75rem;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown :not(pre) > code {
+    background: rgb(15 23 42 / 0.9);
+    color: rgb(191 219 254);
+    border: 1px solid rgb(51 65 85);
+    border-radius: 0.4rem;
+    padding: 0.15rem 0.35rem;
+    font-size: 0.85em;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown pre {
+    overflow-x: auto;
+    background: rgb(2 6 23 / 0.95);
+    border: 1px solid rgb(30 41 59);
+    border-radius: 0.9rem;
+    padding: 1rem;
+    color: rgb(226 232 240);
+  }
+
+  .ccdash-content-viewer .ccdash-markdown pre code {
+    display: block;
+    min-width: max-content;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+
+  .ccdash-content-viewer .ccdash-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border-radius: 0.9rem;
+    border: 1px solid rgb(30 41 59);
+  }
+
+  .ccdash-content-viewer .ccdash-markdown thead {
+    background: rgb(15 23 42 / 0.92);
+  }
+
+  .ccdash-content-viewer .ccdash-markdown th,
+  .ccdash-content-viewer .ccdash-markdown td {
+    border-bottom: 1px solid rgb(30 41 59);
+    padding: 0.7rem 0.85rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .ccdash-content-viewer[data-content-viewer-mode='code'] pre,
+  .ccdash-content-viewer[data-content-viewer-mode='text'] pre {
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
   }
 }
