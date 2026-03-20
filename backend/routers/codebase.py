@@ -74,7 +74,7 @@ async def get_codebase_files(
 
 @codebase_router.get("/file-content")
 async def get_codebase_file_content(
-    path: str = Query("", description="Project-relative file path"),
+    path: str = Query("", description="Project-relative or absolute filesystem file path"),
 ):
     project = _get_active_project()
     project_root = project_manager.get_project_root(project)

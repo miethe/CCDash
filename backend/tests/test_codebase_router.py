@@ -336,6 +336,35 @@ class CodebaseRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["truncated"])
         self.assertIsNone(payload["originalSize"])
 
+    async def test_file_content_accepts_absolute_project_path(self) -> None:
+        absolute_path = (self.project_root / "src" / "app.ts").resolve(strict=False)
+
+        with (
+            patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),
+            patch.object(codebase_router.connection, "get_connection", return_value=self.db),
+        ):
+            payload = await codebase_router.get_codebase_file_content(str(absolute_path))
+
+        self.assertEqual(payload["filePath"], "src/app.ts")
+        self.assertEqual(payload["absolutePath"], str(absolute_path))
+        self.assertIn("export const app = 1;", payload["content"])
+
+    async def test_file_content_accepts_absolute_external_path(self) -> None:
+        with tempfile.TemporaryDirectory() as external_tmpdir:
+            external_dir = Path(external_tmpdir)
+            external_path = (external_dir / "shared.txt").resolve(strict=False)
+            external_path.write_text("shared viewer content\n", encoding="utf-8")
+
+            with (
+                patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),
+                patch.object(codebase_router.connection, "get_connection", return_value=self.db),
+            ):
+                payload = await codebase_router.get_codebase_file_content(str(external_path))
+
+            self.assertEqual(payload["filePath"], str(external_path))
+            self.assertEqual(payload["absolutePath"], str(external_path))
+            self.assertIn("shared viewer content", payload["content"])
+
     async def test_file_content_path_traversal_rejected(self) -> None:
         with (
             patch.object(codebase_router.project_manager, "get_active_project", return_value=self.project),

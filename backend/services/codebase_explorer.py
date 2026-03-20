@@ -120,6 +120,24 @@ def _resolve_safe_path(project_root: Path, requested_path: str) -> tuple[str, Pa
     return rel, candidate
 
 
+def _resolve_file_content_path(project_root: Path, requested_path: str) -> tuple[str, Path]:
+    text = str(requested_path or "").strip()
+    if not text:
+        raise ValueError("File path cannot be empty")
+
+    candidate = Path(text).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve(strict=False)
+        root = project_root.resolve(strict=False)
+        try:
+            rel = resolved.relative_to(root)
+            return _normalize_rel_path(str(rel)), resolved
+        except ValueError:
+            return str(resolved).replace("\\", "/"), resolved
+
+    return _resolve_safe_path(project_root, text)
+
+
 def _normalize_action(action: str | None, source_tool_name: str | None = None) -> str:
     normalized = (action or "").strip().lower()
     if normalized == "read":
@@ -619,7 +637,7 @@ class CodebaseExplorerService:
         }
 
     async def get_file_content(self, file_path: str) -> dict[str, Any]:
-        rel_path, absolute_path = _resolve_safe_path(self.project_root, file_path)
+        rel_path, absolute_path = _resolve_file_content_path(self.project_root, file_path)
         if not absolute_path.exists() or not absolute_path.is_file():
             raise FileNotFoundError(f"File not found: {rel_path}")
 
