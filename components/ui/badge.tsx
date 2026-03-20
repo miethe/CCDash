@@ -7,12 +7,21 @@ import { resolveStablePaletteColor, toColorBadgeStyle } from '@/lib/modelColors'
 import { cn } from '@/lib/utils';
 
 const badgeVariants = cva(
-  'inline-flex items-center rounded border font-semibold whitespace-nowrap',
+  'inline-flex items-center rounded-full border font-semibold whitespace-nowrap',
   {
     variants: {
       size: {
         sm: 'gap-1 px-1.5 py-0.5 text-[10px]',
         md: 'gap-1.5 px-2 py-1 text-xs',
+      },
+      tone: {
+        neutral: 'border-panel-border bg-surface-overlay/80 text-panel-foreground',
+        muted: 'border-panel-border bg-surface-muted text-muted-foreground',
+        info: 'border-info-border bg-info/10 text-info-foreground',
+        success: 'border-success-border bg-success/10 text-success-foreground',
+        warning: 'border-warning-border bg-warning/10 text-warning-foreground',
+        danger: 'border-danger-border bg-danger/10 text-danger-foreground',
+        outline: 'border-panel-border bg-transparent text-panel-foreground',
       },
       mono: {
         true: 'font-mono',
@@ -21,6 +30,7 @@ const badgeVariants = cva(
     },
     defaultVariants: {
       size: 'sm',
+      tone: 'neutral',
       mono: false,
     },
   },
@@ -31,10 +41,10 @@ export interface BadgeProps
     VariantProps<typeof badgeVariants> {}
 
 export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
-  ({ className, size, mono, ...props }, ref) => (
+  ({ className, size, tone, mono, ...props }, ref) => (
     <span
       ref={ref}
-      className={cn(badgeVariants({ size, mono }), className)}
+      className={cn(badgeVariants({ size, tone, mono }), className)}
       {...props}
     />
   ),
@@ -83,6 +93,7 @@ export const StableBadge: React.FC<StableBadgeProps> = ({
   style,
   title,
   size,
+  tone,
   mono,
   ...props
 }) => {
@@ -92,6 +103,7 @@ export const StableBadge: React.FC<StableBadgeProps> = ({
   return (
     <Badge
       size={size}
+      tone={tone}
       mono={mono}
       className={className}
       style={{ ...toColorBadgeStyle(resolveStablePaletteColor(normalizedValue, namespace)), ...style }}
@@ -119,6 +131,7 @@ export const ModelBadge: React.FC<ModelBadgeProps> = ({
   style,
   title,
   size,
+  tone,
   mono,
   ...props
 }) => {
@@ -131,6 +144,7 @@ export const ModelBadge: React.FC<ModelBadgeProps> = ({
   return (
     <Badge
       size={size}
+      tone={tone}
       mono={mono}
       className={className}
       style={{ ...getBadgeStyleForModel({ model: raw || identity.displayName, family: identity.family }), ...style }}
