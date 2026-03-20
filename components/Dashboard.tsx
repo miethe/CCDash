@@ -4,6 +4,7 @@ import { useData } from '../contexts/DataContext';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
+import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
 import { type AnalyticsOverview, type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 
@@ -190,36 +191,44 @@ export const Dashboard: React.FC = () => {
               <AreaChart data={chartData.length > 0 ? chartData : analyticsData}>
                 <defs>
                   <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    {getChartGradientStops(getChartSeriesColor('primary')).map((stop) => (
+                      <stop
+                        key={`cost-${stop.offset}`}
+                        offset={stop.offset}
+                        stopColor={stop.stopColor}
+                        stopOpacity={stop.stopOpacity}
+                      />
+                    ))}
                   </linearGradient>
                   <linearGradient id="colorQuality" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    {getChartGradientStops(getChartSeriesColor('success')).map((stop) => (
+                      <stop
+                        key={`quality-${stop.offset}`}
+                        offset={stop.offset}
+                        stopColor={stop.stopColor}
+                        stopOpacity={stop.stopOpacity}
+                      />
+                    ))}
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <CartesianGrid {...chartTheme.grid} vertical={false} />
                 <XAxis
                   dataKey="date"
                   tickFormatter={(val) => val.slice(5)}
-                  stroke="#475569"
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...chartTheme.axis}
                 />
                 <YAxis
-                  stroke="#475569"
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...chartTheme.axis}
                   tickFormatter={(val) => `$${val}`}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                  itemStyle={{ color: '#e2e8f0' }}
+                  contentStyle={chartTheme.tooltip.contentStyle}
+                  itemStyle={chartTheme.tooltip.itemStyle}
+                  labelStyle={chartTheme.tooltip.labelStyle}
+                  cursor={chartTheme.tooltip.cursor}
                 />
-                <Area type="monotone" dataKey="cost" stroke="#6366f1" fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} name="Daily Cost" />
-                <Area type="monotone" dataKey="velocity" stroke="#10b981" fillOpacity={1} fill="url(#colorQuality)" strokeWidth={2} name="Task Velocity" />
+                <Area type="monotone" dataKey="cost" stroke={getChartSeriesColor('primary')} fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} name="Daily Cost" />
+                <Area type="monotone" dataKey="velocity" stroke={getChartSeriesColor('success')} fillOpacity={1} fill="url(#colorQuality)" strokeWidth={2} name="Task Velocity" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -230,11 +239,16 @@ export const Dashboard: React.FC = () => {
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={modelData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={false} />
+                <CartesianGrid {...chartTheme.grid} horizontal vertical={false} />
                 <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" stroke="#94a3b8" width={80} tick={{ fontSize: 12 }} />
-                <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                <Bar dataKey="usage" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                <YAxis dataKey="name" type="category" width={80} {...chartTheme.axis} />
+                <Tooltip
+                  cursor={{ fill: 'transparent' }}
+                  contentStyle={chartTheme.tooltip.contentStyle}
+                  itemStyle={chartTheme.tooltip.itemStyle}
+                  labelStyle={chartTheme.tooltip.labelStyle}
+                />
+                <Bar dataKey="usage" fill={getChartSeriesColor('info')} radius={[0, 4, 4, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>

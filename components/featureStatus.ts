@@ -8,33 +8,33 @@ export interface FeatureStatusStyle {
 const FEATURE_STATUS_CONFIG: Record<string, FeatureStatusStyle> = {
   done: {
     label: 'Done',
-    color: 'bg-emerald-500/10 text-emerald-500',
-    dot: 'bg-emerald-500',
-    badge: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20',
+    color: 'bg-success/10 text-success-foreground',
+    dot: 'bg-success',
+    badge: 'border-success-border bg-success/10 text-success-foreground hover:bg-success/20',
   },
   'in-progress': {
     label: 'In Progress',
-    color: 'bg-indigo-500/10 text-indigo-500',
-    dot: 'bg-indigo-500',
-    badge: 'border-indigo-500/35 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20',
+    color: 'bg-info/10 text-info-foreground',
+    dot: 'bg-info',
+    badge: 'border-info-border bg-info/10 text-info-foreground hover:bg-info/20',
   },
   review: {
     label: 'Review',
-    color: 'bg-amber-500/10 text-amber-500',
-    dot: 'bg-amber-500',
-    badge: 'border-amber-500/35 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20',
+    color: 'bg-warning/10 text-warning-foreground',
+    dot: 'bg-warning',
+    badge: 'border-warning-border bg-warning/10 text-warning-foreground hover:bg-warning/20',
   },
   backlog: {
     label: 'Backlog',
-    color: 'bg-slate-500/10 text-slate-500',
-    dot: 'bg-slate-500',
-    badge: 'border-slate-600/80 bg-slate-800/70 text-slate-300 hover:bg-slate-800',
+    color: 'bg-surface-muted text-muted-foreground',
+    dot: 'bg-disabled-foreground',
+    badge: 'border-panel-border bg-surface-overlay/80 text-muted-foreground hover:bg-hover/60 hover:text-panel-foreground',
   },
   deferred: {
     label: 'Deferred',
-    color: 'bg-amber-500/10 text-amber-400',
-    dot: 'bg-amber-400',
-    badge: 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20',
+    color: 'bg-warning/10 text-warning-foreground',
+    dot: 'bg-warning',
+    badge: 'border-warning-border bg-warning/10 text-warning-foreground hover:bg-warning/20',
   },
 };
 

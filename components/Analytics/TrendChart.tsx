@@ -9,6 +9,7 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import { analyticsService } from '../../services/analytics';
+import { chartTheme, getChartGradientStops } from '../../lib/chartTheme';
 import { AnalyticsTrendPoint } from '../../types';
 
 interface TrendChartProps {
@@ -64,28 +65,30 @@ export const TrendChart: React.FC<TrendChartProps> = ({
                     <AreaChart data={chartData}>
                         <defs>
                             <linearGradient id={`gradient-${metric}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
-                                <stop offset="95%" stopColor={color} stopOpacity={0} />
+                                {getChartGradientStops(color).map((stop) => (
+                                    <stop
+                                        key={`${metric}-${stop.offset}`}
+                                        offset={stop.offset}
+                                        stopColor={stop.stopColor}
+                                        stopOpacity={stop.stopOpacity}
+                                    />
+                                ))}
                             </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                        <CartesianGrid {...chartTheme.grid} vertical={false} />
                         <XAxis
                             dataKey="date"
-                            stroke="#475569"
-                            tick={{ fill: '#64748b', fontSize: 12 }}
-                            axisLine={false}
-                            tickLine={false}
+                            {...chartTheme.axis}
                         />
                         <YAxis
-                            stroke="#475569"
-                            tick={{ fill: '#64748b', fontSize: 12 }}
-                            axisLine={false}
-                            tickLine={false}
+                            {...chartTheme.axis}
                             tickFormatter={valueFormatter}
                         />
                         <Tooltip
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                            itemStyle={{ color: '#e2e8f0' }}
+                            contentStyle={chartTheme.tooltip.contentStyle}
+                            itemStyle={chartTheme.tooltip.itemStyle}
+                            labelStyle={chartTheme.tooltip.labelStyle}
+                            cursor={chartTheme.tooltip.cursor}
                             labelFormatter={(label, payload) => payload[0]?.payload.fullDate || label}
                             formatter={(value: number) => [valueFormatter(value), title]}
                         />
