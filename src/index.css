@@ -4,30 +4,14 @@
 
 html {
   min-height: 100%;
-  background-color: hsl(var(--background));
+  background-color: hsl(var(--app-background));
   color-scheme: dark;
 }
 
 body {
   min-height: 100%;
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
-}
-
-/* Custom Scrollbar for dashboard feel */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: #0f172a;
-}
-::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background-color: hsl(var(--app-background));
+  color: hsl(var(--app-foreground));
 }
 
 @layer base {
@@ -57,6 +41,62 @@ body {
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
+    --app-background: var(--background);
+    --app-foreground: var(--foreground);
+    --panel: 0 0% 100%;
+    --panel-foreground: var(--foreground);
+    --panel-border: 214.3 31.8% 91.4%;
+    --sidebar: 210 40% 98%;
+    --sidebar-foreground: 222.2 47.4% 11.2%;
+    --sidebar-accent: 210 40% 96.1%;
+    --sidebar-border: 214.3 31.8% 91.4%;
+    --surface-muted: 210 40% 96.1%;
+    --surface-elevated: 0 0% 100%;
+    --surface-overlay: 0 0% 100%;
+    --success: 142.1 76.2% 36.3%;
+    --success-foreground: 138 76.5% 96.7%;
+    --success-border: 142.1 69.2% 58%;
+    --warning: 37.7 92.1% 50.2%;
+    --warning-foreground: 48 96.5% 88.8%;
+    --warning-border: 37.7 84.4% 58.8%;
+    --danger: 0 84.2% 60.2%;
+    --danger-foreground: 210 40% 98%;
+    --danger-border: 0 84.2% 72%;
+    --info: 217.2 91.2% 59.8%;
+    --info-foreground: 213.3 96.9% 87.3%;
+    --info-border: 217.2 91.2% 70%;
+    --chart-grid: 214.3 31.8% 91.4%;
+    --chart-axis: 215.4 16.3% 46.9%;
+    --chart-tooltip: 0 0% 100%;
+    --chart-tooltip-foreground: var(--foreground);
+    --selection: 226 100% 94%;
+    --focus: 221.2 83.2% 53.3%;
+    --hover: 210 40% 96.1%;
+    --disabled: 214.3 31.8% 91.4%;
+    --disabled-foreground: 215.4 16.3% 46.9%;
+    --scrollbar-track: 210 40% 96.1%;
+    --scrollbar-thumb: 215.4 16.3% 46.9%;
+    --scrollbar-thumb-hover: 215 20.2% 65.1%;
+    --viewer-shell: var(--surface-overlay);
+    --viewer-shell-border: var(--panel-border);
+    --viewer-shell-header: var(--surface-overlay);
+    --viewer-inner-surface: var(--surface-muted);
+    --viewer-shell-shadow: 0 0 0 1px rgb(148 163 184 / 0.12), 0 20px 64px rgb(15 23 42 / 0.12);
+    --markdown-foreground: var(--foreground);
+    --markdown-heading: var(--foreground);
+    --markdown-link: 238 83% 67%;
+    --markdown-strong: var(--foreground);
+    --markdown-quote-border: 238 60% 56%;
+    --markdown-quote-background: 226 100% 97%;
+    --markdown-quote-foreground: 217.2 91.2% 35%;
+    --markdown-inline-code-background: 210 40% 96.1%;
+    --markdown-inline-code-foreground: 217.2 91.2% 35%;
+    --markdown-inline-code-border: 214.3 31.8% 91.4%;
+    --markdown-code-background: 210 40% 98%;
+    --markdown-code-border: 214.3 31.8% 91.4%;
+    --markdown-code-foreground: var(--foreground);
+    --markdown-table-border: 214.3 31.8% 91.4%;
+    --markdown-table-head: 210 40% 96.1%;
   }
   .dark {
     --background: 222.2 84% 4.9%;
@@ -83,12 +123,92 @@ body {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    --app-background: var(--background);
+    --app-foreground: var(--foreground);
+    --panel: 222 47% 11%;
+    --panel-foreground: 210 40% 98%;
+    --panel-border: 215 28% 17%;
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-accent: 222 47% 16%;
+    --sidebar-border: 215 28% 17%;
+    --surface-muted: 217 33% 18%;
+    --surface-elevated: 222 41% 14%;
+    --surface-overlay: 222 63% 8%;
+    --success: 142 69% 42%;
+    --success-foreground: 138 76% 92%;
+    --success-border: 142 46% 30%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+    --warning-border: 35 65% 34%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 100% 97%;
+    --danger-border: 0 52% 34%;
+    --info: 217 91% 60%;
+    --info-foreground: 214 100% 97%;
+    --info-border: 217 54% 38%;
+    --chart-grid: 215 28% 22%;
+    --chart-axis: 215 16% 67%;
+    --chart-tooltip: 222 47% 11%;
+    --chart-tooltip-foreground: 210 40% 96%;
+    --selection: 226 70% 58%;
+    --focus: 217 91% 60%;
+    --hover: 217 33% 22%;
+    --disabled: 217 19% 28%;
+    --disabled-foreground: 215 18% 62%;
+    --scrollbar-track: 222 63% 8%;
+    --scrollbar-thumb: 215 28% 27%;
+    --scrollbar-thumb-hover: 215 20% 38%;
+    --viewer-shell: var(--surface-overlay);
+    --viewer-shell-border: var(--panel-border);
+    --viewer-shell-header: 222 63% 9%;
+    --viewer-inner-surface: 222 63% 9%;
+    --viewer-shell-shadow: 0 0 0 1px rgb(15 23 42 / 0.25), 0 24px 80px rgb(2 6 23 / 0.6);
+    --markdown-foreground: 214 32% 91%;
+    --markdown-heading: 210 40% 98%;
+    --markdown-link: 235 89% 74%;
+    --markdown-strong: 210 40% 98%;
+    --markdown-quote-border: 238 60% 56%;
+    --markdown-quote-background: 222 47% 11% / 0.78;
+    --markdown-quote-foreground: 213 97% 87%;
+    --markdown-inline-code-background: 222 47% 11% / 0.9;
+    --markdown-inline-code-foreground: 213 97% 87%;
+    --markdown-inline-code-border: 215 28% 27%;
+    --markdown-code-background: 222 63% 8% / 0.95;
+    --markdown-code-border: 215 28% 17%;
+    --markdown-code-foreground: 214 32% 91%;
+    --markdown-table-border: 215 28% 17%;
+    --markdown-table-head: 222 47% 11% / 0.92;
+  }
+
+  ::selection {
+    background: hsl(var(--selection) / 0.4);
+    color: hsl(var(--app-foreground));
   }
 }
 
 @layer components {
+  /* Shared scrollbar styling is token-backed so future theme modes only swap variables. */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--scrollbar-track));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--scrollbar-thumb));
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--scrollbar-thumb-hover));
+  }
+
   .ccdash-content-viewer .ccdash-markdown {
-    color: rgb(226 232 240);
+    color: hsl(var(--markdown-foreground));
     line-height: 1.75;
   }
 
@@ -106,7 +226,7 @@ body {
   .ccdash-content-viewer .ccdash-markdown h4,
   .ccdash-content-viewer .ccdash-markdown h5,
   .ccdash-content-viewer .ccdash-markdown h6 {
-    color: rgb(248 250 252);
+    color: hsl(var(--markdown-heading));
     font-weight: 700;
     line-height: 1.25;
     margin-top: 1.5rem;
@@ -153,20 +273,20 @@ body {
   }
 
   .ccdash-content-viewer .ccdash-markdown a {
-    color: rgb(129 140 248);
+    color: hsl(var(--markdown-link));
     text-decoration: underline;
     text-underline-offset: 0.18em;
   }
 
   .ccdash-content-viewer .ccdash-markdown strong {
-    color: rgb(248 250 252);
+    color: hsl(var(--markdown-strong));
     font-weight: 700;
   }
 
   .ccdash-content-viewer .ccdash-markdown blockquote {
-    border-left: 3px solid rgb(79 70 229 / 0.55);
-    background: rgb(15 23 42 / 0.65);
-    color: rgb(191 219 254);
+    border-left: 3px solid hsl(var(--markdown-quote-border) / 0.55);
+    background: hsl(var(--markdown-quote-background));
+    color: hsl(var(--markdown-quote-foreground));
     padding: 0.875rem 1rem;
     border-radius: 0.75rem;
   }
@@ -176,9 +296,9 @@ body {
   }
 
   .ccdash-content-viewer .ccdash-markdown :not(pre) > code {
-    background: rgb(15 23 42 / 0.9);
-    color: rgb(191 219 254);
-    border: 1px solid rgb(51 65 85);
+    background: hsl(var(--markdown-inline-code-background));
+    color: hsl(var(--markdown-inline-code-foreground));
+    border: 1px solid hsl(var(--markdown-inline-code-border));
     border-radius: 0.4rem;
     padding: 0.15rem 0.35rem;
     font-size: 0.85em;
@@ -186,11 +306,11 @@ body {
 
   .ccdash-content-viewer .ccdash-markdown pre {
     overflow-x: auto;
-    background: rgb(2 6 23 / 0.95);
-    border: 1px solid rgb(30 41 59);
+    background: hsl(var(--markdown-code-background));
+    border: 1px solid hsl(var(--markdown-code-border));
     border-radius: 0.9rem;
     padding: 1rem;
-    color: rgb(226 232 240);
+    color: hsl(var(--markdown-code-foreground));
   }
 
   .ccdash-content-viewer .ccdash-markdown pre code {
@@ -206,16 +326,16 @@ body {
     border-collapse: collapse;
     overflow: hidden;
     border-radius: 0.9rem;
-    border: 1px solid rgb(30 41 59);
+    border: 1px solid hsl(var(--markdown-table-border));
   }
 
   .ccdash-content-viewer .ccdash-markdown thead {
-    background: rgb(15 23 42 / 0.92);
+    background: hsl(var(--markdown-table-head));
   }
 
   .ccdash-content-viewer .ccdash-markdown th,
   .ccdash-content-viewer .ccdash-markdown td {
-    border-bottom: 1px solid rgb(30 41 59);
+    border-bottom: 1px solid hsl(var(--markdown-table-border));
     padding: 0.7rem 0.85rem;
     text-align: left;
     vertical-align: top;

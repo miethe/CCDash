@@ -17,6 +17,8 @@ export default {
     				'850': '#1e293b',
     				'950': '#020617'
     			},
+    			'app-background': 'hsl(var(--app-background))',
+    			'app-foreground': 'hsl(var(--app-foreground))',
     			background: 'hsl(var(--background))',
     			foreground: 'hsl(var(--foreground))',
     			card: {
@@ -47,15 +49,62 @@ export default {
     				DEFAULT: 'hsl(var(--destructive))',
     				foreground: 'hsl(var(--destructive-foreground))'
     			},
+    			panel: {
+    				DEFAULT: 'hsl(var(--panel))',
+    				foreground: 'hsl(var(--panel-foreground))',
+    				border: 'hsl(var(--panel-border))'
+    			},
+    			sidebar: {
+    				DEFAULT: 'hsl(var(--sidebar))',
+    				foreground: 'hsl(var(--sidebar-foreground))',
+    				accent: 'hsl(var(--sidebar-accent))',
+    				border: 'hsl(var(--sidebar-border))'
+    			},
+    			surface: {
+    				muted: 'hsl(var(--surface-muted))',
+    				elevated: 'hsl(var(--surface-elevated))',
+    				overlay: 'hsl(var(--surface-overlay))'
+    			},
+    			success: {
+    				DEFAULT: 'hsl(var(--success))',
+    				foreground: 'hsl(var(--success-foreground))',
+    				border: 'hsl(var(--success-border))'
+    			},
+    			warning: {
+    				DEFAULT: 'hsl(var(--warning))',
+    				foreground: 'hsl(var(--warning-foreground))',
+    				border: 'hsl(var(--warning-border))'
+    			},
+    			danger: {
+    				DEFAULT: 'hsl(var(--danger))',
+    				foreground: 'hsl(var(--danger-foreground))',
+    				border: 'hsl(var(--danger-border))'
+    			},
+    			info: {
+    				DEFAULT: 'hsl(var(--info))',
+    				foreground: 'hsl(var(--info-foreground))',
+    				border: 'hsl(var(--info-border))'
+    			},
     			border: 'hsl(var(--border))',
     			input: 'hsl(var(--input))',
     			ring: 'hsl(var(--ring))',
+    			selection: 'hsl(var(--selection))',
+    			focus: 'hsl(var(--focus))',
+    			hover: 'hsl(var(--hover))',
+    			disabled: {
+    				DEFAULT: 'hsl(var(--disabled))',
+    				foreground: 'hsl(var(--disabled-foreground))'
+    			},
     			chart: {
     				'1': 'hsl(var(--chart-1))',
     				'2': 'hsl(var(--chart-2))',
     				'3': 'hsl(var(--chart-3))',
     				'4': 'hsl(var(--chart-4))',
-    				'5': 'hsl(var(--chart-5))'
+    				'5': 'hsl(var(--chart-5))',
+    				grid: 'hsl(var(--chart-grid))',
+    				axis: 'hsl(var(--chart-axis))',
+    				tooltip: 'hsl(var(--chart-tooltip))',
+    				'tooltip-foreground': 'hsl(var(--chart-tooltip-foreground))'
     			}
     		},
     		fontFamily: {
