@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-03-21
+
+### Added
+
+- Theme foundation phase 6 guardrails:
+  - `lib/__tests__/themeFoundationGuardrails.test.ts` now protects the foundation-owned shared semantic surfaces from raw palette-literal regressions
+  - shared analytics/chart surfaces are checked to stay on the centralized chart adapter
+- Theme foundation handoff report:
+  - `docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md`
+
+### Changed
+
+- Theme color exceptions policy is now active and explicitly tied to CI-visible foundation guardrails.
+- CCDash theme-system foundation tracking now marks phase 6 complete and the implementation plan complete.
+- The standard theme modes plan now carries a foundation handoff snapshot instead of assuming a fresh theme audit.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md`
+  - `docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md`
+  - `docs/project_plans/reports/ccdash-theme-color-exceptions-2026-03-20.md`
+- Added:
+  - `docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md`
+
 ## 2026-03-15
 
 ### Added
