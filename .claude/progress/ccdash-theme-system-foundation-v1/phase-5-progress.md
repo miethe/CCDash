@@ -8,17 +8,18 @@ prd_ref: /docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1
 plan_ref: /docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
 phase: 5
 title: Feature surface migration waves
-status: in_progress
+status: completed
 started: '2026-03-20'
-completed: ''
+completed: '2026-03-20'
 commit_refs:
 - 43bdf87
+- 2e8a62b
 pr_refs: []
-overall_progress: 67
-completion_estimate: in_progress
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
-completed_tasks: 2
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -48,7 +49,7 @@ tasks:
   priority: high
 - id: THEME-403
   description: Migrate the most styling-dense monolithic pages in staged slices using semantic shells and shared surface patterns.
-  status: in_progress
+  status: completed
   assigned_to:
   - codebase-janitor
   - frontend-developer

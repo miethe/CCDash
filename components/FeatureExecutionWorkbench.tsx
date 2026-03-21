@@ -308,7 +308,7 @@ const executionVerdictClass = (value?: string): string => {
   if (normalized === 'allow') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
   if (normalized === 'requires_approval') return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
   if (normalized === 'deny') return 'border-rose-500/40 bg-rose-500/10 text-rose-200';
-  return 'border-slate-600 bg-slate-800/60 text-slate-200';
+  return 'border-hover bg-surface-muted/70 text-panel-foreground';
 };
 
 const executionRiskClass = (value?: string): string => {
@@ -316,7 +316,7 @@ const executionRiskClass = (value?: string): string => {
   if (normalized === 'low') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
   if (normalized === 'medium') return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
   if (normalized === 'high') return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
-  return 'border-slate-600 bg-slate-800/60 text-slate-200';
+  return 'border-hover bg-surface-muted/70 text-panel-foreground';
 };
 
 const parsePhaseNumber = (value: string, allowBareNumber = false): number | null => {
@@ -1726,21 +1726,21 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         headerRight={(
           <div className="flex items-center gap-3 text-right">
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Workload</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Workload</div>
               <div className="text-xs font-mono text-sky-300">{formatTokenCount(sessionTokenMetrics.workloadTokens)}</div>
             </div>
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Cost</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Cost</div>
               <div className="text-xs font-mono text-emerald-400">${resolveDisplayCost(session).toFixed(2)}</div>
             </div>
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Duration</div>
-              <div className="text-xs font-mono text-slate-400">{Math.round(Number(session.durationSeconds || 0) / 60)}m</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Duration</div>
+              <div className="text-xs font-mono text-muted-foreground">{Math.round(Number(session.durationSeconds || 0) / 60)}m</div>
             </div>
             {primaryCommit && (
               <span
                 title={primaryCommit}
-                className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono"
+                className="flex items-center gap-1 text-[10px] bg-surface-muted text-muted-foreground px-1.5 py-0.5 rounded border border-panel-border font-mono"
               >
                 <GitCommit size={10} />
                 {toShortCommitHash(primaryCommit)}
@@ -1775,10 +1775,10 @@ export const FeatureExecutionWorkbench: React.FC = () => {
           } : undefined,
         )}
         {hasChildren && isExpanded && (
-          <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+          <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-panel-border/90 space-y-3`}>
             {node.children.map(child => (
               <div key={child.session.sessionId} className="relative pl-3">
-                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                <div className="absolute left-0 top-5 w-3 border-t border-panel-border/90" />
                 {renderSessionTreeNode(child, depth + 1)}
               </div>
             ))}
@@ -1810,28 +1810,28 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   if (!loading && !context && !error) {
     return (
       <div className="space-y-5">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5">
+        <div className="bg-panel border border-panel-border rounded-xl p-4 md:p-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <h1 className="text-xl md:text-2xl font-bold text-slate-100">Feature Execution Workbench</h1>
-              <p className="text-sm text-slate-400 mt-1">
+              <h1 className="text-xl md:text-2xl font-bold text-panel-foreground">Feature Execution Workbench</h1>
+              <p className="text-sm text-muted-foreground mt-1">
                 Unified context and deterministic next-command guidance for feature delivery.
               </p>
             </div>
             <div className="w-full md:w-[460px] grid grid-cols-1 md:grid-cols-[1fr_180px] gap-2">
               <label className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
                   value={query}
                   onChange={event => setQuery(event.target.value)}
                   placeholder="Search feature"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-9 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  className="w-full rounded-lg border border-panel-border bg-surface-overlay px-9 py-2.5 text-sm text-panel-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
                 />
               </label>
               <select
                 value={selectedFeatureId}
                 onChange={event => selectFeature(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                className="rounded-lg border border-panel-border bg-surface-overlay px-3 py-2.5 text-sm text-panel-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
               >
                 {!selectedFeatureId && <option value="">Select feature</option>}
                 {filteredFeatures.map(feature => (
@@ -1841,12 +1841,12 @@ export const FeatureExecutionWorkbench: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 text-slate-400 flex items-center gap-2">
+        <div className="bg-panel border border-panel-border rounded-xl p-6 text-muted-foreground flex items-center gap-2">
           <Command size={16} />
           Select a feature to load execution guidance.
           <button
             onClick={() => void refreshFeatures()}
-            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-300 hover:border-slate-500 text-xs"
+            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-panel-border text-foreground hover:border-hover text-xs"
           >
             <RefreshCw size={13} />
             Refresh
@@ -1858,30 +1858,30 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
   return (
     <div className="space-y-5">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5">
+      <div className="bg-panel border border-panel-border rounded-xl p-4 md:p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-100">Feature Execution Workbench</h1>
-            <p className="text-sm text-slate-400 mt-1">
+            <h1 className="text-xl md:text-2xl font-bold text-panel-foreground">Feature Execution Workbench</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               Unified context and deterministic next-command guidance for feature delivery.
             </p>
           </div>
 
           <div className="w-full md:w-[460px] grid grid-cols-1 md:grid-cols-[1fr_180px] gap-2">
             <label className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 value={query}
                 onChange={event => setQuery(event.target.value)}
                 placeholder="Search feature"
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-9 py-2.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                className="w-full rounded-lg border border-panel-border bg-surface-overlay px-9 py-2.5 text-sm text-panel-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
               />
             </label>
 
             <select
               value={selectedFeatureId}
               onChange={event => selectFeature(event.target.value)}
-              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+              className="rounded-lg border border-panel-border bg-surface-overlay px-3 py-2.5 text-sm text-panel-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
             >
               {!selectedFeatureId && <option value="">Select feature</option>}
               {filteredFeatures.map(feature => (
@@ -1894,15 +1894,15 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-          <Link to="/board" className="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500">Board</Link>
-          <Link to="/plans" className="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500">Plans</Link>
-          <Link to="/sessions" className="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500">Sessions</Link>
-          <Link to="/analytics" className="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500">Analytics</Link>
+          <Link to="/board" className="px-2.5 py-1 rounded border border-panel-border text-foreground hover:border-hover">Board</Link>
+          <Link to="/plans" className="px-2.5 py-1 rounded border border-panel-border text-foreground hover:border-hover">Plans</Link>
+          <Link to="/sessions" className="px-2.5 py-1 rounded border border-panel-border text-foreground hover:border-hover">Sessions</Link>
+          <Link to="/analytics" className="px-2.5 py-1 rounded border border-panel-border text-foreground hover:border-hover">Analytics</Link>
         </div>
       </div>
 
       {loading && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 text-slate-400 flex items-center gap-2">
+        <div className="bg-panel border border-panel-border rounded-xl p-6 text-muted-foreground flex items-center gap-2">
           <Loader2 size={16} className="animate-spin" />
           Loading execution context...
         </div>
@@ -1930,19 +1930,19 @@ export const FeatureExecutionWorkbench: React.FC = () => {
           <div className="space-y-4">
             <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
             <div className="h-fit space-y-4 xl:sticky xl:top-0">
-              <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <section className="rounded-xl border border-panel-border bg-panel p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Recommendation</p>
-                    <h2 className="text-lg font-semibold text-slate-100 mt-1">Next Command</h2>
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Recommendation</p>
+                    <h2 className="text-lg font-semibold text-panel-foreground mt-1">Next Command</h2>
                   </div>
                   <span className="text-[10px] font-bold px-2 py-1 rounded border border-indigo-500/40 text-indigo-200 bg-indigo-500/20">
                     {context.recommendations.ruleId}
                   </span>
                 </div>
 
-                <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
-                  <p className="text-[11px] text-slate-500 uppercase tracking-wide mb-2">Primary</p>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay p-3">
+                  <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Primary</p>
                   <code className="text-sm text-emerald-300 block whitespace-pre-wrap break-all">{context.recommendations.primary.command}</code>
                 </div>
 
@@ -1964,23 +1964,23 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   <button
                     onClick={openSourceDoc}
                     disabled={!sourceDocPath}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-700 text-slate-200 text-xs font-semibold enabled:hover:border-slate-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-panel-border text-panel-foreground text-xs font-semibold enabled:hover:border-hover disabled:opacity-50"
                   >
                     <ExternalLink size={14} />
                     Open Source Doc
                   </button>
                 </div>
 
-                <p className="text-sm text-slate-300 leading-relaxed">{context.recommendations.explanation}</p>
+                <p className="text-sm text-foreground leading-relaxed">{context.recommendations.explanation}</p>
 
                 {context.recommendations.alternatives.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[11px] uppercase tracking-wide text-slate-500">Alternatives</p>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Alternatives</p>
                     {context.recommendations.alternatives.map(option => (
-                      <div key={option.command} className="rounded-lg border border-slate-700/80 p-2.5 bg-slate-950/70">
+                      <div key={option.command} className="rounded-lg border border-panel-border/90 p-2.5 bg-surface-overlay/80">
                         <code className="text-xs text-cyan-200 block whitespace-pre-wrap break-all">{option.command}</code>
                         <div className="mt-2 flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-slate-500">{option.ruleId}</span>
+                          <span className="text-[10px] text-muted-foreground">{option.ruleId}</span>
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => void openRunReview(option.command, option.ruleId)}
@@ -1990,7 +1990,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                             </button>
                             <button
                               onClick={() => handleCopyCommand(option.command)}
-                              className="text-[11px] text-slate-300 hover:text-white"
+                              className="text-[11px] text-foreground hover:text-panel-foreground"
                             >
                               Copy
                             </button>
@@ -2007,8 +2007,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
                 )}
 
-                <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Evidence</p>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Evidence</p>
                   <ul className="space-y-1.5">
                     {context.recommendations.evidence.map(item => {
                       const rawPath = (item.sourcePath || (isPathLike(item.value) ? item.value : '')).trim();
@@ -2026,8 +2026,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         || parsed.key === 'next_phase'
                         || parsed.key === 'highest_completed_phase';
                       return (
-                        <li key={item.id} className="text-xs text-slate-300 flex items-center gap-2 min-w-0">
-                          <span className="shrink-0 max-w-[140px] truncate text-[11px] text-slate-500" title={structuredLabel}>
+                        <li key={item.id} className="text-xs text-foreground flex items-center gap-2 min-w-0">
+                          <span className="shrink-0 max-w-[140px] truncate text-[11px] text-muted-foreground" title={structuredLabel}>
                             {structuredLabel}:
                           </span>
                           {isClickable ? (
@@ -2043,7 +2043,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                               {displayValue}
                             </span>
                           )}
-                          <span className="shrink-0 max-w-[96px] truncate text-[10px] uppercase text-slate-500" title={item.sourceType}>
+                          <span className="shrink-0 max-w-[96px] truncate text-[10px] uppercase text-muted-foreground" title={item.sourceType}>
                             {item.sourceType}
                           </span>
                         </li>
@@ -2065,8 +2065,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
             </div>
 
-            <section className={`min-w-0 rounded-xl border border-slate-800 bg-slate-900 p-4 ${isAnalyticsTabActive ? 'min-h-[42rem]' : 'min-h-[42rem] h-[clamp(42rem,74vh,58rem)] overflow-hidden flex flex-col'}`}>
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+            <section className={`min-w-0 rounded-xl border border-panel-border bg-panel p-4 ${isAnalyticsTabActive ? 'min-h-[42rem]' : 'min-h-[42rem] h-[clamp(42rem,74vh,58rem)] overflow-hidden flex flex-col'}`}>
+              <div className="flex flex-wrap items-center gap-2 border-b border-panel-border pb-3">
                 {visibleTabItems.map(tab => (
                   <button
                     key={tab.id}
@@ -2074,7 +2074,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border ${
                       activeTab === tab.id
                         ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-100'
-                        : 'border-slate-700 text-slate-300 hover:border-slate-500'
+                        : 'border-panel-border text-foreground hover:border-hover'
                     }`}
                   >
                     <tab.icon size={13} />
@@ -2090,62 +2090,62 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'overview')}
-                      className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-left hover:border-indigo-500/40"
+                      className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-left hover:border-indigo-500/40"
                     >
-                      <p className="text-[11px] text-slate-500 uppercase">Feature</p>
-                      <p className="text-sm text-slate-100 font-semibold mt-1 truncate">{featureDetail.name}</p>
-                      <p className="text-xs text-slate-500 mt-1 truncate">{featureDetail.id}</p>
+                      <p className="text-[11px] text-muted-foreground uppercase">Feature</p>
+                      <p className="text-sm text-panel-foreground font-semibold mt-1 truncate">{featureDetail.name}</p>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">{featureDetail.id}</p>
                     </button>
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'overview')}
-                      className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-left hover:border-indigo-500/40"
+                      className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-left hover:border-indigo-500/40"
                     >
-                      <p className="text-[11px] text-slate-500 uppercase">Status</p>
-                      <p className="text-sm text-slate-100 font-semibold mt-1">{formatStatus(featureDetail.status)}</p>
-                      <p className="text-xs text-slate-500 mt-1">Updated {formatDateTime(featureDetail.updatedAt)}</p>
+                      <p className="text-[11px] text-muted-foreground uppercase">Status</p>
+                      <p className="text-sm text-panel-foreground font-semibold mt-1">{formatStatus(featureDetail.status)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Updated {formatDateTime(featureDetail.updatedAt)}</p>
                     </button>
                     <button
                       onClick={() => openBoardFeature(featureDetail.id, 'phases')}
-                      className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-left hover:border-indigo-500/40"
+                      className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 text-left hover:border-indigo-500/40"
                     >
-                      <p className="text-[11px] text-slate-500 uppercase">Tasks</p>
-                      <p className="text-sm text-slate-100 font-semibold mt-1">
+                      <p className="text-[11px] text-muted-foreground uppercase">Tasks</p>
+                      <p className="text-sm text-panel-foreground font-semibold mt-1">
                         {featureDetail.completedTasks}/{featureDetail.totalTasks}
                       </p>
-                      <p className="text-xs text-slate-500 mt-1">Across {featureDetail.phases.length} phases</p>
+                      <p className="text-xs text-muted-foreground mt-1">Across {featureDetail.phases.length} phases</p>
                     </button>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Generated</p>
-                      <p className="text-sm text-slate-100 font-semibold mt-1">{formatDateTime(context.generatedAt)}</p>
-                      <p className="text-xs text-slate-500 mt-1">Rule confidence {Math.round(context.recommendations.confidence * 100)}%</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Generated</p>
+                      <p className="text-sm text-panel-foreground font-semibold mt-1">{formatDateTime(context.generatedAt)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Rule confidence {Math.round(context.recommendations.confidence * 100)}%</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Feature Metadata</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Feature Metadata</p>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="text-slate-400">Priority <span className="text-slate-200 ml-1">{featureDetail.priority || '-'}</span></div>
-                        <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{featureDetail.riskLevel || '-'}</span></div>
-                        <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{featureDetail.complexity || '-'}</span></div>
-                        <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{featureDetail.track || '-'}</span></div>
-                        <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
-                        <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{featureDetail.executionReadiness || '-'}</span></div>
-                        <div className="text-slate-400">Coverage <span className="text-slate-200 ml-1">{getFeatureCoverageSummary(featureDetail)}</span></div>
+                        <div className="text-muted-foreground">Priority <span className="text-panel-foreground ml-1">{featureDetail.priority || '-'}</span></div>
+                        <div className="text-muted-foreground">Risk <span className="text-panel-foreground ml-1">{featureDetail.riskLevel || '-'}</span></div>
+                        <div className="text-muted-foreground">Complexity <span className="text-panel-foreground ml-1">{featureDetail.complexity || '-'}</span></div>
+                        <div className="text-muted-foreground">Track <span className="text-panel-foreground ml-1">{featureDetail.track || '-'}</span></div>
+                        <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
+                        <div className="text-muted-foreground">Readiness <span className="text-panel-foreground ml-1">{featureDetail.executionReadiness || '-'}</span></div>
+                        <div className="text-muted-foreground">Coverage <span className="text-panel-foreground ml-1">{getFeatureCoverageSummary(featureDetail)}</span></div>
                       </div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Relation Signals</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Relation Signals</p>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="text-slate-400">Typed links <span className="text-slate-200 ml-1">{getFeatureLinkedFeatureCount(featureDetail)}</span></div>
-                        <div className="text-slate-400">Related IDs <span className="text-slate-200 ml-1">{featureDetail.relatedFeatures.length}</span></div>
-                        <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.blockerCount ?? 0}</span></div>
-                        <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{featureDetail.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
-                        <div className="text-slate-400">Blocked By <span className="text-slate-200 ml-1">{blockedByRelations.length}</span></div>
-                        <div className="text-slate-400">Sequenced Docs <span className="text-slate-200 ml-1">{sequenceDocs.length}</span></div>
+                        <div className="text-muted-foreground">Typed links <span className="text-panel-foreground ml-1">{getFeatureLinkedFeatureCount(featureDetail)}</span></div>
+                        <div className="text-muted-foreground">Related IDs <span className="text-panel-foreground ml-1">{featureDetail.relatedFeatures.length}</span></div>
+                        <div className="text-muted-foreground">Blockers <span className="text-panel-foreground ml-1">{featureDetail.qualitySignals?.blockerCount ?? 0}</span></div>
+                        <div className="text-muted-foreground">At Risk <span className="text-panel-foreground ml-1">{featureDetail.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                        <div className="text-muted-foreground">Blocked By <span className="text-panel-foreground ml-1">{blockedByRelations.length}</span></div>
+                        <div className="text-muted-foreground">Sequenced Docs <span className="text-panel-foreground ml-1">{sequenceDocs.length}</span></div>
                       </div>
                       {(featureDetail.qualitySignals?.integritySignalRefs || []).length > 0 && (
-                        <p className="text-[11px] text-slate-500 mt-2">
+                        <p className="text-[11px] text-muted-foreground mt-2">
                           Integrity refs: {(featureDetail.qualitySignals?.integritySignalRefs || []).join(', ')}
                         </p>
                       )}
@@ -2154,8 +2154,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
 
                   <div className="flex min-h-0 flex-col gap-4 xl:min-w-0">
-                    <div className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Typed Related Features</p>
+                    <div className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Typed Related Features</p>
                       {(featureDetail.linkedFeatures || []).length > 0 ? (
                         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                           {(featureDetail.linkedFeatures || []).map((relation, index) => (
@@ -2166,44 +2166,44 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                               >
                                 {relation.feature}
                               </button>
-                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{relation.type || 'related'}</span>
-                              <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400">{relation.source || 'unknown'}</span>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{relation.type || 'related'}</span>
+                              <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-panel text-muted-foreground">{relation.source || 'unknown'}</span>
                               {typeof relation.confidence === 'number' && (
-                                <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                                <span className="text-muted-foreground">{Math.round(relation.confidence * 100)}%</span>
                               )}
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div className="flex flex-1 items-center rounded-lg border border-dashed border-slate-800 px-3 text-sm text-slate-500">
+                        <div className="flex flex-1 items-center rounded-lg border border-dashed border-panel-border px-3 text-sm text-muted-foreground">
                           No typed feature relations were detected for this feature.
                         </div>
                       )}
                     </div>
 
-                    <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Related Features</p>
+                    <div className="shrink-0 rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Related Features</p>
                       {featureDetail.relatedFeatures.length > 0 ? (
                         <div className="flex flex-wrap gap-2">
                           {featureDetail.relatedFeatures.map(featureId => (
                             <button
                               key={featureId}
                               onClick={() => openBoardFeature(featureId, 'overview')}
-                              className="text-xs px-2 py-1 rounded border border-slate-700 bg-slate-900 text-indigo-300 hover:border-indigo-500/40 [overflow-wrap:anywhere]"
+                              className="text-xs px-2 py-1 rounded border border-panel-border bg-panel text-indigo-300 hover:border-indigo-500/40 [overflow-wrap:anywhere]"
                             >
                               {featureId}
                             </button>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-slate-500">No secondary related feature IDs were attached.</p>
+                        <p className="text-sm text-muted-foreground">No secondary related feature IDs were attached.</p>
                       )}
                     </div>
                     {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
-                      <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Execution Ordering</p>
+                      <div className="shrink-0 rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Execution Ordering</p>
                         <div className="space-y-2 text-xs">
-                          <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
+                          <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{featureDetail.featureFamily || '-'}</span></div>
                           {blockedByRelations.length > 0 && (
                             <div className="flex flex-wrap gap-2">
                               {blockedByRelations.map((relation, index) => (
@@ -2223,7 +2223,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                 <button
                                   key={`sequence-doc-${doc.id}`}
                                   onClick={() => openLinkedDoc(doc)}
-                                  className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-200"
+                                  className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-[10px] text-panel-foreground"
                                 >
                                   #{doc.sequenceOrder} {doc.title}
                                 </button>
@@ -2270,13 +2270,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               {activeTab === 'phases' && (
                 <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {fullFeatureLoading && (
-                    <div className="text-xs text-slate-400 flex items-center gap-2">
+                    <div className="text-xs text-muted-foreground flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
                       Loading full phase/task detail...
                     </div>
                   )}
                   {phases.length === 0 && (
-                    <p className="text-sm text-slate-400">No phase details available.</p>
+                    <p className="text-sm text-muted-foreground">No phase details available.</p>
                   )}
                   {phases.map(phase => {
                     const phaseKey = phase.id || phase.phase;
@@ -2285,8 +2285,8 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                     const pendingTasks = getPhasePendingTasks(phase);
                     return (
-                      <div key={phaseKey} className="rounded-lg border border-slate-800 bg-slate-950/40 overflow-hidden">
-                        <div className="w-full px-3 py-3 text-left hover:bg-slate-900/60">
+                      <div key={phaseKey} className="rounded-lg border border-panel-border bg-surface-overlay/70 overflow-hidden">
+                        <div className="w-full px-3 py-3 text-left hover:bg-panel/70">
                           <div className="flex items-start gap-2">
                             <button
                               onClick={() => {
@@ -2297,7 +2297,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                   return next;
                                 });
                               }}
-                              className="mt-0.5 text-slate-400 hover:text-slate-200"
+                              className="mt-0.5 text-muted-foreground hover:text-panel-foreground"
                               title={isExpanded ? 'Collapse phase' : 'Expand phase'}
                             >
                               {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -2309,22 +2309,22 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                     event.stopPropagation();
                                     if (featureDetail) openBoardFeature(featureDetail.id, 'phases');
                                   }}
-                                  className="text-sm font-semibold text-slate-100 hover:text-indigo-300 truncate"
+                                  className="text-sm font-semibold text-panel-foreground hover:text-indigo-300 truncate"
                                 >
                                   Phase {phase.phase}: {phase.title || 'Untitled'}
                                 </button>
-                                <span className="text-xs text-slate-300 shrink-0">
+                                <span className="text-xs text-foreground shrink-0">
                                   {phase.completedTasks}/{phase.totalTasks}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-400 mt-1">Status: {formatStatus(phase.status)}</p>
-                              <div className="mt-2 h-2 rounded bg-slate-800 overflow-hidden">
+                              <p className="text-xs text-muted-foreground mt-1">Status: {formatStatus(phase.status)}</p>
+                              <div className="mt-2 h-2 rounded bg-surface-muted overflow-hidden">
                                 <div className="h-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, phase.progress || 0))}%` }} />
                               </div>
-                              <p className="text-xs text-slate-400 mt-2">Next unresolved tasks: {pendingTasks}</p>
+                              <p className="text-xs text-muted-foreground mt-2">Next unresolved tasks: {pendingTasks}</p>
                               {phaseRelatedSessions.length > 0 && (
                                 <div className="mt-2 flex flex-wrap items-center gap-1">
-                                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
+                                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Sessions</span>
                                   {phaseRelatedSessions.slice(0, 4).map(link => (
                                     <button
                                       key={`${phaseKey}-${link.sessionId}`}
@@ -2338,7 +2338,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                     </button>
                                   ))}
                                   {phaseRelatedSessions.length > 4 && (
-                                    <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 4} more</span>
+                                    <span className="text-[10px] text-muted-foreground">+{phaseRelatedSessions.length - 4} more</span>
                                   )}
                                 </div>
                               )}
@@ -2347,27 +2347,27 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         </div>
 
                         {isExpanded && (
-                          <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/60 space-y-1.5 overflow-hidden">
+                          <div className="border-t border-panel-border px-3 py-2 bg-surface-overlay/70 space-y-1.5 overflow-hidden">
                             {phaseTasks.length === 0 && (
-                              <p className="text-xs text-slate-500 italic">No task details currently available for this phase.</p>
+                              <p className="text-xs text-muted-foreground italic">No task details currently available for this phase.</p>
                             )}
                             {phaseTasks.map(task => {
                               const taskLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                               const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
                               return (
-                                <div key={`${phaseKey}-${task.id}`} className="w-full max-w-full rounded px-2 py-1.5 hover:bg-slate-900/70 min-w-0 overflow-hidden">
+                                <div key={`${phaseKey}-${task.id}`} className="w-full max-w-full rounded px-2 py-1.5 hover:bg-panel/75 min-w-0 overflow-hidden">
                                   <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 min-w-0 w-full max-w-full overflow-hidden">
                                     <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                                       <button
                                         onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                        className="font-mono text-[10px] text-slate-500 max-w-16 shrink-0 text-left hover:text-indigo-300 truncate"
+                                        className="font-mono text-[10px] text-muted-foreground max-w-16 shrink-0 text-left hover:text-indigo-300 truncate"
                                         title={task.id}
                                       >
                                         {task.id}
                                       </button>
                                       <button
                                         onClick={() => featureDetail && openBoardFeature(featureDetail.id, 'phases')}
-                                        className="text-sm text-slate-300 flex-1 min-w-0 truncate text-left hover:text-indigo-300 block w-full"
+                                        className="text-sm text-foreground flex-1 min-w-0 truncate text-left hover:text-indigo-300 block w-full"
                                         title={task.title}
                                       >
                                         {task.title}
@@ -2394,7 +2394,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                                         </button>
                                       ))}
                                       {taskLinks.length > 3 && (
-                                        <span className="text-[10px] text-slate-500">+{taskLinks.length - 3}</span>
+                                        <span className="text-[10px] text-muted-foreground">+{taskLinks.length - 3}</span>
                                       )}
                                       </div>
                                     </div>
@@ -2412,7 +2412,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
               {activeTab === 'documents' && (
                 <div className="h-full overflow-y-auto pr-1 space-y-2">
-                  {context.documents.length === 0 && <p className="text-sm text-slate-400">No correlated documents found.</p>}
+                  {context.documents.length === 0 && <p className="text-sm text-muted-foreground">No correlated documents found.</p>}
                   {context.documents.map(doc => (
                     <button
                       key={doc.id}
@@ -2424,13 +2424,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         });
                         openLinkedDoc(doc);
                       }}
-                      className="w-full text-left rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 hover:border-slate-600"
+                      className="w-full text-left rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 hover:border-hover"
                     >
-                      <p className="text-sm text-slate-100 font-medium">{doc.title}</p>
-                      <p className="text-xs text-slate-400 mt-1 truncate">{doc.docType} · {doc.filePath}</p>
+                      <p className="text-sm text-panel-foreground font-medium">{doc.title}</p>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">{doc.docType} · {doc.filePath}</p>
                       <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
                         {doc.featureFamily && (
-                          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-slate-300">
+                          <span className="rounded-full border border-panel-border bg-panel px-2 py-0.5 text-foreground">
                             {doc.featureFamily}
                           </span>
                         )}
@@ -2452,7 +2452,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
               {activeTab === 'sessions' && (
                 <div className="h-full overflow-y-auto pr-1 space-y-3">
-                  {executionSessions.length === 0 && <p className="text-sm text-slate-400">No linked sessions available.</p>}
+                  {executionSessions.length === 0 && <p className="text-sm text-muted-foreground">No linked sessions available.</p>}
                   {executionSessions.length > 0 && (
                     <>
                       <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
@@ -2467,22 +2467,22 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         <div key={group.id} className="space-y-2">
                           <button
                             onClick={() => setCoreSessionGroupExpanded(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
-                            className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                            className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
                           >
                             <div>
-                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground">
                                 {coreSessionGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 {group.label}
                               </div>
-                              <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
+                              <p className="text-[11px] text-muted-foreground mt-1">{group.description}</p>
                             </div>
-                            <span className="text-[11px] text-slate-500">{group.totalSessions}</span>
+                            <span className="text-[11px] text-muted-foreground">{group.totalSessions}</span>
                           </button>
 
                           {coreSessionGroupExpanded[group.id] && (
                             <div className="space-y-3">
                               {group.roots.length === 0 && (
-                                <div className="text-xs text-slate-600 italic px-1">
+                                <div className="text-xs text-muted-foreground italic px-1">
                                   No sessions currently in this group.
                                 </div>
                               )}
@@ -2495,19 +2495,19 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       <div className="space-y-2 pt-2">
                         <button
                           onClick={() => setShowSecondarySessions(prev => !prev)}
-                          className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                          className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
                         >
-                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                             {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             Secondary Linkages
                           </div>
-                          <span className="text-[11px] text-slate-500">{secondarySessionCount}</span>
+                          <span className="text-[11px] text-muted-foreground">{secondarySessionCount}</span>
                         </button>
 
                         {showSecondarySessions && (
                           <div className="space-y-3">
                             {secondarySessionRoots.length === 0 && (
-                              <div className="text-xs text-slate-600 italic px-1">
+                              <div className="text-xs text-muted-foreground italic px-1">
                                 No secondary linked sessions.
                               </div>
                             )}
@@ -2523,7 +2523,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               {activeTab === 'artifacts' && (
                 <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {artifactsLoading && (
-                    <div className="text-xs text-slate-400 flex items-center gap-2">
+                    <div className="text-xs text-muted-foreground flex items-center gap-2">
                       <Loader2 size={13} className="animate-spin" />
                       Loading linked session artifacts...
                     </div>
@@ -2537,7 +2537,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     />
                   )}
                   {!artifactsLoading && !mergedArtifactSession && (
-                    <div className="text-sm text-slate-400">No linked artifacts found for this feature yet.</div>
+                    <div className="text-sm text-muted-foreground">No linked artifacts found for this feature yet.</div>
                   )}
                 </div>
               )}
@@ -2545,7 +2545,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               {activeTab === 'history' && (
                 <div className="h-full overflow-y-auto pr-1 space-y-3">
                   {featureHistoryEvents.length === 0 && (
-                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                    <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                       <Calendar size={32} className="mx-auto mb-3 opacity-50" />
                       <p>No timeline events available yet.</p>
                     </div>
@@ -2572,18 +2572,18 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       <button
                         key={event.id}
                         onClick={onOpen}
-                        className={`w-full text-left bg-slate-900 border border-slate-800 rounded-lg p-3 ${isSession || isDocument || isFeature ? 'hover:border-indigo-500/30' : ''}`}
+                        className={`w-full text-left bg-panel border border-panel-border rounded-lg p-3 ${isSession || isDocument || isFeature ? 'hover:border-indigo-500/30' : ''}`}
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-slate-200">{event.label}</div>
-                          <div className="text-xs text-slate-500">{new Date(event.timestamp).toLocaleString()}</div>
+                          <div className="text-sm text-panel-foreground">{event.label}</div>
+                          <div className="text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleString()}</div>
                         </div>
-                        <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
-                          <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">{event.kind}</span>
-                          <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70">{event.confidence}</span>
+                        <div className="mt-1 text-[11px] text-muted-foreground flex flex-wrap items-center gap-2">
+                          <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted/80">{event.kind}</span>
+                          <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted/80">{event.confidence}</span>
                           <span className="font-mono truncate">{event.source}</span>
                         </div>
-                        {event.description && <p className="mt-2 text-xs text-slate-500">{event.description}</p>}
+                        {event.description && <p className="mt-2 text-xs text-muted-foreground">{event.description}</p>}
                       </button>
                     );
                   })}
@@ -2593,34 +2593,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               {activeTab === 'analytics' && (
                 <div className="flex flex-col gap-4">
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Sessions</p>
-                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.sessionCount}</p>
-                      <p className="text-xs text-slate-500 mt-1">Primary {context.analytics.primarySessionCount}</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Sessions</p>
+                      <p className="text-lg text-panel-foreground font-semibold mt-1">{context.analytics.sessionCount}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Primary {context.analytics.primarySessionCount}</p>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Observed Workload</p>
-                      <p className="text-lg text-slate-100 font-semibold mt-1">{formatTokenCount(executionWorkload.workloadTokens)}</p>
-                      <p className="text-xs text-slate-500 mt-1">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Observed Workload</p>
+                      <p className="text-lg text-panel-foreground font-semibold mt-1">{formatTokenCount(executionWorkload.workloadTokens)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {formatTokenCount(executionWorkload.cacheInputTokens)} cache input
                       </p>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Display Spend</p>
-                      <p className="text-lg text-slate-100 font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
-                      <p className="text-xs text-slate-500 mt-1">reported &gt; recalculated &gt; estimated</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Display Spend</p>
+                      <p className="text-lg text-panel-foreground font-semibold mt-1">${context.analytics.totalSessionCost.toFixed(2)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">reported &gt; recalculated &gt; estimated</p>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Telemetry</p>
-                      <p className="text-lg text-slate-100 font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
-                      <p className="text-xs text-slate-500 mt-1">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Telemetry</p>
+                      <p className="text-lg text-panel-foreground font-semibold mt-1">{context.analytics.artifactEventCount} artifacts</p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {context.analytics.commandEventCount} command events
                         {executionWorkload.toolFallbackSessions > 0 ? ` • ${executionWorkload.toolFallbackSessions} tool fallback` : ''}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                      <p className="text-[11px] text-slate-500 uppercase">Last Event</p>
-                      <p className="text-sm text-slate-100 mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                      <p className="text-[11px] text-muted-foreground uppercase">Last Event</p>
+                      <p className="text-sm text-panel-foreground mt-1">{formatDateTime(context.analytics.lastEventAt)}</p>
                     </div>
                   </div>
 
@@ -2644,14 +2644,14 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                     <div className="flex flex-wrap justify-end gap-2">
                       <button
                         onClick={() => navigate('/workflows')}
-                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                        className="inline-flex items-center gap-2 rounded-lg border border-panel-border px-3 py-2 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
                       >
                         <Layers size={13} />
                         Open Workflow Registry
                       </button>
                       <button
                         onClick={() => navigate('/analytics?tab=workflow_intelligence')}
-                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                        className="inline-flex items-center gap-2 rounded-lg border border-panel-border px-3 py-2 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
                       >
                         <ExternalLink size={13} />
                         Open Full Analytics
@@ -2672,7 +2672,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                       onNavigateToTestingPage={() => navigate(`/tests?featureId=${encodeURIComponent(context.feature.id)}`)}
                     />
                   ) : (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-4 text-sm text-muted-foreground">
                       Select an active project to view test status.
                     </div>
                   )}
@@ -2703,16 +2703,16 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
       {reviewOpen && (
         <div className="fixed inset-0 z-[75] bg-black/50 backdrop-blur-[1px] flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl rounded-xl border border-slate-700 bg-slate-900 shadow-2xl">
-            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-slate-100">
+          <div className="w-full max-w-3xl rounded-xl border border-panel-border bg-panel shadow-2xl">
+            <div className="px-4 py-3 border-b border-panel-border flex items-center justify-between">
+              <div className="flex items-center gap-2 text-panel-foreground">
                 <Terminal size={15} />
                 <h3 className="text-sm font-semibold">Review and Launch Run</h3>
               </div>
               <button
                 onClick={() => setReviewOpen(false)}
                 disabled={runActionLoading}
-                className="p-1 rounded border border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50"
+                className="p-1 rounded border border-panel-border text-foreground hover:border-hover disabled:opacity-50"
                 aria-label="Close review dialog"
               >
                 <X size={14} />
@@ -2721,30 +2721,30 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
             <div className="p-4 space-y-4">
               <label className="block">
-                <span className="text-[11px] uppercase tracking-wide text-slate-500">Command</span>
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Command</span>
                 <textarea
                   rows={3}
                   value={reviewCommand}
                   onChange={event => setReviewCommand(event.target.value)}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  className="mt-1 w-full rounded border border-panel-border bg-surface-overlay px-2 py-1.5 text-sm text-panel-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
                 />
               </label>
 
               <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-3">
                 <label className="block">
-                  <span className="text-[11px] uppercase tracking-wide text-slate-500">Working Directory</span>
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Working Directory</span>
                   <input
                     value={reviewCwd}
                     onChange={event => setReviewCwd(event.target.value)}
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    className="mt-1 w-full rounded border border-panel-border bg-surface-overlay px-2 py-1.5 text-sm text-panel-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] uppercase tracking-wide text-slate-500">Env Profile</span>
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Env Profile</span>
                   <select
                     value={reviewEnvProfile}
                     onChange={event => setReviewEnvProfile(event.target.value)}
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    className="mt-1 w-full rounded border border-panel-border bg-surface-overlay px-2 py-1.5 text-sm text-panel-foreground focus:outline-none focus:ring-2 focus:ring-focus/30"
                   >
                     <option value="default">default</option>
                     <option value="minimal">minimal</option>
@@ -2754,13 +2754,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 </label>
               </div>
 
-              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-2">
+              <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500">Policy Evaluation</p>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Policy Evaluation</p>
                   <button
                     onClick={() => { void recheckReviewPolicy(); }}
                     disabled={reviewLoading || runActionLoading}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-slate-300 text-[11px] hover:border-slate-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded border border-panel-border text-foreground text-[11px] hover:border-hover disabled:opacity-50"
                   >
                     <RefreshCw size={12} className={reviewLoading ? 'animate-spin' : ''} />
                     Re-check
@@ -2768,7 +2768,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                 </div>
 
                 {reviewLoading && (
-                  <div className="text-xs text-slate-400 inline-flex items-center gap-1.5">
+                  <div className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
                     <Loader2 size={12} className="animate-spin" />
                     Evaluating command policy...
                   </div>
@@ -2794,7 +2794,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                         {reviewPolicy.reasonCodes.map(reason => (
                           <span
                             key={reason}
-                            className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300 font-mono"
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground font-mono"
                           >
                             {reason}
                           </span>
@@ -2818,15 +2818,15 @@ export const FeatureExecutionWorkbench: React.FC = () => {
               )}
             </div>
 
-            <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-2">
-              <div className="text-[11px] text-slate-500">
-                Rule: <span className="font-mono text-slate-400">{reviewRuleId || 'manual'}</span>
+            <div className="px-4 py-3 border-t border-panel-border flex items-center justify-between gap-2">
+              <div className="text-[11px] text-muted-foreground">
+                Rule: <span className="font-mono text-muted-foreground">{reviewRuleId || 'manual'}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setReviewOpen(false)}
                   disabled={runActionLoading}
-                  className="px-3 py-1.5 rounded border border-slate-700 text-slate-200 text-xs hover:border-slate-500 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded border border-panel-border text-panel-foreground text-xs hover:border-hover disabled:opacity-50"
                 >
                   Cancel
                 </button>

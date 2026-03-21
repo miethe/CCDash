@@ -1230,9 +1230,9 @@ const LogItemBlurb: React.FC<{
                         {mappedTranscriptIcon(parsed.mapped.icon, parsed.kind, 11)}
                         <span>{mappedLabel}</span>
                     </div>
-                    <p className="font-mono text-xs line-clamp-2 break-all text-slate-200">{parsed.summary}</p>
+                    <p className="font-mono text-xs line-clamp-2 break-all text-panel-foreground">{parsed.summary}</p>
                     {parsed.command?.args && (
-                        <p className="text-xs text-slate-400 whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
                     )}
                 </div>
             );
@@ -1247,7 +1247,7 @@ const LogItemBlurb: React.FC<{
                     </div>
                     <p className="font-mono text-xs line-clamp-1 break-all">{commandLabel}</p>
                     {parsed.command?.args && (
-                        <p className="text-xs text-slate-400 whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2 break-words">{parsed.command.args}</p>
                     )}
                 </div>
             );
@@ -1278,12 +1278,12 @@ const LogItemBlurb: React.FC<{
                 <div className="space-y-2">
                     <div className="flex flex-wrap gap-1">
                         {parsed.tags.slice(0, 3).map(tag => (
-                            <span key={`${log.id}-${tag.tag}-${tag.start}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400">
+                            <span key={`${log.id}-${tag.tag}-${tag.start}`} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-panel-border bg-panel/80 text-muted-foreground">
                                 {getReadableTagName(tag.tag)}
                             </span>
                         ))}
                         {parsed.tags.length > 3 && (
-                            <span className="text-[10px] text-slate-500">+{parsed.tags.length - 3} more</span>
+                            <span className="text-[10px] text-muted-foreground">+{parsed.tags.length - 3} more</span>
                         )}
                     </div>
                     <p className="text-xs leading-relaxed whitespace-pre-wrap line-clamp-2 break-words">
@@ -1300,17 +1300,17 @@ const LogItemBlurb: React.FC<{
         return (
             <div
                 onClick={onClick}
-                className={`group cursor-pointer flex gap-4 mb-4 px-2 py-1 rounded-xl transition-all ${isUser ? 'flex-row-reverse' : 'flex-row'} ${isSelected ? 'bg-indigo-500/10 ring-1 ring-indigo-500/30' : 'hover:bg-slate-800/30'
+                className={`group cursor-pointer flex gap-4 mb-4 px-2 py-1 rounded-xl transition-all ${isUser ? 'flex-row-reverse' : 'flex-row'} ${isSelected ? 'bg-indigo-500/10 ring-1 ring-focus/30' : 'hover:bg-surface-muted/40'
                     }`}
             >
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border transition-colors ${isSelected
                     ? 'border-indigo-500 bg-indigo-500/20 text-indigo-400'
                     : isUser
-                        ? 'bg-slate-800 border-slate-700 text-slate-400'
+                        ? 'bg-surface-muted border-panel-border text-muted-foreground'
                         : isForkStartEvent
                             ? 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
                             : isSystem
-                            ? 'bg-slate-900 border-slate-700 text-slate-300'
+                            ? 'bg-panel border-panel-border text-foreground'
                         : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
                     }`}>
                     {isUser
@@ -1331,12 +1331,12 @@ const LogItemBlurb: React.FC<{
                     <div className={`p-3 rounded-xl text-sm transition-all border max-w-full ${isSelected
                         ? 'bg-transparent border-transparent text-indigo-100'
                         : isUser
-                            ? 'bg-slate-800 border-slate-700 text-slate-300'
+                            ? 'bg-surface-muted border-panel-border text-foreground'
                             : isForkStartEvent
                                 ? 'bg-cyan-500/10 border-cyan-500/35 text-cyan-100'
                             : isSystem
-                                ? 'bg-slate-900/60 border-slate-700 text-slate-300'
-                            : 'bg-slate-900 border-slate-800 text-slate-300'
+                                ? 'bg-panel/70 border-panel-border text-foreground'
+                            : 'bg-panel border-panel-border text-foreground'
                         }`}>
                         {renderMessagePreview()}
                     </div>
@@ -1384,8 +1384,8 @@ const LogItemBlurb: React.FC<{
         tool: <Terminal size={12} className="text-amber-500" />,
         subagent: <Zap size={12} className="text-purple-400" />,
         skill: <Cpu size={12} className="text-blue-400" />,
-        thought: <MessageSquare size={12} className="text-slate-300" />,
-        system: isForkStartEvent ? <GitBranch size={12} className="text-cyan-300" /> : <ShieldAlert size={12} className="text-slate-400" />,
+        thought: <MessageSquare size={12} className="text-foreground" />,
+        system: isForkStartEvent ? <GitBranch size={12} className="text-cyan-300" /> : <ShieldAlert size={12} className="text-muted-foreground" />,
         command: <Terminal size={12} className="text-emerald-400" />,
         subagent_start: <Zap size={12} className="text-purple-300" />,
     };
@@ -1422,8 +1422,8 @@ const LogItemBlurb: React.FC<{
         <div
             onClick={onClick}
             className={`cursor-pointer mb-2 ml-12 p-2 rounded-lg border transition-all flex items-center justify-between group ${isSelected
-                ? 'bg-indigo-500/20 border-indigo-500/50 ring-1 ring-indigo-500/20'
-                : 'bg-slate-950 border-slate-900 hover:border-slate-800'
+                ? 'bg-indigo-500/20 border-indigo-500/50 ring-1 ring-focus/20'
+                : 'bg-surface-overlay border-panel-border hover:border-panel-border'
                 }`}
         >
             <div className="flex items-center gap-2 overflow-hidden">
@@ -1433,7 +1433,7 @@ const LogItemBlurb: React.FC<{
                         <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-amber-400'}`}>
                             {taskToolDetails.toolName} Invocation
                         </div>
-                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-foreground'}`}>
                             {taskToolDetails.description || taskToolDetails.name || taskToolDetails.taskId || 'Subagent tool call'}
                         </div>
                         <div className="flex flex-wrap items-center gap-1 pt-0.5">
@@ -1453,7 +1453,7 @@ const LogItemBlurb: React.FC<{
                                 />
                             )}
                             {typeof taskToolDetails.runInBackground === 'boolean' && (
-                                <Badge className="border-slate-700 bg-slate-900 text-slate-400">
+                                <Badge className="border-panel-border bg-panel text-muted-foreground">
                                     {taskToolDetails.runInBackground ? 'background' : 'foreground'}
                                 </Badge>
                             )}
@@ -1464,7 +1464,7 @@ const LogItemBlurb: React.FC<{
                         <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-sky-400'}`}>
                             {taskMutationDetails.toolName}
                         </div>
-                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-foreground'}`}>
                             {taskMutationDetails.subject || taskMutationDetails.description || taskMutationDetails.outputText || 'Task mutation'}
                         </div>
                         <div className="flex flex-wrap items-center gap-1 pt-0.5">
@@ -1491,10 +1491,10 @@ const LogItemBlurb: React.FC<{
                         <div className={`text-[10px] uppercase tracking-wider font-semibold ${isSelected ? 'text-indigo-300' : 'text-emerald-400'}`}>
                             {testToolDetails.framework} Test Run
                         </div>
-                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                        <div className={`text-[11px] truncate ${isSelected ? 'text-indigo-100' : 'text-foreground'}`}>
                             {testToolDetails.description || testToolDetails.domain || testToolDetails.command || 'Test execution'}
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                             {testToolDetails.status && <span>{testToolDetails.status}</span>}
                             {typeof testToolDetails.total === 'number' && <span>{testToolDetails.total} tests</span>}
                             {typeof testToolDetails.durationSeconds === 'number' && <span>{testToolDetails.durationSeconds.toFixed(2)}s</span>}
@@ -1507,17 +1507,17 @@ const LogItemBlurb: React.FC<{
                             {mappedTranscriptIcon(formattedMessage.mapped.icon, formattedMessage.kind, 11)}
                             <span className="truncate">{formattedMessage.mapped.transcriptLabel || formattedMessage.mapped.label}</span>
                         </div>
-                        <div className={`text-[11px] font-mono truncate ${isSelected ? 'text-indigo-100' : 'text-slate-300'}`}>
+                        <div className={`text-[11px] font-mono truncate ${isSelected ? 'text-indigo-100' : 'text-foreground'}`}>
                             {formattedMessage.summary}
                         </div>
                         {formattedMessage.mapped.args && (
-                            <div className="text-[10px] text-slate-500 font-mono truncate">
+                            <div className="text-[10px] text-muted-foreground font-mono truncate">
                                 {formattedMessage.mapped.args}
                             </div>
                         )}
                     </div>
                 ) : (
-                    <span className={`text-[11px] font-mono truncate transition-colors ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
+                    <span className={`text-[11px] font-mono truncate transition-colors ${isSelected ? 'text-indigo-300' : 'text-muted-foreground'}`}>
                         {label}
                     </span>
                 )}
@@ -1556,7 +1556,7 @@ const LogItemBlurb: React.FC<{
                         A:{artifactCount}
                     </button>
                 )}
-                <ChevronRight size={12} className={`text-slate-600 transition-transform ${isSelected ? 'rotate-90 text-indigo-400' : 'group-hover:translate-x-0.5'}`} />
+                <ChevronRight size={12} className={`text-muted-foreground transition-transform ${isSelected ? 'rotate-90 text-indigo-400' : 'group-hover:translate-x-0.5'}`} />
             </div>
         </div>
     );
@@ -1621,7 +1621,7 @@ const DetailPane: React.FC<{
         if (parsedMessage.kind === 'claude-command') {
             const commandLabel = parsedMessage.command?.name || parsedMessage.command?.message || 'Unknown Command';
             return (
-                <div className="bg-slate-900/30 border border-emerald-500/20 rounded-xl p-5 space-y-4">
+                <div className="bg-panel/40 border border-emerald-500/20 rounded-xl p-5 space-y-4">
                     <div className="flex items-start justify-between gap-3">
                         <div>
                             <div className="text-[10px] text-emerald-300 uppercase tracking-widest font-bold mb-2">Command</div>
@@ -1633,9 +1633,9 @@ const DetailPane: React.FC<{
                     </div>
 
                     {parsedMessage.command?.args !== undefined && (
-                        <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3">
-                            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2">Command Args</div>
-                            <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words font-mono max-h-56 overflow-y-auto">
+                        <div className="bg-surface-overlay/80 border border-panel-border rounded-lg p-3">
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-2">Command Args</div>
+                            <pre className="text-xs text-foreground whitespace-pre-wrap break-words font-mono max-h-56 overflow-y-auto">
                                 {parsedMessage.command.args || '(no args)'}
                             </pre>
                         </div>
@@ -1657,7 +1657,7 @@ const DetailPane: React.FC<{
             return (
                 <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
                     <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">Local Command Caveat</div>
-                    <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
+                    <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
                         {parsedMessage.text || 'Caveat metadata'}
                     </p>
                 </div>
@@ -1668,7 +1668,7 @@ const DetailPane: React.FC<{
             return (
                 <div className="bg-sky-500/5 border border-sky-500/20 rounded-xl p-5">
                     <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">Local Command Output</div>
-                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-80 overflow-y-auto">
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-80 overflow-y-auto">
                         {parsedMessage.text && parsedMessage.text.trim() ? parsedMessage.text : '(empty stdout)'}
                     </pre>
                 </div>
@@ -1677,27 +1677,27 @@ const DetailPane: React.FC<{
 
         if (parsedMessage.kind === 'tagged') {
             return (
-                <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5 space-y-4">
+                <div className="bg-panel/40 border border-panel-border rounded-xl p-5 space-y-4">
                     <div className="flex flex-wrap gap-2">
                         {parsedMessage.tags.map(tag => (
                             <span
                                 key={`${tag.tag}-${tag.start}`}
-                                className="text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-400"
+                                className="text-[10px] font-mono px-2 py-0.5 rounded border border-panel-border bg-panel text-muted-foreground"
                             >
                                 {getReadableTagName(tag.tag)}
                             </span>
                         ))}
                     </div>
                     {parsedMessage.text && (
-                        <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed break-words">{parsedMessage.text}</p>
+                        <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed break-words">{parsedMessage.text}</p>
                     )}
                 </div>
             );
         }
 
         return (
-            <div className="bg-slate-900/30 border border-slate-800 rounded-xl p-5">
-                <p className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">{log.content}</p>
+            <div className="bg-panel/40 border border-panel-border rounded-xl p-5">
+                <p className="text-foreground leading-relaxed whitespace-pre-wrap text-sm">{log.content}</p>
             </div>
         );
     };
@@ -1708,16 +1708,16 @@ const DetailPane: React.FC<{
         }
         const rawSectionId = `raw-${parsedMessage.kind}`;
         return (
-            <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4">
+            <div className="bg-surface-overlay/70 border border-panel-border rounded-xl p-4">
                 <button
                     onClick={() => toggleSection(rawSectionId)}
-                    className="w-full flex justify-between items-center text-[10px] text-slate-500 uppercase font-bold tracking-wider hover:text-slate-300 transition-colors"
+                    className="w-full flex justify-between items-center text-[10px] text-muted-foreground uppercase font-bold tracking-wider hover:text-foreground transition-colors"
                 >
                     <span>{expandedSections.has(rawSectionId) ? 'Hide Raw' : 'View Raw...'}</span>
                     {expandedSections.has(rawSectionId) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </button>
                 {expandedSections.has(rawSectionId) && (
-                    <pre className="mt-3 text-xs font-mono text-slate-300 bg-slate-900/70 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-200">
+                    <pre className="mt-3 text-xs font-mono text-foreground bg-panel/75 p-3 rounded border border-panel-border whitespace-pre-wrap break-words max-h-96 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-200">
                         {parsedMessage.rawText}
                     </pre>
                 )}
@@ -1727,7 +1727,7 @@ const DetailPane: React.FC<{
 
     return (
         <div className="flex flex-col h-full animate-in fade-in slide-in-from-right-2 duration-300">
-            <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
+            <div className="p-4 border-b border-panel-border bg-panel/60 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg shadow-inner">
                         {log.type === 'tool'
@@ -1739,10 +1739,10 @@ const DetailPane: React.FC<{
                                     : <MessageSquare size={16} />}
                     </div>
                     <div>
-                        <h4 className="text-sm font-bold text-slate-100 uppercase tracking-tight">
+                        <h4 className="text-sm font-bold text-panel-foreground uppercase tracking-tight">
                             {detailTitle}
                         </h4>
-                        <p className="text-[10px] text-slate-500 font-mono">{log.timestamp}</p>
+                        <p className="text-[10px] text-muted-foreground font-mono">{log.timestamp}</p>
                     </div>
                 </div>
             </div>
@@ -1758,8 +1758,8 @@ const DetailPane: React.FC<{
                                 onOpenArtifacts={onOpenArtifacts}
                             />
                         )}
-                        <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
-                            <div className="px-4 py-3 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
+                        <div className="bg-surface-overlay rounded-xl border border-panel-border overflow-hidden">
+                            <div className="px-4 py-3 bg-panel border-b border-panel-border flex justify-between items-center">
                                 <span className="text-xs font-mono text-amber-500 flex items-center gap-2">
                                     <Terminal size={14} /> {log.toolCall.name}
                                 </span>
@@ -1769,30 +1769,30 @@ const DetailPane: React.FC<{
                             </div>
 
                             {taskToolDetails && (
-                                <div className="p-4 border-b border-slate-800 bg-amber-500/5">
+                                <div className="p-4 border-b border-panel-border bg-amber-500/5">
                                     <div className="text-[10px] text-amber-300 uppercase tracking-widest font-bold mb-3">{taskToolDetails.toolName} Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         {taskToolDetails.taskId && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task ID</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Task ID</div>
                                                 <div className="font-mono text-amber-200">{taskToolDetails.taskId}</div>
                                             </div>
                                         )}
                                         {(taskToolDetails.description || taskToolDetails.name) && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
-                                                <div className="text-slate-200">{taskToolDetails.description || taskToolDetails.name}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-panel-foreground">{taskToolDetails.description || taskToolDetails.name}</div>
                                             </div>
                                         )}
                                         {taskDisplayContext.subagentLabel && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Subagent</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Subagent</div>
                                                 <StableBadge value={taskDisplayContext.subagentLabel} namespace="subagent" />
                                             </div>
                                         )}
                                         {taskDisplayContext.model && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Model</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Model</div>
                                                 <ModelBadge
                                                     raw={taskDisplayContext.model.raw}
                                                     displayName={taskDisplayContext.model.displayName}
@@ -1804,20 +1804,20 @@ const DetailPane: React.FC<{
                                         )}
                                         {taskToolDetails.mode && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Mode</div>
-                                                <div className="text-slate-300">{taskToolDetails.mode}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Mode</div>
+                                                <div className="text-foreground">{taskToolDetails.mode}</div>
                                             </div>
                                         )}
                                         {typeof taskToolDetails.runInBackground === 'boolean' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Run In Background</div>
-                                                <div className="text-slate-300">{taskToolDetails.runInBackground ? 'true' : 'false'}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Run In Background</div>
+                                                <div className="text-foreground">{taskToolDetails.runInBackground ? 'true' : 'false'}</div>
                                             </div>
                                         )}
                                         {taskToolDetails.promptPreview && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Prompt (Preview)</div>
-                                                <p className="text-slate-300 whitespace-pre-wrap break-words">{taskToolDetails.promptPreview}</p>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Prompt (Preview)</div>
+                                                <p className="text-foreground whitespace-pre-wrap break-words">{taskToolDetails.promptPreview}</p>
                                                 {taskToolDetails.prompt && taskToolDetails.prompt !== taskToolDetails.promptPreview && (
                                                     <button
                                                         onClick={() => toggleSection('task-full-prompt')}
@@ -1840,16 +1840,16 @@ const DetailPane: React.FC<{
                                                     ariaLabel={`Task prompt: ${taskPromptViewerPayload.path}`}
                                                 />
                                             ) : (
-                                                <pre className="text-xs font-mono text-slate-300 bg-slate-900/60 p-3 rounded border border-slate-800 whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+                                                <pre className="text-xs font-mono text-foreground bg-panel/70 p-3 rounded border border-panel-border whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
                                                     {taskToolDetails.prompt}
                                                 </pre>
                                             )}
                                         </div>
                                     )}
                                     {taskToolDetails.args && (
-                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Invocation Parameters</div>
-                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                        <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3">
+                                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Invocation Parameters</div>
+                                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                 {JSON.stringify(taskToolDetails.args, null, 2)}
                                             </pre>
                                         </div>
@@ -1858,48 +1858,48 @@ const DetailPane: React.FC<{
                             )}
 
                             {taskMutationDetails && (
-                                <div className="p-4 border-b border-slate-800 bg-sky-500/5">
+                                <div className="p-4 border-b border-panel-border bg-sky-500/5">
                                     <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">{taskMutationDetails.toolName} Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         {taskMutationDetails.taskId && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task ID</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Task ID</div>
                                                 <StableBadge value={taskMutationDetails.taskId} namespace="task" mono />
                                             </div>
                                         )}
                                         {taskMutationDetails.status && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Status</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Status</div>
                                                 <StableBadge value={taskMutationDetails.status} namespace="task-status" />
                                             </div>
                                         )}
                                         {taskMutationDetails.subject && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Subject</div>
-                                                <div className="text-slate-200">{taskMutationDetails.subject}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Subject</div>
+                                                <div className="text-panel-foreground">{taskMutationDetails.subject}</div>
                                             </div>
                                         )}
                                         {taskMutationDetails.description && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
-                                                <div className="text-slate-300 whitespace-pre-wrap break-words">{taskMutationDetails.description}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-foreground whitespace-pre-wrap break-words">{taskMutationDetails.description}</div>
                                             </div>
                                         )}
                                         {taskMutationDetails.taskType && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Task Type</div>
-                                                <div className="text-slate-300">{taskMutationDetails.taskType}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Task Type</div>
+                                                <div className="text-foreground">{taskMutationDetails.taskType}</div>
                                             </div>
                                         )}
                                         {taskMutationDetails.activeForm && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Active Form</div>
-                                                <div className="text-slate-300">{taskMutationDetails.activeForm}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Active Form</div>
+                                                <div className="text-foreground">{taskMutationDetails.activeForm}</div>
                                             </div>
                                         )}
                                         {taskMutationDetails.blockedByAdded.length > 0 && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Blocked By Added</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Blocked By Added</div>
                                                 <div className="flex flex-wrap gap-1">
                                                     {taskMutationDetails.blockedByAdded.map(item => (
                                                         <StableBadge key={`blocked-by-add-${item}`} value={item} namespace="dependency" mono />
@@ -1909,7 +1909,7 @@ const DetailPane: React.FC<{
                                         )}
                                         {taskMutationDetails.blockedByRemoved.length > 0 && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Blocked By Removed</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Blocked By Removed</div>
                                                 <div className="flex flex-wrap gap-1">
                                                     {taskMutationDetails.blockedByRemoved.map(item => (
                                                         <StableBadge key={`blocked-by-remove-${item}`} value={item} namespace="dependency" mono />
@@ -1919,27 +1919,27 @@ const DetailPane: React.FC<{
                                         )}
                                     </div>
                                     {taskMutationDetails.args && (
-                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Arguments</div>
-                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                        <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3">
+                                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Arguments</div>
+                                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                 {JSON.stringify(taskMutationDetails.args, null, 2)}
                                             </pre>
                                         </div>
                                     )}
                                     {(taskMutationDetails.outputText || Object.keys(taskMutationDetails.outputData).length > 0) && (
-                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3 space-y-3">
+                                        <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3 space-y-3">
                                             {taskMutationDetails.outputText && (
                                                 <div>
-                                                    <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Output Text</div>
-                                                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
+                                                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Output Text</div>
+                                                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
                                                         {taskMutationDetails.outputText}
                                                     </pre>
                                                 </div>
                                             )}
                                             {Object.keys(taskMutationDetails.outputData).length > 0 && (
                                                 <div>
-                                                    <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Output Data</div>
-                                                    <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Output Data</div>
+                                                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                         {JSON.stringify(taskMutationDetails.outputData, null, 2)}
                                                     </pre>
                                                 </div>
@@ -1950,90 +1950,90 @@ const DetailPane: React.FC<{
                             )}
 
                             {testToolDetails && (
-                                <div className="p-4 border-b border-slate-800 bg-emerald-500/5">
+                                <div className="p-4 border-b border-panel-border bg-emerald-500/5">
                                     <div className="text-[10px] text-emerald-300 uppercase tracking-widest font-bold mb-3">Test Run Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         <div>
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Framework</div>
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Framework</div>
                                             <div className="font-mono text-emerald-200">{testToolDetails.framework}</div>
                                         </div>
                                         {testToolDetails.status && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Status</div>
-                                                <div className="text-slate-200">{testToolDetails.status}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Status</div>
+                                                <div className="text-panel-foreground">{testToolDetails.status}</div>
                                             </div>
                                         )}
                                         {(testToolDetails.domain || testToolDetails.domains.length > 0) && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Domain</div>
-                                                <div className="text-slate-300">
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Domain</div>
+                                                <div className="text-foreground">
                                                     {testToolDetails.domain || testToolDetails.domains.join(', ')}
                                                 </div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.timeoutMs === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Timeout</div>
-                                                <div className="text-slate-300">{testToolDetails.timeoutMs} ms</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Timeout</div>
+                                                <div className="text-foreground">{testToolDetails.timeoutMs} ms</div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.durationSeconds === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Duration</div>
-                                                <div className="text-slate-300">{testToolDetails.durationSeconds.toFixed(2)} s</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Duration</div>
+                                                <div className="text-foreground">{testToolDetails.durationSeconds.toFixed(2)} s</div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.total === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Total</div>
-                                                <div className="text-slate-300">{testToolDetails.total} tests</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Total</div>
+                                                <div className="text-foreground">{testToolDetails.total} tests</div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.passRate === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pass Rate</div>
-                                                <div className="text-slate-300">{(testToolDetails.passRate * 100).toFixed(1)}%</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Pass Rate</div>
+                                                <div className="text-foreground">{(testToolDetails.passRate * 100).toFixed(1)}%</div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.collected === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Collected</div>
-                                                <div className="text-slate-300">{testToolDetails.collected}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Collected</div>
+                                                <div className="text-foreground">{testToolDetails.collected}</div>
                                             </div>
                                         )}
                                         {typeof testToolDetails.workers === 'number' && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Workers</div>
-                                                <div className="text-slate-300">{testToolDetails.workers}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Workers</div>
+                                                <div className="text-foreground">{testToolDetails.workers}</div>
                                             </div>
                                         )}
                                         {testToolDetails.pytestVersion && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pytest</div>
-                                                <div className="text-slate-300">{testToolDetails.pytestVersion}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Pytest</div>
+                                                <div className="text-foreground">{testToolDetails.pytestVersion}</div>
                                             </div>
                                         )}
                                         {testToolDetails.pythonVersion && (
                                             <div>
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Python</div>
-                                                <div className="text-slate-300">{testToolDetails.pythonVersion}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Python</div>
+                                                <div className="text-foreground">{testToolDetails.pythonVersion}</div>
                                             </div>
                                         )}
                                         {testToolDetails.rootdir && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Rootdir</div>
-                                                <div className="font-mono text-slate-300 break-all">{testToolDetails.rootdir}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Rootdir</div>
+                                                <div className="font-mono text-foreground break-all">{testToolDetails.rootdir}</div>
                                             </div>
                                         )}
                                         {testToolDetails.description && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Description</div>
-                                                <div className="text-slate-200">{testToolDetails.description}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Description</div>
+                                                <div className="text-panel-foreground">{testToolDetails.description}</div>
                                             </div>
                                         )}
                                         {Object.keys(testToolDetails.counts).length > 0 && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Result Counts</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Result Counts</div>
                                                 <div className="flex flex-wrap gap-2">
                                                     {Object.entries(testToolDetails.counts).map(([key, value]) => (
                                                         <span key={key} className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 font-mono">
@@ -2045,22 +2045,22 @@ const DetailPane: React.FC<{
                                         )}
                                         {testToolDetails.targets.length > 0 && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Targets</div>
-                                                <div className="text-slate-300 font-mono break-all whitespace-pre-wrap">
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Targets</div>
+                                                <div className="text-foreground font-mono break-all whitespace-pre-wrap">
                                                     {testToolDetails.targets.slice(0, 12).join('\n')}
                                                 </div>
                                             </div>
                                         )}
                                         {testToolDetails.flags.length > 0 && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Flags</div>
-                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.flags.join(' ')}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Flags</div>
+                                                <div className="text-foreground font-mono break-all">{testToolDetails.flags.join(' ')}</div>
                                             </div>
                                         )}
                                         {testToolDetails.command && (
                                             <div className="sm:col-span-2">
-                                                <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Command</div>
-                                                <div className="text-slate-300 font-mono break-all">{testToolDetails.command}</div>
+                                                <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Command</div>
+                                                <div className="text-foreground font-mono break-all">{testToolDetails.command}</div>
                                             </div>
                                         )}
                                     </div>
@@ -2068,37 +2068,37 @@ const DetailPane: React.FC<{
                             )}
 
                             {readToolDetails && (
-                                <div className="p-4 border-b border-slate-800 bg-sky-500/5">
+                                <div className="p-4 border-b border-panel-border bg-sky-500/5">
                                     <div className="text-[10px] text-sky-300 uppercase tracking-widest font-bold mb-3">Read Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         <div className="sm:col-span-2">
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">File</div>
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">File</div>
                                             <div className="font-mono text-sky-200 break-all">{readToolDetails.filePath || 'n/a'}</div>
                                         </div>
                                         <div>
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Offset</div>
-                                            <div className="text-slate-300 font-mono">
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Offset</div>
+                                            <div className="text-foreground font-mono">
                                                 {typeof readToolDetails.offset === 'number' ? readToolDetails.offset : 'n/a'}
                                             </div>
                                         </div>
                                         <div>
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Limit</div>
-                                            <div className="text-slate-300 font-mono">
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Limit</div>
+                                            <div className="text-foreground font-mono">
                                                 {typeof readToolDetails.limit === 'number' ? readToolDetails.limit : 'n/a'}
                                             </div>
                                         </div>
                                     </div>
                                     {Object.keys(readToolDetails.otherParams).length > 0 && (
-                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
-                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                        <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3">
+                                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                 {JSON.stringify(readToolDetails.otherParams, null, 2)}
                                             </pre>
                                         </div>
                                     )}
                                     {inlineContentViewerPayload && (
                                         <div className="mt-4">
-                                            <div className="mb-2 text-[10px] text-slate-500 uppercase tracking-wider font-bold">Shared Viewer Preview</div>
+                                            <div className="mb-2 text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Shared Viewer Preview</div>
                                             <UnifiedContentViewer
                                                 path={inlineContentViewerPayload.path}
                                                 content={inlineContentViewerPayload.content}
@@ -2111,24 +2111,24 @@ const DetailPane: React.FC<{
                             )}
 
                             {grepToolDetails && (
-                                <div className="p-4 border-b border-slate-800 bg-cyan-500/5">
+                                <div className="p-4 border-b border-panel-border bg-cyan-500/5">
                                     <div className="text-[10px] text-cyan-300 uppercase tracking-widest font-bold mb-3">Grep Details</div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                                         <div className="sm:col-span-2">
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Pattern</div>
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Pattern</div>
                                             <div className="font-mono text-cyan-200 break-all">{grepToolDetails.pattern || 'n/a'}</div>
                                         </div>
                                         <div className="sm:col-span-2">
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Path</div>
-                                            <div className="font-mono text-slate-300 break-all">{grepToolDetails.searchPath || 'n/a'}</div>
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Path</div>
+                                            <div className="font-mono text-foreground break-all">{grepToolDetails.searchPath || 'n/a'}</div>
                                         </div>
                                         <div>
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Output Mode</div>
-                                            <div className="text-slate-300 font-mono">{grepToolDetails.outputMode || 'n/a'}</div>
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Output Mode</div>
+                                            <div className="text-foreground font-mono">{grepToolDetails.outputMode || 'n/a'}</div>
                                         </div>
                                         <div>
-                                            <div className="text-slate-500 uppercase tracking-wider text-[10px] mb-1">Line Numbers</div>
-                                            <div className="text-slate-300 font-mono">
+                                            <div className="text-muted-foreground uppercase tracking-wider text-[10px] mb-1">Line Numbers</div>
+                                            <div className="text-foreground font-mono">
                                                 {grepToolDetails.lineNumbersEnabled === null
                                                     ? 'n/a'
                                                     : (grepToolDetails.lineNumbersEnabled ? 'enabled' : 'disabled')}
@@ -2136,36 +2136,36 @@ const DetailPane: React.FC<{
                                         </div>
                                     </div>
                                     {Object.keys(grepToolDetails.otherParams).length > 0 && (
-                                        <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Other Parameters</div>
-                                            <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                                        <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3">
+                                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Other Parameters</div>
+                                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                                                 {JSON.stringify(grepToolDetails.otherParams, null, 2)}
                                             </pre>
                                         </div>
                                     )}
-                                    <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
-                                        <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-2">Matches By File</div>
+                                    <div className="mt-4 bg-panel/70 border border-panel-border rounded-lg p-3">
+                                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-2">Matches By File</div>
                                         {grepToolDetails.files.length === 0 ? (
-                                            <div className="text-xs text-slate-400">No parseable grep matches were found in tool output.</div>
+                                            <div className="text-xs text-muted-foreground">No parseable grep matches were found in tool output.</div>
                                         ) : (
                                             <div className="space-y-2">
                                                 {grepToolDetails.files.map((file, index) => {
                                                     const sectionId = `grep-file-${index}-${file.filePath}`;
                                                     const isExpanded = expandedSections.has(sectionId);
                                                     return (
-                                                        <div key={sectionId} className="border border-slate-800 rounded-md bg-slate-950/70 overflow-hidden">
+                                                        <div key={sectionId} className="border border-panel-border rounded-md bg-surface-overlay/80 overflow-hidden">
                                                             <button
                                                                 onClick={() => toggleSection(sectionId)}
-                                                                className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left hover:bg-slate-900/70 transition-colors"
+                                                                className="w-full px-3 py-2 flex items-center justify-between gap-3 text-left hover:bg-panel/75 transition-colors"
                                                             >
                                                                 <span className="font-mono text-xs text-cyan-200 break-all">{file.filePath}</span>
                                                                 <div className="flex items-center gap-2 shrink-0">
-                                                                    <span className="text-[10px] text-slate-500">{file.matches.length} match{file.matches.length === 1 ? '' : 'es'}</span>
-                                                                    {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-500" />}
+                                                                    <span className="text-[10px] text-muted-foreground">{file.matches.length} match{file.matches.length === 1 ? '' : 'es'}</span>
+                                                                    {isExpanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
                                                                 </div>
                                                             </button>
                                                             {isExpanded && (
-                                                                <pre className="border-t border-slate-800 px-3 py-2 text-xs font-mono text-slate-300 whitespace-pre-wrap break-words max-h-72 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
+                                                                <pre className="border-t border-panel-border px-3 py-2 text-xs font-mono text-foreground whitespace-pre-wrap break-words max-h-72 overflow-y-auto animate-in slide-in-from-top-1 duration-200">
                                                                     {file.matches
                                                                         .map(match => `${typeof match.lineNumber === 'number' ? match.lineNumber : '?'}: ${match.content}`)
                                                                         .join('\n')}
@@ -2181,16 +2181,16 @@ const DetailPane: React.FC<{
                             )}
 
                             {/* Arguments Section */}
-                            <div className="p-4 border-b border-slate-800">
+                            <div className="p-4 border-b border-panel-border">
                                 <button
                                     onClick={() => toggleSection('args')}
-                                    className="w-full flex justify-between items-center text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2 hover:text-slate-300 transition-colors"
+                                    className="w-full flex justify-between items-center text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-2 hover:text-foreground transition-colors"
                                 >
                                     <span>Arguments</span>
                                     {expandedSections.has('args') ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 </button>
                                 {expandedSections.has('args') && (
-                                    <pre className="text-xs font-mono text-slate-300 bg-slate-900/50 p-3 rounded border border-slate-800 overflow-x-auto animate-in slide-in-from-top-1 duration-200">
+                                    <pre className="text-xs font-mono text-foreground bg-panel/60 p-3 rounded border border-panel-border overflow-x-auto animate-in slide-in-from-top-1 duration-200">
                                         {log.toolCall.args}
                                     </pre>
                                 )}
@@ -2198,16 +2198,16 @@ const DetailPane: React.FC<{
 
                             {/* Output Section */}
                             {log.toolCall.output && !inlineContentViewerPayload && (
-                                <div className="p-4 bg-slate-900/20">
+                                <div className="p-4 bg-panel/20">
                                     <button
                                         onClick={() => toggleSection('output')}
-                                        className="w-full flex justify-between items-center text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2 hover:text-slate-300 transition-colors"
+                                        className="w-full flex justify-between items-center text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-2 hover:text-foreground transition-colors"
                                     >
                                         <span>Output</span>
                                         {expandedSections.has('output') ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                     </button>
                                     {expandedSections.has('output') && (
-                                        <pre className="text-xs font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap animate-in slide-in-from-top-1 duration-200">
+                                        <pre className="text-xs font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap animate-in slide-in-from-top-1 duration-200">
                                             {log.toolCall.output}
                                         </pre>
                                     )}
@@ -2225,25 +2225,25 @@ const DetailPane: React.FC<{
                                 <div
                                     key={sl.id}
                                     onClick={() => toggleSection(`sub-${sl.id}`)}
-                                    className="bg-slate-900/50 rounded-lg p-3 border border-slate-800 cursor-pointer hover:border-slate-700 transition-all"
+                                    className="bg-panel/60 rounded-lg p-3 border border-panel-border cursor-pointer hover:border-panel-border transition-all"
                                 >
                                     <div className="flex justify-between items-center mb-2">
-                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${sl.speaker === 'user' ? 'bg-slate-800 text-slate-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${sl.speaker === 'user' ? 'bg-surface-muted text-muted-foreground' : 'bg-indigo-500/10 text-indigo-400'}`}>
                                             {sl.speaker.toUpperCase()}
                                         </span>
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[9px] text-slate-600 font-mono">{sl.timestamp}</span>
-                                            {expandedSections.has(`sub-${sl.id}`) ? <ChevronDown size={12} className="text-slate-500" /> : <ChevronRight size={12} className="text-slate-500" />}
+                                            <span className="text-[9px] text-muted-foreground font-mono">{sl.timestamp}</span>
+                                            {expandedSections.has(`sub-${sl.id}`) ? <ChevronDown size={12} className="text-muted-foreground" /> : <ChevronRight size={12} className="text-muted-foreground" />}
                                         </div>
                                     </div>
-                                    <p className={`text-xs text-slate-300 ${expandedSections.has(`sub-${sl.id}`) ? '' : 'line-clamp-2'}`}>{sl.content}</p>
+                                    <p className={`text-xs text-foreground ${expandedSections.has(`sub-${sl.id}`) ? '' : 'line-clamp-2'}`}>{sl.content}</p>
                                     {expandedSections.has(`sub-${sl.id}`) && sl.toolCall && (
                                         <div className="mt-3 text-[10px] font-mono text-amber-500 bg-amber-500/5 p-2 rounded border border-amber-500/10 animate-in fade-in duration-200">
                                             <div className="mb-1 flex justify-between">
                                                 <span>{'>'} {sl.toolCall.name}</span>
                                                 <span className="opacity-50">{sl.toolCall.status}</span>
                                             </div>
-                                            <div className="text-slate-500 truncate">{sl.toolCall.args}</div>
+                                            <div className="text-muted-foreground truncate">{sl.toolCall.args}</div>
                                         </div>
                                     )}
                                 </div>
@@ -2293,14 +2293,14 @@ const DetailPane: React.FC<{
                                         onOpenArtifacts={onOpenArtifacts}
                                     />
                                 )}
-                                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                                <div className="bg-panel border border-panel-border rounded-xl p-5 shadow-lg">
                                     <div className="flex items-center gap-2 text-blue-400 font-mono text-sm mb-3">
                                         <Cpu size={16} /> {log.skillDetails.name}
                                     </div>
-                                    <p className="text-slate-400 text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
-                                    <div className="flex items-center justify-between text-[10px] border-t border-slate-800 pt-3">
-                                        <span className="text-slate-500">Version</span>
-                                        <span className="font-mono text-slate-300">{log.skillDetails.version}</span>
+                                    <p className="text-muted-foreground text-xs mb-4 leading-relaxed">{log.skillDetails.description}</p>
+                                    <div className="flex items-center justify-between text-[10px] border-t border-panel-border pt-3">
+                                        <span className="text-muted-foreground">Version</span>
+                                        <span className="font-mono text-foreground">{log.skillDetails.version}</span>
                                     </div>
                                 </div>
                             </>
@@ -2575,14 +2575,14 @@ const TranscriptView: React.FC<{
         <div className="flex-1 flex gap-4 min-h-0 min-w-full h-full">
             {/* Pane 1: Chat Transcript (Left) */}
             <div
-                className={`relative flex flex-col bg-slate-900/50 border border-slate-800 rounded-2xl overflow-hidden transition-all duration-500 ease-out ${selectedLogId ? 'basis-[30%] min-w-[320px] max-w-[520px]' : 'flex-1 min-w-[420px]'
+                className={`relative flex flex-col bg-panel/60 border border-panel-border rounded-2xl overflow-hidden transition-all duration-500 ease-out ${selectedLogId ? 'basis-[30%] min-w-[320px] max-w-[520px]' : 'flex-1 min-w-[420px]'
                     }`}
             >
-                <div className="p-4 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <div className="p-4 border-b border-panel-border bg-surface-overlay/70 flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
                         <MessageSquare size={14} className="text-indigo-400" /> {filterAgent ? `Transcript: ${filterAgent}` : 'Full Transcript'}
                     </h3>
-                    <div className="text-[10px] text-slate-600 font-mono">{animatedLogs.items.length} Steps</div>
+                    <div className="text-[10px] text-muted-foreground font-mono">{animatedLogs.items.length} Steps</div>
                 </div>
                 <div ref={smartScroll.containerRef} className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                     <AnimatePresence initial={false}>
@@ -2614,7 +2614,7 @@ const TranscriptView: React.FC<{
                             );
                         })}
                     </AnimatePresence>
-                    {animatedLogs.items.length === 0 && <div className="p-8 text-center text-slate-500 italic">No logs found for this view.</div>}
+                    {animatedLogs.items.length === 0 && <div className="p-8 text-center text-muted-foreground italic">No logs found for this view.</div>}
                 </div>
                 {liveTranscriptState.isLive && (
                     <div className="border-t border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
@@ -2648,7 +2648,7 @@ const TranscriptView: React.FC<{
                                         onClick={() => {
                                             if (agent.sessionId) onOpenThread(agent.sessionId);
                                         }}
-                                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-slate-950/40 px-2.5 py-1 text-[11px] text-emerald-100 hover:border-emerald-300/40 hover:bg-emerald-400/10 transition-colors"
+                                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-surface-overlay/70 px-2.5 py-1 text-[11px] text-emerald-100 hover:border-emerald-300/40 hover:bg-emerald-400/10 transition-colors"
                                     >
                                         <Activity size={11} />
                                         {agent.agentName}
@@ -2673,7 +2673,7 @@ const TranscriptView: React.FC<{
                         animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
                         exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
                         transition={messagePreset.transition}
-                        className="flex-1 min-w-[420px] flex flex-col bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl"
+                        className="flex-1 min-w-[420px] flex flex-col bg-panel border border-indigo-500/20 rounded-2xl overflow-hidden shadow-2xl"
                     >
                         {selectedLog && (
                             <DetailPane
@@ -2693,7 +2693,7 @@ const TranscriptView: React.FC<{
             <div className="w-[260px] min-w-[220px] max-w-[300px] flex flex-col gap-5 overflow-y-auto pb-4 shrink-0">
                 {/* Key Metadata */}
                 {(primaryFeatureLink || session.sessionMetadata) && (
-                    <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 shadow-sm space-y-3">
+                    <div className="bg-panel border border-emerald-500/30 rounded-2xl p-5 shadow-sm space-y-3">
                         <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-widest">Key Metadata</h3>
 
                         {session.sessionMetadata && (
@@ -2706,7 +2706,7 @@ const TranscriptView: React.FC<{
                                     {session.sessionMetadata.fields.map(field => (
                                         <div key={`${session.sessionMetadata?.mappingId}-${field.id}`} className="text-xs">
                                             <div className="text-[10px] text-emerald-200/70 uppercase tracking-wide">{field.label}</div>
-                                            <div className="text-slate-200 font-mono text-[11px] break-words">{field.value}</div>
+                                            <div className="text-panel-foreground font-mono text-[11px] break-words">{field.value}</div>
                                         </div>
                                     ))}
                                     {primaryFeatureLink && (
@@ -2749,43 +2749,43 @@ const TranscriptView: React.FC<{
                 )}
 
                 {/* Performance Summary */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Forensics</h3>
+                <div className="bg-panel border border-panel-border rounded-2xl p-5 shadow-sm">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Forensics</h3>
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Clock size={14} /> Duration</div>
-                            <span className="text-xs font-mono text-slate-200">{session.durationSeconds}s</span>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock size={14} /> Duration</div>
+                            <span className="text-xs font-mono text-panel-foreground">{session.durationSeconds}s</span>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Observed Workload</div>
-                            <span className="text-xs font-mono text-slate-200">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Database size={14} /> Observed Workload</div>
+                            <span className="text-xs font-mono text-panel-foreground">{formatTokenCount(resolveTokenMetrics(session).workloadTokens)}</span>
                         </div>
                         {session.currentContextTokens && session.contextWindowSize ? (
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Layers size={14} /> Current Context</div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Layers size={14} /> Current Context</div>
                                 <span className="text-xs font-mono text-cyan-300">{contextSummaryLabel(session)}</span>
                             </div>
                         ) : null}
                         {resolveTokenMetrics(session).cacheInputTokens > 0 && (
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-500"><Zap size={14} /> Cache Input</div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Zap size={14} /> Cache Input</div>
                                 <span className="text-xs font-mono text-cyan-300">
                                     {formatTokenCount(resolveTokenMetrics(session).cacheInputTokens)} ({formatPercent(resolveTokenMetrics(session).cacheShare, 0)})
                                 </span>
                             </div>
                         )}
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Activity size={14} /> Cost Source</div>
-                            <span className="text-[10px] text-slate-300">{costSummaryLabel(session)}</span>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Activity size={14} /> Cost Source</div>
+                            <span className="text-[10px] text-foreground">{costSummaryLabel(session)}</span>
                         </div>
                         {session.currentContextTokens && (
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-500"><RefreshCw size={14} /> Context Signal</div>
-                                <span className="text-[10px] text-slate-400">{formatContextMeasurementSource(session.contextMeasurementSource)}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw size={14} /> Context Signal</div>
+                                <span className="text-[10px] text-muted-foreground">{formatContextMeasurementSource(session.contextMeasurementSource)}</span>
                             </div>
                         )}
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Code size={14} /> Base Model</div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Code size={14} /> Base Model</div>
                             <ModelBadge
                                 raw={session.model}
                                 displayName={session.modelDisplayName}
@@ -2796,7 +2796,7 @@ const TranscriptView: React.FC<{
                             />
                         </div>
                         <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 text-xs text-slate-400"><Cpu size={14} /> Platform</div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Cpu size={14} /> Platform</div>
                             <span
                                 className="text-[10px] font-mono text-amber-300 truncate max-w-[140px]"
                                 title={`${platformType}${latestPlatformVersion ? ` ${latestPlatformVersion}` : ''}`}
@@ -2805,49 +2805,49 @@ const TranscriptView: React.FC<{
                             </span>
                         </div>
                         {platformVersions.length > 1 && (
-                            <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
+                            <div className="text-[10px] text-muted-foreground pt-1 border-t border-panel-border/70">
                                 {platformVersions.length} versions seen in this session
                             </div>
                         )}
                         {platformVersionTransitions.length > 0 && (
-                            <div className="pt-2 border-t border-slate-800/60 space-y-1.5">
-                                <div className="text-[9px] uppercase tracking-wider text-slate-500">Version Changes</div>
+                            <div className="pt-2 border-t border-panel-border/70 space-y-1.5">
+                                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Version Changes</div>
                                 {platformVersionTransitions.map((transition, idx) => (
-                                    <div key={`${transition.timestamp}-${idx}`} className="text-[10px] font-mono text-slate-300">
-                                        <span className="text-slate-500">{formatTimeAgo(transition.timestamp)}:</span>{' '}
+                                    <div key={`${transition.timestamp}-${idx}`} className="text-[10px] font-mono text-foreground">
+                                        <span className="text-muted-foreground">{formatTimeAgo(transition.timestamp)}:</span>{' '}
                                         {transition.fromVersion} {'->'} {transition.toVersion}
                                     </div>
                                 ))}
                             </div>
                         )}
-                        <div className="pt-2 border-t border-slate-800/60 space-y-2">
+                        <div className="pt-2 border-t border-panel-border/70 space-y-2">
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Bot size={14} /> Thinking</div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Bot size={14} /> Thinking</div>
                                 <span className="text-[10px] font-mono text-fuchsia-300">{thinkingLevel}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Terminal size={14} /> Request IDs</div>
-                                <span className="text-[10px] font-mono text-slate-200">{requestIds.length}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Terminal size={14} /> Request IDs</div>
+                                <span className="text-[10px] font-mono text-panel-foreground">{requestIds.length}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Scroll size={14} /> Queue Ops</div>
-                                <span className="text-[10px] font-mono text-slate-200">{queueOperations.length}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Scroll size={14} /> Queue Ops</div>
+                                <span className="text-[10px] font-mono text-panel-foreground">{queueOperations.length}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Activity size={14} /> Waiting Tasks</div>
-                                <span className={`text-[10px] font-mono ${waitingForTaskCount > 0 ? 'text-amber-300' : 'text-slate-200'}`}>{waitingForTaskCount}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Activity size={14} /> Waiting Tasks</div>
+                                <span className={`text-[10px] font-mono ${waitingForTaskCount > 0 ? 'text-amber-300' : 'text-panel-foreground'}`}>{waitingForTaskCount}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Database size={14} /> Resources</div>
-                                <span className="text-[10px] font-mono text-slate-200">{resourceObservationCount}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Database size={14} /> Resources</div>
+                                <span className="text-[10px] font-mono text-panel-foreground">{resourceObservationCount}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><Users size={14} /> Subagents</div>
-                                <span className="text-[10px] font-mono text-slate-200">{subagentStartCount}</span>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Users size={14} /> Subagents</div>
+                                <span className="text-[10px] font-mono text-panel-foreground">{subagentStartCount}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs text-slate-400"><HardDrive size={14} /> Sidecars</div>
-                                <span className="text-[10px] font-mono text-slate-200" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount} · ToolResults ${toolResultFileCount}`}>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><HardDrive size={14} /> Sidecars</div>
+                                <span className="text-[10px] font-mono text-panel-foreground" title={`Todos ${todosCount} · Tasks ${tasksCount} · Team ${teamMessagesCount} · ToolResults ${toolResultFileCount}`}>
                                     {todosCount}/{tasksCount}/{teamMessagesCount}/{toolResultFileCount}
                                 </span>
                             </div>
@@ -2866,15 +2866,15 @@ const TranscriptView: React.FC<{
                             )}
                             {permissionModes.length > 0 && (
                                 <div className="pt-1">
-                                    <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-1">Permission Modes</div>
+                                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground mb-1">Permission Modes</div>
                                     <div className="flex flex-wrap gap-1">
                                         {permissionModes.slice(0, 3).map(mode => (
-                                            <span key={mode} className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">
+                                            <span key={mode} className="text-[9px] px-1.5 py-0.5 rounded border border-panel-border text-foreground font-mono">
                                                 {mode}
                                             </span>
                                         ))}
                                         {permissionModes.length > 3 && (
-                                            <span className="text-[9px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-500">
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded border border-panel-border text-muted-foreground">
                                                 +{permissionModes.length - 3}
                                             </span>
                                         )}
@@ -2898,12 +2898,12 @@ const TranscriptView: React.FC<{
 
                 {/* Git Context */}
                 {(commitHashes.length > 0 || (session.gitBranch && session.gitBranch.trim())) && (
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Version Control</h3>
+                    <div className="bg-panel border border-panel-border rounded-2xl p-5">
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Version Control</h3>
                         <div className="space-y-4">
                             {displayedCommitHashes.length > 0 && (
                                 <div className="group">
-                                    <div className="text-[9px] text-slate-600 uppercase font-bold mb-1 group-hover:text-slate-400 transition-colors">
+                                    <div className="text-[9px] text-muted-foreground uppercase font-bold mb-1 group-hover:text-muted-foreground transition-colors">
                                         Commit{commitHashes.length === 1 ? '' : 's'}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-1.5">
@@ -2917,7 +2917,7 @@ const TranscriptView: React.FC<{
                                             </span>
                                         ))}
                                         {hiddenCommitCount > 0 && (
-                                            <span className="text-[10px] font-mono text-slate-400">
+                                            <span className="text-[10px] font-mono text-muted-foreground">
                                                 +{hiddenCommitCount} more
                                             </span>
                                         )}
@@ -2926,9 +2926,9 @@ const TranscriptView: React.FC<{
                             )}
                             {session.gitBranch && session.gitBranch.trim() && (
                                 <div className="group">
-                                    <div className="text-[9px] text-slate-600 uppercase font-bold mb-1">Branch</div>
-                                    <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-                                        <GitBranch size={14} className="text-slate-500" /> {session.gitBranch}
+                                    <div className="text-[9px] text-muted-foreground uppercase font-bold mb-1">Branch</div>
+                                    <div className="flex items-center gap-2 text-xs font-mono text-foreground">
+                                        <GitBranch size={14} className="text-muted-foreground" /> {session.gitBranch}
                                     </div>
                                 </div>
                             )}
@@ -2937,23 +2937,23 @@ const TranscriptView: React.FC<{
                 )}
 
                 {/* Tool Breakdown */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex-1 shadow-sm">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Tool Efficiency</h3>
+                <div className="bg-panel border border-panel-border rounded-2xl p-5 flex-1 shadow-sm">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">Tool Efficiency</h3>
                     <div className="space-y-5">
                         {session.toolsUsed.map(tool => (
                             <div key={tool.name} className="space-y-1.5">
                                 <div className="flex justify-between items-center text-[11px] font-mono">
-                                    <span className="text-slate-400">{tool.name}</span>
-                                    <span className="text-slate-300 font-bold">{tool.count}</span>
+                                    <span className="text-muted-foreground">{tool.name}</span>
+                                    <span className="text-foreground font-bold">{tool.count}</span>
                                 </div>
-                                <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800/50">
+                                <div className="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden border border-panel-border/60">
                                     <div
                                         className={`h-full transition-all duration-1000 ${tool.successRate > 0.9 ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]' : 'bg-amber-500'}`}
                                         style={{ width: `${tool.successRate * 100}%` }}
                                     />
                                 </div>
                                 <div className="flex justify-end">
-                                    <span className="text-[9px] text-slate-600 font-mono">{(tool.successRate * 100).toFixed(0)}% SR</span>
+                                    <span className="text-[9px] text-muted-foreground font-mono">{(tool.successRate * 100).toFixed(0)}% SR</span>
                                 </div>
                             </div>
                         ))}
@@ -2961,12 +2961,12 @@ const TranscriptView: React.FC<{
                 </div>
 
                 {/* Forks and Threads */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-panel border border-panel-border rounded-2xl p-5 shadow-sm space-y-4">
                     <div>
                         <h3 className="text-xs font-bold text-cyan-300 uppercase tracking-widest mb-3">Forks</h3>
                         <div className="space-y-2 max-h-56 overflow-y-auto">
                             {!parentForkLink && directForkLinks.length === 0 && siblingForkLinks.length === 0 && (session.forks || []).length === 0 && (
-                                <div className="text-xs text-slate-500">No related forks found.</div>
+                                <div className="text-xs text-muted-foreground">No related forks found.</div>
                             )}
                             {parentForkLink && (
                                 <button
@@ -3023,19 +3023,19 @@ const TranscriptView: React.FC<{
                     </div>
 
                     <div>
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Linked Sub-Threads</h3>
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">Linked Sub-Threads</h3>
                         <div className="space-y-2 max-h-56 overflow-y-auto">
                             {linkedSubthreads.length === 0 && (
-                                <div className="text-xs text-slate-500">No linked sub-threads found.</div>
+                                <div className="text-xs text-muted-foreground">No linked sub-threads found.</div>
                             )}
                             {linkedSubthreads.map(thread => (
                                 <button
                                     key={thread.id}
                                     onClick={() => onOpenThread(thread.id)}
-                                    className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
+                                    className="w-full text-left p-2 rounded-lg border border-panel-border bg-surface-overlay hover:border-indigo-500/40 transition-colors"
                                 >
                                     <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
-                                    <div className="text-[10px] text-slate-500 mt-1">
+                                    <div className="text-[10px] text-muted-foreground mt-1">
                                         {getThreadDisplayName(thread, subagentNameBySessionId)}
                                     </div>
                                 </button>
@@ -3244,10 +3244,10 @@ const SessionFeaturesView: React.FC<{
         const mainThreads = mainThreadSessionsByFeatureId[feature.featureId] || [];
         const isLoadingMainThreads = Boolean(mainThreadSessionsLoadingByFeatureId[feature.featureId]);
         return (
-            <div key={feature.featureId} className="group/feature-link bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <div key={feature.featureId} className="group/feature-link bg-panel border border-panel-border rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-100 truncate">
+                        <div className="text-sm font-semibold text-panel-foreground truncate">
                             {feature.featureName || feature.featureId}
                         </div>
                         <button
@@ -3265,7 +3265,7 @@ const SessionFeaturesView: React.FC<{
                             type="button"
                             onClick={() => void onRemoveLinkedFeature(feature.featureId)}
                             disabled={linkMutationInFlight}
-                            className="opacity-0 group-hover/feature-link:opacity-100 disabled:opacity-40 text-slate-500 hover:text-rose-300 transition-colors p-1 rounded border border-slate-700 hover:border-rose-500/50 bg-slate-950/70"
+                            className="opacity-0 group-hover/feature-link:opacity-100 disabled:opacity-40 text-muted-foreground hover:text-rose-300 transition-colors p-1 rounded border border-panel-border hover:border-rose-500/50 bg-surface-overlay/80"
                             title="Remove linked feature"
                             aria-label={`Remove linked feature ${feature.featureName || feature.featureId}`}
                         >
@@ -3275,11 +3275,11 @@ const SessionFeaturesView: React.FC<{
                 </div>
 
                 <div className="mt-3 flex items-center gap-2 text-[10px]">
-                    <span className={`px-1.5 py-0.5 rounded border ${feature.isPrimaryLink ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800/60'}`}>
+                    <span className={`px-1.5 py-0.5 rounded border ${feature.isPrimaryLink ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-panel-border text-muted-foreground bg-surface-muted/70'}`}>
                         {feature.isPrimaryLink ? 'Primary' : 'Related'}
                     </span>
                     {feature.featureStatus && (
-                        <span className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 bg-slate-800/60 capitalize">
+                        <span className="px-1.5 py-0.5 rounded border border-panel-border text-foreground bg-surface-muted/70 capitalize">
                             {feature.featureStatus}
                         </span>
                     )}
@@ -3289,16 +3289,16 @@ const SessionFeaturesView: React.FC<{
                         </span>
                     )}
                     {feature.linkStrategy && (
-                        <span className="px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 bg-slate-800/60">
+                        <span className="px-1.5 py-0.5 rounded border border-panel-border text-muted-foreground bg-surface-muted/70">
                             {formatSessionReason(feature.linkStrategy)}
                         </span>
                     )}
                 </div>
 
                 {feature.reasons.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+                    <div className="mt-3 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
                         {feature.reasons.slice(0, 5).map(reason => (
-                            <span key={`${feature.featureId}-${reason}`} className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/60">
+                            <span key={`${feature.featureId}-${reason}`} className="px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted/70">
                                 {formatSessionReason(reason)}
                             </span>
                         ))}
@@ -3306,11 +3306,11 @@ const SessionFeaturesView: React.FC<{
                 )}
 
                 <div className="mt-3">
-                    <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
                         <span>Feature Progress</span>
                         <span className="font-mono">{feature.completedTasks}/{feature.totalTasks}</span>
                     </div>
-                    <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-1.5 rounded-full bg-surface-muted overflow-hidden">
                         <div
                             className="h-full rounded-full bg-indigo-500"
                             style={{ width: `${pct}%` }}
@@ -3318,16 +3318,16 @@ const SessionFeaturesView: React.FC<{
                     </div>
                 </div>
 
-                <div className="mt-3 pt-3 border-t border-slate-800/80">
+                <div className="mt-3 pt-3 border-t border-panel-border/90">
                     <button
                         onClick={() => toggleRelatedMainThreadSessions(feature.featureId)}
-                        className="w-full inline-flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/60 px-2.5 py-2 text-[11px] text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
+                        className="w-full inline-flex items-center justify-between rounded-lg border border-panel-border bg-surface-overlay/70 px-2.5 py-2 text-[11px] text-foreground hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
                     >
                         <span className="inline-flex items-center gap-1.5">
                             {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                             Related Main-Thread Sessions
                         </span>
-                        <span className="font-mono text-[10px] text-slate-500">
+                        <span className="font-mono text-[10px] text-muted-foreground">
                             {isLoadingMainThreads ? '...' : mainThreads.length}
                         </span>
                     </button>
@@ -3335,12 +3335,12 @@ const SessionFeaturesView: React.FC<{
                     {isExpanded && (
                         <div className="mt-2 space-y-1.5">
                             {isLoadingMainThreads && (
-                                <div className="rounded-md border border-slate-800 bg-slate-950/50 px-2.5 py-2 text-[11px] text-slate-500">
+                                <div className="rounded-md border border-panel-border bg-surface-overlay/70 px-2.5 py-2 text-[11px] text-muted-foreground">
                                     Loading related main-thread sessions...
                                 </div>
                             )}
                             {!isLoadingMainThreads && mainThreads.length === 0 && (
-                                <div className="rounded-md border border-dashed border-slate-800 bg-slate-950/50 px-2.5 py-2 text-[11px] text-slate-500">
+                                <div className="rounded-md border border-dashed border-panel-border bg-surface-overlay/70 px-2.5 py-2 text-[11px] text-muted-foreground">
                                     No other main-thread sessions are linked to this feature yet.
                                 </div>
                             )}
@@ -3348,18 +3348,18 @@ const SessionFeaturesView: React.FC<{
                                 <button
                                     key={`${feature.featureId}-${session.sessionId}`}
                                     onClick={() => onOpenSession(session.sessionId)}
-                                    className="w-full text-left rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2 hover:border-indigo-500/40 transition-colors"
+                                    className="w-full text-left rounded-md border border-panel-border bg-surface-overlay/70 px-2.5 py-2 hover:border-indigo-500/40 transition-colors"
                                 >
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="truncate text-[11px] text-indigo-300 font-mono">{session.sessionId}</div>
-                                        <div className="text-[10px] text-slate-500">
+                                        <div className="text-[10px] text-muted-foreground">
                                             {Math.round((session.confidence || 0) * 100)}%
                                         </div>
                                     </div>
-                                    <div className="truncate text-[11px] text-slate-300 mt-0.5">
+                                    <div className="truncate text-[11px] text-foreground mt-0.5">
                                         {session.title || session.sessionId}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-1">
+                                    <div className="text-[10px] text-muted-foreground mt-1">
                                         {(session.workflowType || session.sessionType || 'session')} · {session.startedAt ? new Date(session.startedAt).toLocaleString() : 'Unknown start'}
                                     </div>
                                 </button>
@@ -3373,13 +3373,13 @@ const SessionFeaturesView: React.FC<{
 
     return (
         <div className="h-full overflow-y-auto pr-1 space-y-5">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+            <div className="bg-panel border border-panel-border rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                     <div>
                         <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">Manage Feature Links</div>
-                        <p className="text-[11px] text-slate-400 mt-1">Set primary, add related, or remove links directly from this session.</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">Set primary, add related, or remove links directly from this session.</p>
                     </div>
-                    <div className="text-[10px] text-slate-500 font-mono">{linkedFeatures.length} linked</div>
+                    <div className="text-[10px] text-muted-foreground font-mono">{linkedFeatures.length} linked</div>
                 </div>
                 <div className="flex flex-col md:flex-row gap-2">
                     <input
@@ -3394,7 +3394,7 @@ const SessionFeaturesView: React.FC<{
                         }}
                         list={featureInputListId}
                         placeholder="Feature ID or exact feature name"
-                        className="flex-1 text-xs rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                        className="flex-1 text-xs rounded-lg border border-panel-border bg-surface-overlay/80 px-2.5 py-2 text-panel-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-focus/60"
                     />
                     <datalist id={featureInputListId}>
                         {availableFeatures.map(feature => (
@@ -3428,10 +3428,10 @@ const SessionFeaturesView: React.FC<{
             </div>
 
             {linkedFeatures.length === 0 && taskArtifacts.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500 py-10">
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-10">
                     <Box size={42} className="mb-3 opacity-30" />
                     <p className="text-sm">No linked features found for this session.</p>
-                    <p className="text-xs mt-1 text-slate-600">Use the controls above to set a primary feature or add related ones.</p>
+                    <p className="text-xs mt-1 text-muted-foreground">Use the controls above to set a primary feature or add related ones.</p>
                 </div>
             ) : (
                 <>
@@ -3447,14 +3447,14 @@ const SessionFeaturesView: React.FC<{
 
                             {grouped.primary.length > 0 && grouped.primary.map(renderFeatureCard)}
                             {grouped.primary.length === 0 && (
-                                <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                                <div className="text-xs text-muted-foreground border border-dashed border-panel-border rounded-lg p-4">
                                     No primary links yet. Related feature matches are shown below.
                                 </div>
                             )}
 
                             {grouped.related.length > 0 && (
                                 <div className="space-y-3 pt-2">
-                                    <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Related Feature Links</div>
+                                    <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Related Feature Links</div>
                                     {grouped.related.map(renderFeatureCard)}
                                 </div>
                             )}
@@ -3471,28 +3471,28 @@ const SessionFeaturesView: React.FC<{
                         </div>
 
                         {taskArtifacts.length === 0 && (
-                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                            <div className="text-xs text-muted-foreground border border-dashed border-panel-border rounded-lg p-4">
                                 No task artifacts detected for this session.
                             </div>
                         )}
 
                         {taskArtifacts.length > 0 && loadingFeatureDetails && (
-                            <div className="text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
+                            <div className="text-xs text-muted-foreground border border-panel-border rounded-lg p-4">
                                 Loading feature phase/task details...
                             </div>
                         )}
 
                         {taskArtifacts.length > 0 && !loadingFeatureDetails && taskHierarchy.length === 0 && (
-                            <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                            <div className="text-xs text-muted-foreground border border-dashed border-panel-border rounded-lg p-4">
                                 Task artifacts were found, but none mapped to linked feature phases yet.
                             </div>
                         )}
 
                         {taskHierarchy.map(entry => (
-                            <div key={`tasks-${entry.featureLink.featureId}`} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div key={`tasks-${entry.featureLink.featureId}`} className="bg-panel border border-panel-border rounded-xl p-4 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                        <div className="text-sm font-semibold text-slate-100 truncate">
+                                        <div className="text-sm font-semibold text-panel-foreground truncate">
                                             {entry.featureLink.featureName || entry.featureLink.featureId}
                                         </div>
                                         <button
@@ -3509,12 +3509,12 @@ const SessionFeaturesView: React.FC<{
 
                                 <div className="space-y-2">
                                     {entry.phases.map(phaseEntry => (
-                                        <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                                        <div key={`${entry.featureLink.featureId}-${phaseEntry.phase.id || phaseEntry.phase.phase}`} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
                                             <div className="flex items-center justify-between gap-2">
-                                                <div className="text-xs font-semibold text-slate-200">
+                                                <div className="text-xs font-semibold text-panel-foreground">
                                                     Phase {phaseEntry.phase.phase}: {phaseEntry.phase.title || 'Untitled'}
                                                 </div>
-                                                <div className="text-[10px] text-slate-400 font-mono">
+                                                <div className="text-[10px] text-muted-foreground font-mono">
                                                     {phaseEntry.phase.completedTasks}/{phaseEntry.phase.totalTasks}
                                                 </div>
                                             </div>
@@ -3522,9 +3522,9 @@ const SessionFeaturesView: React.FC<{
                                                 {phaseEntry.tasks.map(task => {
                                                     const statusStyle = getFeatureStatusStyle(task.status || 'backlog');
                                                     return (
-                                                        <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-slate-900/60 border border-slate-800 px-2 py-1.5">
-                                                            <span className="font-mono text-slate-500 shrink-0">{task.id}</span>
-                                                            <span className="text-slate-300 truncate">{task.title}</span>
+                                                        <div key={`${phaseEntry.phase.id || phaseEntry.phase.phase}-${task.id}`} className="flex items-center gap-2 text-xs rounded bg-panel/70 border border-panel-border px-2 py-1.5">
+                                                            <span className="font-mono text-muted-foreground shrink-0">{task.id}</span>
+                                                            <span className="text-foreground truncate">{task.title}</span>
                                                             <span className={`ml-auto text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${statusStyle.color}`}>
                                                                 {statusStyle.label}
                                                             </span>
@@ -3707,7 +3707,7 @@ const ActivityView: React.FC<{
 
     if (activityRows.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <Activity size={48} className="mb-4 opacity-20" />
                 <p>No activity entries found for this thread family.</p>
             </div>
@@ -3732,8 +3732,8 @@ const ActivityView: React.FC<{
     };
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
-            <div className="grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="bg-panel border border-panel-border rounded-xl overflow-hidden h-full flex flex-col">
+            <div className="grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-panel-border bg-surface-overlay/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <div>Timestamp</div>
                 <div>Type</div>
                 <div>Entry</div>
@@ -3744,31 +3744,31 @@ const ActivityView: React.FC<{
                 {activityRows.map(row => (
                     <div
                         key={row.id}
-                        className={`grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
+                        className={`grid grid-cols-[170px_90px_1fr_130px_160px] gap-2 px-3 py-2 border-b border-panel-border/80 text-xs hover:bg-surface-muted/40 ${highlightedSourceLogId && row.sourceLogId === highlightedSourceLogId ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
                     >
-                        <div className="text-slate-500 text-[11px]">{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</div>
+                        <div className="text-muted-foreground text-[11px]">{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</div>
                         <div>
-                            <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] ${row.kind === 'file' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : row.kind === 'artifact' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-slate-600 bg-slate-700/30 text-slate-300'}`}>
+                            <span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] ${row.kind === 'file' ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' : row.kind === 'artifact' ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-hover bg-surface-muted/40 text-foreground'}`}>
                                 {formatAction(row.kind)}
                             </span>
                         </div>
                         <div className="min-w-0">
-                            <div className="truncate text-slate-200">{row.label}</div>
-                            {row.detail && <div className="truncate text-[11px] text-slate-500">{row.detail}</div>}
+                            <div className="truncate text-panel-foreground">{row.label}</div>
+                            {row.detail && <div className="truncate text-[11px] text-muted-foreground">{row.detail}</div>}
                             {row.kind === 'file' && (
                                 <div className="text-[10px] font-mono mt-0.5">
                                     <span className="text-emerald-400">+{row.additions || 0}</span>
-                                    <span className="mx-1 text-slate-600">/</span>
+                                    <span className="mx-1 text-muted-foreground">/</span>
                                     <span className="text-rose-400">-{row.deletions || 0}</span>
                                 </div>
                             )}
                         </div>
-                        <div className="truncate text-slate-400">{row.threadName || row.sessionId}</div>
+                        <div className="truncate text-muted-foreground">{row.threadName || row.sessionId}</div>
                         <div className="flex items-center gap-1 justify-end">
                             {row.kind === 'file' && row.filePath && (
                                 <button
                                     onClick={() => openRowViewer(row)}
-                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    className="p-1 rounded text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/10"
                                     title="Open in shared viewer"
                                 >
                                     <Maximize2 size={14} />
@@ -3777,7 +3777,7 @@ const ActivityView: React.FC<{
                             {row.kind === 'file' && row.localPath && (
                                 <button
                                     onClick={() => openRowFile(row)}
-                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    className="p-1 rounded text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/10"
                                     title="Open file"
                                 >
                                     <ExternalLink size={14} />
@@ -3788,7 +3788,7 @@ const ActivityView: React.FC<{
                                     href={row.githubUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    className="p-1 rounded text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/10"
                                     title="Open file on GitHub"
                                 >
                                     <GitCommit size={14} />
@@ -3930,7 +3930,7 @@ const FilesView: React.FC<{
 
     if (fileRows.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <FileText size={48} className="mb-4 opacity-20" />
                 <p>No tracked files found for this thread family.</p>
             </div>
@@ -3938,8 +3938,8 @@ const FilesView: React.FC<{
     }
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-full flex flex-col">
-            <div className="grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/60 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="bg-panel border border-panel-border rounded-xl overflow-hidden h-full flex flex-col">
+            <div className="grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-panel-border bg-surface-overlay/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <div>File</div>
                 <div>Path</div>
                 <div>Actions</div>
@@ -3953,20 +3953,20 @@ const FilesView: React.FC<{
                 {fileRows.map(row => (
                     <div
                         key={row.key}
-                        className={`grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 ${highlightedSourceLogId && row.sourceLogIds.includes(highlightedSourceLogId) ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
+                        className={`grid grid-cols-[1.2fr_1.1fr_70px_80px_80px_150px_100px_110px] gap-2 px-3 py-2 border-b border-panel-border/80 text-xs hover:bg-surface-muted/40 ${highlightedSourceLogId && row.sourceLogIds.includes(highlightedSourceLogId) ? 'bg-indigo-500/10 border-indigo-500/30' : ''}`}
                     >
-                        <div className="truncate text-slate-200 font-medium">{row.fileName}</div>
-                        <div className="truncate font-mono text-[11px] text-slate-500">{row.filePath}</div>
+                        <div className="truncate text-panel-foreground font-medium">{row.fileName}</div>
+                        <div className="truncate font-mono text-[11px] text-muted-foreground">{row.filePath}</div>
                         <div className="flex flex-wrap gap-1">
                             {row.actions.map(action => (
-                                <span key={`${row.key}:${action}`} className={`inline-flex rounded border px-1 py-0.5 text-[10px] ${action === 'read' ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : action === 'create' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : action === 'update' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : action === 'delete' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-700/30 border-slate-600 text-slate-300'}`}>
+                                <span key={`${row.key}:${action}`} className={`inline-flex rounded border px-1 py-0.5 text-[10px] ${action === 'read' ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : action === 'create' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : action === 'update' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : action === 'delete' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-surface-muted/40 border-hover text-foreground'}`}>
                                     {formatAction(action)}
                                 </span>
                             ))}
                         </div>
-                        <div className="text-slate-300">{row.touchCount}</div>
-                        <div className="text-slate-300">{row.uniqueSessions}</div>
-                        <div className="text-slate-500 text-[11px]">{row.lastTouchedAt ? new Date(row.lastTouchedAt).toLocaleString() : '—'}</div>
+                        <div className="text-foreground">{row.touchCount}</div>
+                        <div className="text-foreground">{row.uniqueSessions}</div>
+                        <div className="text-muted-foreground text-[11px]">{row.lastTouchedAt ? new Date(row.lastTouchedAt).toLocaleString() : '—'}</div>
                         <div className="font-mono text-[11px]">
                             <span className={row.netDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                                 {row.netDiff >= 0 ? '+' : ''}{row.netDiff}
@@ -3984,7 +3984,7 @@ const FilesView: React.FC<{
                                     }
                                     onOpenFile(row.filePath, row.localPath);
                                 }}
-                                className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                className="p-1 rounded text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/10"
                                 title="Open in shared viewer"
                             >
                                 <Maximize2 size={14} />
@@ -3994,7 +3994,7 @@ const FilesView: React.FC<{
                                     onClick={() => {
                                         window.location.href = `vscode://file/${encodeURI(row.localPath)}`;
                                     }}
-                                    className="p-1 rounded text-slate-500 hover:text-indigo-300 hover:bg-indigo-500/10"
+                                    className="p-1 rounded text-muted-foreground hover:text-indigo-300 hover:bg-indigo-500/10"
                                     title="Open locally"
                                 >
                                     <ExternalLink size={14} />
@@ -4015,43 +4015,43 @@ const ArtifactDetailsModal: React.FC<{
     subagentNameBySessionId: Map<string, string>;
 }> = ({ group, onClose, onOpenThread, subagentNameBySessionId }) => {
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-                <div className="p-5 border-b border-slate-800 flex justify-between items-start bg-slate-950">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface-overlay/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-panel border border-panel-border rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                <div className="p-5 border-b border-panel-border flex justify-between items-start bg-surface-overlay">
                     <div>
-                        <h3 className="text-lg font-bold text-slate-100">{group.title}</h3>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <h3 className="text-lg font-bold text-panel-foreground">{group.title}</h3>
+                        <p className="text-xs text-muted-foreground mt-1">
                             {group.type} • {group.source} • {group.artifacts.length} merged artifacts
                         </p>
                     </div>
-                    <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+                    <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors">
                         <X size={20} />
                     </button>
                 </div>
 
                 <div className="p-6 space-y-6 overflow-y-auto">
-                    <div className="bg-slate-950/70 rounded-lg border border-slate-800 p-4 text-sm text-slate-300">
+                    <div className="bg-surface-overlay/80 rounded-lg border border-panel-border p-4 text-sm text-foreground">
                         {group.description || 'No artifact description available.'}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Source Log IDs</h4>
+                            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Source Log IDs</h4>
                             <div className="flex flex-wrap gap-2">
-                                {group.sourceLogIds.length === 0 && <span className="text-xs text-slate-500">None</span>}
+                                {group.sourceLogIds.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
                                 {group.sourceLogIds.map(sourceLogId => (
-                                    <span key={sourceLogId} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                    <span key={sourceLogId} className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border font-mono">
                                         {sourceLogId}
                                     </span>
                                 ))}
                             </div>
                         </div>
                         <div>
-                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Source Tools</h4>
+                            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Source Tools</h4>
                             <div className="flex flex-wrap gap-2">
-                                {group.sourceToolNames.length === 0 && <span className="text-xs text-slate-500">None</span>}
+                                {group.sourceToolNames.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
                                 {group.sourceToolNames.map(sourceToolName => (
-                                    <span key={sourceToolName} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                    <span key={sourceToolName} className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border font-mono">
                                         {sourceToolName}
                                     </span>
                                 ))}
@@ -4060,20 +4060,20 @@ const ArtifactDetailsModal: React.FC<{
                     </div>
 
                     <div>
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Related Tool Calls</h4>
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Related Tool Calls</h4>
                         <div className="space-y-2">
                             {group.relatedToolLogs.length === 0 && (
-                                <div className="text-xs text-slate-500">No related tool calls found.</div>
+                                <div className="text-xs text-muted-foreground">No related tool calls found.</div>
                             )}
                             {group.relatedToolLogs.map(log => (
-                                <div key={log.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+                                <div key={log.id} className="rounded-lg border border-panel-border bg-surface-overlay p-3">
                                     <div className="flex items-center justify-between gap-3">
-                                        <div className="text-sm font-mono text-slate-200">{log.toolCall?.name || 'tool'}</div>
+                                        <div className="text-sm font-mono text-panel-foreground">{log.toolCall?.name || 'tool'}</div>
                                         <div className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${log.toolCall?.status === 'error' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
                                             {log.toolCall?.status || 'success'}
                                         </div>
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-1">
+                                    <div className="text-[10px] text-muted-foreground mt-1">
                                         {log.id} • {log.timestamp}
                                     </div>
                                 </div>
@@ -4082,16 +4082,16 @@ const ArtifactDetailsModal: React.FC<{
                     </div>
 
                     <div>
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Linked Sub-agent Threads</h4>
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Linked Sub-agent Threads</h4>
                         <div className="space-y-2">
                             {group.linkedThreads.length === 0 && (
-                                <div className="text-xs text-slate-500">No linked sub-agent threads found.</div>
+                                <div className="text-xs text-muted-foreground">No linked sub-agent threads found.</div>
                             )}
                             {group.linkedThreads.map(thread => (
-                                <div key={thread.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3 flex items-center justify-between gap-3">
+                                <div key={thread.id} className="rounded-lg border border-panel-border bg-surface-overlay p-3 flex items-center justify-between gap-3">
                                     <div>
                                         <div className="text-sm text-indigo-300 font-mono">{thread.id}</div>
-                                        <div className="text-[10px] text-slate-500 mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
+                                        <div className="text-[10px] text-muted-foreground mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
                                     </div>
                                     <button
                                         onClick={() => onOpenThread(thread.id)}
@@ -4105,10 +4105,10 @@ const ArtifactDetailsModal: React.FC<{
                     </div>
 
                     <div>
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Merged Artifact IDs</h4>
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Merged Artifact IDs</h4>
                         <div className="flex flex-wrap gap-2">
                             {group.artifactIds.map(id => (
-                                <span key={id} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                                <span key={id} className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border font-mono">
                                     {id}
                                 </span>
                             ))}
@@ -4367,7 +4367,7 @@ const ArtifactsView: React.FC<{
         <button
             key={group.key}
             onClick={() => setSelectedGroup(group)}
-            className={`text-left bg-slate-900 border rounded-xl p-6 hover:border-indigo-500/50 transition-all group min-w-0 overflow-hidden ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800'}`}
+            className={`text-left bg-panel border rounded-xl p-6 hover:border-indigo-500/50 transition-all group min-w-0 overflow-hidden ${highlightedSourceLogId && group.sourceLogIds.includes(highlightedSourceLogId) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-panel-border'}`}
         >
             <div className="flex justify-between items-start gap-3 mb-4 min-w-0">
                 <div className={`p-2 rounded-lg ${group.type === 'memory' ? 'bg-purple-500/10 text-purple-400' :
@@ -4379,34 +4379,34 @@ const ArtifactsView: React.FC<{
                             <Database size={20} />}
                 </div>
                 <span
-                    className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded uppercase font-bold tracking-wider max-w-[9rem] truncate"
+                    className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded uppercase font-bold tracking-wider max-w-[9rem] truncate"
                     title={group.source}
                 >
                     {group.source}
                 </span>
             </div>
 
-            <h3 className="font-bold text-slate-200 mb-2 group-hover:text-indigo-400 transition-colors truncate" title={group.title}>
+            <h3 className="font-bold text-panel-foreground mb-2 group-hover:text-indigo-400 transition-colors truncate" title={group.title}>
                 {group.title}
             </h3>
-            <p className="text-sm text-slate-400 mb-4 line-clamp-3 break-all" title={group.description || ''}>
+            <p className="text-sm text-muted-foreground mb-4 line-clamp-3 break-all" title={group.description || ''}>
                 {group.description}
             </p>
 
             <div className="flex flex-wrap gap-2 mb-4">
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                <span className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border">
                     {group.artifacts.length} merged
                 </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                <span className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border">
                     {group.relatedToolLogs.length} tool calls
                 </span>
-                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
+                <span className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-0.5 rounded border border-panel-border">
                     {group.linkedThreads.length} sub-threads
                 </span>
             </div>
 
-            <div className="pt-4 border-t border-slate-800 flex justify-between items-center gap-2 min-w-0">
-                <span className="text-xs font-mono text-slate-500 truncate min-w-0 max-w-[65%]" title={group.artifactIds[0]}>
+            <div className="pt-4 border-t border-panel-border flex justify-between items-center gap-2 min-w-0">
+                <span className="text-xs font-mono text-muted-foreground truncate min-w-0 max-w-[65%]" title={group.artifactIds[0]}>
                     {group.artifactIds[0]}
                 </span>
                 <span className="text-xs flex items-center gap-1 text-indigo-400 group-hover:text-indigo-300 shrink-0">
@@ -4418,7 +4418,7 @@ const ArtifactsView: React.FC<{
 
     if (!hasAnyData) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <LinkIcon size={48} className="mb-4 opacity-20" />
                 <p>No linked artifacts found.</p>
             </div>
@@ -4427,7 +4427,7 @@ const ArtifactsView: React.FC<{
 
     return (
         <>
-            <div className="mb-4 flex items-center gap-2 border border-slate-800 rounded-lg bg-slate-900 p-1 w-fit">
+            <div className="mb-4 flex items-center gap-2 border border-panel-border rounded-lg bg-panel p-1 w-fit">
                 {[
                     { id: 'commands', label: `Commands (${commandEntries.length})` },
                     { id: 'skills', label: `Skills (${skillGroups.length})` },
@@ -4439,7 +4439,7 @@ const ArtifactsView: React.FC<{
                         onClick={() => setActiveSubTab(tab.id as 'commands' | 'skills' | 'agents' | 'tools')}
                         className={`px-3 py-1.5 text-xs rounded-md transition-colors ${activeSubTab === tab.id
                             ? 'bg-indigo-600 text-white'
-                            : 'text-slate-400 hover:text-slate-200'
+                            : 'text-muted-foreground hover:text-panel-foreground'
                             }`}
                     >
                         {tab.label}
@@ -4450,26 +4450,26 @@ const ArtifactsView: React.FC<{
             {activeSubTab === 'commands' && (
                 <div className="space-y-3">
                     {commandEntries.length === 0 && (
-                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                        <div className="rounded-xl border border-panel-border bg-panel/50 p-4 text-sm text-muted-foreground">
                             No command activity found.
                         </div>
                     )}
                     {commandEntries.map(entry => (
                         <div
                             key={entry.logId}
-                            className={`rounded-xl border p-4 ${highlightedSourceLogId && entry.logId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-slate-800 bg-slate-900/40'}`}
+                            className={`rounded-xl border p-4 ${highlightedSourceLogId && entry.logId === highlightedSourceLogId ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-panel-border bg-panel/50'}`}
                         >
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-[10px] uppercase tracking-wider text-emerald-300/90 font-semibold mb-1 flex items-center gap-1.5">
                                         <Terminal size={11} /> Command
                                     </div>
-                                    <p className="font-mono text-sm text-slate-200 break-all">{entry.commandName}</p>
+                                    <p className="font-mono text-sm text-panel-foreground break-all">{entry.commandName}</p>
                                     {entry.args && (
-                                        <p className="mt-2 text-xs text-slate-400 whitespace-pre-wrap break-words">{entry.args}</p>
+                                        <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap break-words">{entry.args}</p>
                                     )}
                                 </div>
-                                <div className="text-[10px] text-slate-500">{new Date(entry.timestamp).toLocaleString()}</div>
+                                <div className="text-[10px] text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</div>
                             </div>
 
                             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -4479,7 +4479,7 @@ const ArtifactsView: React.FC<{
                                     </span>
                                 ))}
                                 {entry.featureSlug && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-300">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted/80 text-foreground">
                                         Feature {entry.featureSlug}
                                     </span>
                                 )}
@@ -4489,7 +4489,7 @@ const ArtifactsView: React.FC<{
                                     </span>
                                 )}
                                 {entry.featurePath && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800/70 text-slate-400 font-mono">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted/80 text-muted-foreground font-mono">
                                         {fileNameFromPath(entry.featurePath)}
                                     </span>
                                 )}
@@ -4508,12 +4508,12 @@ const ArtifactsView: React.FC<{
                 <div className="space-y-6">
                     {toolGroupSections.map(section => (
                         <section key={section.id} className="space-y-3">
-                            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                                <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold">{section.label}</h3>
-                                <span className="text-[11px] text-slate-500">{section.groups.length}</span>
+                            <div className="flex items-center justify-between border-b border-panel-border pb-2">
+                                <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">{section.label}</h3>
+                                <span className="text-[11px] text-muted-foreground">{section.groups.length}</span>
                             </div>
                             {section.groups.length === 0 ? (
-                                <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+                                <div className="rounded-xl border border-panel-border bg-panel/50 p-4 text-sm text-muted-foreground">
                                     {section.emptyLabel}
                                 </div>
                             ) : (
@@ -4529,7 +4529,7 @@ const ArtifactsView: React.FC<{
             {activeSubTab !== 'commands' && activeSubTab !== 'tools' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {visibleGroups.length === 0 && (
-                        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500 md:col-span-2 lg:col-span-3">
+                        <div className="rounded-xl border border-panel-border bg-panel/50 p-4 text-sm text-muted-foreground md:col-span-2 lg:col-span-3">
                             No {activeSubTab} artifacts found.
                         </div>
                     )}
@@ -4560,37 +4560,37 @@ const AnalyticsDetailsModal: React.FC<{
     if (!data) return null;
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-                <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950">
-                    <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface-overlay/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-panel border border-panel-border rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="p-5 border-b border-panel-border flex justify-between items-center bg-surface-overlay">
+                    <h3 className="text-lg font-bold text-panel-foreground flex items-center gap-2">
                         <Activity size={18} className="text-indigo-500" />
                         {title}: {data.name}
                     </h3>
-                    <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+                    <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors">
                         <X size={20} />
                     </button>
                 </div>
                 <div className="p-6 space-y-6">
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
-                            <div className="text-xs text-slate-500 uppercase font-bold mb-1">Total Interactions</div>
+                        <div className="bg-surface-muted/60 p-3 rounded-lg border border-panel-border/60">
+                            <div className="text-xs text-muted-foreground uppercase font-bold mb-1">Total Interactions</div>
                             <div className="text-2xl font-mono text-white">{data.value || 0}</div>
                         </div>
-                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
-                            <div className="text-xs text-slate-500 uppercase font-bold mb-1">Estimated Cost</div>
+                        <div className="bg-surface-muted/60 p-3 rounded-lg border border-panel-border/60">
+                            <div className="text-xs text-muted-foreground uppercase font-bold mb-1">Estimated Cost</div>
                             <div className="text-2xl font-mono text-emerald-400">${(data.cost || 0).toFixed(4)}</div>
                         </div>
                     </div>
 
                     <div className="space-y-2">
-                        <div className="flex justify-between text-sm border-b border-slate-800 pb-2">
-                            <span className="text-slate-400">Tokens Consumed</span>
-                            <span className="font-mono text-slate-200">{(data.tokens || 0).toLocaleString()}</span>
+                        <div className="flex justify-between text-sm border-b border-panel-border pb-2">
+                            <span className="text-muted-foreground">Tokens Consumed</span>
+                            <span className="font-mono text-panel-foreground">{(data.tokens || 0).toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between text-sm border-b border-slate-800 pb-2">
-                            <span className="text-slate-400">Tools Called</span>
-                            <span className="font-mono text-slate-200">{data.toolCount || 0}</span>
+                        <div className="flex justify-between text-sm border-b border-panel-border pb-2">
+                            <span className="text-muted-foreground">Tools Called</span>
+                            <span className="font-mono text-panel-foreground">{data.toolCount || 0}</span>
                         </div>
                     </div>
 
@@ -4813,24 +4813,24 @@ const TokenTimeline: React.FC<{ sessions: AgentSession[] }> = ({ sessions }) => 
                 </ResponsiveContainer>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Tool Executions</div>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/90 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Tool Executions</div>
                     <div className="text-sm font-mono text-amber-300">{totals.toolExecutions.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Failed Tools</div>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/90 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Failed Tools</div>
                     <div className="text-sm font-mono text-rose-300">{totals.failedTools.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">File Edits</div>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/90 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">File Edits</div>
                     <div className="text-sm font-mono text-emerald-300">{totals.fileEdits.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Artifact Links</div>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/90 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Artifact Links</div>
                     <div className="text-sm font-mono text-violet-300">{totals.artifactLinks.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Test Runs</div>
+                <div className="rounded-lg border border-panel-border bg-surface-overlay/90 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Test Runs</div>
                     <div className="text-sm font-mono text-cyan-300">{totals.testRuns.toLocaleString()}</div>
                 </div>
             </div>
@@ -4983,25 +4983,25 @@ const AnalyticsView: React.FC<{
 
     return (
         <div className="h-full overflow-y-auto pb-6 relative">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-panel-border bg-panel/80 px-4 py-3">
                 <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Correlation Scope</div>
-                    <div className="text-sm text-slate-200">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Correlation Scope</div>
+                    <div className="text-sm text-panel-foreground">
                         {scopeMode === 'thread_family'
                             ? `Main thread + ${Math.max(0, sessionsInScope.length - 1)} linked sub-thread${sessionsInScope.length === 2 ? '' : 's'}`
                             : 'Main thread only'}
                     </div>
                 </div>
-                <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                <div className="flex bg-surface-overlay rounded-lg p-0.5 border border-panel-border">
                     <button
                         onClick={() => setScopeMode('thread_family')}
-                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'thread_family' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'thread_family' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
                     >
                         Main + Linked
                     </button>
                     <button
                         onClick={() => setScopeMode('main')}
-                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'main' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                        className={`px-3 py-1.5 text-[11px] font-bold rounded ${scopeMode === 'main' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
                     >
                         Main Only
                     </button>
@@ -5010,8 +5010,8 @@ const AnalyticsView: React.FC<{
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
 
                 {/* 1. AGENTS CHART */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><Users size={16} /> Active Agents</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-foreground mb-6 flex items-center gap-2"><Users size={16} /> Active Agents</h3>
                     <div className="h-64 cursor-pointer">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={agentStats} onClick={(data: any) => data && data.activePayload && setModalData({ title: 'Agent Details', data: data.activePayload[0].payload })}>
@@ -5026,8 +5026,8 @@ const AnalyticsView: React.FC<{
                 </div>
 
                 {/* 2. TOOLS CHART */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><PieChartIcon size={16} /> Tool Usage</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-foreground mb-6 flex items-center gap-2"><PieChartIcon size={16} /> Tool Usage</h3>
                     <div className="h-64 cursor-pointer">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -5051,8 +5051,8 @@ const AnalyticsView: React.FC<{
                 </div>
 
                 {/* 3. MODELS CHART */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-6 flex items-center gap-2"><Cpu size={16} /> Model Allocation</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-foreground mb-6 flex items-center gap-2"><Cpu size={16} /> Model Allocation</h3>
                     <div className="h-64 cursor-pointer">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart layout="vertical" data={modelData} onClick={(data: any) => data && data.activePayload && setModalData({ title: 'Model Details', data: data.activePayload[0].payload })}>
@@ -5071,19 +5071,19 @@ const AnalyticsView: React.FC<{
                 </div>
 
                 {/* 4. TOKEN CONSUMPTION (Toggleable) */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                <div className="bg-panel border border-panel-border rounded-xl p-6">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><BarChart2 size={16} /> Token Consumption</h3>
-                        <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                        <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><BarChart2 size={16} /> Token Consumption</h3>
+                        <div className="flex bg-surface-overlay rounded-lg p-0.5 border border-panel-border">
                             <button
                                 onClick={() => setTokenViewMode('summary')}
-                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'summary' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'summary' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                                 Summary
                             </button>
                             <button
                                 onClick={() => setTokenViewMode('timeline')}
-                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'timeline' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                                className={`px-2 py-1 text-[10px] font-bold rounded ${tokenViewMode === 'timeline' ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                                 Timeline
                             </button>
@@ -5114,9 +5114,9 @@ const AnalyticsView: React.FC<{
                 </div>
 
                 {/* 5. MASTER TIMELINE VIEW (Full Width) */}
-                <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
-                    <h3 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Layers size={16} /> Session Master Timeline</h3>
-                    <p className="text-xs text-slate-500 mb-6">Correlated lifecycle view across tokens, tool executions, file edits, artifacts, and test runs.</p>
+                <div className="md:col-span-2 bg-panel border border-panel-border rounded-xl p-6">
+                    <h3 className="text-sm font-bold text-foreground mb-2 flex items-center gap-2"><Layers size={16} /> Session Master Timeline</h3>
+                    <p className="text-xs text-muted-foreground mb-6">Correlated lifecycle view across tokens, tool executions, file edits, artifacts, and test runs.</p>
                     <TokenTimeline sessions={sessionsInScope} />
                 </div>
 
@@ -5124,20 +5124,20 @@ const AnalyticsView: React.FC<{
 
             {/* COST SUMMARY */}
             {sessionBlockInsightsEnabled && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+                <div className="bg-panel border border-panel-border rounded-xl p-6 mb-6">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <div>
-                            <h3 className="text-sm font-bold text-slate-300">Session Block Insights</h3>
-                            <p className="mt-1 text-xs text-slate-500">
+                            <h3 className="text-sm font-bold text-foreground">Session Block Insights</h3>
+                            <p className="mt-1 text-xs text-muted-foreground">
                                 Rolling workload and spend blocks for the main session only. These views are additive and never rewrite canonical workload or display-cost totals.
                             </p>
                         </div>
-                        <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                        <div className="flex bg-surface-overlay rounded-lg p-0.5 border border-panel-border">
                             {blockDurationOptions.map(option => (
                                 <button
                                     key={`session-block-duration-${option}`}
                                     onClick={() => setBlockDurationHours(option)}
-                                    className={`px-2.5 py-1 text-[10px] font-bold rounded ${blockDurationHours === option ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                                    className={`px-2.5 py-1 text-[10px] font-bold rounded ${blockDurationHours === option ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
                                     {option}h
                                 </button>
@@ -5150,31 +5150,31 @@ const AnalyticsView: React.FC<{
                             CCDash could not derive per-block workload events for this session yet. Refresh the session detail after sync if usage metadata becomes available.
                         </div>
                     ) : !blockInsights.isLongSession ? (
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+                        <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-4 py-3 text-sm text-foreground">
                             Session runtime is {blockInsights.sessionDurationHours.toFixed(1)}h, which is shorter than the current {blockDurationHours}h block window.
                         </div>
                     ) : latestBlock ? (
                         <>
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Latest Block</div>
-                                    <div className="mt-2 text-lg font-mono text-slate-100">{latestBlock.label}</div>
-                                    <div className="mt-1 text-xs text-slate-400">{formatBlockWindow(latestBlock.startAt, latestBlock.actualEndAt)}</div>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Latest Block</div>
+                                    <div className="mt-2 text-lg font-mono text-panel-foreground">{latestBlock.label}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">{formatBlockWindow(latestBlock.startAt, latestBlock.actualEndAt)}</div>
                                 </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Block Workload</div>
-                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.workloadTokens)}</div>
-                                    <div className="mt-1 text-xs text-slate-400">{latestBlock.status} • {Math.round(latestBlock.progressPct)}% window</div>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Block Workload</div>
+                                    <div className="mt-2 text-lg font-mono text-panel-foreground">{formatTokenCount(latestBlock.workloadTokens)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">{latestBlock.status} • {Math.round(latestBlock.progressPct)}% window</div>
                                 </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Burn Rate</div>
-                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.tokenBurnRatePerHour)}/h</div>
-                                    <div className="mt-1 text-xs text-slate-400">${formatUsd(latestBlock.costBurnRatePerHour, 4)}/h</div>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Burn Rate</div>
+                                    <div className="mt-2 text-lg font-mono text-panel-foreground">{formatTokenCount(latestBlock.tokenBurnRatePerHour)}/h</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">${formatUsd(latestBlock.costBurnRatePerHour, 4)}/h</div>
                                 </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Projected End</div>
-                                    <div className="mt-2 text-lg font-mono text-slate-100">{formatTokenCount(latestBlock.projectedWorkloadTokens)}</div>
-                                    <div className="mt-1 text-xs text-slate-400">${formatUsd(latestBlock.projectedCostUsd, 4)} projected block cost</div>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Projected End</div>
+                                    <div className="mt-2 text-lg font-mono text-panel-foreground">{formatTokenCount(latestBlock.projectedWorkloadTokens)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">${formatUsd(latestBlock.projectedCostUsd, 4)} projected block cost</div>
                                 </div>
                             </div>
 
@@ -5211,28 +5211,28 @@ const AnalyticsView: React.FC<{
 
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 {blockInsights.blocks.slice(-3).map(block => (
-                                    <div key={`session-block-summary-${block.index}`} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-3">
+                                    <div key={`session-block-summary-${block.index}`} className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-3">
                                         <div className="flex items-center justify-between gap-2">
-                                            <span className="text-sm font-semibold text-slate-100">{block.label}</span>
-                                            <span className="text-[10px] uppercase tracking-wide text-slate-500">{block.status}</span>
+                                            <span className="text-sm font-semibold text-panel-foreground">{block.label}</span>
+                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{block.status}</span>
                                         </div>
-                                        <div className="mt-1 text-xs text-slate-500">{formatBlockWindow(block.startAt, block.actualEndAt)}</div>
+                                        <div className="mt-1 text-xs text-muted-foreground">{formatBlockWindow(block.startAt, block.actualEndAt)}</div>
                                         <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
-                                                <div className="text-slate-500">Model IO</div>
-                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.modelInputTokens + block.modelOutputTokens)}</div>
+                                            <div className="rounded-md border border-panel-border bg-panel/80 px-2 py-2">
+                                                <div className="text-muted-foreground">Model IO</div>
+                                                <div className="mt-1 font-mono text-panel-foreground">{formatTokenCount(block.modelInputTokens + block.modelOutputTokens)}</div>
                                             </div>
-                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
-                                                <div className="text-slate-500">Cache Input</div>
-                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.cacheCreationInputTokens + block.cacheReadInputTokens)}</div>
+                                            <div className="rounded-md border border-panel-border bg-panel/80 px-2 py-2">
+                                                <div className="text-muted-foreground">Cache Input</div>
+                                                <div className="mt-1 font-mono text-panel-foreground">{formatTokenCount(block.cacheCreationInputTokens + block.cacheReadInputTokens)}</div>
                                             </div>
-                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
-                                                <div className="text-slate-500">Cost</div>
-                                                <div className="mt-1 font-mono text-slate-200">${formatUsd(block.costUsd, 4)}</div>
+                                            <div className="rounded-md border border-panel-border bg-panel/80 px-2 py-2">
+                                                <div className="text-muted-foreground">Cost</div>
+                                                <div className="mt-1 font-mono text-panel-foreground">${formatUsd(block.costUsd, 4)}</div>
                                             </div>
-                                            <div className="rounded-md border border-slate-800 bg-slate-900/80 px-2 py-2">
-                                                <div className="text-slate-500">Token Rate</div>
-                                                <div className="mt-1 font-mono text-slate-200">{formatTokenCount(block.tokenBurnRatePerHour)}/h</div>
+                                            <div className="rounded-md border border-panel-border bg-panel/80 px-2 py-2">
+                                                <div className="text-muted-foreground">Token Rate</div>
+                                                <div className="mt-1 font-mono text-panel-foreground">{formatTokenCount(block.tokenBurnRatePerHour)}/h</div>
                                             </div>
                                         </div>
                                     </div>
@@ -5244,39 +5244,39 @@ const AnalyticsView: React.FC<{
             )}
 
             {usageAttributionEnabled && session.usageAttributionSummary ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+            <div className="bg-panel border border-panel-border rounded-xl p-6 mb-6">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
-                        <h3 className="text-sm font-bold text-slate-300">Usage Attribution</h3>
-                        <p className="mt-1 text-xs text-slate-500">Event-level ownership for this session only. Exclusive totals reconcile; supporting totals are participatory.</p>
+                        <h3 className="text-sm font-bold text-foreground">Usage Attribution</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">Event-level ownership for this session only. Exclusive totals reconcile; supporting totals are participatory.</p>
                     </div>
                     <div className="flex gap-3 text-xs">
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
-                            Coverage <span className="ml-1 font-mono text-slate-100">{formatPercent(Number(attributionCalibration?.primaryCoverage || 0), 0)}</span>
+                        <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-foreground">
+                            Coverage <span className="ml-1 font-mono text-panel-foreground">{formatPercent(Number(attributionCalibration?.primaryCoverage || 0), 0)}</span>
                         </div>
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
-                            Model IO gap <span className="ml-1 font-mono text-slate-100">{formatTokenCount(Math.abs(Number(attributionCalibration?.modelIOGap || 0)))}</span>
+                        <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-foreground">
+                            Model IO gap <span className="ml-1 font-mono text-panel-foreground">{formatTokenCount(Math.abs(Number(attributionCalibration?.modelIOGap || 0)))}</span>
                         </div>
                     </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Model IO</div>
-                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveModelIOTokens || 0))}</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Exclusive Model IO</div>
+                        <div className="mt-2 text-xl font-mono text-panel-foreground">{formatTokenCount(Number(attributionCalibration?.exclusiveModelIOTokens || 0))}</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Exclusive Cache</div>
-                        <div className="mt-2 text-xl font-mono text-slate-100">{formatTokenCount(Number(attributionCalibration?.exclusiveCacheInputTokens || 0))}</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Exclusive Cache</div>
+                        <div className="mt-2 text-xl font-mono text-panel-foreground">{formatTokenCount(Number(attributionCalibration?.exclusiveCacheInputTokens || 0))}</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
-                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Confidence</div>
-                        <div className="mt-2 text-xl font-mono text-slate-100">{Number(attributionCalibration?.averageConfidence || 0).toFixed(2)}</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Confidence</div>
+                        <div className="mt-2 text-xl font-mono text-panel-foreground">{Number(attributionCalibration?.averageConfidence || 0).toFixed(2)}</div>
                     </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="text-slate-400 border-b border-slate-800">
+                            <tr className="text-muted-foreground border-b border-panel-border">
                                 <th className="text-left py-2 pr-3">Entity</th>
                                 <th className="text-right py-2 pr-3">Exclusive</th>
                                 <th className="text-right py-2 pr-3">Supporting</th>
@@ -5286,10 +5286,10 @@ const AnalyticsView: React.FC<{
                         </thead>
                         <tbody>
                             {attributionRows.map((row, idx) => (
-                                <tr key={`${row.entityType}-${row.entityId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                <tr key={`${row.entityType}-${row.entityId}-${idx}`} className="border-b border-panel-border text-foreground">
                                     <td className="py-2 pr-3">
-                                        <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
-                                        <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                        <div className="text-panel-foreground">{row.entityLabel || row.entityId}</div>
+                                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{row.entityType}</div>
                                     </td>
                                     <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.exclusiveTokens || 0))}</td>
                                     <td className="py-2 pr-3 text-right font-mono">{formatTokenCount(Number(row.supportingTokens || 0))}</td>
@@ -5302,40 +5302,40 @@ const AnalyticsView: React.FC<{
                 </div>
             </div>
             ) : (
-                <div className="bg-slate-900 border border-amber-500/25 rounded-xl p-6 mb-6 text-sm text-amber-100">
+                <div className="bg-panel border border-amber-500/25 rounded-xl p-6 mb-6 text-sm text-amber-100">
                     {usageAttributionEnabled
                         ? 'Usage attribution is currently unavailable for this session. Check the backend rollout gate or refresh after re-enabling attribution APIs.'
                         : 'Usage attribution is disabled for this project. Re-enable it in Project Settings to restore event-level attribution summaries for this session.'}
                 </div>
             )}
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-300 mb-2">Cost Analysis</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-6">
+                <h3 className="text-sm font-bold text-foreground mb-2">Cost Analysis</h3>
                 <div className="flex items-center gap-8">
-                    <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
-                        <div className="text-xs text-slate-500 mb-1">Total Cost</div>
+                    <div className="flex-1 bg-surface-overlay rounded-lg p-4 border border-panel-border">
+                        <div className="text-xs text-muted-foreground mb-1">Total Cost</div>
                         <div className="text-3xl font-mono text-emerald-400 font-bold">${formatUsd(scopeTotals.totalCost, 4)}</div>
                     </div>
-                    <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
-                        <div className="text-xs text-slate-500 mb-1">Cost / Step</div>
+                    <div className="flex-1 bg-surface-overlay rounded-lg p-4 border border-panel-border">
+                        <div className="text-xs text-muted-foreground mb-1">Cost / Step</div>
                         <div className="text-3xl font-mono text-indigo-400 font-bold">${formatUsd(scopeTotals.totalCost / Math.max(scopeTotals.logCount, 1), 4)}</div>
                     </div>
-                    <div className="flex-1 bg-slate-950 rounded-lg p-4 border border-slate-800">
-                        <div className="text-xs text-slate-500 mb-1">Workload / Step</div>
+                    <div className="flex-1 bg-surface-overlay rounded-lg p-4 border border-panel-border">
+                        <div className="text-xs text-muted-foreground mb-1">Workload / Step</div>
                         <div className="text-3xl font-mono text-blue-400 font-bold">{Math.round(scopeTotals.workloadTokens / Math.max(scopeTotals.logCount, 1))}</div>
                     </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
-                        <span className="text-slate-500">Observed workload</span>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-foreground">
+                        <span className="text-muted-foreground">Observed workload</span>
                         <div className="mt-1 font-mono">{formatTokenCount(scopeTotals.workloadTokens)}</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
-                        <span className="text-slate-500">Cache share</span>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-foreground">
+                        <span className="text-muted-foreground">Cache share</span>
                         <div className="mt-1 font-mono">{formatPercent(scopeTotals.workloadTokens > 0 ? scopeTotals.cacheInputTokens / scopeTotals.workloadTokens : 0, 0)}</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-slate-300">
-                        <span className="text-slate-500">Fallback sessions</span>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/80 px-3 py-2 text-foreground">
+                        <span className="text-muted-foreground">Fallback sessions</span>
                         <div className="mt-1 font-mono">{scopeTotals.toolFallbackCount}</div>
                     </div>
                 </div>
@@ -5386,25 +5386,25 @@ const AgentsView: React.FC<{
                 const threads = agentThreads(agent);
 
                 return (
-                    <div key={agent} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                    <div key={agent} className="bg-panel border border-panel-border rounded-xl overflow-hidden">
                         <button
                             onClick={() => setExpandedAgent(isOpen ? null : agent)}
-                            className="w-full p-4 flex items-center justify-between hover:bg-slate-800/30 transition-colors"
+                            className="w-full p-4 flex items-center justify-between hover:bg-surface-muted/40 transition-colors"
                         >
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-sm font-bold text-indigo-400">
+                                <div className="w-10 h-10 rounded-full bg-surface-muted border border-panel-border flex items-center justify-center text-sm font-bold text-indigo-400">
                                     {agent[0]}
                                 </div>
                                 <div className="text-left">
-                                    <div className="font-bold text-slate-200">{agent}</div>
-                                    <div className="text-xs text-slate-500 font-mono">{agentLogs.length} interactions · {threads.length} threads</div>
+                                    <div className="font-bold text-panel-foreground">{agent}</div>
+                                    <div className="text-xs text-muted-foreground font-mono">{agentLogs.length} interactions · {threads.length} threads</div>
                                 </div>
                             </div>
-                            {isOpen ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
+                            {isOpen ? <ChevronDown size={16} className="text-muted-foreground" /> : <ChevronRight size={16} className="text-muted-foreground" />}
                         </button>
 
                         {isOpen && (
-                            <div className="p-4 border-t border-slate-800 space-y-3">
+                            <div className="p-4 border-t border-panel-border space-y-3">
                                 <button
                                     onClick={() => onSelectAgent(agent === MAIN_SESSION_AGENT ? '' : agent)}
                                     className="text-xs px-3 py-1.5 rounded-lg border border-indigo-500/30 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20"
@@ -5413,16 +5413,16 @@ const AgentsView: React.FC<{
                                 </button>
                                 <div className="space-y-2">
                                     {threads.length === 0 && (
-                                        <div className="text-xs text-slate-500">No linked threads for this agent.</div>
+                                        <div className="text-xs text-muted-foreground">No linked threads for this agent.</div>
                                     )}
                                     {threads.map(thread => (
                                         <button
                                             key={thread.id}
                                             onClick={() => onOpenThread(thread.id)}
-                                            className="w-full text-left p-2 rounded-lg border border-slate-800 bg-slate-950 hover:border-indigo-500/40 transition-colors"
+                                            className="w-full text-left p-2 rounded-lg border border-panel-border bg-surface-overlay hover:border-indigo-500/40 transition-colors"
                                         >
                                             <div className="text-[11px] font-mono text-indigo-300 truncate">{thread.id}</div>
-                                            <div className="text-[10px] text-slate-500 mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
+                                            <div className="text-[10px] text-muted-foreground mt-1">{getThreadDisplayName(thread, subagentNameBySessionId)}</div>
                                         </button>
                                     ))}
                                 </div>
@@ -5460,7 +5460,7 @@ const signalBadge = (signal: ImpactSignal): string => (
         ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
         : signal === 'risk'
             ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
-            : 'border-slate-700 bg-slate-800/80 text-slate-300'
+            : 'border-panel-border bg-surface-muted/90 text-foreground'
 );
 
 const categoryBadge = (category: ImpactCategory): string => (
@@ -5472,7 +5472,7 @@ const categoryBadge = (category: ImpactCategory): string => (
                 ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
                 : category === 'workflow'
                     ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                    : 'border-slate-700 bg-slate-800/80 text-slate-300'
+                    : 'border-panel-border bg-surface-muted/90 text-foreground'
 );
 
 const formatImpactEventTime = (timestamp: string, timestampMs: number): string => {
@@ -5772,21 +5772,21 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
 
     return (
         <div className="space-y-6 h-full overflow-y-auto pb-6">
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2"><TrendingUp size={16} /> App Impact</h3>
-                <p className="text-xs text-slate-400 mt-2">
+            <div className="rounded-xl border border-panel-border bg-panel/75 p-5">
+                <h3 className="text-sm font-bold text-panel-foreground flex items-center gap-2"><TrendingUp size={16} /> App Impact</h3>
+                <p className="text-xs text-muted-foreground mt-2">
                     Outcome layer for this session: code changes, validation movement, delivery artifacts, and workflow friction.
                 </p>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Diff From Analytics</div>
-                        <p className="text-xs text-slate-300 mt-1">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Diff From Analytics</div>
+                        <p className="text-xs text-foreground mt-1">
                             Analytics explains resource consumption and execution behavior (tokens, tools, costs).
                         </p>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">This Tab Adds</div>
-                        <p className="text-xs text-slate-300 mt-1">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">This Tab Adds</div>
+                        <p className="text-xs text-foreground mt-1">
                             Correlations and conclusions about delivery outcomes, regressions, and execution risk.
                         </p>
                     </div>
@@ -5794,34 +5794,34 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Code Footprint</div>
-                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.filesWritten}</div>
-                    <div className="text-xs text-slate-400 mt-1">files written ({impactModel.filesTouched} touched)</div>
+                <div className="rounded-xl border border-panel-border bg-panel/75 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Code Footprint</div>
+                    <div className="text-2xl font-mono text-panel-foreground mt-1">{impactModel.filesWritten}</div>
+                    <div className="text-xs text-muted-foreground mt-1">files written ({impactModel.filesTouched} touched)</div>
                     <div className={`text-xs font-mono mt-2 ${impactModel.netLoc >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
                         {impactModel.netLoc >= 0 ? '+' : ''}{impactModel.netLoc} net lines
                     </div>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Validation</div>
-                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.runCount}</div>
-                    <div className="text-xs text-slate-400 mt-1">test run(s)</div>
+                <div className="rounded-xl border border-panel-border bg-panel/75 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Validation</div>
+                    <div className="text-2xl font-mono text-panel-foreground mt-1">{impactModel.runCount}</div>
+                    <div className="text-xs text-muted-foreground mt-1">test run(s)</div>
                     <div className={`text-xs font-mono mt-2 ${impactModel.failingRuns > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
                         {(impactModel.passRate * 100).toFixed(1)}% pass · {impactModel.failedTests} failed tests
                     </div>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Delivery Traceability</div>
-                    <div className="text-2xl font-mono text-slate-100 mt-1">{impactModel.artifactsCount}</div>
-                    <div className="text-xs text-slate-400 mt-1">linked artifacts</div>
+                <div className="rounded-xl border border-panel-border bg-panel/75 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Delivery Traceability</div>
+                    <div className="text-2xl font-mono text-panel-foreground mt-1">{impactModel.artifactsCount}</div>
+                    <div className="text-xs text-muted-foreground mt-1">linked artifacts</div>
                     <div className="text-xs font-mono text-indigo-300 mt-2">{impactModel.linkedFeatureCount} linked features</div>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Risk Signals</div>
-                    <div className="text-2xl font-mono text-slate-100 mt-1">
+                <div className="rounded-xl border border-panel-border bg-panel/75 p-4">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Risk Signals</div>
+                    <div className="text-2xl font-mono text-panel-foreground mt-1">
                         {impactModel.toolErrorCount + impactModel.apiErrorCount + impactModel.waitingForTaskCount}
                     </div>
-                    <div className="text-xs text-slate-400 mt-1">aggregate risk points</div>
+                    <div className="text-xs text-muted-foreground mt-1">aggregate risk points</div>
                     <div className="text-xs font-mono text-amber-300 mt-2">
                         Tool errors {impactModel.toolErrorCount} · API errors {impactModel.apiErrorCount}
                     </div>
@@ -5829,45 +5829,45 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><LayoutGrid size={14} /> Impact Correlations</h4>
+                <div className="xl:col-span-2 rounded-xl border border-panel-border bg-panel/75 p-5">
+                    <h4 className="text-sm font-semibold text-panel-foreground mb-3 flex items-center gap-2"><LayoutGrid size={14} /> Impact Correlations</h4>
                     <div className="space-y-2">
                         {impactModel.insights.map(insight => (
-                            <div key={insight.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                            <div key={insight.id} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
                                 <div className="flex items-center justify-between gap-2">
-                                    <div className="text-sm text-slate-100">{insight.title}</div>
+                                    <div className="text-sm text-panel-foreground">{insight.title}</div>
                                     <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(insight.signal)}`}>
                                         {insight.signal}
                                     </span>
                                 </div>
-                                <p className="text-xs text-slate-400 mt-1">{insight.description}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{insight.description}</p>
                             </div>
                         ))}
                     </div>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2"><RefreshCw size={14} /> Pipeline Coverage</h4>
+                <div className="rounded-xl border border-panel-border bg-panel/75 p-5">
+                    <h4 className="text-sm font-semibold text-panel-foreground mb-3 flex items-center gap-2"><RefreshCw size={14} /> Pipeline Coverage</h4>
                     <div className="space-y-2">
                         {impactModel.coverage.map(item => (
-                            <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                            <div key={item.id} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-2.5">
                                 <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs text-slate-200">{item.label}</span>
+                                    <span className="text-xs text-panel-foreground">{item.label}</span>
                                     <span className={`text-[10px] px-1.5 py-0.5 rounded border uppercase tracking-wide ${signalBadge(item.signal)}`}>
                                         {item.signal}
                                     </span>
                                 </div>
-                                <p className="text-[11px] text-slate-500 mt-1">{item.detail}</p>
+                                <p className="text-[11px] text-muted-foreground mt-1">{item.detail}</p>
                             </div>
                         ))}
                     </div>
                     {impactModel.topArtifactTypes.length > 0 && (
-                        <div className="mt-4 pt-3 border-t border-slate-800">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Artifact Types</div>
+                        <div className="mt-4 pt-3 border-t border-panel-border">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Top Artifact Types</div>
                             <div className="space-y-1">
                                 {impactModel.topArtifactTypes.map(([type, count]) => (
                                     <div key={type} className="flex justify-between text-[11px]">
-                                        <span className="text-slate-400 font-mono">{type}</span>
-                                        <span className="text-slate-200 font-mono">{count}</span>
+                                        <span className="text-muted-foreground font-mono">{type}</span>
+                                        <span className="text-panel-foreground font-mono">{count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -5876,10 +5876,10 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
                 </div>
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+            <div className="rounded-xl border border-panel-border bg-panel/75 p-5">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2"><Layers size={14} /> Impact Event Stream</h4>
-                    <div className="flex items-center gap-1 border border-slate-800 rounded-lg bg-slate-950 p-1">
+                    <h4 className="text-sm font-semibold text-panel-foreground flex items-center gap-2"><Layers size={14} /> Impact Event Stream</h4>
+                    <div className="flex items-center gap-1 border border-panel-border rounded-lg bg-surface-overlay p-1">
                         {([
                             { id: 'all', label: 'All' },
                             { id: 'code', label: 'Code' },
@@ -5891,7 +5891,7 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
                             <button
                                 key={filter.id}
                                 onClick={() => setEventFilter(filter.id)}
-                                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${eventFilter === filter.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                className={`px-2 py-1 text-[10px] rounded-md transition-colors ${eventFilter === filter.id ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-panel-foreground'}`}
                             >
                                 {filter.label}
                             </button>
@@ -5901,12 +5901,12 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
 
                 <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
                     {filteredEvents.length === 0 && (
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-500">
+                        <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-4 text-sm text-muted-foreground">
                             No events match this filter.
                         </div>
                     )}
                     {filteredEvents.map(event => (
-                        <div key={event.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                        <div key={event.id} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -5917,10 +5917,10 @@ const ImpactView: React.FC<{ session: AgentSession; linkedFeatureLinks: SessionF
                                             {event.signal}
                                         </span>
                                     </div>
-                                    <div className="text-sm text-slate-200 mt-1 break-words">{event.summary}</div>
-                                    {event.detail && <div className="text-xs text-slate-500 mt-1 break-words">{event.detail}</div>}
+                                    <div className="text-sm text-panel-foreground mt-1 break-words">{event.summary}</div>
+                                    {event.detail && <div className="text-xs text-muted-foreground mt-1 break-words">{event.detail}</div>}
                                 </div>
-                                <div className="text-[10px] text-slate-500 whitespace-nowrap">{formatImpactEventTime(event.timestamp, event.timestampMs)}</div>
+                                <div className="text-[10px] text-muted-foreground whitespace-nowrap">{formatImpactEventTime(event.timestamp, event.timestampMs)}</div>
                             </div>
                         </div>
                     ))}
@@ -5977,7 +5977,7 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
 
     if (Object.keys(forensics).length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <Database size={48} className="mb-4 opacity-20" />
                 <p>No forensic payload available for this session.</p>
             </div>
@@ -5987,103 +5987,103 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
     return (
         <div className="space-y-6 h-full overflow-y-auto pb-6">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><ShieldAlert size={16} /> Session Capture</h3>
                     <div className="space-y-2 text-xs">
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Schema Version</span><span className="text-slate-200 font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Raw Session ID</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
-                        <div className="text-slate-500">Session File</div>
-                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.sessionFile || '')}</div>
-                        <div className="text-slate-500">Claude Root</div>
-                        <div className="text-[11px] text-slate-300 font-mono break-all">{String(forensics.claudeRoot || '')}</div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Schema Version</span><span className="text-panel-foreground font-mono">{String(forensics.schemaVersion || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Raw Session ID</span><span className="text-foreground font-mono truncate max-w-[60%]" title={String(forensics.rawSessionId || '')}>{String(forensics.rawSessionId || '')}</span></div>
+                        <div className="text-muted-foreground">Session File</div>
+                        <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.sessionFile || '')}</div>
+                        <div className="text-muted-foreground">Claude Root</div>
+                        <div className="text-[11px] text-foreground font-mono break-all">{String(forensics.claudeRoot || '')}</div>
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-                    <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Bot size={16} /> Thinking</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><Bot size={16} /> Thinking</h3>
                     <div className="space-y-2 text-xs">
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Level</span><span className="text-fuchsia-300 font-mono uppercase">{String(thinking.level || session.thinkingLevel || 'unknown')}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Source</span><span className="text-slate-300 font-mono truncate max-w-[60%]" title={String(thinking.source || '')}>{String(thinking.source || 'n/a')}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Max Thinking Tokens</span><span className="text-slate-200 font-mono">{asNumber(thinking.maxThinkingTokens, 0).toLocaleString()}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-slate-500">Disabled</span><span className={`font-mono ${thinking.disabled ? 'text-amber-300' : 'text-slate-300'}`}>{String(Boolean(thinking.disabled))}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Level</span><span className="text-fuchsia-300 font-mono uppercase">{String(thinking.level || session.thinkingLevel || 'unknown')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Source</span><span className="text-foreground font-mono truncate max-w-[60%]" title={String(thinking.source || '')}>{String(thinking.source || 'n/a')}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Max Thinking Tokens</span><span className="text-panel-foreground font-mono">{asNumber(thinking.maxThinkingTokens, 0).toLocaleString()}</span></div>
+                        <div className="flex justify-between gap-4"><span className="text-muted-foreground">Disabled</span><span className={`font-mono ${thinking.disabled ? 'text-amber-300' : 'text-foreground'}`}>{String(Boolean(thinking.disabled))}</span></div>
                         {thinking.explicitLevel && (
-                            <div className="flex justify-between gap-4"><span className="text-slate-500">Explicit Level</span><span className="text-slate-300 font-mono uppercase">{String(thinking.explicitLevel)}</span></div>
+                            <div className="flex justify-between gap-4"><span className="text-muted-foreground">Explicit Level</span><span className="text-foreground font-mono uppercase">{String(thinking.explicitLevel)}</span></div>
                         )}
                     </div>
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><HardDrive size={16} /> Sidecars</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><HardDrive size={16} /> Sidecars</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Todos</div>
-                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(todosSidecar.fileCount, 0)} files · {asNumber(todosSidecar.totalItems, 0)} items</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Todos</div>
+                        <div className="text-xs text-panel-foreground mt-1 font-mono">{asNumber(todosSidecar.fileCount, 0)} files · {asNumber(todosSidecar.totalItems, 0)} items</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Tasks</div>
-                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(tasksSidecar.taskFileCount, 0)} files · HWM {String(tasksSidecar.highWatermark || '0')}</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Tasks</div>
+                        <div className="text-xs text-panel-foreground mt-1 font-mono">{asNumber(tasksSidecar.taskFileCount, 0)} files · HWM {String(tasksSidecar.highWatermark || '0')}</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Teams</div>
-                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(teamsSidecar.totalMessages, 0)} msgs · {asNumber(teamsSidecar.unreadMessages, 0)} unread</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Teams</div>
+                        <div className="text-xs text-panel-foreground mt-1 font-mono">{asNumber(teamsSidecar.totalMessages, 0)} msgs · {asNumber(teamsSidecar.unreadMessages, 0)} unread</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Env</div>
-                        <div className="text-xs text-slate-200 mt-1 font-mono">{asNumber(sessionEnvSidecar.fileCount, 0)} files</div>
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Session Env</div>
+                        <div className="text-xs text-panel-foreground mt-1 font-mono">{asNumber(sessionEnvSidecar.fileCount, 0)} files</div>
                     </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Tool Results</div>
-                        <div className="text-xs text-slate-200 mt-1 font-mono">
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Tool Results</div>
+                        <div className="text-xs text-panel-foreground mt-1 font-mono">
                             {asNumber(toolResultsSidecar.fileCount, 0)} files · {(asNumber(toolResultsSidecar.totalBytes, 0) / (1024 * 1024)).toFixed(2)} MB
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Terminal size={16} /> Entry Context</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><Terminal size={16} /> Entry Context</h3>
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Session Context</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Session Context</div>
                         <div className="space-y-1.5 text-xs">
-                            <div className="flex justify-between"><span className="text-slate-500">Request IDs</span><span className="text-slate-200 font-mono">{requestIds.length}</span></div>
-                            <div className="flex justify-between"><span className="text-slate-500">Queue Ops</span><span className="text-slate-200 font-mono">{queueOperations.length}</span></div>
-                            <div className="flex justify-between"><span className="text-slate-500">API Errors</span><span className={`font-mono ${apiErrors.length > 0 ? 'text-rose-300' : 'text-slate-200'}`}>{apiErrors.length}</span></div>
-                            <div className="flex justify-between"><span className="text-slate-500">Snapshots</span><span className="text-slate-200 font-mono">{asNumber(entryContext.snapshotCount, 0)}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Request IDs</span><span className="text-panel-foreground font-mono">{requestIds.length}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Queue Ops</span><span className="text-panel-foreground font-mono">{queueOperations.length}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">API Errors</span><span className={`font-mono ${apiErrors.length > 0 ? 'text-rose-300' : 'text-panel-foreground'}`}>{apiErrors.length}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Snapshots</span><span className="text-panel-foreground font-mono">{asNumber(entryContext.snapshotCount, 0)}</span></div>
                         </div>
                     </div>
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Permission Modes</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Permission Modes</div>
                         <div className="flex flex-wrap gap-1">
-                            {permissionModes.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {permissionModes.length === 0 && <span className="text-xs text-muted-foreground">None captured</span>}
                             {permissionModes.map(mode => (
-                                <span key={mode} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">{mode}</span>
+                                <span key={mode} className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border text-foreground font-mono">{mode}</span>
                             ))}
                         </div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 mt-4">Working Directories</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 mt-4">Working Directories</div>
                         <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                            {workingDirectories.length === 0 && <div className="text-xs text-slate-500">None captured</div>}
+                            {workingDirectories.length === 0 && <div className="text-xs text-muted-foreground">None captured</div>}
                             {workingDirectories.map(dir => (
-                                <div key={dir} className="text-[10px] text-slate-300 font-mono break-all">{dir}</div>
+                                <div key={dir} className="text-[10px] text-foreground font-mono break-all">{dir}</div>
                             ))}
                         </div>
                     </div>
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Versions Seen</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Versions Seen</div>
                         <div className="flex flex-wrap gap-1 mb-4">
-                            {versions.length === 0 && <span className="text-xs text-slate-500">None captured</span>}
+                            {versions.length === 0 && <span className="text-xs text-muted-foreground">None captured</span>}
                             {versions.map(version => (
-                                <span key={version} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-amber-300 font-mono">{version}</span>
+                                <span key={version} className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border text-amber-300 font-mono">{version}</span>
                             ))}
                         </div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Top Entry Types</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Top Entry Types</div>
                         <div className="space-y-1">
-                            {entryTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                            {entryTypeCounts.length === 0 && <div className="text-xs text-muted-foreground">No counts</div>}
                             {entryTypeCounts.map(item => (
                                 <div key={item.key} className="flex justify-between text-[10px]">
-                                    <span className="text-slate-400 font-mono">{item.key}</span>
-                                    <span className="text-slate-200 font-mono">{item.count}</span>
+                                    <span className="text-muted-foreground font-mono">{item.key}</span>
+                                    <span className="text-panel-foreground font-mono">{item.count}</span>
                                 </div>
                             ))}
                         </div>
@@ -6091,48 +6091,48 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><TestTube2 size={16} /> Test Execution</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><TestTube2 size={16} /> Test Execution</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Runs</div>
-                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.runCount, 0)}</div>
+                    <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Runs</div>
+                        <div className="text-panel-foreground font-mono mt-1">{asNumber(testExecution.runCount, 0)}</div>
                     </div>
-                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Total Tests</div>
-                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalTests, 0)}</div>
+                    <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Tests</div>
+                        <div className="text-panel-foreground font-mono mt-1">{asNumber(testExecution.totalTests, 0)}</div>
                     </div>
-                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Pass Rate</div>
-                        <div className="text-slate-200 font-mono mt-1">{(asNumber(testExecution.passRate, 0) * 100).toFixed(1)}%</div>
+                    <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Pass Rate</div>
+                        <div className="text-panel-foreground font-mono mt-1">{(asNumber(testExecution.passRate, 0) * 100).toFixed(1)}%</div>
                     </div>
-                    <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Duration</div>
-                        <div className="text-slate-200 font-mono mt-1">{asNumber(testExecution.totalDurationSeconds, 0).toFixed(2)}s</div>
+                    <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Duration</div>
+                        <div className="text-panel-foreground font-mono mt-1">{asNumber(testExecution.totalDurationSeconds, 0).toFixed(2)}s</div>
                     </div>
                 </div>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Frameworks</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Frameworks</div>
                             <div className="space-y-1">
-                                {testFrameworkCounts.length === 0 && <div className="text-xs text-slate-500">No test runs parsed</div>}
+                                {testFrameworkCounts.length === 0 && <div className="text-xs text-muted-foreground">No test runs parsed</div>}
                                 {testFrameworkCounts.map(item => (
                                     <div key={item.key} className="flex justify-between text-[10px]">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Statuses</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Statuses</div>
                             <div className="space-y-1">
-                                {testStatusCounts.length === 0 && <div className="text-xs text-slate-500">No status signals</div>}
+                                {testStatusCounts.length === 0 && <div className="text-xs text-muted-foreground">No status signals</div>}
                                 {testStatusCounts.map(item => (
                                     <div key={item.key} className="flex justify-between text-[10px]">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -6140,25 +6140,25 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                     </div>
                     <div className="space-y-2">
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Domains</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Domains</div>
                             <div className="space-y-1">
-                                {testDomainCounts.length === 0 && <div className="text-xs text-slate-500">No domain inference</div>}
+                                {testDomainCounts.length === 0 && <div className="text-xs text-muted-foreground">No domain inference</div>}
                                 {testDomainCounts.map(item => (
                                     <div key={item.key} className="flex justify-between text-[10px]">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Result Counts</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Result Counts</div>
                             <div className="space-y-1">
-                                {testResultCounts.length === 0 && <div className="text-xs text-slate-500">No result counts</div>}
+                                {testResultCounts.length === 0 && <div className="text-xs text-muted-foreground">No result counts</div>}
                                 {testResultCounts.map(item => (
                                     <div key={item.key} className="flex justify-between text-[10px]">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -6167,14 +6167,14 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 </div>
                 {testRuns.length > 0 && (
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Recent Runs</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Recent Runs</div>
                         <div className="max-h-32 overflow-y-auto pr-1 space-y-1">
                             {testRuns.slice(0, 20).map((row, idx) => {
                                 const run = asRecord(row);
                                 return (
-                                    <div key={`${idx}-${String(run.framework || '')}-${String(run.status || '')}`} className="rounded border border-slate-800 bg-slate-950/60 p-2 text-[10px]">
-                                        <div className="text-slate-300 font-mono">{String(run.framework || 'test')} · {String(run.status || 'unknown')}</div>
-                                        <div className="text-slate-500 mt-0.5">
+                                    <div key={`${idx}-${String(run.framework || '')}-${String(run.status || '')}`} className="rounded border border-panel-border bg-surface-overlay/70 p-2 text-[10px]">
+                                        <div className="text-foreground font-mono">{String(run.framework || 'test')} · {String(run.status || 'unknown')}</div>
+                                        <div className="text-muted-foreground mt-0.5">
                                             {String(run.domain || 'n/a')} · {asNumber(run.total, 0)} tests · {asNumber(run.durationSeconds, 0).toFixed(2)}s
                                         </div>
                                     </div>
@@ -6186,50 +6186,50 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-300 mb-3">Queue Operations</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-foreground mb-3">Queue Operations</h3>
                     <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                        {queueOperations.length === 0 && <div className="text-xs text-slate-500">No queue operations recorded.</div>}
+                        {queueOperations.length === 0 && <div className="text-xs text-muted-foreground">No queue operations recorded.</div>}
                         {queueOperations.slice(0, 40).map((operation, idx) => {
                             const op = asRecord(operation);
                             return (
-                                <div key={`${String(op.timestamp || idx)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                    <div className="text-[10px] text-slate-500 font-mono">{String(op.timestamp || '')}</div>
+                                <div key={`${String(op.timestamp || idx)}-${idx}`} className="rounded-lg border border-panel-border bg-surface-overlay/70 p-2">
+                                    <div className="text-[10px] text-muted-foreground font-mono">{String(op.timestamp || '')}</div>
                                     <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[11px]">
                                         <span className="text-indigo-300 font-mono">{String(op.operation || 'event')}</span>
-                                        {op.taskId && <span className="text-slate-300 font-mono">Task {String(op.taskId)}</span>}
+                                        {op.taskId && <span className="text-foreground font-mono">Task {String(op.taskId)}</span>}
                                         {op.status && <span className="text-amber-300 font-mono">{String(op.status)}</span>}
                                     </div>
-                                    {op.summary && <div className="text-[11px] text-slate-300 mt-1 break-words">{String(op.summary)}</div>}
+                                    {op.summary && <div className="text-[11px] text-foreground mt-1 break-words">{String(op.summary)}</div>}
                                 </div>
                             );
                         })}
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-300 mb-3">Additional Event Mix</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-foreground mb-3">Additional Event Mix</h3>
                     <div className="space-y-3 text-[11px]">
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Content Block Types</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Content Block Types</div>
                             <div className="space-y-1">
-                                {contentBlockTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {contentBlockTypeCounts.length === 0 && <div className="text-xs text-muted-foreground">No counts</div>}
                                 {contentBlockTypeCounts.map(item => (
                                     <div key={item.key} className="flex justify-between">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Progress Types</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Progress Types</div>
                             <div className="space-y-1">
-                                {progressTypeCounts.length === 0 && <div className="text-xs text-slate-500">No counts</div>}
+                                {progressTypeCounts.length === 0 && <div className="text-xs text-muted-foreground">No counts</div>}
                                 {progressTypeCounts.map(item => (
                                     <div key={item.key} className="flex justify-between">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -6239,58 +6239,58 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-300 mb-3">Queue Pressure</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-foreground mb-3">Queue Pressure</h3>
                     <div className="space-y-3 text-[11px]">
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Operations</div>
-                                <div className="text-slate-200 font-mono mt-1">{asNumber(queuePressure.queueOperationCount, 0)}</div>
+                            <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Operations</div>
+                                <div className="text-panel-foreground font-mono mt-1">{asNumber(queuePressure.queueOperationCount, 0)}</div>
                             </div>
-                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Waiting Tasks</div>
-                                <div className={`font-mono mt-1 ${asNumber(queuePressure.waitingForTaskCount, 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
+                            <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Waiting Tasks</div>
+                                <div className={`font-mono mt-1 ${asNumber(queuePressure.waitingForTaskCount, 0) > 0 ? 'text-amber-300' : 'text-panel-foreground'}`}>
                                     {asNumber(queuePressure.waitingForTaskCount, 0)}
                                 </div>
                             </div>
-                            <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500">Distinct Tasks</div>
-                                <div className="text-slate-200 font-mono mt-1">{asNumber(queuePressure.distinctTaskCount, 0)}</div>
+                            <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Distinct Tasks</div>
+                                <div className="text-panel-foreground font-mono mt-1">{asNumber(queuePressure.distinctTaskCount, 0)}</div>
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Operation Mix</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Operation Mix</div>
                             <div className="space-y-1">
-                                {queueOperationCounts.length === 0 && <div className="text-xs text-slate-500">No queue pressure counts</div>}
+                                {queueOperationCounts.length === 0 && <div className="text-xs text-muted-foreground">No queue pressure counts</div>}
                                 {queueOperationCounts.map(item => (
                                     <div key={`op-${item.key}`} className="flex justify-between">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Status Mix</div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Status Mix</div>
                                 <div className="space-y-1">
-                                    {queueStatusCounts.length === 0 && <div className="text-xs text-slate-500">No status counts</div>}
+                                    {queueStatusCounts.length === 0 && <div className="text-xs text-muted-foreground">No status counts</div>}
                                     {queueStatusCounts.map(item => (
                                         <div key={`status-${item.key}`} className="flex justify-between">
-                                            <span className="text-slate-400 font-mono">{item.key}</span>
-                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                            <span className="text-muted-foreground font-mono">{item.key}</span>
+                                            <span className="text-panel-foreground font-mono">{item.count}</span>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                             <div>
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Task Type Mix</div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Task Type Mix</div>
                                 <div className="space-y-1">
-                                    {queueTaskTypeCounts.length === 0 && <div className="text-xs text-slate-500">No task type counts</div>}
+                                    {queueTaskTypeCounts.length === 0 && <div className="text-xs text-muted-foreground">No task type counts</div>}
                                     {queueTaskTypeCounts.map(item => (
                                         <div key={`task-type-${item.key}`} className="flex justify-between">
-                                            <span className="text-slate-400 font-mono">{item.key}</span>
-                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                            <span className="text-muted-foreground font-mono">{item.key}</span>
+                                            <span className="text-panel-foreground font-mono">{item.count}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -6299,45 +6299,45 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-300 mb-3">Resource Footprint</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-foreground mb-3">Resource Footprint</h3>
                     <div className="space-y-3 text-[11px]">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Categories</div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Categories</div>
                                 <div className="space-y-1">
-                                    {resourceCategoryCounts.length === 0 && <div className="text-xs text-slate-500">No resource categories</div>}
+                                    {resourceCategoryCounts.length === 0 && <div className="text-xs text-muted-foreground">No resource categories</div>}
                                     {resourceCategoryCounts.map(item => (
                                         <div key={`resource-category-${item.key}`} className="flex justify-between">
-                                            <span className="text-slate-400 font-mono">{item.key}</span>
-                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                            <span className="text-muted-foreground font-mono">{item.key}</span>
+                                            <span className="text-panel-foreground font-mono">{item.count}</span>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                             <div>
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Scopes</div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Scopes</div>
                                 <div className="space-y-1">
-                                    {resourceScopeCounts.length === 0 && <div className="text-xs text-slate-500">No scope counts</div>}
+                                    {resourceScopeCounts.length === 0 && <div className="text-xs text-muted-foreground">No scope counts</div>}
                                     {resourceScopeCounts.map(item => (
                                         <div key={`resource-scope-${item.key}`} className="flex justify-between">
-                                            <span className="text-slate-400 font-mono">{item.key}</span>
-                                            <span className="text-slate-200 font-mono">{item.count}</span>
+                                            <span className="text-muted-foreground font-mono">{item.key}</span>
+                                            <span className="text-panel-foreground font-mono">{item.count}</span>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Top Targets</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Top Targets</div>
                             <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                                {resourceTopTargets.length === 0 && <div className="text-xs text-slate-500">No targets captured</div>}
+                                {resourceTopTargets.length === 0 && <div className="text-xs text-muted-foreground">No targets captured</div>}
                                 {resourceTopTargets.slice(0, 20).map((row, idx) => {
                                     const item = asRecord(row);
                                     return (
                                         <div key={`target-${idx}`} className="flex justify-between gap-2">
-                                            <span className="text-slate-400 font-mono break-all">{String(item.target || '')}</span>
-                                            <span className="text-slate-200 font-mono shrink-0">{asNumber(item.count, 0)}</span>
+                                            <span className="text-muted-foreground font-mono break-all">{String(item.target || '')}</span>
+                                            <span className="text-panel-foreground font-mono shrink-0">{asNumber(item.count, 0)}</span>
                                         </div>
                                     );
                                 })}
@@ -6348,92 +6348,92 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-                    <h3 className="text-sm font-bold text-slate-300 mb-1">Subagent Topology</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-foreground mb-1">Subagent Topology</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Task Calls</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.taskToolCallCount, 0)}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Task Calls</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(subagentTopology.taskToolCallCount, 0)}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Calls</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.linkedTaskToolCallCount, 0)}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Calls</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(subagentTopology.linkedTaskToolCallCount, 0)}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Orphan Calls</div>
-                            <div className={`font-mono mt-1 ${asNumber(subagentTopology.orphanTaskToolCallCount, 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Orphan Calls</div>
+                            <div className={`font-mono mt-1 ${asNumber(subagentTopology.orphanTaskToolCallCount, 0) > 0 ? 'text-amber-300' : 'text-panel-foreground'}`}>
                                 {asNumber(subagentTopology.orphanTaskToolCallCount, 0)}
                             </div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Subagent Starts</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.subagentStartCount, 0)}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Subagent Starts</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(subagentTopology.subagentStartCount, 0)}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Subagent Files</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(subagentTopology.subagentTranscriptFileCount, 0)}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Subagent Files</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(subagentTopology.subagentTranscriptFileCount, 0)}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Is Subagent</div>
-                            <div className="text-slate-200 font-mono mt-1">{String(Boolean(subagentTopology.isSubagentSession))}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Is Subagent</div>
+                            <div className="text-panel-foreground font-mono mt-1">{String(Boolean(subagentTopology.isSubagentSession))}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Agent Types</div>
-                            <div className="text-slate-200 font-mono mt-1">{subagentTypes.length}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Agent Types</div>
+                            <div className="text-panel-foreground font-mono mt-1">{subagentTypes.length}</div>
                         </div>
                     </div>
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Agent Types</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Agent Types</div>
                         <div className="max-h-24 overflow-y-auto pr-1 space-y-1">
-                            {subagentTypes.length === 0 && <div className="text-xs text-slate-500">No agent type metadata captured</div>}
+                            {subagentTypes.length === 0 && <div className="text-xs text-muted-foreground">No agent type metadata captured</div>}
                             {subagentTypes.slice(0, 20).map(typeName => (
-                                <div key={typeName} className="text-[10px] text-slate-300 font-mono break-all">{typeName}</div>
+                                <div key={typeName} className="text-[10px] text-foreground font-mono break-all">{typeName}</div>
                             ))}
                         </div>
                     </div>
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Linked Session IDs</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Linked Session IDs</div>
                         <div className="max-h-24 overflow-y-auto pr-1 space-y-1">
-                            {subagentLinkedSessionIds.length === 0 && <div className="text-xs text-slate-500">No linked subagent sessions</div>}
+                            {subagentLinkedSessionIds.length === 0 && <div className="text-xs text-muted-foreground">No linked subagent sessions</div>}
                             {subagentLinkedSessionIds.slice(0, 40).map(linkedId => (
-                                <div key={linkedId} className="text-[10px] text-slate-300 font-mono break-all">{linkedId}</div>
+                                <div key={linkedId} className="text-[10px] text-foreground font-mono break-all">{linkedId}</div>
                             ))}
                         </div>
                     </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-                    <h3 className="text-sm font-bold text-slate-300 mb-1">Tool Result Intensity</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-3">
+                    <h3 className="text-sm font-bold text-foreground mb-1">Tool Result Intensity</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Files</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.fileCount, asNumber(toolResultsSidecar.fileCount, 0))}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Files</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(toolResultIntensity.fileCount, asNumber(toolResultsSidecar.fileCount, 0))}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Total Bytes</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.totalBytes, asNumber(toolResultsSidecar.totalBytes, 0)).toLocaleString()}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Bytes</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(toolResultIntensity.totalBytes, asNumber(toolResultsSidecar.totalBytes, 0)).toLocaleString()}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Avg File Bytes</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.avgFileBytes, asNumber(toolResultsSidecar.avgFileBytes, 0)).toLocaleString()}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Avg File Bytes</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(toolResultIntensity.avgFileBytes, asNumber(toolResultsSidecar.avgFileBytes, 0)).toLocaleString()}</div>
                         </div>
-                        <div className="rounded border border-slate-800 bg-slate-950/60 p-2">
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500">Large Files</div>
-                            <div className="text-slate-200 font-mono mt-1">{asNumber(toolResultIntensity.largeFileCount, asNumber(toolResultsSidecar.largeFileCount, 0))}</div>
+                        <div className="rounded border border-panel-border bg-surface-overlay/70 p-2">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Large Files</div>
+                            <div className="text-panel-foreground font-mono mt-1">{asNumber(toolResultIntensity.largeFileCount, asNumber(toolResultsSidecar.largeFileCount, 0))}</div>
                         </div>
                     </div>
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Largest Files</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Largest Files</div>
                         <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
                             {(Array.isArray(toolResultIntensity.largestFiles) ? toolResultIntensity.largestFiles : []).length === 0 && (
-                                <div className="text-xs text-slate-500">No tool result files captured</div>
+                                <div className="text-xs text-muted-foreground">No tool result files captured</div>
                             )}
                             {(Array.isArray(toolResultIntensity.largestFiles) ? toolResultIntensity.largestFiles : []).slice(0, 20).map((row, idx) => {
                                 const item = asRecord(row);
                                 return (
                                     <div key={`tool-file-${idx}`} className="flex justify-between gap-2">
-                                        <span className="text-slate-400 font-mono break-all">{String(item.name || item.path || '')}</span>
-                                        <span className="text-slate-200 font-mono shrink-0">{asNumber(item.bytes, 0).toLocaleString()}</span>
+                                        <span className="text-muted-foreground font-mono break-all">{String(item.name || item.path || '')}</span>
+                                        <span className="text-panel-foreground font-mono shrink-0">{asNumber(item.bytes, 0).toLocaleString()}</span>
                                     </div>
                                 );
                             })}
@@ -6442,32 +6442,32 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Cpu size={16} /> Platform Telemetry</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><Cpu size={16} /> Platform Telemetry</h3>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 text-xs">
                     <div className="space-y-1.5">
-                        <div className="flex justify-between"><span className="text-slate-500">Config Source</span><span className="text-slate-300 font-mono truncate max-w-[65%]" title={String(platformTelemetry.source || '')}>{String(platformTelemetry.source || 'n/a')}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Projects</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.projectCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Startups</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.numStartups, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Prompt Queue Uses</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.promptQueueUseCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Tool Usage Keys</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.toolUsageCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Skill Usage Keys</span><span className="text-slate-200 font-mono">{asNumber(platformTelemetry.skillUsageCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Config Source</span><span className="text-foreground font-mono truncate max-w-[65%]" title={String(platformTelemetry.source || '')}>{String(platformTelemetry.source || 'n/a')}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Projects</span><span className="text-panel-foreground font-mono">{asNumber(platformTelemetry.projectCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Startups</span><span className="text-panel-foreground font-mono">{asNumber(platformTelemetry.numStartups, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Prompt Queue Uses</span><span className="text-panel-foreground font-mono">{asNumber(platformTelemetry.promptQueueUseCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Tool Usage Keys</span><span className="text-panel-foreground font-mono">{asNumber(platformTelemetry.toolUsageCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Skill Usage Keys</span><span className="text-panel-foreground font-mono">{asNumber(platformTelemetry.skillUsageCount, 0)}</span></div>
                     </div>
                     <div className="space-y-1.5">
-                        <div className="flex justify-between"><span className="text-slate-500">Matched Project</span><span className="text-slate-300 font-mono truncate max-w-[65%]" title={String(telemetryProject.path || '')}>{String(telemetryProject.path || 'n/a')}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">MCP Servers</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.mcpServerCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Disabled MCP</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.disabledMcpServerCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Enabled MCPJSON</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.enabledMcpjsonServerCount, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Web Search Requests</span><span className="text-slate-200 font-mono">{asNumber(telemetryProject.lastTotalWebSearchRequests, 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Project Onboarding</span><span className="text-slate-200 font-mono">{String(Boolean(telemetryProject.hasCompletedProjectOnboarding))}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Matched Project</span><span className="text-foreground font-mono truncate max-w-[65%]" title={String(telemetryProject.path || '')}>{String(telemetryProject.path || 'n/a')}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">MCP Servers</span><span className="text-panel-foreground font-mono">{asNumber(telemetryProject.mcpServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Disabled MCP</span><span className="text-panel-foreground font-mono">{asNumber(telemetryProject.disabledMcpServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Enabled MCPJSON</span><span className="text-panel-foreground font-mono">{asNumber(telemetryProject.enabledMcpjsonServerCount, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Web Search Requests</span><span className="text-panel-foreground font-mono">{asNumber(telemetryProject.lastTotalWebSearchRequests, 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Project Onboarding</span><span className="text-panel-foreground font-mono">{String(Boolean(telemetryProject.hasCompletedProjectOnboarding))}</span></div>
                     </div>
                 </div>
                 {telemetryMcpServerNames.length > 0 && (
                     <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">MCP Server Names</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">MCP Server Names</div>
                         <div className="flex flex-wrap gap-1">
                             {telemetryMcpServerNames.slice(0, 20).map(name => (
-                                <span key={name} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-emerald-300 font-mono">{name}</span>
+                                <span key={name} className="text-[10px] px-1.5 py-0.5 rounded border border-panel-border text-emerald-300 font-mono">{name}</span>
                             ))}
                         </div>
                     </div>
@@ -6475,27 +6475,27 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
             </div>
 
             {(codexPayloadTypeCounts.length > 0 || codexToolNameCounts.length > 0) && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-300 mb-3">Codex Payload Signals</h3>
+                <div className="bg-panel border border-panel-border rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-foreground mb-3">Codex Payload Signals</h3>
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 text-[11px]">
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Payload Types</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Payload Types</div>
                             <div className="space-y-1">
                                 {codexPayloadTypeCounts.map(item => (
                                     <div key={`codex-payload-${item.key}`} className="flex justify-between">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                         <div>
-                            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Tool Names</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Tool Names</div>
                             <div className="space-y-1">
                                 {codexToolNameCounts.map(item => (
                                     <div key={`codex-tool-${item.key}`} className="flex justify-between">
-                                        <span className="text-slate-400 font-mono">{item.key}</span>
-                                        <span className="text-slate-200 font-mono">{item.count}</span>
+                                        <span className="text-muted-foreground font-mono">{item.key}</span>
+                                        <span className="text-panel-foreground font-mono">{item.count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -6504,10 +6504,10 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 </div>
             )}
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <h3 className="text-sm font-bold text-slate-300 mb-3">API Errors</h3>
+            <div className="bg-panel border border-panel-border rounded-xl p-5">
+                <h3 className="text-sm font-bold text-foreground mb-3">API Errors</h3>
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {apiErrors.length === 0 && <div className="text-xs text-slate-500">No API errors captured.</div>}
+                    {apiErrors.length === 0 && <div className="text-xs text-muted-foreground">No API errors captured.</div>}
                     {apiErrors.slice(0, 30).map((error, idx) => {
                         const row = asRecord(error);
                         return (
@@ -6520,9 +6520,9 @@ const SessionForensicsView: React.FC<{ session: AgentSession }> = ({ session }) 
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <h3 className="text-sm font-bold text-slate-300 mb-3">Raw Forensics Payload</h3>
-                <pre className="text-[10px] leading-4 font-mono bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-x-auto text-slate-300">
+            <div className="bg-panel border border-panel-border rounded-xl p-5">
+                <h3 className="text-sm font-bold text-foreground mb-3">Raw Forensics Payload</h3>
+                <pre className="text-[10px] leading-4 font-mono bg-surface-overlay border border-panel-border rounded-lg p-3 overflow-x-auto text-foreground">
                     {JSON.stringify(forensics, null, 2)}
                 </pre>
             </div>
@@ -7065,24 +7065,24 @@ const SessionFilterBar: React.FC = () => {
     );
 
     const renderDateRangeControl = (label: string, startKey: keyof SessionFilters, endKey: keyof SessionFilters) => (
-        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
+        <div className="rounded-lg border border-panel-border bg-panel/40 p-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
             <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">From</span>
                 <input
                     type="date"
                     value={String(localFilters[startKey] || '')}
                     onChange={e => handleChange(startKey, e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                 />
             </div>
             <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">To</span>
                 <input
                     type="date"
                     value={String(localFilters[endKey] || '')}
                     onChange={e => handleChange(endKey, e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                 />
             </div>
         </div>
@@ -7094,7 +7094,7 @@ const SessionFilterBar: React.FC = () => {
                 <div className="space-y-2">
                     <button
                         onClick={() => toggleSection('general')}
-                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
                     >
                         <span>General</span>
                         {collapsedSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -7102,9 +7102,9 @@ const SessionFilterBar: React.FC = () => {
                     {!collapsedSections.general && (
                         <div className="pl-1 space-y-2">
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Status</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Status</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                                     value={localFilters.status || ''}
                                     onChange={e => handleChange('status', e.target.value)}
                                 >
@@ -7116,9 +7116,9 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Thread</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Thread</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                                     value={localFilters.thread_kind || ''}
                                     onChange={e => handleChange('thread_kind', e.target.value)}
                                 >
@@ -7130,20 +7130,20 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Family</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Family</label>
                                 <input
                                     type="text"
                                     value={localFilters.conversation_family_id || ''}
                                     onChange={e => handleChange('conversation_family_id', e.target.value)}
                                     placeholder="conversation family id"
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground focus:border-focus focus:outline-none"
                                 />
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Platform</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Platform</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                                     value={localFilters.platform_type || ''}
                                     onChange={e => handlePlatformTypeChange(e.target.value)}
                                 >
@@ -7155,9 +7155,9 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">CLI Ver</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">CLI Ver</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none disabled:opacity-50"
                                     value={localFilters.platform_version || ''}
                                     onChange={e => handlePlatformVersionChange(e.target.value)}
                                     disabled={!localFilters.platform_type}
@@ -7172,8 +7172,8 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Threads</label>
-                                <label className="inline-flex items-center gap-2 text-[11px] text-slate-300">
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Threads</label>
+                                <label className="inline-flex items-center gap-2 text-[11px] text-foreground">
                                     <input
                                         type="checkbox"
                                         checked={!!localFilters.include_subagents}
@@ -7188,7 +7188,7 @@ const SessionFilterBar: React.FC = () => {
 
                     <button
                         onClick={() => toggleSection('models')}
-                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
                     >
                         <span>Model Fields</span>
                         {collapsedSections.models ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -7196,9 +7196,9 @@ const SessionFilterBar: React.FC = () => {
                     {!collapsedSections.models && (
                         <div className="pl-1 space-y-2">
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Provider</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Provider</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                                     value={localFilters.model_provider || ''}
                                     onChange={e => handleProviderChange(e.target.value)}
                                 >
@@ -7210,9 +7210,9 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Family</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Family</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none"
                                     value={localFilters.model_family || ''}
                                     onChange={e => handleFamilyChange(e.target.value)}
                                 >
@@ -7224,9 +7224,9 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Version</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Version</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none disabled:opacity-50"
                                     value={localFilters.model_version || ''}
                                     onChange={e => handleVersionChange(e.target.value)}
                                     disabled={!localFilters.model_family}
@@ -7241,9 +7241,9 @@ const SessionFilterBar: React.FC = () => {
                             </div>
 
                             <div className="grid grid-cols-[74px_1fr] items-center gap-2">
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">Model</label>
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Model</label>
                                 <select
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1.5 text-[11px] text-slate-300 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                                    className="w-full bg-surface-overlay border border-panel-border rounded-md px-2 py-1.5 text-[11px] text-foreground focus:border-focus focus:outline-none disabled:opacity-50"
                                     value={localFilters.model || ''}
                                     onChange={e => handleChange('model', e.target.value)}
                                     disabled={!localFilters.model_version}
@@ -7261,7 +7261,7 @@ const SessionFilterBar: React.FC = () => {
 
                     <button
                         onClick={() => toggleSection('dates')}
-                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
                     >
                         <span>Date Ranges</span>
                         {collapsedSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -7277,7 +7277,7 @@ const SessionFilterBar: React.FC = () => {
                 </div>
 
                 <div className="mt-3 space-y-2">
-                    <p className="text-[10px] text-slate-500 leading-snug break-words">
+                    <p className="text-[10px] text-muted-foreground leading-snug break-words">
                         {modelFacetsLoading || platformFacetsLoading
                             ? 'Loading model/platform history…'
                             : `${normalizedModelFacets.length} model variants · ${normalizedPlatformFacets.length} platform versions`}
@@ -7315,7 +7315,7 @@ const SessionFilterBar: React.FC = () => {
                             console.error('Sync failed', e);
                         }
                     }}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition-all border border-slate-700 hover:border-slate-600"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-surface-muted hover:bg-hover text-foreground rounded-lg text-xs font-bold transition-all border border-panel-border hover:border-hover"
                     title="Force full project re-scan"
                 >
                     <RefreshCw size={14} id="force-sync-btn" />
@@ -7749,7 +7749,7 @@ const SessionDetail: React.FC<{
             ? { label: 'fork', style: 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/35' }
             : threadKind === 'subagent'
                 ? { label: 'subagent', style: 'bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30' }
-                : { label: 'root', style: 'bg-slate-800 text-slate-300 border border-slate-700' }
+                : { label: 'root', style: 'bg-surface-muted text-foreground border border-panel-border' }
     );
     const primaryFeatureDetail = useMemo(
         () => (primaryFeatureLink ? (linkedFeatureDetailsById[primaryFeatureLink.featureId] || null) : null),
@@ -7784,16 +7784,16 @@ const SessionDetail: React.FC<{
             <div className="mb-4 px-2 space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="flex items-start gap-4 min-w-0 flex-1">
-                        <button onClick={onBack} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all group">
+                        <button onClick={onBack} className="p-2 rounded-lg hover:bg-surface-muted text-muted-foreground hover:text-panel-foreground transition-all group">
                             <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
                         </button>
                         <div className="min-w-0">
-                            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 min-w-0">
+                            <h2 className="text-xl font-bold text-panel-foreground flex items-center gap-2 min-w-0">
                                 {sessionDisplayTitle}
                             </h2>
-                            <div className="text-xs text-slate-500 font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
+                            <div className="text-xs text-muted-foreground font-mono tracking-wider mt-0.5 truncate">{session.id}</div>
                             <div className="flex flex-wrap items-center gap-3 mt-0.5">
-                                <span className="text-xs text-slate-500 flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
+                                <span className="text-xs text-muted-foreground flex items-center gap-1.5"><Calendar size={12} /> {new Date(session.startedAt).toLocaleString()}</span>
                                 <ModelBadge
                                     raw={session.model}
                                     displayName={session.modelDisplayName}
@@ -7801,7 +7801,7 @@ const SessionDetail: React.FC<{
                                     family={session.modelFamily}
                                     version={session.modelVersion}
                                 />
-                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-800 text-slate-500'}`}>
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${session.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-surface-muted text-muted-foreground'}`}>
                                     {session.status}
                                 </span>
                                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${threadKindBadge.style}`}>
@@ -7811,8 +7811,8 @@ const SessionDetail: React.FC<{
                         </div>
                     </div>
 
-                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 min-w-[18rem] max-w-[28rem] shrink-0 space-y-2">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">Session Context</div>
+                    <div className="rounded-xl border border-panel-border bg-panel/75 p-3 min-w-[18rem] max-w-[28rem] shrink-0 space-y-2">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Session Context</div>
                         <div className="flex flex-col gap-2">
                             <div className="flex items-start gap-2">
                                 {primaryFeatureLink ? (
@@ -7834,7 +7834,7 @@ const SessionDetail: React.FC<{
                                     </button>
                                 ) : (
                                     !linkedFeatureDetailsLoading && (
-                                        <span className="flex-1 text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                        <span className="flex-1 text-[11px] text-muted-foreground px-2 py-1 rounded-lg border border-panel-border bg-panel/70">
                                             No linked feature
                                         </span>
                                     )
@@ -7853,7 +7853,7 @@ const SessionDetail: React.FC<{
                                     }}
                                     className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${sessionContextEditingPrimary
                                         ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-100'
-                                        : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200'
+                                        : 'border-panel-border bg-panel/75 text-foreground hover:border-indigo-500/40 hover:text-indigo-200'
                                         }`}
                                     title={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
                                     aria-label={sessionContextEditingPrimary ? 'Hide primary feature editor' : 'Edit primary feature'}
@@ -7863,34 +7863,34 @@ const SessionDetail: React.FC<{
                                 </button>
                             </div>
                             {linkedFeatureDetailsLoading && (
-                                <span className="text-[11px] text-slate-500 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60">
+                                <span className="text-[11px] text-muted-foreground px-2 py-1 rounded-lg border border-panel-border bg-panel/70">
                                     Resolving linked feature...
                                 </span>
                             )}
                             {primaryFeatureLink && relatedFeatureLinks.length > 0 && (
                                 <div className="relative group/related-feature-badge w-fit">
-                                    <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 w-fit">
+                                    <span className="text-[11px] text-muted-foreground px-2 py-1 rounded-lg border border-panel-border bg-panel/70 w-fit">
                                         +{relatedFeatureLinks.length} related
                                     </span>
-                                    <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[220px] max-w-[320px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/related-feature-badge:opacity-100 group-hover/related-feature-badge:translate-y-0">
-                                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Related Features</div>
+                                    <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[220px] max-w-[320px] rounded-lg border border-panel-border bg-surface-overlay/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/related-feature-badge:opacity-100 group-hover/related-feature-badge:translate-y-0">
+                                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Related Features</div>
                                         <div className="space-y-1.5">
                                             {relatedFeatureTooltipRows.slice(0, 8).map(row => (
                                                 <div key={`session-context-related-${row.featureId}`} className="flex items-center justify-between gap-3">
-                                                    <span className="text-[11px] text-slate-200 truncate">{row.featureName}</span>
-                                                    <span className="text-[10px] text-slate-500 font-mono shrink-0">{Math.round(row.confidence * 100)}%</span>
+                                                    <span className="text-[11px] text-panel-foreground truncate">{row.featureName}</span>
+                                                    <span className="text-[10px] text-muted-foreground font-mono shrink-0">{Math.round(row.confidence * 100)}%</span>
                                                 </div>
                                             ))}
                                             {relatedFeatureTooltipRows.length > 8 && (
-                                                <div className="text-[10px] text-slate-500">+{relatedFeatureTooltipRows.length - 8} more</div>
+                                                <div className="text-[10px] text-muted-foreground">+{relatedFeatureTooltipRows.length - 8} more</div>
                                             )}
                                         </div>
                                     </div>
                                 </div>
                             )}
                             {sessionContextEditingPrimary && (
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 space-y-2">
-                                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Set Primary Feature</div>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-2.5 py-2 space-y-2">
+                                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Set Primary Feature</div>
                                     <div className="flex items-center gap-2">
                                         <input
                                             type="text"
@@ -7904,7 +7904,7 @@ const SessionDetail: React.FC<{
                                             }}
                                             list={sessionContextFeatureInputListId}
                                             placeholder="Feature ID or exact feature name"
-                                            className="flex-1 text-xs rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1.5 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                            className="flex-1 text-xs rounded-md border border-panel-border bg-panel/80 px-2 py-1.5 text-panel-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-focus/50"
                                         />
                                         <datalist id={sessionContextFeatureInputListId}>
                                             {availableFeatures.map(feature => (
@@ -7929,12 +7929,12 @@ const SessionDetail: React.FC<{
                                     )}
                                 </div>
                             )}
-                            <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5">
-                                <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-panel-border bg-surface-overlay/70 px-2.5 py-1.5">
+                                <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
                                     <Cpu size={12} />
                                     Platform
                                 </span>
-                                <span className="text-[11px] text-slate-200 font-mono truncate" title={platformDisplay}>
+                                <span className="text-[11px] text-panel-foreground font-mono truncate" title={platformDisplay}>
                                     {platformDisplay}
                                 </span>
                             </div>
@@ -7943,9 +7943,9 @@ const SessionDetail: React.FC<{
 
                     <div className="flex items-center gap-6 shrink-0">
                         <div className="text-right">
-                            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Session Cost</div>
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Session Cost</div>
                             <div className="text-emerald-400 font-mono font-bold text-lg">${formatUsd(resolveDisplayCost(session), 2)}</div>
-                            <div className="text-[10px] text-slate-500 mt-1">{costSummaryLabel(session)}</div>
+                            <div className="text-[10px] text-muted-foreground mt-1">{costSummaryLabel(session)}</div>
                         </div>
                     </div>
                 </div>
@@ -7986,14 +7986,14 @@ const SessionDetail: React.FC<{
                 )}
 
                 {/* Tabs */}
-                <div className="w-full flex items-center bg-slate-900 rounded-lg p-1 border border-slate-800 overflow-x-auto">
+                <div className="w-full flex items-center bg-panel rounded-lg p-1 border border-panel-border overflow-x-auto">
                     {sessionDetailTabs.map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTabWithSync(tab.id)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                 ? 'bg-indigo-600 text-white shadow'
-                                : 'text-slate-400 hover:text-slate-200'
+                                : 'text-muted-foreground hover:text-panel-foreground'
                                 }`}
                         >
                             <tab.icon size={14} />
@@ -8049,7 +8049,7 @@ const SessionDetail: React.FC<{
                             onNavigateToTestingPage={() => navigate(`/tests?sessionId=${encodeURIComponent(session.id)}`)}
                         />
                     ) : (
-                        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
+                        <div className="rounded-lg border border-panel-border bg-panel/50 p-4 text-sm text-muted-foreground">
                             Select an active project to view session test status.
                         </div>
                     )
@@ -8408,10 +8408,10 @@ export const SessionInspector: React.FC = () => {
                 />
 
                 {hasChildren && expanded && (
-                    <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3`}>
+                    <div className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-panel-border/90 space-y-3`}>
                         {node.children.map(child => (
                             <div key={child.session.id} className="relative pl-3">
-                                <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                                <div className="absolute left-0 top-5 w-3 border-t border-panel-border/90" />
                                 {renderThreadNode(child, depth + 1)}
                             </div>
                         ))}
@@ -8442,9 +8442,9 @@ export const SessionInspector: React.FC = () => {
     const requestedSessionId = getSessionIdFromQuery(searchParams);
     if (!selectedSession && requestedSessionId && sessionOpenLoading) {
         return (
-            <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
                 <Activity size={24} className="animate-spin text-indigo-400" />
-                <div className="text-sm">Loading session <span className="font-mono text-slate-300">{requestedSessionId}</span>...</div>
+                <div className="text-sm">Loading session <span className="font-mono text-foreground">{requestedSessionId}</span>...</div>
             </div>
         );
     }
@@ -8463,7 +8463,7 @@ export const SessionInspector: React.FC = () => {
                             tab: requestedTab,
                         });
                     }}
-                    className="px-3 py-1.5 rounded-md border border-slate-700 bg-slate-900 text-xs text-slate-300 hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
+                    className="px-3 py-1.5 rounded-md border border-panel-border bg-panel text-xs text-foreground hover:border-indigo-500/40 hover:text-indigo-200 transition-colors"
                 >
                     Retry
                 </button>
@@ -8474,17 +8474,17 @@ export const SessionInspector: React.FC = () => {
     return (
         <div className="h-full flex flex-col gap-8 animate-in fade-in duration-500 overflow-y-auto pb-8">
             <div>
-                <h2 className="text-3xl font-bold text-slate-100 mb-2 font-mono tracking-tighter">Session Forensics</h2>
-                <p className="text-slate-400 max-w-2xl mb-6">Examine agent behavior, tool call chains, and multi-agent orchestration logs with millisecond-precision timestamps.</p>
+                <h2 className="text-3xl font-bold text-panel-foreground mb-2 font-mono tracking-tighter">Session Forensics</h2>
+                <p className="text-muted-foreground max-w-2xl mb-6">Examine agent behavior, tool call chains, and multi-agent orchestration logs with millisecond-precision timestamps.</p>
                 <SessionFilterBar />
             </div>
 
             <div className="space-y-10">
                 <div className="flex justify-end">
-                    <div className="bg-slate-900 border border-slate-800 p-1 rounded-lg flex gap-1">
+                    <div className="bg-panel border border-panel-border p-1 rounded-lg flex gap-1">
                         <button
                             onClick={() => setSessionsViewMode('threaded')}
-                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'threaded' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'threaded' ? 'bg-indigo-600 text-white shadow' : 'text-muted-foreground hover:text-panel-foreground'}`}
                             title="Nested thread tree view"
                         >
                             <Layers size={14} />
@@ -8492,7 +8492,7 @@ export const SessionInspector: React.FC = () => {
                         </button>
                         <button
                             onClick={() => setSessionsViewMode('cards')}
-                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'cards' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                            className={`p-1.5 rounded-md transition-all flex items-center gap-1.5 text-[11px] ${sessionsViewMode === 'cards' ? 'bg-indigo-600 text-white shadow' : 'text-muted-foreground hover:text-panel-foreground'}`}
                             title="Flat all-sessions card view"
                         >
                             <LayoutGrid size={14} />
@@ -8513,7 +8513,7 @@ export const SessionInspector: React.FC = () => {
                         <div className="space-y-4">
                             {activeSessionThreadRoots.map(node => renderThreadNode(node))}
                             {activeSessionThreadRoots.length === 0 && (
-                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                <div className="col-span-full border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
                                     <Zap size={32} className="mx-auto mb-3 opacity-10" />
                                     <p className="text-sm">No live sessions detected on local system.</p>
                                 </div>
@@ -8530,7 +8530,7 @@ export const SessionInspector: React.FC = () => {
                                 />
                             ))}
                             {activeSessions.length === 0 && (
-                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                <div className="col-span-full border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
                                     <Zap size={32} className="mx-auto mb-3 opacity-10" />
                                     <p className="text-sm">No live sessions detected on local system.</p>
                                 </div>
@@ -8541,7 +8541,7 @@ export const SessionInspector: React.FC = () => {
 
                 {/* Past Sessions Section */}
                 <div className="space-y-4">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-[0.2em] flex items-center gap-2">
                         <Archive size={16} /> Historical Index
                     </h3>
 
@@ -8549,7 +8549,7 @@ export const SessionInspector: React.FC = () => {
                         <div className="space-y-4">
                             {pastSessionThreadRoots.map(node => renderThreadNode(node))}
                             {pastSessionThreadRoots.length === 0 && (
-                                <div className="col-span-full border border-dashed border-slate-800 rounded-2xl p-10 text-center text-slate-600 bg-slate-900/10">
+                                <div className="col-span-full border border-dashed border-panel-border rounded-2xl p-10 text-center text-muted-foreground bg-panel/10">
                                     <Zap size={32} className="mx-auto mb-3 opacity-10" />
                                     <p className="text-sm">No historical sessions found.</p>
                                 </div>
@@ -8573,7 +8573,7 @@ export const SessionInspector: React.FC = () => {
                             <button
                                 onClick={() => loadMoreSessions()}
                                 disabled={loading}
-                                className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                                className="px-6 py-2 bg-surface-muted hover:bg-hover text-foreground rounded-full text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
                             >
                                 {loading && <Activity size={14} className="animate-spin" />}
                                 {loading ? 'Loading...' : 'Load More Sessions'}
@@ -8664,11 +8664,11 @@ const SessionSummaryCard: React.FC<{
                             ? 'text-cyan-300 border-cyan-500/35 bg-cyan-500/10'
                             : normalizedThreadKind(session) === 'subagent'
                                 ? 'text-fuchsia-300 border-fuchsia-500/35 bg-fuchsia-500/10'
-                                : 'text-slate-400 border-slate-700 bg-slate-900'
+                                : 'text-muted-foreground border-panel-border bg-panel'
                     }`}>
                         {normalizedThreadKind(session)}
                     </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
+                    <span className="text-[10px] text-muted-foreground font-mono">
                         {session.logs.length} logs
                     </span>
                     {session.currentContextTokens && session.contextWindowSize ? (
@@ -8687,17 +8687,17 @@ const SessionSummaryCard: React.FC<{
                     </span>
                 </div>
             )}
-            <div className="pt-3 border-t border-slate-800/60 flex items-center justify-between">
+            <div className="pt-3 border-t border-panel-border/70 flex items-center justify-between">
                 <div className="flex -space-x-2">
                     {agentNames.map((agent, i) => (
-                        <div key={i} className="w-7 h-7 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center text-[10px] text-indigo-400 font-bold group-hover:border-slate-700 transition-colors" title={agent}>
+                        <div key={i} className="w-7 h-7 rounded-full bg-surface-muted border-2 border-panel-border flex items-center justify-center text-[10px] text-indigo-400 font-bold group-hover:border-panel-border transition-colors" title={agent}>
                             {agent[0]}
                         </div>
                     ))}
                 </div>
                 <div className="flex gap-1.5">
                     {[...Array(5)].map((_, i) => (
-                        <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < (session.qualityRating || 0) ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-slate-800'}`} />
+                        <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < (session.qualityRating || 0) ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-surface-muted'}`} />
                     ))}
                 </div>
             </div>

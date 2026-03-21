@@ -960,17 +960,17 @@ const ProgressBar = ({
   const deferredPct = safeTotal > 0 ? (safeDeferred / safeTotal) * 100 : 0;
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-surface-muted rounded-full overflow-hidden">
         {pct > 0 ? (
           <div className="h-full w-full flex rounded-full overflow-hidden">
             {donePct > 0 && <div className="h-full bg-emerald-500 transition-all" style={{ width: `${donePct}%` }} />}
             {deferredPct > 0 && <div className="h-full bg-amber-400 transition-all" style={{ width: `${deferredPct}%` }} />}
           </div>
         ) : (
-          <div className="h-full bg-slate-700 transition-all" style={{ width: '100%' }} />
+          <div className="h-full bg-surface-muted transition-all" style={{ width: '100%' }} />
         )}
       </div>
-      <span className="text-[10px] text-slate-500 font-mono min-w-[64px] text-right">
+      <span className="text-[10px] text-muted-foreground font-mono min-w-[64px] text-right">
         {safeCompleted}/{safeTotal}
       </span>
     </div>
@@ -984,7 +984,7 @@ const DocTypeIcon = ({ docType }: { docType: string }) => {
     case 'phase_plan': return <FileText size={12} className="text-amber-400" />;
     case 'progress': return <Terminal size={12} className="text-cyan-400" />;
     case 'report': return <BarChart3 size={12} className="text-emerald-400" />;
-    default: return <FileText size={12} className="text-slate-400" />;
+    default: return <FileText size={12} className="text-muted-foreground" />;
   }
 };
 
@@ -1011,23 +1011,23 @@ const LinkedDocsSummaryBadge = ({
         event.stopPropagation();
         onClick();
       }}
-      className="relative group/doc-badge inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/85 px-2 py-1 text-[10px] font-semibold text-slate-300 hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
+      className="relative group/doc-badge inline-flex items-center gap-1 rounded-md border border-panel-border bg-panel/85 px-2 py-1 text-[10px] font-semibold text-foreground hover:border-indigo-500/60 hover:text-indigo-200 transition-colors"
       title="Open linked documents"
     >
       <FileText size={compact ? 10 : 11} />
       <span className="uppercase tracking-wide">Docs</span>
       <span className="font-mono">{docs.length}</span>
 
-      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[180px] rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/doc-badge:opacity-100 group-hover/doc-badge:translate-y-0">
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Linked Documents</div>
+      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 min-w-[180px] rounded-lg border border-panel-border bg-surface-overlay/95 px-3 py-2 opacity-0 translate-y-1 shadow-2xl transition-all duration-150 group-hover/doc-badge:opacity-100 group-hover/doc-badge:translate-y-0">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Linked Documents</div>
         <div className="space-y-1">
           {typeCounts.map(row => (
-            <div key={row.docType} className="flex items-center justify-between gap-3 text-[11px] text-slate-300">
+            <div key={row.docType} className="flex items-center justify-between gap-3 text-[11px] text-foreground">
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <DocTypeIcon docType={row.docType} />
                 <span className="truncate">{getDocTypeLabel(row.docType)}</span>
               </span>
-              <span className="font-mono text-slate-400">{row.count}</span>
+              <span className="font-mono text-muted-foreground">{row.count}</span>
             </div>
           ))}
         </div>
@@ -1039,14 +1039,14 @@ const LinkedDocsSummaryBadge = ({
 const FeatureDateStack = ({ feature }: { feature: Feature }) => {
   const dateModule = getFeatureDateModule(feature);
   return (
-    <div className="rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2">
-      <div className="text-[10px] text-slate-500">
+    <div className="rounded-md border border-panel-border bg-surface-overlay/70 px-2.5 py-2">
+      <div className="text-[10px] text-muted-foreground">
         <span className="uppercase tracking-wider">{dateModule.first.label}</span>
-        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.first.value)}</span>
+        <span className="ml-1 font-mono text-muted-foreground">{formatFeatureDate(dateModule.first.value)}</span>
       </div>
-      <div className="mt-1 text-[10px] text-slate-500">
+      <div className="mt-1 text-[10px] text-muted-foreground">
         <span className="uppercase tracking-wider">Completed</span>
-        <span className="ml-1 font-mono text-slate-400">{formatFeatureDate(dateModule.completed.value)}</span>
+        <span className="ml-1 font-mono text-muted-foreground">{formatFeatureDate(dateModule.completed.value)}</span>
       </div>
     </div>
   );
@@ -1063,13 +1063,13 @@ const FeatureKanbanDateModule = ({ feature }: { feature: Feature }) => {
         {dateModule.daysBetween !== null ? `${dateModule.daysBetween}d` : '--'}
       </div>
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1">
-        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+        <span className="whitespace-nowrap text-[9px] font-mono text-foreground">
           {firstLabel} {firstDate}
         </span>
-        <span className="relative h-px bg-gradient-to-r from-slate-600 to-indigo-400">
+        <span className="relative h-px bg-gradient-to-r from-panel-border to-indigo-400">
           <ChevronRight size={10} className="absolute -right-0.5 top-1/2 -translate-y-1/2 text-indigo-400" />
         </span>
-        <span className="whitespace-nowrap text-[9px] font-mono text-slate-300">
+        <span className="whitespace-nowrap text-[9px] font-mono text-foreground">
           C {completedDate}
         </span>
       </div>
@@ -1099,11 +1099,11 @@ const StatusDropdown = ({
         onStatusChange(e.target.value);
       }}
       onClick={(e) => e.stopPropagation()}
-      className={`font-bold uppercase rounded cursor-pointer border-0 appearance-none ${sizeClasses} ${style.color} bg-transparent hover:ring-1 hover:ring-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all`}
+      className={`font-bold uppercase rounded cursor-pointer border-0 appearance-none ${sizeClasses} ${style.color} bg-transparent hover:ring-1 hover:ring-hover focus:ring-1 focus:ring-focus focus:outline-none transition-all`}
       style={{ WebkitAppearance: 'none' }}
     >
       {FEATURE_STATUS_OPTIONS.map(s => (
-        <option key={s} value={s} className="bg-slate-900 text-slate-300">
+        <option key={s} value={s} className="bg-panel text-foreground">
           {getStatusStyle(s).label}
         </option>
       ))}
@@ -1134,36 +1134,36 @@ const TaskSourceDialog = ({ task, onClose }: { task: ProjectTask; onClose: () =>
   }, [task.sourceFile]);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-3xl h-[70vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface-overlay/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-panel border border-panel-border rounded-xl w-full max-w-3xl h-[70vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-panel-border flex justify-between items-center bg-surface-overlay">
           <div className="min-w-0">
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2 truncate">
+            <h3 className="text-sm font-bold text-panel-foreground flex items-center gap-2 truncate">
               <FileText size={16} className="text-indigo-400 flex-shrink-0" />
               {task.title}
             </h3>
             <div className="flex items-center gap-3 mt-1">
-              <span className="font-mono text-[10px] text-slate-500">{task.id}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">{task.id}</span>
               {task.sourceFile && (
-                <span className="text-[10px] text-slate-600 font-mono truncate flex items-center gap-1">
+                <span className="text-[10px] text-muted-foreground font-mono truncate flex items-center gap-1">
                   <FolderOpen size={10} />
                   {task.sourceFile}
                 </span>
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-1">
+          <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors p-1">
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
+        <div className="flex-1 overflow-y-auto p-6 bg-surface-overlay/60">
         {loading && (
-            <div className="flex items-center justify-center h-full text-slate-500">
+            <div className="flex items-center justify-center h-full text-muted-foreground">
               <RefreshCw size={20} className="animate-spin mr-2" /> Loading source file…
             </div>
           )}
           {error && (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <FileText size={32} className="mb-3 opacity-30" />
               <p className="text-sm">{error}</p>
             </div>
@@ -2264,21 +2264,21 @@ const FeatureModal = ({
         headerRight={(
           <div className="flex items-center gap-4 text-right">
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Workload</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Workload</div>
               <div className="text-xs font-mono text-sky-300">{formatTokenCount(sessionTokenMetrics.workloadTokens)}</div>
             </div>
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Cost</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Cost</div>
               <div className="text-xs font-mono text-emerald-400">${resolveDisplayCost(session).toFixed(2)}</div>
             </div>
             <div>
-              <div className="text-[9px] text-slate-600 uppercase">Duration</div>
-              <div className="text-xs font-mono text-slate-400">{Math.round(session.durationSeconds / 60)}m</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Duration</div>
+              <div className="text-xs font-mono text-muted-foreground">{Math.round(session.durationSeconds / 60)}m</div>
             </div>
             {primaryCommit && (
               <span
                 title={primaryCommit}
-                className="flex items-center gap-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono"
+                className="flex items-center gap-1 text-[10px] bg-surface-muted text-muted-foreground px-1.5 py-0.5 rounded border border-panel-border font-mono"
               >
                 <GitCommit size={10} />
                 {toShortCommitHash(primaryCommit)}
@@ -2288,7 +2288,7 @@ const FeatureModal = ({
         )}
       >
         <div className="mb-3 text-[10px] flex flex-wrap items-center gap-2">
-          <span className={`px-1.5 py-0.5 rounded border ${linkRole === 'Primary' ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 bg-slate-800/60'}`}>
+          <span className={`px-1.5 py-0.5 rounded border ${linkRole === 'Primary' ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-panel-border text-muted-foreground bg-surface-muted/70'}`}>
             {linkRole}
           </span>
           <span className={`px-1.5 py-0.5 rounded border ${threadLabel === 'Sub-thread' ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-blue-500/30 text-blue-300 bg-blue-500/10'}`}>
@@ -2305,15 +2305,15 @@ const FeatureModal = ({
         </div>
 
         {relatedTasks.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-slate-800/60">
-            <div className="text-[10px] text-slate-600 uppercase font-bold mb-2">Linked Tasks</div>
+          <div className="mt-3 pt-3 border-t border-panel-border/70">
+            <div className="text-[10px] text-muted-foreground uppercase font-bold mb-2">Linked Tasks</div>
             <div className="space-y-1">
               {relatedTasks.map(({ phase, task }) => (
                 <div key={task.id} className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-600">Phase {phase.phase}</span>
-                  <span className="text-slate-700">→</span>
-                  <span className="font-mono text-slate-500">{task.id}</span>
-                  <span className="text-slate-400 truncate">{task.title}</span>
+                  <span className="text-muted-foreground">Phase {phase.phase}</span>
+                  <span className="text-muted-foreground">→</span>
+                  <span className="font-mono text-muted-foreground">{task.id}</span>
+                  <span className="text-muted-foreground truncate">{task.title}</span>
                   <span className={`text-[9px] uppercase font-bold ml-auto ${getStatusStyle(task.status).color}`}>
                     {getStatusStyle(task.status).label}
                   </span>
@@ -2355,12 +2355,12 @@ const FeatureModal = ({
               animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
               exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
               transition={listInsertPreset.transition}
-              className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-slate-700/80 space-y-3 overflow-hidden`}
+              className={`mt-3 ${depth > 0 ? 'ml-2' : ''} pl-4 border-l border-panel-border/90 space-y-3 overflow-hidden`}
             >
               <AnimatePresence initial={false}>
                 {node.children.map(child => (
                   <motion.div key={child.session.sessionId} layout="position" className="relative pl-3">
-                    <div className="absolute left-0 top-5 w-3 border-t border-slate-700/80" />
+                    <div className="absolute left-0 top-5 w-3 border-t border-panel-border/90" />
                     {renderSessionTreeNode(child, depth + 1)}
                   </motion.div>
                 ))}
@@ -2373,19 +2373,19 @@ const FeatureModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-panel border border-panel-border rounded-xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="p-6 border-b border-slate-800 bg-slate-900">
+        <div className="p-6 border-b border-panel-border bg-panel">
           <div className="flex justify-between items-start">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-2">
-                <span className="font-mono text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-slate-700 truncate max-w-[200px]">{feature.id}</span>
+                <span className="font-mono text-xs text-muted-foreground bg-surface-muted px-2 py-0.5 rounded border border-panel-border truncate max-w-[200px]">{feature.id}</span>
                 <StatusDropdown status={activeFeature.status} onStatusChange={handleFeatureStatusChange} />
                 {updatingStatus && <RefreshCw size={14} className="text-indigo-400 animate-spin" />}
                 {activeFeature.category && (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground">
                     {activeFeature.category}
                   </span>
                 )}
@@ -2395,8 +2395,8 @@ const FeatureModal = ({
                   </span>
                 )}
               </div>
-              <h2 className="text-xl font-bold text-slate-100 truncate">{activeFeature.name}</h2>
-              <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
+              <h2 className="text-xl font-bold text-panel-foreground truncate">{activeFeature.name}</h2>
+              <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
                 <span>{pct}% complete</span>
                 <span>{featureCompletedTasks}/{activeFeature.totalTasks} tasks</span>
                 {featureDeferredTasks > 0 && (
@@ -2419,7 +2419,7 @@ const FeatureModal = ({
                 <Play size={14} />
                 Begin Work
               </button>
-              <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors p-1 hover:bg-slate-800 rounded">
+              <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors p-1 hover:bg-surface-muted rounded">
                 <X size={24} />
               </button>
             </div>
@@ -2430,14 +2430,14 @@ const FeatureModal = ({
         </div>
 
         {/* Tab Nav */}
-        <div className="px-6 border-b border-slate-800 bg-slate-900/50 flex gap-6">
+        <div className="px-6 border-b border-panel-border bg-panel/60 flex gap-6">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               className={`flex items-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-panel-border'
                 }`}
             >
               <tab.icon size={16} />
@@ -2447,68 +2447,68 @@ const FeatureModal = ({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/30">
+        <div className="flex-1 overflow-y-auto p-6 bg-surface-overlay/60">
 
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
               {/* Stats Grid */}
               <div className="grid grid-cols-4 gap-4">
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <div className="text-slate-500 text-xs mb-1">Total Tasks</div>
-                  <div className="text-slate-100 font-bold text-2xl">{activeFeature.totalTasks}</div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="text-muted-foreground text-xs mb-1">Total Tasks</div>
+                  <div className="text-panel-foreground font-bold text-2xl">{activeFeature.totalTasks}</div>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <div className="text-slate-500 text-xs mb-1">Completed</div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="text-muted-foreground text-xs mb-1">Completed</div>
                   <div className="text-emerald-400 font-bold text-2xl">{featureDoneTasks}</div>
                   {featureDeferredTasks > 0 && (
                     <div className="text-[11px] mt-1 text-amber-300">{featureDeferredTasks} deferred</div>
                   )}
                 </div>
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <div className="text-slate-500 text-xs mb-1">Phases</div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="text-muted-foreground text-xs mb-1">Phases</div>
                   <div className="text-indigo-400 font-bold text-2xl">{phases.length}</div>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <div className="text-slate-500 text-xs mb-1">Documents</div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="text-muted-foreground text-xs mb-1">Documents</div>
                   <div className="text-purple-400 font-bold text-2xl">{linkedDocs.length}</div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <h3 className="text-sm font-semibold text-slate-200 mb-2">Delivery Metadata</h3>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <h3 className="text-sm font-semibold text-panel-foreground mb-2">Delivery Metadata</h3>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="text-slate-400">Priority <span className="text-slate-200 ml-1">{activeFeature.priority || '-'}</span></div>
-                    <div className="text-slate-400">Risk <span className="text-slate-200 ml-1">{activeFeature.riskLevel || '-'}</span></div>
-                    <div className="text-slate-400">Complexity <span className="text-slate-200 ml-1">{activeFeature.complexity || '-'}</span></div>
-                    <div className="text-slate-400">Track <span className="text-slate-200 ml-1">{activeFeature.track || '-'}</span></div>
-                    <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
-                    <div className="text-slate-400">Target <span className="text-slate-200 ml-1">{activeFeature.targetRelease || '-'}</span></div>
-                    <div className="text-slate-400">Milestone <span className="text-slate-200 ml-1">{activeFeature.milestone || '-'}</span></div>
-                    <div className="text-slate-400">Readiness <span className="text-slate-200 ml-1">{activeFeature.executionReadiness || '-'}</span></div>
-                    <div className="text-slate-400">Coverage <span className="text-slate-200 ml-1">{getFeatureCoverageSummary(activeFeature)}</span></div>
+                    <div className="text-muted-foreground">Priority <span className="text-panel-foreground ml-1">{activeFeature.priority || '-'}</span></div>
+                    <div className="text-muted-foreground">Risk <span className="text-panel-foreground ml-1">{activeFeature.riskLevel || '-'}</span></div>
+                    <div className="text-muted-foreground">Complexity <span className="text-panel-foreground ml-1">{activeFeature.complexity || '-'}</span></div>
+                    <div className="text-muted-foreground">Track <span className="text-panel-foreground ml-1">{activeFeature.track || '-'}</span></div>
+                    <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
+                    <div className="text-muted-foreground">Target <span className="text-panel-foreground ml-1">{activeFeature.targetRelease || '-'}</span></div>
+                    <div className="text-muted-foreground">Milestone <span className="text-panel-foreground ml-1">{activeFeature.milestone || '-'}</span></div>
+                    <div className="text-muted-foreground">Readiness <span className="text-panel-foreground ml-1">{activeFeature.executionReadiness || '-'}</span></div>
+                    <div className="text-muted-foreground">Coverage <span className="text-panel-foreground ml-1">{getFeatureCoverageSummary(activeFeature)}</span></div>
                   </div>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                  <h3 className="text-sm font-semibold text-slate-200 mb-2">Quality Signals</h3>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <h3 className="text-sm font-semibold text-panel-foreground mb-2">Quality Signals</h3>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="text-slate-400">Blockers <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.blockerCount ?? 0}</span></div>
-                    <div className="text-slate-400">At Risk <span className="text-slate-200 ml-1">{activeFeature.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
-                    <div className="text-slate-400">Blocked By <span className="text-slate-200 ml-1">{blockedByRelations.length}</span></div>
-                    <div className="text-slate-400">Test Impact <span className="text-slate-200 ml-1">{activeFeature.testImpact || activeFeature.qualitySignals?.testImpact || '-'}</span></div>
-                    <div className="text-slate-400">Relations <span className="text-slate-200 ml-1">{getFeatureLinkedFeatureCount(activeFeature)}</span></div>
+                    <div className="text-muted-foreground">Blockers <span className="text-panel-foreground ml-1">{activeFeature.qualitySignals?.blockerCount ?? 0}</span></div>
+                    <div className="text-muted-foreground">At Risk <span className="text-panel-foreground ml-1">{activeFeature.qualitySignals?.atRiskTaskCount ?? 0}</span></div>
+                    <div className="text-muted-foreground">Blocked By <span className="text-panel-foreground ml-1">{blockedByRelations.length}</span></div>
+                    <div className="text-muted-foreground">Test Impact <span className="text-panel-foreground ml-1">{activeFeature.testImpact || activeFeature.qualitySignals?.testImpact || '-'}</span></div>
+                    <div className="text-muted-foreground">Relations <span className="text-panel-foreground ml-1">{getFeatureLinkedFeatureCount(activeFeature)}</span></div>
                   </div>
                   {(activeFeature.qualitySignals?.integritySignalRefs || []).length > 0 && (
-                    <div className="mt-2 text-[11px] text-slate-400">
+                    <div className="mt-2 text-[11px] text-muted-foreground">
                       Integrity refs: {(activeFeature.qualitySignals?.integritySignalRefs || []).join(', ')}
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                <h3 className="text-sm font-semibold text-slate-200 mb-3">Date Signals</h3>
+              <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-panel-foreground mb-3">Date Signals</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                   {[
                     { label: 'Planned', value: getFeatureDateValue(activeFeature, 'plannedAt') },
@@ -2516,9 +2516,9 @@ const FeatureModal = ({
                     { label: 'Completed', value: getFeatureDateValue(activeFeature, 'completedAt') },
                     { label: 'Updated', value: getFeatureDateValue(activeFeature, 'updatedAt') },
                   ].map(item => (
-                    <div key={item.label} className="p-2 rounded border border-slate-800 bg-slate-950">
-                      <div className="text-slate-500 uppercase">{item.label}</div>
-                      <div className="text-slate-200 mt-1">
+                    <div key={item.label} className="p-2 rounded border border-panel-border bg-surface-overlay">
+                      <div className="text-muted-foreground uppercase">{item.label}</div>
+                      <div className="text-panel-foreground mt-1">
                         {item.value.value ? new Date(item.value.value).toLocaleDateString() : '-'}
                         {item.value.confidence ? ` (${item.value.confidence})` : ''}
                       </div>
@@ -2529,8 +2529,8 @@ const FeatureModal = ({
 
               {(blockedByRelations.length > 0 || sequenceDocs.length > 0) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                    <h3 className="text-sm font-semibold text-slate-200 mb-3">Hard Dependencies</h3>
+                  <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                    <h3 className="text-sm font-semibold text-panel-foreground mb-3">Hard Dependencies</h3>
                     <div className="flex flex-wrap gap-2">
                       {blockedByRelations.map((relation, index) => (
                         <button
@@ -2541,14 +2541,14 @@ const FeatureModal = ({
                           {relation.feature}
                         </button>
                       ))}
-                      {blockedByRelations.length === 0 && <span className="text-xs text-slate-500 italic">No hard feature dependencies captured.</span>}
+                      {blockedByRelations.length === 0 && <span className="text-xs text-muted-foreground italic">No hard feature dependencies captured.</span>}
                     </div>
                   </div>
-                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-                    <h3 className="text-sm font-semibold text-slate-200 mb-3">Family Sequence</h3>
+                  <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                    <h3 className="text-sm font-semibold text-panel-foreground mb-3">Family Sequence</h3>
                     <div className="space-y-2 text-xs">
-                      <div className="text-slate-400">Family <span className="text-slate-200 ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
-                      <div className="text-slate-400">Sequenced docs <span className="text-slate-200 ml-1">{sequenceDocs.length}</span></div>
+                      <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{activeFeature.featureFamily || '-'}</span></div>
+                      <div className="text-muted-foreground">Sequenced docs <span className="text-panel-foreground ml-1">{sequenceDocs.length}</span></div>
                     </div>
                     {sequenceDocs.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -2556,7 +2556,7 @@ const FeatureModal = ({
                           <button
                             key={`seq-doc-${doc.id}`}
                             onClick={() => handleDocClick(doc)}
-                            className="rounded-full border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] text-slate-300 hover:border-indigo-500/40"
+                            className="rounded-full border border-panel-border bg-surface-overlay px-2 py-1 text-[10px] text-foreground hover:border-indigo-500/40"
                           >
                             #{doc.sequenceOrder} {doc.title}
                           </button>
@@ -2570,18 +2570,18 @@ const FeatureModal = ({
               {/* Linked Documents — clickable */}
               {linkedDocs.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Linked Documents</h3>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Linked Documents</h3>
                   <div className="space-y-2">
                     {orderedLinkedDocs.map(doc => (
                       <button
                         key={doc.id}
                         onClick={() => handleDocClick(doc)}
-                        className="w-full flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-lg p-3 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                        className="w-full flex items-center gap-3 bg-panel border border-panel-border rounded-lg p-3 hover:border-indigo-500/50 hover:bg-surface-muted/60 transition-all text-left group"
                       >
                         <DocTypeIcon docType={doc.docType} />
-                        <span className="text-sm text-slate-300 flex-1 truncate group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+                        <span className="text-sm text-foreground flex-1 truncate group-hover:text-indigo-400 transition-colors">{doc.title}</span>
                         <DocTypeBadge docType={doc.docType} />
-                        <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                        <ExternalLink size={12} className="text-muted-foreground group-hover:text-indigo-400 transition-colors" />
                       </button>
                     ))}
                   </div>
@@ -2591,10 +2591,10 @@ const FeatureModal = ({
               {/* Related Features */}
               {activeFeature.relatedFeatures.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Related Features</h3>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Related Features</h3>
                   <div className="flex flex-wrap gap-2">
                     {activeFeature.relatedFeatures.map(rel => (
-                      <span key={rel} className="text-xs bg-slate-800 text-indigo-400 px-2 py-1 rounded border border-slate-700">
+                      <span key={rel} className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border">
                         {rel}
                       </span>
                     ))}
@@ -2605,10 +2605,10 @@ const FeatureModal = ({
               {/* Tags */}
               {activeFeature.tags.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Tags</h3>
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Tags</h3>
                   <div className="flex flex-wrap gap-2">
                     {activeFeature.tags.map(tag => (
-                      <span key={tag} className="text-[10px] bg-slate-800 text-slate-400 px-2 py-1 rounded-full border border-slate-700 flex items-center gap-1">
+                      <span key={tag} className="text-[10px] bg-surface-muted text-muted-foreground px-2 py-1 rounded-full border border-panel-border flex items-center gap-1">
                         <Tag size={10} />{tag}
                       </span>
                     ))}
@@ -2622,13 +2622,13 @@ const FeatureModal = ({
           {activeTab === 'phases' && (
             <div className="space-y-3">
               {phases.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-slate-800 bg-slate-900/60">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg border border-panel-border bg-panel/70">
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Phase Status</label>
+                    <label className="text-[10px] text-muted-foreground mb-1 block uppercase">Phase Status</label>
                     <select
                       value={phaseStatusFilter}
                       onChange={(e) => setPhaseStatusFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      className="w-full bg-surface-overlay border border-panel-border rounded px-2 py-1 text-xs text-panel-foreground focus:border-focus focus:outline-none"
                     >
                       <option value="all">All</option>
                       {FEATURE_STATUS_OPTIONS.map(status => (
@@ -2637,11 +2637,11 @@ const FeatureModal = ({
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block uppercase">Task Status</label>
+                    <label className="text-[10px] text-muted-foreground mb-1 block uppercase">Task Status</label>
                     <select
                       value={taskStatusFilter}
                       onChange={(e) => setTaskStatusFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      className="w-full bg-surface-overlay border border-panel-border rounded px-2 py-1 text-xs text-panel-foreground focus:border-focus focus:outline-none"
                     >
                       <option value="all">All</option>
                       {FEATURE_STATUS_OPTIONS.map(status => (
@@ -2652,7 +2652,7 @@ const FeatureModal = ({
                 </div>
               )}
               {filteredPhases.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <Layers size={32} className="mx-auto mb-3 opacity-50" />
                   <p>{phases.length === 0 ? 'No phases tracked for this feature.' : 'No phases match your filters.'}</p>
                 </div>
@@ -2672,20 +2672,20 @@ const FeatureModal = ({
                   ? phaseTasks
                   : phaseTasks.filter(task => task.status === taskStatusFilter);
                 return (
-                  <div key={phaseKey} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-                    <div className="flex items-start gap-3 p-4 hover:bg-slate-800/50 transition-colors">
+                  <div key={phaseKey} className="bg-panel border border-panel-border rounded-lg overflow-hidden">
+                    <div className="flex items-start gap-3 p-4 hover:bg-surface-muted/60 transition-colors">
                       <div className="flex-1 min-w-0">
                         <button
                           onClick={() => togglePhase(phaseKey)}
                           className="w-full flex items-center gap-3 text-left"
                         >
-                          {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                          {isExpanded ? <ChevronDown size={16} className="text-muted-foreground" /> : <ChevronRight size={16} className="text-muted-foreground" />}
                           <div className={`w-2 h-2 rounded-full ${phaseStatus.dot}`} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-slate-200">Phase {phase.phase}</span>
+                              <span className="text-sm font-medium text-panel-foreground">Phase {phase.phase}</span>
                               {phase.title && (
-                                <span className="text-sm text-slate-400 truncate">- {phase.title}</span>
+                                <span className="text-sm text-muted-foreground truncate">- {phase.title}</span>
                               )}
                               {phaseDeferredTasks > 0 && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10 uppercase">
@@ -2700,7 +2700,7 @@ const FeatureModal = ({
                         </button>
                         {phaseRelatedSessions.length > 0 && (
                           <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] uppercase tracking-wider text-slate-500">Sessions</span>
+                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Sessions</span>
                             {phaseRelatedSessions.slice(0, 3).map(sessionLink => (
                               <button
                                 key={`phase-${phaseKey}-session-${sessionLink.sessionId}`}
@@ -2716,13 +2716,13 @@ const FeatureModal = ({
                               </button>
                             ))}
                             {phaseRelatedSessions.length > 3 && (
-                              <span className="text-[10px] text-slate-500">+{phaseRelatedSessions.length - 3} more</span>
+                              <span className="text-[10px] text-muted-foreground">+{phaseRelatedSessions.length - 3} more</span>
                             )}
                           </div>
                         )}
                         {phaseRelatedCommits.length > 0 && (
                           <div className="mt-2 ml-7 flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] uppercase tracking-wider text-slate-500">Commits</span>
+                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Commits</span>
                             {phaseRelatedCommits.slice(0, 5).map(commitRef => (
                               <button
                                 key={`phase-${phaseKey}-commit-${commitRef.commitHash}`}
@@ -2737,7 +2737,7 @@ const FeatureModal = ({
                               </button>
                             ))}
                             {phaseRelatedCommits.length > 5 && (
-                              <span className="text-[10px] text-slate-500">+{phaseRelatedCommits.length - 5} more</span>
+                              <span className="text-[10px] text-muted-foreground">+{phaseRelatedCommits.length - 5} more</span>
                             )}
                           </div>
                         )}
@@ -2751,7 +2751,7 @@ const FeatureModal = ({
 
                     {/* Expanded task list */}
                     {isExpanded && visibleTasks.length > 0 && (
-                      <div className="border-t border-slate-800 px-4 py-3 space-y-1.5 bg-slate-950/30">
+                      <div className="border-t border-panel-border px-4 py-3 space-y-1.5 bg-surface-overlay/60">
                         {visibleTasks.map(task => {
                           const normalizedStatus = (task.status || '').toLowerCase();
                           const taskDone = normalizedStatus === 'done';
@@ -2760,10 +2760,10 @@ const FeatureModal = ({
                           const markTitle = taskDone ? 'Mark deferred' : taskDeferred ? 'Mark backlog' : 'Mark done';
                           const taskSessionLinks = taskSessionLinksByTaskId.get(String(task.id || '').trim()) || [];
                           const taskTextClass = taskDone
-                            ? 'text-slate-500 line-through'
+                            ? 'text-muted-foreground line-through'
                             : taskDeferred
                               ? 'text-amber-300/90 italic'
-                              : 'text-slate-300';
+                              : 'text-foreground';
                           const correlatedCommits = taskCommitLinksByTaskId.get(String(task.id || '').trim()) || [];
                           const taskCommitHashes = Array.from(
                             new Set(
@@ -2774,7 +2774,7 @@ const FeatureModal = ({
                             )
                           );
                           return (
-                            <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-slate-900 transition-colors">
+                            <div key={`${task.id}-${task.sourceFile || ''}`} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-panel transition-colors">
                               <button
                                 onClick={() => handleTaskStatusChange(phase.phase, task.id, nextStatus as ProjectTask['status'])}
                                 className="flex-shrink-0 hover:scale-110 transition-transform"
@@ -2785,12 +2785,12 @@ const FeatureModal = ({
                                 ) : taskDeferred ? (
                                   <CircleDashed size={14} className="text-amber-400" />
                                 ) : (
-                                  <Circle size={14} className="text-slate-600 hover:text-indigo-400" />
+                                  <Circle size={14} className="text-muted-foreground hover:text-indigo-400" />
                                 )}
                               </button>
                               <button
                                 onClick={() => setViewingTask(task)}
-                                className="font-mono text-[10px] text-slate-500 w-16 flex-shrink-0 hover:text-indigo-400 transition-colors cursor-pointer text-left"
+                                className="font-mono text-[10px] text-muted-foreground w-16 flex-shrink-0 hover:text-indigo-400 transition-colors cursor-pointer text-left"
                                 title="View source file"
                               >
                                 {task.id}
@@ -2811,7 +2811,7 @@ const FeatureModal = ({
                                         e.stopPropagation();
                                         openGitCommitInHistory(hash);
                                       }}
-                                      className="flex items-center gap-1 text-[10px] bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-mono flex-shrink-0 hover:bg-emerald-500/20 transition-colors"
+                                      className="flex items-center gap-1 text-[10px] bg-surface-muted text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-mono flex-shrink-0 hover:bg-emerald-500/20 transition-colors"
                                       title={`Open ${hash} in Git history`}
                                     >
                                       <GitCommit size={10} />
@@ -2819,7 +2819,7 @@ const FeatureModal = ({
                                     </button>
                                   ))}
                                   {taskCommitHashes.length > 3 && (
-                                    <span className="text-[10px] text-slate-500">+{taskCommitHashes.length - 3} more</span>
+                                    <span className="text-[10px] text-muted-foreground">+{taskCommitHashes.length - 3} more</span>
                                   )}
                                 </div>
                               )}
@@ -2840,12 +2840,12 @@ const FeatureModal = ({
                                     </button>
                                   ))}
                                   {taskSessionLinks.length > 3 && (
-                                    <span className="text-[10px] text-slate-500">+{taskSessionLinks.length - 3} more</span>
+                                    <span className="text-[10px] text-muted-foreground">+{taskSessionLinks.length - 3} more</span>
                                   )}
                                 </div>
                               )}
                               {task.owner && (
-                                <span className="text-[10px] text-slate-600 truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
+                                <span className="text-[10px] text-muted-foreground truncate max-w-[100px] flex-shrink-0">{task.owner}</span>
                               )}
                               <StatusDropdown
                                 status={task.status}
@@ -2858,7 +2858,7 @@ const FeatureModal = ({
                       </div>
                     )}
                     {isExpanded && visibleTasks.length === 0 && (
-                      <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-600 italic">
+                      <div className="border-t border-panel-border px-4 py-3 text-xs text-muted-foreground italic">
                         No task details match the current task filter.
                       </div>
                     )}
@@ -2872,7 +2872,7 @@ const FeatureModal = ({
           {activeTab === 'docs' && (
             <div className="space-y-3">
               {linkedDocs.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <FileText size={32} className="mx-auto mb-3 opacity-50" />
                   <p>No documents linked to this feature.</p>
                 </div>
@@ -2881,16 +2881,16 @@ const FeatureModal = ({
                 <div key={group.id} className="space-y-2">
                   <button
                     onClick={() => toggleDocGroup(group.id)}
-                    className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                    className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
                   >
                     <div>
-                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground">
                         {docGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         {group.label}
                       </div>
-                      <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">{group.description}</p>
                     </div>
-                    <span className="text-[11px] text-slate-500">{group.docs.length}</span>
+                    <span className="text-[11px] text-muted-foreground">{group.docs.length}</span>
                   </button>
 
                   {docGroupExpanded[group.id] && (
@@ -2899,33 +2899,33 @@ const FeatureModal = ({
                         <button
                           key={doc.id}
                           onClick={() => handleDocClick(doc)}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-indigo-500/50 hover:bg-slate-800/50 transition-all text-left group"
+                          className="w-full bg-panel border border-panel-border rounded-lg p-4 hover:border-indigo-500/50 hover:bg-surface-muted/60 transition-all text-left group"
                         >
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
                               <DocTypeIcon docType={doc.docType} />
-                              <span className="text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{doc.title}</span>
+                              <span className="text-sm font-medium text-panel-foreground group-hover:text-indigo-400 transition-colors">{doc.title}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath))
                                 ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                                : 'bg-surface-muted text-muted-foreground border-panel-border'
                                 }`}>
                                 {primaryDocIds.has(doc.id) || primaryDocIds.has(normalizePath(doc.filePath)) ? 'Primary' : 'Supporting'}
                               </span>
                               <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${doc.docType === 'prd' ? 'bg-purple-500/10 text-purple-400' : 'bg-blue-500/10 text-blue-400'}`}>
                                 <DocTypeBadge docType={doc.docType} />
                               </span>
-                              <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                              <ExternalLink size={12} className="text-muted-foreground group-hover:text-indigo-400 transition-colors" />
                             </div>
                           </div>
-                          <div className="text-xs text-slate-500 font-mono truncate flex items-center gap-1.5">
+                          <div className="text-xs text-muted-foreground font-mono truncate flex items-center gap-1.5">
                             <FolderOpen size={12} />
                             {doc.filePath}
                           </div>
                           <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
                             {doc.featureFamily && (
-                              <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-300">
+                              <span className="rounded-full border border-panel-border bg-surface-overlay px-2 py-0.5 text-foreground">
                                 {doc.featureFamily}
                               </span>
                             )}
@@ -2941,8 +2941,8 @@ const FeatureModal = ({
                             ))}
                           </div>
                           {(doc.prdRef || '').trim() && (
-                            <div className="mt-2 text-[11px] text-slate-400">
-                              PRD Ref: <span className="font-mono text-slate-300">{doc.prdRef}</span>
+                            <div className="mt-2 text-[11px] text-muted-foreground">
+                              PRD Ref: <span className="font-mono text-foreground">{doc.prdRef}</span>
                             </div>
                           )}
                         </button>
@@ -2955,62 +2955,62 @@ const FeatureModal = ({
           )}
           {activeTab === 'relations' && (
             <div className="space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Typed Feature Relations</h3>
+              <div className="bg-panel border border-panel-border rounded-lg p-4">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Typed Feature Relations</h3>
                 <div className="space-y-2">
                   {(activeFeature.linkedFeatures || []).map((relation, index) => (
-                    <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-slate-800 bg-slate-950 px-3 py-2 text-xs">
+                    <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
                       <button
                         onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
                         className="font-mono text-indigo-300 hover:text-indigo-200"
                       >
                         {relation.feature}
                       </button>
-                      <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-300">{relation.type || 'related'}</span>
-                      <span className="uppercase px-1.5 py-0.5 rounded border border-slate-700 bg-slate-800 text-slate-400">{relation.source || 'unknown'}</span>
+                      <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted text-foreground">{relation.type || 'related'}</span>
+                      <span className="uppercase px-1.5 py-0.5 rounded border border-panel-border bg-surface-muted text-muted-foreground">{relation.source || 'unknown'}</span>
                       {typeof relation.confidence === 'number' && (
-                        <span className="text-slate-500">{Math.round(relation.confidence * 100)}%</span>
+                        <span className="text-muted-foreground">{Math.round(relation.confidence * 100)}%</span>
                       )}
-                      {relation.notes && <span className="text-slate-400">{relation.notes}</span>}
+                      {relation.notes && <span className="text-muted-foreground">{relation.notes}</span>}
                     </div>
                   ))}
                   {(activeFeature.linkedFeatures || []).length === 0 && (
-                    <p className="text-xs text-slate-500 italic">No typed feature relations available.</p>
+                    <p className="text-xs text-muted-foreground italic">No typed feature relations available.</p>
                   )}
                 </div>
               </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Related Features</h3>
+              <div className="bg-panel border border-panel-border rounded-lg p-4">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Related Features</h3>
                 <div className="flex flex-wrap gap-2">
                   {activeFeature.relatedFeatures.map(rel => (
                     <button
                       key={rel}
                       onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(rel)}&tab=overview`); }}
-                      className="text-xs bg-slate-800 text-indigo-400 px-2 py-1 rounded border border-slate-700"
+                      className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border"
                     >
                       {rel}
                     </button>
                   ))}
                   {activeFeature.relatedFeatures.length === 0 && (
-                    <span className="text-xs text-slate-500 italic">No related features.</span>
+                    <span className="text-xs text-muted-foreground italic">No related features.</span>
                   )}
                 </div>
               </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Lineage Signals</h3>
+              <div className="bg-panel border border-panel-border rounded-lg p-4">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Lineage Signals</h3>
                 <div className="space-y-2">
                   {linkedDocs
                     .filter(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0)
                     .map(doc => (
-                      <div key={`lineage-${doc.id}`} className="text-xs rounded border border-slate-800 bg-slate-950 p-2">
-                        <div className="text-slate-300">{doc.title}</div>
-                        <div className="text-slate-500 mt-1">Family: <span className="font-mono">{doc.lineageFamily || '-'}</span></div>
-                        <div className="text-slate-500">Parent: <span className="font-mono">{doc.lineageParent || '-'}</span></div>
-                        <div className="text-slate-500">Children: <span className="font-mono">{(doc.lineageChildren || []).join(', ') || '-'}</span></div>
+                      <div key={`lineage-${doc.id}`} className="text-xs rounded border border-panel-border bg-surface-overlay p-2">
+                        <div className="text-foreground">{doc.title}</div>
+                        <div className="text-muted-foreground mt-1">Family: <span className="font-mono">{doc.lineageFamily || '-'}</span></div>
+                        <div className="text-muted-foreground">Parent: <span className="font-mono">{doc.lineageParent || '-'}</span></div>
+                        <div className="text-muted-foreground">Children: <span className="font-mono">{(doc.lineageChildren || []).join(', ') || '-'}</span></div>
                       </div>
                     ))}
                   {!linkedDocs.some(doc => doc.lineageFamily || doc.lineageParent || (doc.lineageChildren || []).length > 0) && (
-                    <p className="text-xs text-slate-500 italic">No lineage metadata detected.</p>
+                    <p className="text-xs text-muted-foreground italic">No lineage metadata detected.</p>
                   )}
                 </div>
               </div>
@@ -3020,10 +3020,10 @@ const FeatureModal = ({
           {activeTab === 'sessions' && (
             <div className="space-y-3">
               {linkedSessions.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <Terminal size={32} className="mx-auto mb-3 opacity-50" />
                   <p>No sessions linked to this feature.</p>
-                  <p className="text-xs mt-1 text-slate-600">No high-confidence session evidence found yet.</p>
+                  <p className="text-xs mt-1 text-muted-foreground">No high-confidence session evidence found yet.</p>
                 </div>
               )}
               {linkedSessions.length > 0 && (
@@ -3042,22 +3042,22 @@ const FeatureModal = ({
                     <div key={group.id} className="space-y-2">
                       <button
                         onClick={() => toggleCoreSessionGroup(group.id)}
-                        className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
                       >
                         <div>
-                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
+                          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-foreground">
                             {coreSessionGroupExpanded[group.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             {group.label}
                           </div>
-                          <p className="text-[11px] text-slate-500 mt-1">{group.description}</p>
+                          <p className="text-[11px] text-muted-foreground mt-1">{group.description}</p>
                         </div>
-                        <span className="text-[11px] text-slate-500">{group.totalSessions}</span>
+                        <span className="text-[11px] text-muted-foreground">{group.totalSessions}</span>
                       </button>
 
                       {coreSessionGroupExpanded[group.id] && (
                         <div className="space-y-3">
                           {group.roots.length === 0 && (
-                            <div className="text-xs text-slate-600 italic px-1">
+                            <div className="text-xs text-muted-foreground italic px-1">
                               No sessions currently in this group.
                             </div>
                           )}
@@ -3072,19 +3072,19 @@ const FeatureModal = ({
                   <div className="space-y-2 pt-2">
                     <button
                       onClick={() => setShowSecondarySessions(prev => !prev)}
-                      className="w-full flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-left hover:border-slate-700 transition-colors"
+                      className="w-full flex items-center justify-between bg-panel border border-panel-border rounded-lg px-3 py-2 text-left hover:border-panel-border transition-colors"
                     >
-                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         {showSecondarySessions ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         Secondary Linkages
                       </div>
-                      <span className="text-[11px] text-slate-500">{secondarySessionCount}</span>
+                      <span className="text-[11px] text-muted-foreground">{secondarySessionCount}</span>
                     </button>
 
                     {showSecondarySessions && (
                       <div className="space-y-3">
                         {secondarySessionRoots.length === 0 && (
-                          <div className="text-xs text-slate-600 italic px-1">
+                          <div className="text-xs text-muted-foreground italic px-1">
                             No secondary linked sessions.
                           </div>
                         )}
@@ -3111,16 +3111,16 @@ const FeatureModal = ({
           {activeTab === 'history' && (
             <div className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Commits</div>
+                <div className="bg-panel border border-panel-border rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Commits</div>
                   <div className="text-xl font-semibold text-emerald-300 mt-1">{gitHistoryData.commits.length}</div>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked PRs</div>
+                <div className="bg-panel border border-panel-border rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked PRs</div>
                   <div className="text-xl font-semibold text-blue-300 mt-1">{gitHistoryData.pullRequests.length}</div>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Linked Branches</div>
+                <div className="bg-panel border border-panel-border rounded-lg p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Branches</div>
                   <div className="text-xl font-semibold text-purple-300 mt-1">{gitHistoryData.branches.length}</div>
                 </div>
               </div>
@@ -3140,8 +3140,8 @@ const FeatureModal = ({
               )}
 
               {gitHistoryData.branches.length > 0 && (
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Branches</div>
+                <div className="bg-panel border border-panel-border rounded-lg p-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Branches</div>
                   <div className="flex flex-wrap gap-2">
                     {gitHistoryData.branches.map(branch => (
                       <span
@@ -3157,8 +3157,8 @@ const FeatureModal = ({
               )}
 
               {gitHistoryData.pullRequests.length > 0 && (
-                <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Pull Requests</div>
+                <div className="bg-panel border border-panel-border rounded-lg p-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Pull Requests</div>
                   <div className="space-y-2">
                     <AnimatePresence initial={false}>
                       {animatedPullRequests.items.map((pr, index) => {
@@ -3176,9 +3176,9 @@ const FeatureModal = ({
                           transition={listInsertPreset.transition}
                           className="flex items-center justify-between gap-3 text-xs"
                         >
-                          <div className="text-slate-300 flex items-center gap-2">
+                          <div className="text-foreground flex items-center gap-2">
                             <span className="font-mono text-blue-300">{label}</span>
-                            {pr.prRepository && <span className="text-slate-500">{pr.prRepository}</span>}
+                            {pr.prRepository && <span className="text-muted-foreground">{pr.prRepository}</span>}
                           </div>
                           {href ? (
                             <a
@@ -3190,7 +3190,7 @@ const FeatureModal = ({
                               Open <ExternalLink size={12} />
                             </a>
                           ) : (
-                            <span className="text-slate-600">No URL</span>
+                            <span className="text-muted-foreground">No URL</span>
                           )}
                         </motion.div>
                       );
@@ -3201,10 +3201,10 @@ const FeatureModal = ({
               )}
 
               {filteredGitCommits.length === 0 && (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <GitCommit size={32} className="mx-auto mb-3 opacity-50" />
                   <p>No linked Git commits available yet.</p>
-                  <p className="text-xs mt-1 text-slate-600">Commit correlations are derived from session evidence and forensics metadata.</p>
+                  <p className="text-xs mt-1 text-muted-foreground">Commit correlations are derived from session evidence and forensics metadata.</p>
                 </div>
               )}
 
@@ -3221,7 +3221,7 @@ const FeatureModal = ({
                       animate={shouldAnimateIn ? listInsertPreset.animate : undefined}
                       exit={listInsertPreset.exit}
                       transition={listInsertPreset.transition}
-                      className="bg-slate-900 border border-slate-800 rounded-lg p-3"
+                      className="bg-panel border border-panel-border rounded-lg p-3"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <button
@@ -3232,7 +3232,7 @@ const FeatureModal = ({
                           <GitCommit size={14} />
                           {toShortCommitHash(commit.commitHash)}
                         </button>
-                        <div className="text-xs text-slate-500">
+                        <div className="text-xs text-muted-foreground">
                           {commit.lastSeenAt ? `Last seen ${new Date(commit.lastSeenAt).toLocaleString()}` : 'No timestamp'}
                         </div>
                       </div>
@@ -3254,27 +3254,27 @@ const FeatureModal = ({
                           </span>
                         ))}
                         {commit.phases.map(phase => (
-                          <span key={`${commit.commitHash}-phase-${phase}`} className="px-2 py-0.5 rounded border border-slate-700 bg-slate-800/80 text-slate-300">
+                          <span key={`${commit.commitHash}-phase-${phase}`} className="px-2 py-0.5 rounded border border-panel-border bg-surface-muted/90 text-foreground">
                             Phase {phase}
                           </span>
                         ))}
                         {commit.taskIds.slice(0, 6).map(taskId => (
-                          <span key={`${commit.commitHash}-task-${taskId}`} className="px-2 py-0.5 rounded border border-slate-700 bg-slate-800/80 text-slate-300 font-mono">
+                          <span key={`${commit.commitHash}-task-${taskId}`} className="px-2 py-0.5 rounded border border-panel-border bg-surface-muted/90 text-foreground font-mono">
                             {taskId}
                           </span>
                         ))}
                         {commit.taskIds.length > 6 && (
-                          <span className="text-slate-500">+{commit.taskIds.length - 6} tasks</span>
+                          <span className="text-muted-foreground">+{commit.taskIds.length - 6} tasks</span>
                         )}
                       </div>
 
                       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 text-[11px]">
-                        <div className="text-slate-400">Sessions: <span className="text-slate-200">{commit.sessionIds.length}</span></div>
-                        <div className="text-slate-400">Files: <span className="text-slate-200">{commit.fileCount}</span></div>
-                        <div className="text-slate-400">+/-: <span className="text-slate-200">{commit.additions}/{commit.deletions}</span></div>
-                        <div className="text-slate-400">Model IO: <span className="text-slate-200">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
-                        <div className="text-slate-400">Events: <span className="text-slate-200">{commit.eventCount}</span></div>
-                        <div className="text-slate-400">Cost: <span className="text-slate-200">${commit.costUsd.toFixed(2)}</span></div>
+                        <div className="text-muted-foreground">Sessions: <span className="text-panel-foreground">{commit.sessionIds.length}</span></div>
+                        <div className="text-muted-foreground">Files: <span className="text-panel-foreground">{commit.fileCount}</span></div>
+                        <div className="text-muted-foreground">+/-: <span className="text-panel-foreground">{commit.additions}/{commit.deletions}</span></div>
+                        <div className="text-muted-foreground">Model IO: <span className="text-panel-foreground">{(commit.tokenInput + commit.tokenOutput).toLocaleString()}</span></div>
+                        <div className="text-muted-foreground">Events: <span className="text-panel-foreground">{commit.eventCount}</span></div>
+                        <div className="text-muted-foreground">Cost: <span className="text-panel-foreground">${commit.costUsd.toFixed(2)}</span></div>
                       </div>
                     </motion.div>
                   )})}
@@ -3319,14 +3319,14 @@ const FeatureSessionIndicator = ({
       onClick={(e) => e.stopPropagation()}
       title="Linked session summary"
     >
-      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md border border-slate-700 bg-slate-900/80 text-slate-300">
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md border border-panel-border bg-panel/80 text-foreground">
         <Terminal size={11} />
         {loading ? <RefreshCw size={10} className="animate-spin" /> : total}
       </span>
 
-      <div className="pointer-events-none absolute right-0 top-[calc(100%+8px)] w-60 rounded-lg border border-slate-700 bg-slate-950/95 shadow-2xl px-3 py-2 opacity-0 translate-y-1 group-hover/session-indicator:opacity-100 group-hover/session-indicator:translate-y-0 transition-all duration-150 z-20">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Linked Sessions</div>
-        <div className="space-y-1 text-[11px] text-slate-300">
+      <div className="pointer-events-none absolute right-0 top-[calc(100%+8px)] w-60 rounded-lg border border-panel-border bg-surface-overlay/95 shadow-2xl px-3 py-2 opacity-0 translate-y-1 group-hover/session-indicator:opacity-100 group-hover/session-indicator:translate-y-0 transition-all duration-150 z-20">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Linked Sessions</div>
+        <div className="space-y-1 text-[11px] text-foreground">
           <div className="flex items-center justify-between">
             <span>Total</span>
             <span className="font-mono">{total}</span>
@@ -3358,13 +3358,13 @@ const FeatureSessionIndicator = ({
           )}
         </div>
         {typeRows.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-slate-800">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Types</div>
+          <div className="mt-2 pt-2 border-t border-panel-border">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Types</div>
             <div className="space-y-1">
               {typeRows.map(row => (
-                <div key={row.type} className="flex items-center justify-between text-[11px] text-slate-300">
+                <div key={row.type} className="flex items-center justify-between text-[11px] text-foreground">
                   <span className="truncate pr-2">{row.type}</span>
-                  <span className="font-mono text-slate-400">{row.count}</span>
+                  <span className="font-mono text-muted-foreground">{row.count}</span>
                 </div>
               ))}
             </div>
@@ -3410,18 +3410,18 @@ const FeatureCard = ({
       }}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      className={`bg-slate-900 border border-slate-800 p-4 rounded-lg shadow-sm hover:border-indigo-500/50 transition-all group cursor-pointer hover:shadow-lg hover:-translate-y-0.5 ${isDragging ? 'opacity-60 ring-1 ring-indigo-500/40' : ''}`}
+      className={`bg-panel border border-panel-border p-4 rounded-lg shadow-sm hover:border-indigo-500/50 transition-all group cursor-pointer hover:shadow-lg hover:-translate-y-0.5 ${isDragging ? 'opacity-60 ring-1 ring-focus/30' : ''}`}
     >
       {/* Header */}
       <div className="flex justify-between items-start mb-2">
-        <span className="font-mono text-[10px] text-slate-500 truncate max-w-[180px]">{feature.id}</span>
+        <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[180px]">{feature.id}</span>
         <div className="flex items-center gap-2">
           <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
           <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
         </div>
       </div>
 
-      <h4 className="font-medium text-slate-200 mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
+      <h4 className="font-medium text-panel-foreground mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
       {featureHasDeferred && (
         <div className="mb-2">
           <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-300 bg-amber-500/10">
@@ -3439,27 +3439,27 @@ const FeatureCard = ({
       <div className="flex flex-wrap gap-1.5 mb-3">
         <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} compact />
         {feature.phases.length > 0 && (
-          <span className="text-[9px] flex items-center gap-1 bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
+          <span className="text-[9px] flex items-center gap-1 bg-surface-muted text-muted-foreground px-1.5 py-0.5 rounded border border-panel-border">
             {feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}
           </span>
         )}
       </div>
       <div className="flex flex-wrap gap-1.5 mb-3 text-[9px]">
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.executionReadiness || 'readiness n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{getFeatureCoverageSummary(feature)}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">links {getFeatureLinkedFeatureCount(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {getFeatureLinkedFeatureCount(feature)}</span>
       </div>
 
       {/* Footer */}
-      <div className="pt-2 border-t border-slate-800">
+      <div className="pt-2 border-t border-panel-border">
         <div className="flex items-center justify-between">
           <div className="flex flex-col min-w-0">
             {feature.category ? (
-              <span className="text-[10px] text-slate-500 truncate capitalize">{feature.category}</span>
+              <span className="text-[10px] text-muted-foreground truncate capitalize">{feature.category}</span>
             ) : <span />}
           </div>
-          <span className="text-[10px] text-slate-600 flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
+          <span className="text-[10px] text-muted-foreground flex items-center gap-1 group-hover:text-indigo-400 transition-colors">
             Details <ChevronRight size={10} />
           </span>
         </div>
@@ -3493,19 +3493,19 @@ const FeatureListCard = ({
   return (
     <div
       onClick={onClick}
-      className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group shadow-sm hover:shadow-md"
+      className="bg-panel border border-panel-border rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group shadow-sm hover:shadow-md"
     >
       <div className="flex justify-between items-start mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
-            <span className="font-mono text-xs text-slate-500 border border-slate-800 px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
+            <span className="font-mono text-xs text-muted-foreground border border-panel-border px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
             <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
             <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
             {feature.category && (
-              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 capitalize">{feature.category}</span>
+              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground capitalize">{feature.category}</span>
             )}
           </div>
-          <h3 className="font-bold text-slate-200 text-lg group-hover:text-indigo-400 transition-colors truncate">{feature.name}</h3>
+          <h3 className="font-bold text-panel-foreground text-lg group-hover:text-indigo-400 transition-colors truncate">{feature.name}</h3>
         </div>
         <div className="text-right ml-4 flex-shrink-0">
           <div className="text-indigo-400 font-mono font-bold text-sm">{featureCompletedTasks}/{feature.totalTasks}</div>
@@ -3527,18 +3527,18 @@ const FeatureListCard = ({
         <FeatureDateStack feature={feature} />
       </div>
       <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.priority || 'priority n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{feature.executionReadiness || 'readiness n/a'}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">{getFeatureCoverageSummary(feature)}</span>
-        <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300">links {getFeatureLinkedFeatureCount(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.priority || 'priority n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{feature.executionReadiness || 'readiness n/a'}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">{getFeatureCoverageSummary(feature)}</span>
+        <span className="px-1.5 py-0.5 rounded border border-panel-border bg-panel text-foreground">links {getFeatureLinkedFeatureCount(feature)}</span>
       </div>
 
-      <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+      <div className="pt-3 border-t border-panel-border flex items-center justify-between">
         <div className="flex gap-2">
           <LinkedDocsSummaryBadge docs={feature.linkedDocs} onClick={onOpenDocs} />
         </div>
         {feature.phases.length > 0 && (
-          <span className="text-xs text-slate-500">{feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-muted-foreground">{feature.phases.length} phase{feature.phases.length !== 1 ? 's' : ''}</span>
         )}
       </div>
     </div>
@@ -3585,11 +3585,11 @@ const StatusColumn = ({
   return (
     <div className="flex flex-col gap-4 min-w-[300px] w-full lg:w-1/4">
       <div className="flex items-center justify-between px-2">
-        <h3 className="font-semibold text-slate-300 text-sm uppercase tracking-wider flex items-center gap-2">
+        <h3 className="font-semibold text-foreground text-sm uppercase tracking-wider flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${style.dot}`} />
           {title}
         </h3>
-        <span className="text-slate-600 text-xs font-mono bg-slate-900 px-2 py-1 rounded">{features.length}</span>
+        <span className="text-muted-foreground text-xs font-mono bg-panel px-2 py-1 rounded">{features.length}</span>
       </div>
 
       <div
@@ -3604,7 +3604,7 @@ const StatusColumn = ({
           e.preventDefault();
           onCardDrop(e.dataTransfer.getData('text/plain'), status);
         }}
-        className={`flex flex-col gap-3 min-h-[200px] rounded-lg bg-slate-900/30 p-2 border overflow-y-auto max-h-[calc(100vh-280px)] transition-colors ${isDropTarget ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-slate-800/30'}`}
+        className={`flex flex-col gap-3 min-h-[200px] rounded-lg bg-panel/40 p-2 border overflow-y-auto max-h-[calc(100vh-280px)] transition-colors ${isDropTarget ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-panel-border/40'}`}
       >
         {features.map(f => (
           <FeatureCard
@@ -3621,7 +3621,7 @@ const StatusColumn = ({
           />
         ))}
         {features.length === 0 && (
-          <div className="h-full flex items-center justify-center text-slate-700 text-sm border-2 border-dashed border-slate-800 rounded-lg p-4">
+          <div className="h-full flex items-center justify-center text-muted-foreground text-sm border-2 border-dashed border-panel-border rounded-lg p-4">
             No features
           </div>
         )}
@@ -3932,7 +3932,7 @@ export const ProjectBoard: React.FC = () => {
             <div className="space-y-2">
               <button
                 onClick={() => toggleSidebarSection('general')}
-                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
               >
                 <span>General</span>
                 {collapsedSidebarSections.general ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -3940,22 +3940,22 @@ export const ProjectBoard: React.FC = () => {
               {!collapsedSidebarSections.general && (
                 <div className="pl-1 space-y-2">
                   <div className="relative">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <input
                       type="text"
                       placeholder="Search features..."
                       value={draftSearchQuery}
                       onChange={e => setDraftSearchQuery(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none transition-colors"
+                      className="w-full bg-surface-overlay border border-panel-border rounded-lg pl-9 pr-3 py-2 text-xs text-panel-foreground focus:border-focus focus:outline-none transition-colors"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Status</label>
+                    <label className="text-[10px] text-muted-foreground mb-1 block">Status</label>
                     <select
                       value={draftStatusFilter}
                       onChange={e => setDraftStatusFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      className="w-full bg-surface-overlay border border-panel-border rounded-lg px-3 py-2 text-xs text-panel-foreground focus:border-focus focus:outline-none"
                     >
                       <option value="all">All Statuses</option>
                       <option value="backlog">Backlog</option>
@@ -3967,11 +3967,11 @@ export const ProjectBoard: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 mb-1 block">Category</label>
+                    <label className="text-[10px] text-muted-foreground mb-1 block">Category</label>
                     <select
                       value={draftCategoryFilter}
                       onChange={e => setDraftCategoryFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      className="w-full bg-surface-overlay border border-panel-border rounded-lg px-3 py-2 text-xs text-panel-foreground focus:border-focus focus:outline-none"
                     >
                       <option value="all">All Categories</option>
                       {categories.map(c => (
@@ -3984,94 +3984,94 @@ export const ProjectBoard: React.FC = () => {
 
               <button
                 onClick={() => toggleSidebarSection('dates')}
-                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
               >
                 <span>Date Ranges</span>
                 {collapsedSidebarSections.dates ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
               </button>
               {!collapsedSidebarSections.dates && (
                 <div className="pl-1 space-y-2">
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Planned</p>
+                  <div className="rounded-lg border border-panel-border bg-panel/40 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Planned</p>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">From</span>
                       <input
                         type="date"
                         value={draftPlannedFrom}
                         onChange={e => setDraftPlannedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">To</span>
                       <input
                         type="date"
                         value={draftPlannedTo}
                         onChange={e => setDraftPlannedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Started</p>
+                  <div className="rounded-lg border border-panel-border bg-panel/40 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Started</p>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">From</span>
                       <input
                         type="date"
                         value={draftStartedFrom}
                         onChange={e => setDraftStartedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">To</span>
                       <input
                         type="date"
                         value={draftStartedTo}
                         onChange={e => setDraftStartedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Completed</p>
+                  <div className="rounded-lg border border-panel-border bg-panel/40 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Completed</p>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">From</span>
                       <input
                         type="date"
                         value={draftCompletedFrom}
                         onChange={e => setDraftCompletedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">To</span>
                       <input
                         type="date"
                         value={draftCompletedTo}
                         onChange={e => setDraftCompletedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Updated</p>
+                  <div className="rounded-lg border border-panel-border bg-panel/40 p-2 space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Updated</p>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">From</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">From</span>
                       <input
                         type="date"
                         value={draftUpdatedFrom}
                         onChange={e => setDraftUpdatedFrom(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                     <div className="grid grid-cols-[34px_1fr] items-center gap-1">
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500">To</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">To</span>
                       <input
                         type="date"
                         value={draftUpdatedTo}
                         onChange={e => setDraftUpdatedTo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:border-indigo-500 focus:outline-none"
+                        className="w-full bg-surface-overlay border border-panel-border rounded-lg px-2 py-1.5 text-[11px] text-panel-foreground focus:border-focus focus:outline-none"
                       />
                     </div>
                   </div>
@@ -4080,7 +4080,7 @@ export const ProjectBoard: React.FC = () => {
 
               <button
                 onClick={() => toggleSidebarSection('sort')}
-                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400 border border-slate-800 rounded-md px-2.5 py-2 hover:text-slate-200 hover:border-slate-700 transition-colors"
+                className="w-full flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border border-panel-border rounded-md px-2.5 py-2 hover:text-panel-foreground hover:border-panel-border transition-colors"
               >
                 <span>Sort</span>
                 {collapsedSidebarSections.sort ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -4095,7 +4095,7 @@ export const ProjectBoard: React.FC = () => {
                     <button
                       key={s.key}
                       onClick={() => setDraftSortBy(s.key as any)}
-                      className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${draftSortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
+                      className={`py-1.5 px-3 text-xs rounded border text-left transition-colors ${draftSortBy === s.key ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-panel border-panel-border text-muted-foreground'}`}
                     >
                       {s.label}
                     </button>
@@ -4126,23 +4126,23 @@ export const ProjectBoard: React.FC = () => {
       {/* Page Header */}
       <div className="mb-6 flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Feature Board</h2>
-          <p className="text-slate-400 text-sm">
+          <h2 className="text-2xl font-bold text-panel-foreground">Feature Board</h2>
+          <p className="text-muted-foreground text-sm">
             {filteredFeatures.length} features · Synced from project plans &amp; progress files
           </p>
         </div>
         <div className="flex gap-3">
-          <div className="bg-slate-900 border border-slate-800 p-1 rounded-lg flex gap-1">
+          <div className="bg-panel border border-panel-border p-1 rounded-lg flex gap-1">
             <button
               onClick={() => setViewMode('board')}
-              className={`p-1.5 rounded-md transition-all ${viewMode === 'board' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`p-1.5 rounded-md transition-all ${viewMode === 'board' ? 'bg-indigo-600 text-white shadow' : 'text-muted-foreground hover:text-panel-foreground'}`}
               title="Kanban View"
             >
               <LayoutGrid size={18} />
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-indigo-600 text-white shadow' : 'text-muted-foreground hover:text-panel-foreground'}`}
               title="List View"
             >
               <List size={18} />
@@ -4238,7 +4238,7 @@ export const ProjectBoard: React.FC = () => {
               />
             ))}
             {filteredFeatures.length === 0 && (
-              <div className="col-span-full py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">
+              <div className="col-span-full py-12 text-center text-muted-foreground border border-dashed border-panel-border rounded-xl">
                 No features match your filters.
               </div>
             )}
