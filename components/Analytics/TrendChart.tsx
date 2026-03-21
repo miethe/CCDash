@@ -9,8 +9,9 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import { analyticsService } from '../../services/analytics';
-import { chartTheme, getChartGradientStops } from '../../lib/chartTheme';
+import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../../lib/chartTheme';
 import { AnalyticsTrendPoint } from '../../types';
+import { Surface } from '../ui/surface';
 
 interface TrendChartProps {
     metric: string;
@@ -22,7 +23,7 @@ interface TrendChartProps {
 export const TrendChart: React.FC<TrendChartProps> = ({
     metric,
     title,
-    color = '#6366f1',
+    color = getChartSeriesColor('primary'),
     valueFormatter = (val) => val.toString(),
 }) => {
     const [data, setData] = useState<AnalyticsTrendPoint[]>([]);
@@ -43,11 +44,11 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     }, [metric]);
 
     if (loading) {
-        return <div className="h-64 flex items-center justify-center text-slate-500">Loading {title}...</div>;
+        return <Surface tone="overlay" padding="lg" className="flex h-64 items-center justify-center text-muted-foreground">Loading {title}...</Surface>;
     }
 
     if (data.length === 0) {
-        return <div className="h-64 flex items-center justify-center text-slate-500">No data for {title}</div>;
+        return <Surface tone="overlay" padding="lg" className="flex h-64 items-center justify-center text-muted-foreground">No data for {title}</Surface>;
     }
 
     // Transform for chart
@@ -58,8 +59,8 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     }));
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-slate-200 mb-6">{title}</h3>
+        <Surface tone="panel" padding="lg">
+            <h3 className="mb-6 text-lg font-semibold text-panel-foreground">{title}</h3>
             <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData}>
@@ -103,6 +104,6 @@ export const TrendChart: React.FC<TrendChartProps> = ({
                     </AreaChart>
                 </ResponsiveContainer>
             </div>
-        </div>
+        </Surface>
     );
 };

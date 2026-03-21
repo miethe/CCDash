@@ -40,8 +40,12 @@ import {
 } from 'recharts';
 import { WorkflowEffectivenessSurface } from '../execution/WorkflowEffectivenessSurface';
 import { Badge, ModelBadge } from '../ui/badge';
+import { Button } from '../ui/button';
+import { AlertSurface, Surface } from '../ui/surface';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../../lib/tokenMetrics';
 import { costProvenanceLabel } from '../../lib/sessionSemantics';
+import { chartTheme, getChartSeriesColor } from '../../lib/chartTheme';
+import { cn } from '../../lib/utils';
 
 type AnalyticsTab = 'overview' | 'attribution' | 'artifacts' | 'models_tools' | 'features' | 'correlation' | 'workflow_intelligence';
 
@@ -61,7 +65,7 @@ const isAnalyticsTab = (value: string | null): value is AnalyticsTab => (
     Boolean(value) && TAB_IDS.has(value as AnalyticsTab)
 );
 
-const PIE_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316'];
+const PIE_TONES = ['primary', 'info', 'success', 'warning', 'danger', 'secondary', 'tertiary', 'quaternary'] as const;
 
 const formatNumber = (value: number): string => Number(value || 0).toLocaleString();
 const formatCurrency = (value: number): string => `$${Number(value || 0).toFixed(4)}`;
@@ -73,17 +77,20 @@ const formatDurationSeconds = (seconds: number): string => {
 };
 
 const MetricCard: React.FC<{ label: string; value: string; subtitle: string }> = ({ label, value, subtitle }) => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <p className="text-slate-500 text-xs uppercase tracking-wide">{label}</p>
-        <p className="text-2xl font-semibold text-slate-100 mt-2">{value}</p>
-        <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
-    </div>
+    <Surface tone="panel" padding="md" className="h-full">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-2 text-2xl font-semibold text-panel-foreground">{value}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+    </Surface>
 );
 
 const EntityLinkButton: React.FC<{ label: string; onClick: () => void; mono?: boolean }> = ({ label, onClick, mono }) => (
     <button
         onClick={onClick}
-        className={`inline-flex items-center rounded px-1.5 py-0.5 text-indigo-300 hover:text-indigo-200 hover:bg-indigo-600/10 transition-colors ${mono ? 'font-mono text-xs' : 'text-sm'}`}
+        className={cn(
+            'inline-flex items-center rounded px-1.5 py-0.5 text-primary hover:text-primary/90 hover:bg-primary/10 transition-colors',
+            mono ? 'font-mono text-xs' : 'text-sm',
+        )}
         title={`Open ${label}`}
     >
         {label}
@@ -303,28 +310,30 @@ export const AnalyticsDashboard: React.FC = () => {
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="flex flex-wrap justify-between items-end gap-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h2 className="text-3xl font-bold text-slate-100">Analytics & Trends</h2>
-                    <p className="text-slate-400 mt-2">Expanded analytics across artifacts, models, tools, sessions, and features.</p>
+                    <h2 className="text-3xl font-bold text-panel-foreground">Analytics & Trends</h2>
+                    <p className="mt-2 text-muted-foreground">Expanded analytics across artifacts, models, tools, sessions, and features.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => {
                             void loadAll();
                         }}
-                        className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700"
                     >
                         <RefreshCcw size={15} />
                         Refresh
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
                         onClick={handleExport}
-                        className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700"
                     >
                         <Download size={16} />
                         Export Prometheus
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -333,24 +342,22 @@ export const AnalyticsDashboard: React.FC = () => {
                     const Icon = tab.icon;
                     const active = activeTab === tab.id;
                     return (
-                        <button
+                        <Button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-2 whitespace-nowrap px-3 py-2 rounded-lg text-sm border transition-colors ${
-                                active
-                                    ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-200'
-                                    : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-slate-100 hover:border-slate-700'
-                            }`}
+                            variant={active ? 'panel' : 'chip'}
+                            size="sm"
+                            className="whitespace-nowrap"
                         >
                             <Icon size={15} />
                             {tab.label}
-                        </button>
+                        </Button>
                     );
                 })}
             </div>
 
-            {loading && <div className="text-slate-400">Loading analytics data...</div>}
-            {!loading && error && <div className="text-rose-300 bg-rose-900/20 border border-rose-800 rounded-lg px-4 py-3">{error}</div>}
+            {loading && <div className="text-muted-foreground">Loading analytics data...</div>}
+            {!loading && error && <AlertSurface intent="danger">{error}</AlertSurface>}
 
             {!loading && !error && activeTab === 'overview' && (
                 <div className="space-y-6">
@@ -388,115 +395,115 @@ export const AnalyticsDashboard: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <TrendChart metric="session_cost" title="Session Cost" color="#ef4444" valueFormatter={(v) => `$${v.toFixed(2)}`} />
-                        <TrendChart metric="session_tokens" title="Observed Workload" color="#3b82f6" valueFormatter={(v) => v.toLocaleString()} />
-                        <TrendChart metric="session_count" title="Sessions" color="#10b981" />
+                        <TrendChart metric="session_cost" title="Session Cost" color={getChartSeriesColor('danger')} valueFormatter={(v) => `$${v.toFixed(2)}`} />
+                        <TrendChart metric="session_tokens" title="Observed Workload" color={getChartSeriesColor('info')} valueFormatter={(v) => v.toLocaleString()} />
+                        <TrendChart metric="session_count" title="Sessions" color={getChartSeriesColor('success')} />
                         <TrendChart
                             metric="task_completion_pct"
                             title="Task Completion %"
-                            color="#f59e0b"
+                            color={getChartSeriesColor('warning')}
                             valueFormatter={(v) => `${v.toFixed(1)}%`}
                         />
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                            <h3 className="text-lg font-semibold text-slate-200">Cache Efficiency</h3>
-                            <p className="mt-1 text-sm text-slate-500">
+                        <Surface tone="panel" padding="lg">
+                            <h3 className="text-lg font-semibold text-panel-foreground">Cache Efficiency</h3>
+                            <p className="mt-1 text-sm text-muted-foreground">
                                 Observed workload defaults to message-derived tokens. Tool-reported totals remain fallback-only and are not additive.
                             </p>
                             <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Share</div>
-                                    <div className="mt-2 text-2xl font-semibold text-cyan-300">{formatPercent(overviewWorkload.cacheShare)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">of observed workload</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Cache Input</div>
-                                    <div className="mt-2 text-2xl font-semibold text-emerald-300">{formatTokenCount(overviewWorkload.cacheInputTokens)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">cache creation + cache read</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Tool Fallback</div>
-                                    <div className="mt-2 text-2xl font-semibold text-amber-300">{formatTokenCount(overviewWorkload.toolReportedTokens)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">visible for diagnostics only</div>
-                                </div>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Cache Share</div>
+                                    <div className="mt-2 text-2xl font-semibold text-info-foreground">{formatPercent(overviewWorkload.cacheShare)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">of observed workload</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Cache Input</div>
+                                    <div className="mt-2 text-2xl font-semibold text-success-foreground">{formatTokenCount(overviewWorkload.cacheInputTokens)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">cache creation + cache read</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Tool Fallback</div>
+                                    <div className="mt-2 text-2xl font-semibold text-warning-foreground">{formatTokenCount(overviewWorkload.toolReportedTokens)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">visible for diagnostics only</div>
+                                </Surface>
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                            <h3 className="text-lg font-semibold text-slate-200">Token Semantics</h3>
-                            <div className="mt-4 space-y-3 text-sm text-slate-300">
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Observed Workload</div>
+                        <Surface tone="panel" padding="lg">
+                            <h3 className="text-lg font-semibold text-panel-foreground">Token Semantics</h3>
+                            <div className="mt-4 space-y-3 text-sm text-foreground">
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Observed Workload</div>
                                     <div className="mt-1">Model IO plus cache input when available.</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Current Context</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Current Context</div>
                                     <div className="mt-1">A point-in-time occupancy snapshot, never merged into observed workload totals.</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Model IO</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Model IO</div>
                                     <div className="mt-1">Legacy `tokensIn` + `tokensOut`, preserved for cost and compatibility.</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Display Spend</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Display Spend</div>
                                     <div className="mt-1">Reported cost wins when available, then recalculated pricing, then estimated fallback.</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-4 py-3">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Relay Policy</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Relay Policy</div>
                                     <div className="mt-1">Relay-wrapped `data.message.message.*` records stay excluded until attribution is implemented.</div>
-                                </div>
+                                </Surface>
                             </div>
-                        </div>
+                        </Surface>
                     </div>
 
                     {costCalibration && (
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                            <h3 className="text-lg font-semibold text-slate-200">Cost Calibration</h3>
+                        <Surface tone="panel" padding="lg">
+                            <h3 className="text-lg font-semibold text-panel-foreground">Cost Calibration</h3>
                             <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Comparable Coverage</div>
-                                    <div className="mt-2 text-2xl font-semibold text-emerald-300">{formatPercent(costCalibration.comparableCoveragePct)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">{formatNumber(costCalibration.comparableSessionCount)} sessions</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Mismatch</div>
-                                    <div className="mt-2 text-2xl font-semibold text-amber-300">{formatPercent(costCalibration.avgMismatchPct)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">max {formatPercent(costCalibration.maxMismatchPct)}</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Avg Confidence</div>
-                                    <div className="mt-2 text-2xl font-semibold text-indigo-300">{formatPercent(costCalibration.avgCostConfidence)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">all sessions</div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
-                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Display Spend</div>
-                                    <div className="mt-2 text-2xl font-semibold text-slate-100">{formatCurrency(costCalibration.totalDisplayCostUsd)}</div>
-                                    <div className="mt-1 text-xs text-slate-500">reported &gt; recalculated &gt; estimated</div>
-                                </div>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Comparable Coverage</div>
+                                    <div className="mt-2 text-2xl font-semibold text-success-foreground">{formatPercent(costCalibration.comparableCoveragePct)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">{formatNumber(costCalibration.comparableSessionCount)} sessions</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Mismatch</div>
+                                    <div className="mt-2 text-2xl font-semibold text-warning-foreground">{formatPercent(costCalibration.avgMismatchPct)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">max {formatPercent(costCalibration.maxMismatchPct)}</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Confidence</div>
+                                    <div className="mt-2 text-2xl font-semibold text-primary-foreground">{formatPercent(costCalibration.avgCostConfidence)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">all sessions</div>
+                                </Surface>
+                                <Surface tone="overlay" padding="md">
+                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Display Spend</div>
+                                    <div className="mt-2 text-2xl font-semibold text-panel-foreground">{formatCurrency(costCalibration.totalDisplayCostUsd)}</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">reported &gt; recalculated &gt; estimated</div>
+                                </Surface>
                             </div>
-                        </div>
+                        </Surface>
                     )}
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <Surface tone="panel" padding="lg">
                         <div className="flex items-center gap-2 mb-4">
-                            <Bell size={18} className="text-indigo-400" />
-                            <h3 className="text-lg font-semibold text-slate-200">Recent Alerts</h3>
+                            <Bell size={18} className="text-primary" />
+                            <h3 className="text-lg font-semibold text-panel-foreground">Recent Alerts</h3>
                         </div>
                         <div className="space-y-3">
                             {notifications.length === 0 ? (
-                                <p className="text-slate-500">No recent alerts.</p>
+                                <p className="text-muted-foreground">No recent alerts.</p>
                             ) : (
                                 notifications.map(n => (
-                                    <div key={n.id} className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50 flex justify-between items-center">
-                                        <span className="text-slate-300 text-sm">{n.message}</span>
-                                        <span className="text-slate-500 text-xs">{new Date(n.timestamp).toLocaleString()}</span>
-                                    </div>
+                                    <Surface key={n.id} tone="overlay" padding="sm" className="flex items-center justify-between gap-3">
+                                        <span className="text-sm text-foreground">{n.message}</span>
+                                        <span className="text-xs text-muted-foreground">{new Date(n.timestamp).toLocaleString()}</span>
+                                    </Surface>
                                 ))
                             )}
                         </div>
-                    </div>
+                    </Surface>
                 </div>
             )}
 
@@ -527,20 +534,20 @@ export const AnalyticsDashboard: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
                             <div className="flex items-center justify-between gap-3 mb-4">
                                 <div>
-                                    <h3 className="text-slate-200 font-semibold">Top Attribution Targets</h3>
-                                    <p className="mt-1 text-sm text-slate-500">Exclusive totals reconcile workload. Supporting totals show participation across overlaps.</p>
+                                    <h3 className="text-panel-foreground font-semibold">Top Attribution Targets</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">Exclusive totals reconcile workload. Supporting totals show participation across overlaps.</p>
                                 </div>
-                                <div className="text-xs text-slate-500">
+                                <div className="text-xs text-muted-foreground">
                                     {formatNumber(Number(usageAttribution?.summary?.entityCount || 0))} entities
                                 </div>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="text-slate-400 border-b border-slate-800">
+                                        <tr className="text-muted-foreground border-b border-panel-border">
                                             <th className="text-left py-2 pr-3">Entity</th>
                                             <th className="text-right py-2 pr-3">Exclusive</th>
                                             <th className="text-right py-2 pr-3">Supporting</th>
@@ -558,15 +565,15 @@ export const AnalyticsDashboard: React.FC = () => {
                                             return (
                                                 <tr
                                                     key={`${row.entityType}-${row.entityId}-${idx}`}
-                                                    className={`border-b border-slate-900/80 text-slate-300 ${isSelected ? 'bg-indigo-500/5' : ''}`}
+                                                    className={`border-b border-panel-border/80 text-foreground ${isSelected ? 'bg-primary/5' : ''}`}
                                                 >
                                                     <td className="py-2 pr-3">
                                                         <button
                                                             onClick={() => setSelectedUsageEntity({ entityType: row.entityType, entityId: row.entityId })}
                                                             className="text-left"
                                                         >
-                                                            <div className="text-slate-100">{row.entityLabel || row.entityId}</div>
-                                                            <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.entityType}</div>
+                                                            <div className="text-panel-foreground">{row.entityLabel || row.entityId}</div>
+                                                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{row.entityType}</div>
                                                         </button>
                                                     </td>
                                                     <td className="py-2 pr-3 text-right font-mono">{formatNumber(Number(row.exclusiveTokens || 0))}</td>
@@ -582,38 +589,38 @@ export const AnalyticsDashboard: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold">Calibration Summary</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold">Calibration Summary</h3>
                             <div className="mt-4 space-y-3 text-sm">
                                 {(usageCalibration?.confidenceBands || []).map((band, idx) => (
-                                    <div key={`${String(band.band)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
-                                        <span className="text-slate-300 capitalize">{String(band.band || 'unknown')} confidence</span>
-                                        <span className="font-mono text-slate-100">{formatNumber(Number(band.count || 0))}</span>
+                                    <div key={`${String(band.band)}-${idx}`} className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-3 flex items-center justify-between gap-3">
+                                        <span className="text-foreground capitalize">{String(band.band || 'unknown')} confidence</span>
+                                        <span className="font-mono text-panel-foreground">{formatNumber(Number(band.count || 0))}</span>
                                     </div>
                                 ))}
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
-                                    <span className="text-slate-300">Unattributed events</span>
-                                    <span className="font-mono text-slate-100">{formatNumber(Number(usageCalibration?.unattributedEventCount || 0))}</span>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-foreground">Unattributed events</span>
+                                    <span className="font-mono text-panel-foreground">{formatNumber(Number(usageCalibration?.unattributedEventCount || 0))}</span>
                                 </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3 flex items-center justify-between gap-3">
-                                    <span className="text-slate-300">Cache reconciliation gap</span>
-                                    <span className="font-mono text-slate-100">{formatTokenCount(Math.abs(Number(usageCalibration?.cacheGap || 0)))}</span>
+                                <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-3 flex items-center justify-between gap-3">
+                                    <span className="text-foreground">Cache reconciliation gap</span>
+                                    <span className="font-mono text-panel-foreground">{formatTokenCount(Math.abs(Number(usageCalibration?.cacheGap || 0)))}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold mb-4">Method Mix</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold mb-4">Method Mix</h3>
                             <div className="space-y-3">
                                 {attributionMethodMix.map((row, idx) => (
-                                    <div key={`${String(row.method)}-${idx}`} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-3">
+                                    <div key={`${String(row.method)}-${idx}`} className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-3">
                                         <div className="flex items-center justify-between gap-3">
-                                            <span className="text-slate-200 text-sm">{String(row.method || 'unknown')}</span>
-                                            <span className="font-mono text-slate-100">{formatNumber(Number(row.tokens || 0))}</span>
+                                            <span className="text-panel-foreground text-sm">{String(row.method || 'unknown')}</span>
+                                            <span className="font-mono text-panel-foreground">{formatNumber(Number(row.tokens || 0))}</span>
                                         </div>
-                                        <div className="mt-1 text-xs text-slate-500">
+                                        <div className="mt-1 text-xs text-muted-foreground">
                                             {formatNumber(Number(row.eventCount || 0))} events, avg confidence {Number(row.averageConfidence || 0).toFixed(2)}
                                         </div>
                                     </div>
@@ -621,11 +628,11 @@ export const AnalyticsDashboard: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
                             <div className="flex items-center justify-between gap-3 mb-4">
                                 <div>
-                                    <h3 className="text-slate-200 font-semibold">Entity Drill-down</h3>
-                                    <p className="mt-1 text-sm text-slate-500">
+                                    <h3 className="text-panel-foreground font-semibold">Entity Drill-down</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">
                                         {selectedUsageEntity ? `${selectedUsageEntity.entityType}: ${selectedUsageEntity.entityId}` : 'Select an entity to inspect contributing events.'}
                                     </p>
                                 </div>
@@ -633,7 +640,7 @@ export const AnalyticsDashboard: React.FC = () => {
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="text-slate-400 border-b border-slate-800">
+                                        <tr className="text-muted-foreground border-b border-panel-border">
                                             <th className="text-left py-2 pr-3">Captured</th>
                                             <th className="text-left py-2 pr-3">Session</th>
                                             <th className="text-left py-2 pr-3">Method</th>
@@ -644,8 +651,8 @@ export const AnalyticsDashboard: React.FC = () => {
                                     </thead>
                                     <tbody>
                                         {(usageDrilldown?.items || []).map((row, idx) => (
-                                            <tr key={`${row.eventId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
-                                                <td className="py-2 pr-3 text-xs text-slate-400">{new Date(row.capturedAt).toLocaleString()}</td>
+                                            <tr key={`${row.eventId}-${idx}`} className="border-b border-panel-border/80 text-foreground">
+                                                <td className="py-2 pr-3 text-xs text-muted-foreground">{new Date(row.capturedAt).toLocaleString()}</td>
                                                 <td className="py-2 pr-3">
                                                     <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
                                                 </td>
@@ -662,9 +669,9 @@ export const AnalyticsDashboard: React.FC = () => {
                     </div>
                 </div>
                 ) : (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                    <div className="rounded-xl border border-warning-border/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
                         <p className="font-semibold">{usageAttributionAvailable ? 'Usage Attribution Unavailable' : 'Usage Attribution Disabled'}</p>
-                        <p className="mt-1 text-amber-100/80">
+                        <p className="mt-1 text-warning-foreground/80">
                             {usageAttributionAvailable
                                 ? 'The attribution endpoints are currently unavailable. Check the global rollout gate or backend status.'
                                 : 'Enable Usage Attribution in Project Settings to show attribution rollups, calibration, and drill-down views.'}
@@ -684,7 +691,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <div className="flex justify-end">
                             <button
                                 onClick={() => navigate('/workflows')}
-                                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                                className="inline-flex items-center gap-2 rounded-lg border border-hover px-3 py-2 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
                             >
                                 <Sparkles size={13} />
                                 Open Workflow Registry
@@ -692,9 +699,9 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                    <div className="rounded-xl border border-warning-border/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
                         <p className="font-semibold">Workflow Intelligence Disabled</p>
-                        <p className="mt-1 text-amber-100/80">
+                        <p className="mt-1 text-warning-foreground/80">
                             Project settings have disabled workflow effectiveness analytics for this surface.
                         </p>
                     </div>
@@ -744,33 +751,41 @@ export const AnalyticsDashboard: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold mb-4">Artifacts by Type</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold mb-4">Artifacts by Type</h3>
                             <div className="h-72 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={artifactTypeChart}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                        <XAxis dataKey="name" stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
-                                        <YAxis stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
+                                        <CartesianGrid {...chartTheme.grid} vertical={false} />
+                                        <XAxis dataKey="name" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
+                                        <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
                                         <Tooltip
-                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                                            contentStyle={chartTheme.tooltip.contentStyle}
+                                            itemStyle={chartTheme.tooltip.itemStyle}
+                                            labelStyle={chartTheme.tooltip.labelStyle}
+                                            cursor={chartTheme.tooltip.cursor}
                                             formatter={(value: number) => [formatNumber(value), 'Artifacts']}
                                         />
-                                        <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                                        <Bar dataKey="count" fill={getChartSeriesColor('primary')} radius={[4, 4, 0, 0]} />
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold mb-4">Artifact Sources</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold mb-4">Artifact Sources</h3>
                             <div className="h-72 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
-                                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                                        <Tooltip
+                                            contentStyle={chartTheme.tooltip.contentStyle}
+                                            itemStyle={chartTheme.tooltip.itemStyle}
+                                            labelStyle={chartTheme.tooltip.labelStyle}
+                                            cursor={chartTheme.tooltip.cursor}
+                                        />
                                         <Pie data={artifactSourceChart} dataKey="count" nameKey="name" outerRadius={110} label>
                                             {artifactSourceChart.map((entry, index) => (
-                                                <Cell key={`${entry.name}-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                                <Cell key={`${entry.name}-${index}`} fill={getChartSeriesColor(PIE_TONES[index % PIE_TONES.length])} />
                                             ))}
                                         </Pie>
                                     </PieChart>
@@ -779,12 +794,12 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Model ↔ Artifact Relationships</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Model ↔ Artifact Relationships</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-right py-2 pr-3">Count</th>
@@ -795,7 +810,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {(artifacts?.modelArtifact || []).slice(0, 24).map((row, idx) => (
-                                        <tr key={`${row.model}-${row.artifactType}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={`${row.model}-${row.artifactType}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -809,12 +824,12 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Per-Session Artifact Detail</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Per-Session Artifact Detail</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Session</th>
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
@@ -825,20 +840,20 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {(artifacts?.bySession || []).slice(0, 20).map((row) => (
-                                        <tr key={row.sessionId} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={row.sessionId} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3">
                                                 <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
                                             </td>
                                             <td className="py-2 pr-3">
                                                 <div><ModelBadge raw={row.model} family={row.modelFamily} /></div>
-                                                {row.modelFamily && <div className="text-[11px] text-slate-500">{row.modelFamily}</div>}
+                                                {row.modelFamily && <div className="text-[11px] text-muted-foreground">{row.modelFamily}</div>}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.totalTokens)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatCurrency(row.totalCost)}</td>
                                             <td className="py-2 text-xs">
                                                 {row.featureIds.length === 0 ? (
-                                                    <span className="text-slate-500">Unlinked</span>
+                                                    <span className="text-muted-foreground">Unlinked</span>
                                                 ) : (
                                                     <div className="flex flex-wrap gap-1.5">
                                                         {row.featureIds.map((featureId, idx) => (
@@ -862,25 +877,25 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'models_tools' && (
                 <div className="space-y-6">
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
                         <div className="flex items-center justify-between mb-4 gap-3">
-                            <h3 className="text-slate-200 font-semibold">
+                            <h3 className="text-panel-foreground font-semibold">
                                 Token Usage by {modelGrouping === 'model' ? 'Canonical Model' : 'Model Family'}
                             </h3>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setModelGrouping('model')}
                                     className={`px-2.5 py-1.5 rounded-md text-xs border ${modelGrouping === 'model'
-                                        ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-200'
-                                        : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                                        ? 'bg-primary/10 border-primary-border/40 text-primary-foreground'
+                                        : 'bg-surface-muted border-hover text-foreground'}`}
                                 >
                                     Model
                                 </button>
                                 <button
                                     onClick={() => setModelGrouping('family')}
                                     className={`px-2.5 py-1.5 rounded-md text-xs border ${modelGrouping === 'family'
-                                        ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-200'
-                                        : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                                        ? 'bg-primary/10 border-primary-border/40 text-primary-foreground'
+                                        : 'bg-surface-muted border-hover text-foreground'}`}
                                 >
                                     Family
                                 </button>
@@ -889,11 +904,14 @@ export const AnalyticsDashboard: React.FC = () => {
                         <div className="h-80 w-full">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={modelTokenChart}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                    <XAxis dataKey="name" stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
-                                    <YAxis stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
+                                    <CartesianGrid {...chartTheme.grid} vertical={false} />
+                                    <XAxis dataKey="name" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
+                                    <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
                                     <Tooltip
-                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                                        contentStyle={chartTheme.tooltip.contentStyle}
+                                        itemStyle={chartTheme.tooltip.itemStyle}
+                                        labelStyle={chartTheme.tooltip.labelStyle}
+                                        cursor={chartTheme.tooltip.cursor}
                                         formatter={(value: number, name: string) => [name === 'cost' ? formatCurrency(value) : formatNumber(value), name]}
                                     />
                                     <Bar dataKey="tokens" radius={[4, 4, 0, 0]}>
@@ -911,12 +929,12 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Model Family Summary</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Model Family Summary</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Family</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
@@ -926,7 +944,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {(artifacts?.modelFamilies || []).slice(0, 12).map((row, idx) => (
-                                        <tr key={`${row.modelFamily}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={`${row.modelFamily}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3">
                                                 <Badge
                                                     className="text-xs"
@@ -946,12 +964,12 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Model + Artifact + Tool Relationships</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Model + Artifact + Tool Relationships</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Model</th>
                                         <th className="text-left py-2 pr-3">Family</th>
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
@@ -963,7 +981,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                         {(artifacts?.modelArtifactTool || []).slice(0, 30).map((row, idx) => (
-                                            <tr key={`${row.model}-${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                            <tr key={`${row.model}-${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                                 <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                                 <td className="py-2 pr-3 text-xs">
                                                     {row.modelFamily
@@ -983,12 +1001,12 @@ export const AnalyticsDashboard: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold mb-4">Commands ↔ Models</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold mb-4">Commands ↔ Models</h3>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="text-slate-400 border-b border-slate-800">
+                                        <tr className="text-muted-foreground border-b border-panel-border">
                                             <th className="text-left py-2 pr-3">Command</th>
                                             <th className="text-left py-2 pr-3">Model</th>
                                             <th className="text-left py-2 pr-3">Family</th>
@@ -998,7 +1016,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                     </thead>
                                     <tbody>
                                         {(artifacts?.commandModel || []).slice(0, 24).map((row, idx) => (
-                                            <tr key={`${row.command}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                            <tr key={`${row.command}-${row.model}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                                 <td className="py-2 pr-3 font-mono text-xs">{row.command}</td>
                                                 <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                                 <td className="py-2 pr-3 text-xs">
@@ -1015,12 +1033,12 @@ export const AnalyticsDashboard: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                            <h3 className="text-slate-200 font-semibold mb-4">Agents ↔ Models</h3>
+                        <div className="bg-panel border border-panel-border rounded-xl p-5">
+                            <h3 className="text-panel-foreground font-semibold mb-4">Agents ↔ Models</h3>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="text-slate-400 border-b border-slate-800">
+                                        <tr className="text-muted-foreground border-b border-panel-border">
                                             <th className="text-left py-2 pr-3">Agent</th>
                                             <th className="text-left py-2 pr-3">Model</th>
                                             <th className="text-left py-2 pr-3">Family</th>
@@ -1030,7 +1048,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                     </thead>
                                     <tbody>
                                         {(artifacts?.agentModel || []).slice(0, 24).map((row, idx) => (
-                                            <tr key={`${row.agent}-${row.model}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                            <tr key={`${row.agent}-${row.model}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                                 <td className="py-2 pr-3">{row.agent}</td>
                                                 <td className="py-2 pr-3"><ModelBadge raw={row.model} family={row.modelFamily} /></td>
                                                 <td className="py-2 pr-3 text-xs">
@@ -1048,12 +1066,12 @@ export const AnalyticsDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Artifact Type ↔ Tool Relationships</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Artifact Type ↔ Tool Relationships</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Artifact Type</th>
                                         <th className="text-left py-2 pr-3">Tool</th>
                                         <th className="text-right py-2 pr-3">Count</th>
@@ -1062,7 +1080,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {(artifacts?.artifactTool || []).slice(0, 24).map((row, idx) => (
-                                        <tr key={`${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={`${row.artifactType}-${row.toolName}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3">{row.artifactType}</td>
                                             <td className="py-2 pr-3 font-mono text-xs">{row.toolName}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.count)}</td>
@@ -1078,30 +1096,33 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {!loading && !error && activeTab === 'features' && (
                 <div className="space-y-6">
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Artifacts by Feature</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Artifacts by Feature</h3>
                         <div className="h-80 w-full">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={featureChart}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                    <XAxis dataKey="name" stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
-                                    <YAxis stroke="#64748b" tick={{ fill: '#64748b', fontSize: 11 }} />
+                                    <CartesianGrid {...chartTheme.grid} vertical={false} />
+                                    <XAxis dataKey="name" {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
+                                    <YAxis {...chartTheme.axis} tick={{ ...chartTheme.axis.tick, fontSize: 11 }} />
                                     <Tooltip
-                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }}
+                                        contentStyle={chartTheme.tooltip.contentStyle}
+                                        itemStyle={chartTheme.tooltip.itemStyle}
+                                        labelStyle={chartTheme.tooltip.labelStyle}
+                                        cursor={chartTheme.tooltip.cursor}
                                         formatter={(value: number) => [formatNumber(value), 'Artifacts']}
                                     />
-                                    <Bar dataKey="count" fill="#10b981" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="count" fill={getChartSeriesColor('success')} radius={[4, 4, 0, 0]} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                        <h3 className="text-slate-200 font-semibold mb-4">Feature Detail</h3>
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
+                        <h3 className="text-panel-foreground font-semibold mb-4">Feature Detail</h3>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Feature</th>
                                         <th className="text-right py-2 pr-3">Artifacts</th>
                                         <th className="text-right py-2 pr-3">Sessions</th>
@@ -1111,10 +1132,10 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {(artifacts?.byFeature || []).slice(0, 24).map((row) => (
-                                        <tr key={row.featureId} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={row.featureId} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3">
                                                 <EntityLinkButton label={row.featureName || row.featureId} onClick={() => openFeature(row.featureId)} />
-                                                <div className="text-xs text-slate-500 font-mono">{row.featureId}</div>
+                                                <div className="text-xs text-muted-foreground font-mono">{row.featureId}</div>
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.artifactCount)}</td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatNumber(row.sessions)}</td>
@@ -1146,19 +1167,19 @@ export const AnalyticsDashboard: React.FC = () => {
                             <MetricCard label="Avg Cost Confidence" value={formatPercent(costCalibration.avgCostConfidence)} subtitle="display-cost rows" />
                         </div>
                     )}
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                    <div className="bg-panel border border-panel-border rounded-xl p-5">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                            <h3 className="text-slate-200 font-semibold">Session ↔ Feature Correlation</h3>
-                            <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+                            <h3 className="text-panel-foreground font-semibold">Session ↔ Feature Correlation</h3>
+                            <div className="flex bg-surface-overlay rounded-lg p-0.5 border border-panel-border">
                                 <button
                                     onClick={() => setCorrelationLinkedOnly(false)}
-                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${!correlationLinkedOnly ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${!correlationLinkedOnly ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-panel-foreground'}`}
                                 >
                                     All Rows
                                 </button>
                                 <button
                                     onClick={() => setCorrelationLinkedOnly(true)}
-                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${correlationLinkedOnly ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                    className={`px-3 py-1.5 text-[11px] font-semibold rounded ${correlationLinkedOnly ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-panel-foreground'}`}
                                 >
                                     Linked Only
                                 </button>
@@ -1167,7 +1188,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-slate-400 border-b border-slate-800">
+                                    <tr className="text-muted-foreground border-b border-panel-border">
                                         <th className="text-left py-2 pr-3">Session</th>
                                         <th className="text-left py-2 pr-3">Thread</th>
                                         <th className="text-left py-2 pr-3">Feature</th>
@@ -1185,15 +1206,15 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </thead>
                                 <tbody>
                                     {filteredCorrelation.slice(0, 80).map((row, idx) => (
-                                        <tr key={`${row.sessionId}-${row.featureId}-${idx}`} className="border-b border-slate-900/80 text-slate-300">
+                                        <tr key={`${row.sessionId}-${row.featureId}-${idx}`} className="border-b border-panel-border/80 text-foreground">
                                             <td className="py-2 pr-3">
                                                 <EntityLinkButton label={row.sessionId} onClick={() => openSession(row.sessionId)} mono />
                                             </td>
                                             <td className="py-2 pr-3">
                                                 <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
                                                     row.isSubagent
-                                                        ? 'bg-amber-500/10 text-amber-300 border border-amber-500/25'
-                                                        : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/25'
+                                                        ? 'bg-warning/10 text-warning-foreground border border-warning-border/25'
+                                                        : 'bg-success/10 text-success-foreground border border-success-border/25'
                                                 }`}>
                                                     {row.isSubagent ? 'sub-thread' : 'main'}
                                                 </span>
@@ -1205,7 +1226,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                                         onClick={() => openFeature(row.featureId)}
                                                     />
                                                 ) : (
-                                                    <span className="text-slate-500">Unlinked</span>
+                                                    <span className="text-muted-foreground">Unlinked</span>
                                                 )}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{Number(row.confidence || 0).toFixed(2)}</td>
@@ -1217,18 +1238,18 @@ export const AnalyticsDashboard: React.FC = () => {
                                                     : '-'}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatCurrency(Number(row.totalCost || 0))}</td>
-                                            <td className="py-2 pr-3 text-xs text-slate-400">
+                                            <td className="py-2 pr-3 text-xs text-muted-foreground">
                                                 {costProvenanceLabel(row.costProvenance)}
                                                 {Number(row.costMismatchPct || 0) > 0 ? ` · ${(Number(row.costMismatchPct || 0) * 100).toFixed(1)}%` : ''}
                                             </td>
                                             <td className="py-2 pr-3 text-right font-mono">{formatDurationSeconds(Number(row.durationSeconds || 0))}</td>
-                                            <td className="py-2 pr-3">{row.model ? <ModelBadge raw={row.model} family={row.modelFamily} /> : <span className="text-slate-500">-</span>}</td>
+                                            <td className="py-2 pr-3">{row.model ? <ModelBadge raw={row.model} family={row.modelFamily} /> : <span className="text-muted-foreground">-</span>}</td>
                                             <td className="py-2 pr-3 text-xs">
                                                 {row.modelFamily
                                                     ? <Badge style={getBadgeStyleForModel({ family: row.modelFamily })}>{row.modelFamily}</Badge>
                                                     : '-'}
                                             </td>
-                                            <td className="py-2 text-xs text-slate-400">{row.linkStrategy || '-'}</td>
+                                            <td className="py-2 text-xs text-muted-foreground">{row.linkStrategy || '-'}</td>
                                         </tr>
                                     ))}
                                 </tbody>
