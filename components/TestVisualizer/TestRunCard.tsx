@@ -33,9 +33,9 @@ const toStatus = (status: TestRun['status']) => {
 };
 
 const triggerChipClass = (trigger: string): string => {
-  if (trigger === 'ci') return 'border-cyan-500/35 bg-cyan-500/10 text-cyan-300';
-  if (trigger === 'local') return 'border-slate-600/45 bg-slate-700/30 text-slate-300';
-  return 'border-indigo-500/35 bg-indigo-500/10 text-indigo-300';
+  if (trigger === 'ci') return 'border-info-border bg-info/10 text-info-foreground';
+  if (trigger === 'local') return 'border-panel-border bg-surface-muted text-muted-foreground';
+  return 'border-success-border bg-success/10 text-success-foreground';
 };
 
 export const TestRunCard: React.FC<TestRunCardProps> = ({
@@ -71,18 +71,18 @@ export const TestRunCard: React.FC<TestRunCardProps> = ({
       tabIndex={0}
       onClick={onOpenRun}
       onKeyDown={handleKeyDown}
-      className={`min-w-[280px] rounded-xl border bg-slate-900 p-4 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${selected ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-800 hover:border-slate-700'} ${run.status === 'running' ? 'border-l-2 border-l-indigo-400 motion-safe:animate-pulse motion-reduce:animate-none' : ''} ${className}`.trim()}
+      className={`min-w-[280px] rounded-xl border bg-panel p-4 text-panel-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 focus-visible:ring-offset-2 focus-visible:ring-offset-app-background ${selected ? 'border-info-border bg-info/10' : 'border-panel-border hover:border-hover'} ${run.status === 'running' ? 'border-l-2 border-l-info motion-safe:animate-pulse motion-reduce:animate-none' : ''} ${className}`.trim()}
     >
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-200">
+          <span className="rounded border border-panel-border bg-surface-overlay/80 px-2 py-0.5 font-mono text-xs text-panel-foreground">
             {shortHash(run.runId)}
           </span>
           <span className={`rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${triggerChipClass(run.trigger)}`}>
             {run.trigger}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TestStatusBadge status={toStatus(run.status)} size="sm" />
           <span>{new Date(run.timestamp).toLocaleString()}</span>
         </div>
@@ -95,25 +95,25 @@ export const TestRunCard: React.FC<TestRunCardProps> = ({
         total={run.totalTests}
       />
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {!compact && run.gitSha && (
-          <span className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          <span className="rounded border border-panel-border bg-surface-overlay/80 px-1.5 py-0.5 font-mono text-[10px] text-panel-foreground">
             {shortHash(run.gitSha)}
           </span>
         )}
         {!compact && run.branch && (
-          <span className="rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          <span className="rounded border border-panel-border bg-surface-overlay/80 px-1.5 py-0.5 font-mono text-[10px] text-panel-foreground">
             {run.branch}
           </span>
         )}
-        <span className="inline-flex items-center gap-1 text-slate-500">
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Clock size={12} aria-hidden="true" />
           {formatDuration(run.durationMs)}
         </span>
         {showSession && !compact && run.agentSessionId && (
           <Link
             to={`/sessions?session=${encodeURIComponent(run.agentSessionId)}`}
-            className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
+            className="inline-flex items-center gap-1 text-info-foreground hover:text-info"
             onClick={event => event.stopPropagation()}
           >
             <Link2 size={12} aria-hidden="true" />

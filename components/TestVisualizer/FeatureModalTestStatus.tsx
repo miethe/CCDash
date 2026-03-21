@@ -29,8 +29,8 @@ export const FeatureModalTestStatus: React.FC<FeatureModalTestStatusProps> = ({
       </div>
     </div>
 
-    <div className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-xs text-slate-400">
-      <p className="font-mono text-slate-500">{featureId}</p>
+    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs text-muted-foreground">
+      <p className="font-mono text-muted-foreground">{featureId}</p>
       <p className="mt-1">
         Last run: {health.lastRunAt ? new Date(health.lastRunAt).toLocaleString() : 'No run yet'}
       </p>

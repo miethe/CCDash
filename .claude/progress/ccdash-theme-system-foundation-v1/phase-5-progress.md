@@ -11,12 +11,13 @@ title: Feature surface migration waves
 status: in_progress
 started: '2026-03-20'
 completed: ''
-commit_refs: []
+commit_refs:
+- 43bdf87
 pr_refs: []
-overall_progress: 33
+overall_progress: 67
 completion_estimate: in_progress
 total_tasks: 3
-completed_tasks: 1
+completed_tasks: 2
 in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -38,7 +39,7 @@ tasks:
   priority: high
 - id: THEME-402
   description: Migrate test-visualizer and workflow registry surfaces to semantic primitives and status variants.
-  status: in_progress
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies:
@@ -47,7 +48,7 @@ tasks:
   priority: high
 - id: THEME-403
   description: Migrate the most styling-dense monolithic pages in staged slices using semantic shells and shared surface patterns.
-  status: pending
+  status: in_progress
   assigned_to:
   - codebase-janitor
   - frontend-developer

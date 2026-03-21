@@ -66,10 +66,10 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
 
   if (isLoading) {
     return (
-      <div className={`rounded-xl border border-slate-800 bg-slate-900 ${className}`.trim()}>
+      <div className={`rounded-xl border border-panel-border bg-panel ${className}`.trim()}>
         <div className="space-y-2 p-3">
           {Array.from({ length: 5 }).map((_, index) => (
-            <div key={index} className="h-10 animate-pulse rounded bg-slate-800" />
+            <div key={index} className="h-10 animate-pulse rounded bg-surface-muted" />
           ))}
         </div>
       </div>
@@ -78,19 +78,19 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
 
   if (results.length === 0) {
     return (
-      <div className={`rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-500 ${className}`.trim()}>
+      <div className={`rounded-xl border border-panel-border bg-panel p-6 text-sm text-muted-foreground ${className}`.trim()}>
         No test results yet.
       </div>
     );
   }
 
   return (
-    <div className={`rounded-xl border border-slate-800 bg-slate-900 ${className}`.trim()}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-3">
-        <div className="text-xs text-slate-400">
-          Server-sorted by <span className="font-semibold text-slate-200">{sortKey}</span> ({sortOrder})
+    <div className={`rounded-xl border border-panel-border bg-panel ${className}`.trim()}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-panel-border p-3">
+        <div className="text-xs text-muted-foreground">
+          Server-sorted by <span className="font-semibold text-panel-foreground">{sortKey}</span> ({sortOrder})
         </div>
-        <div className="text-xs text-slate-500">
+        <div className="text-xs text-muted-foreground">
           {results.length} loaded / {typeof total === 'number' ? total : results.length} total
           {typeof totalTestsOverall === 'number' && (
             <span> (out of {totalTestsOverall} total tests)</span>
@@ -100,7 +100,7 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-950/40 text-xs uppercase tracking-wide text-slate-500">
+          <thead className="bg-surface-overlay/70 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left">Details</th>
               <th className="px-3 py-2 text-left">
@@ -121,32 +121,32 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
               const expanded = Boolean(expandedRows[result.testId]);
               return (
                 <React.Fragment key={`${result.runId}:${result.testId}`}>
-                  <tr className="border-t border-slate-800 text-slate-300">
+                  <tr className="border-t border-panel-border text-foreground">
                     <td className="px-3 py-2 align-top">
                       <button
                         type="button"
                         onClick={() => toggleRow(result.testId)}
-                        className="rounded border border-slate-700 bg-slate-800 p-1 text-slate-400 hover:text-slate-200"
+                        className="rounded border border-panel-border bg-surface-muted p-1 text-muted-foreground hover:text-panel-foreground"
                         aria-label={expanded ? 'Collapse row' : 'Expand row'}
                       >
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </button>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <div className="font-medium text-slate-200">{definition?.name || result.testId}</div>
-                      <div className="font-mono text-xs text-slate-500">{definition?.path || result.testId}</div>
+                      <div className="font-medium text-panel-foreground">{definition?.name || result.testId}</div>
+                      <div className="font-mono text-xs text-muted-foreground">{definition?.path || result.testId}</div>
                     </td>
                     <td className="px-3 py-2 align-top">
                       <TestStatusBadge status={result.status} size="md" />
                     </td>
-                    <td className="px-3 py-2 align-top text-slate-400">{formatDuration(result.durationMs)}</td>
-                    <td className="px-3 py-2 align-top text-slate-400">{previewError(result.errorMessage)}</td>
+                    <td className="px-3 py-2 align-top text-muted-foreground">{formatDuration(result.durationMs)}</td>
+                    <td className="px-3 py-2 align-top text-muted-foreground">{previewError(result.errorMessage)}</td>
                   </tr>
                   {expanded && (
-                    <tr className="border-t border-slate-800/70 bg-slate-950/30">
+                    <tr className="border-t border-panel-border/80 bg-surface-overlay/60">
                       <td colSpan={5} className="px-3 py-3">
-                        <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Full Error</p>
+                        <div className="rounded-lg border border-panel-border bg-surface-overlay p-3">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Full Error</p>
                           <pre className="whitespace-pre-wrap break-words font-mono text-xs text-rose-200">
                             {result.errorMessage || 'No error message.'}
                           </pre>
@@ -161,14 +161,14 @@ export const TestResultTable: React.FC<TestResultTableProps> = ({
         </table>
       </div>
       {(error || hasMore || isLoadingMore) && (
-        <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2">
+        <div className="flex items-center justify-between border-t border-panel-border px-3 py-2">
           <div className="text-xs text-rose-300">{error || ''}</div>
           {hasMore && onLoadMore && (
             <button
               type="button"
               onClick={onLoadMore}
               disabled={isLoadingMore}
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:border-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded border border-panel-border bg-surface-muted px-3 py-1.5 text-xs text-panel-foreground hover:border-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isLoadingMore ? 'Loading more…' : 'Load more'}
             </button>

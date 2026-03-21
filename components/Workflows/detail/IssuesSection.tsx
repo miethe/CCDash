@@ -9,9 +9,9 @@ interface IssuesSectionProps {
 }
 
 export const IssuesSection: React.FC<IssuesSectionProps> = ({ issues }) => (
-  <section className="rounded-[28px] border border-slate-800/80 bg-slate-950/55 px-5 py-5">
-    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Issues</div>
-    <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-100">Correlation gaps and tuning friction</h3>
+  <section className="rounded-[28px] border border-panel-border bg-surface-overlay/70 px-5 py-5">
+    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Issues</div>
+    <h3 className="mt-2 text-xl font-semibold tracking-tight text-panel-foreground">Correlation gaps and tuning friction</h3>
 
     {issues.length === 0 ? (
       <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-4 text-sm text-emerald-100">

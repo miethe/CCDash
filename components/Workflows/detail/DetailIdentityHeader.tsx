@@ -28,13 +28,13 @@ const ReferenceButton: React.FC<{
   <button
     type="button"
     onClick={onClick}
-    className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-left transition-colors hover:border-slate-600"
+    className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-3 text-left transition-colors hover:border-hover"
   >
-    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
       {icon}
       {subtitle}
     </div>
-    <div className="mt-2 text-sm font-semibold text-slate-100 [overflow-wrap:anywhere]">{label}</div>
+    <div className="mt-2 text-sm font-semibold text-panel-foreground [overflow-wrap:anywhere]">{label}</div>
   </button>
 );
 
@@ -44,29 +44,29 @@ export const DetailIdentityHeader: React.FC<DetailIdentityHeaderProps> = ({
   commandReference,
   onOpenReference,
 }) => (
-  <section className="rounded-[28px] border border-slate-800/80 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.14),_rgba(15,23,42,0.97)_38%,_rgba(2,6,23,1)_100%)] px-5 py-5">
+  <section className="rounded-[28px] border border-panel-border bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.14),_rgba(15,23,42,0.97)_38%,_rgba(2,6,23,1)_100%)] px-5 py-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Identity</div>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-100 [overflow-wrap:anywhere]">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Identity</div>
+        <h2 className="mt-2 text-3xl font-semibold tracking-tight text-panel-foreground [overflow-wrap:anywhere]">
           {detail.identity.displayLabel || detail.identity.observedWorkflowFamilyRef || detail.id}
         </h2>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span
             className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-semibold ${correlationBadgeClass(detail.correlationState)}`}
           >
             <Radar size={12} />
             {correlationStateLabel(detail.correlationState)}
           </span>
-          <span className="rounded-full border border-slate-800 bg-slate-950/70 px-2.5 py-1 text-xs text-slate-300">
+          <span className="rounded-full border border-panel-border bg-surface-overlay/80 px-2.5 py-1 text-xs text-foreground">
             Sample size {formatInteger(detail.sampleSize)}
           </span>
-          <span className="rounded-full border border-slate-800 bg-slate-950/70 px-2.5 py-1 text-xs text-slate-300">
+          <span className="rounded-full border border-panel-border bg-surface-overlay/80 px-2.5 py-1 text-xs text-foreground">
             Last seen {formatDateTime(detail.lastObservedAt)}
           </span>
         </div>
-        <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-300">
-          Observed family <span className="font-mono text-slate-200">{detail.identity.observedWorkflowFamilyRef || 'n/a'}</span>
+        <p className="mt-4 max-w-3xl text-sm leading-6 text-foreground">
+          Observed family <span className="font-mono text-panel-foreground">{detail.identity.observedWorkflowFamilyRef || 'n/a'}</span>
           {' '}is being correlated against SkillMeat workflow definitions, command artifacts, and CCDash effectiveness evidence.
         </p>
       </div>
@@ -91,44 +91,44 @@ export const DetailIdentityHeader: React.FC<DetailIdentityHeaderProps> = ({
     </div>
 
     <div className="mt-5 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-4">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Observed Aliases</div>
+      <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Observed Aliases</div>
         <div className="mt-3 flex flex-wrap gap-2">
           {detail.identity.observedAliases.length > 0 ? (
             detail.identity.observedAliases.map(alias => (
               <span
                 key={`${detail.id}-${alias}`}
-                className="rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-200"
+                className="rounded-full border border-panel-border bg-panel/80 px-2.5 py-1 text-xs text-panel-foreground"
               >
                 {alias}
               </span>
             ))
           ) : (
-            <span className="text-sm text-slate-500">No additional aliases cached.</span>
+            <span className="text-sm text-muted-foreground">No additional aliases cached.</span>
           )}
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-4">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Representative Commands</div>
+      <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Representative Commands</div>
         <div className="mt-3 space-y-2">
           {detail.representativeCommands.length > 0 ? (
             detail.representativeCommands.map(command => (
               <div
                 key={`${detail.id}-${command}`}
-                className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2 font-mono text-xs text-slate-200 [overflow-wrap:anywhere]"
+                className="rounded-xl border border-panel-border bg-surface-overlay/90 px-3 py-2 font-mono text-xs text-panel-foreground [overflow-wrap:anywhere]"
               >
                 {command}
               </div>
             ))
           ) : (
-            <div className="text-sm text-slate-500">No command evidence attached.</div>
+            <div className="text-sm text-muted-foreground">No command evidence attached.</div>
           )}
         </div>
       </div>
     </div>
 
-    <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+    <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
       <Link2 size={12} />
       {detail.issueCount > 0
         ? `${formatInteger(detail.issueCount)} issue(s) are shaping current workflow confidence.`

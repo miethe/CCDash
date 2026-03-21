@@ -31,18 +31,18 @@ interface WorkflowDetailPanelProps {
 
 const LoadingState: React.FC = () => (
   <div className="space-y-4 animate-pulse">
-    <div className="h-64 rounded-[28px] border border-slate-800 bg-slate-950/50" />
-    <div className="h-52 rounded-[28px] border border-slate-800 bg-slate-950/50" />
-    <div className="h-52 rounded-[28px] border border-slate-800 bg-slate-950/50" />
+    <div className="h-64 rounded-[28px] border border-panel-border bg-surface-overlay/70" />
+    <div className="h-52 rounded-[28px] border border-panel-border bg-surface-overlay/70" />
+    <div className="h-52 rounded-[28px] border border-panel-border bg-surface-overlay/70" />
   </div>
 );
 
 const EmptyState: React.FC = () => (
-  <div className="flex min-h-[28rem] items-center justify-center rounded-[28px] border border-dashed border-slate-800 bg-slate-950/30 px-6 py-10 text-center">
+  <div className="flex min-h-[28rem] items-center justify-center rounded-[28px] border border-dashed border-panel-border bg-surface-overlay/60 px-6 py-10 text-center">
     <div className="max-w-md">
-      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Detail</div>
-      <h3 className="mt-3 text-2xl font-semibold tracking-tight text-slate-100">Select a workflow</h3>
-      <p className="mt-3 text-sm leading-6 text-slate-400">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Detail</div>
+      <h3 className="mt-3 text-2xl font-semibold tracking-tight text-panel-foreground">Select a workflow</h3>
+      <p className="mt-3 text-sm leading-6 text-muted-foreground">
         Choose a catalog entry to inspect identity, composition, effectiveness, and unresolved workflow-correlation gaps.
       </p>
     </div>
@@ -102,7 +102,7 @@ export const WorkflowDetailPanel: React.FC<WorkflowDetailPanelProps> = ({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+          className="inline-flex items-center gap-2 rounded-full border border-panel-border bg-surface-overlay/80 px-3 py-1.5 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
         >
           <ArrowLeft size={12} />
           Back to catalog
@@ -126,13 +126,13 @@ export const WorkflowDetailPanel: React.FC<WorkflowDetailPanelProps> = ({
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <IssuesSection issues={detail.issues} />
 
-        <section className="rounded-[28px] border border-slate-800/80 bg-slate-950/55 px-5 py-5">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Evidence</div>
-          <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-100">Sessions and executions</h3>
+        <section className="rounded-[28px] border border-panel-border bg-surface-overlay/70 px-5 py-5">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Evidence</div>
+          <h3 className="mt-2 text-xl font-semibold tracking-tight text-panel-foreground">Sessions and executions</h3>
 
           <div className="mt-4 space-y-4">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Representative Sessions</div>
+            <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Representative Sessions</div>
               <div className="mt-3 space-y-3">
                 {detail.representativeSessions.length > 0 ? (
                   detail.representativeSessions.map(session => (
@@ -150,29 +150,29 @@ export const WorkflowDetailPanel: React.FC<WorkflowDetailPanelProps> = ({
                           metadata: { sessionId: session.sessionId },
                         })
                       }
-                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-3 text-left transition-colors hover:border-slate-600"
+                      className="w-full rounded-2xl border border-panel-border bg-surface-overlay/90 px-4 py-3 text-left transition-colors hover:border-hover"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-slate-100 [overflow-wrap:anywhere]">
+                        <div className="text-sm font-semibold text-panel-foreground [overflow-wrap:anywhere]">
                           {session.title || session.sessionId}
                         </div>
-                        <span className="rounded-full border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-slate-300">
+                        <span className="rounded-full border border-panel-border bg-panel px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-foreground">
                           {session.status || 'unknown'}
                         </span>
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">
+                      <div className="mt-1 text-xs text-muted-foreground">
                         {session.workflowRef || 'No workflow ref'} • {formatDateTime(session.startedAt)}
                       </div>
                     </button>
                   ))
                 ) : (
-                  <div className="text-sm text-slate-500">No representative sessions were attached.</div>
+                  <div className="text-sm text-muted-foreground">No representative sessions were attached.</div>
                 )}
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Recent SkillMeat Executions</div>
+            <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Recent SkillMeat Executions</div>
               <div className="mt-3 space-y-3">
                 {detail.recentExecutions.length > 0 ? (
                   detail.recentExecutions.map(execution => (
@@ -180,25 +180,25 @@ export const WorkflowDetailPanel: React.FC<WorkflowDetailPanelProps> = ({
                       key={execution.executionId || execution.startedAt}
                       type="button"
                       onClick={() => openExternalUrl(execution.sourceUrl)}
-                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-3 text-left transition-colors hover:border-slate-600"
+                      className="w-full rounded-2xl border border-panel-border bg-surface-overlay/90 px-4 py-3 text-left transition-colors hover:border-hover"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-slate-100">
+                        <div className="text-sm font-semibold text-panel-foreground">
                           {execution.executionId || 'Execution'}
                         </div>
-                        <ExternalLink size={12} className="text-slate-500" />
+                        <ExternalLink size={12} className="text-muted-foreground" />
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                         <Clock3 size={12} />
                         {formatDateTime(execution.startedAt)}
                       </div>
-                      <div className="mt-2 text-xs text-slate-300">
+                      <div className="mt-2 text-xs text-foreground">
                         {execution.status || 'unknown'} • {formatInteger(Object.keys(execution.parameters || {}).length)} parameter field(s)
                       </div>
                     </button>
                   ))
                 ) : (
-                  <div className="text-sm text-slate-500">No recent workflow executions were cached.</div>
+                  <div className="text-sm text-muted-foreground">No recent workflow executions were cached.</div>
                 )}
               </div>
             </div>

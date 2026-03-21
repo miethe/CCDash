@@ -22,7 +22,7 @@ const toChartData = (timeline: FeatureTestTimeline) =>
 export const TestTimeline: React.FC<TestTimelineProps> = ({ timeline, className = '' }) => {
   if (!timeline || timeline.timeline.length === 0) {
     return (
-      <div className={`rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-500 ${className}`.trim()}>
+      <div className={`rounded-xl border border-panel-border bg-panel p-6 text-sm text-muted-foreground ${className}`.trim()}>
         No timeline data.
       </div>
     );
@@ -31,10 +31,10 @@ export const TestTimeline: React.FC<TestTimelineProps> = ({ timeline, className 
   const data = toChartData(timeline);
 
   return (
-    <div className={`rounded-xl border border-slate-800 bg-slate-900 p-4 ${className}`.trim()}>
+    <div className={`rounded-xl border border-panel-border bg-panel p-4 ${className}`.trim()}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-200">Feature Timeline</h3>
-        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+        <h3 className="text-sm font-semibold text-panel-foreground">Feature Timeline</h3>
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           {timeline.firstGreen && <span>First green: {new Date(timeline.firstGreen).toLocaleDateString()}</span>}
           {timeline.lastRed && <span>Last red: {new Date(timeline.lastRed).toLocaleDateString()}</span>}
         </div>

@@ -31,18 +31,18 @@ const LoadingSkeleton: React.FC = () => (
     {Array.from({ length: 4 }).map((_, index) => (
       <div
         key={`workflow-catalog-skeleton-${index}`}
-        className="rounded-[24px] border border-slate-800/80 bg-slate-950/50 p-4 animate-pulse"
+        className="rounded-[24px] border border-panel-border bg-surface-overlay/70 p-4 animate-pulse"
       >
-        <div className="h-4 w-40 rounded bg-slate-800" />
-        <div className="mt-2 h-3 w-24 rounded bg-slate-900" />
+        <div className="h-4 w-40 rounded bg-surface-muted" />
+        <div className="mt-2 h-3 w-24 rounded bg-panel" />
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <div className="h-20 rounded-2xl bg-slate-900" />
-          <div className="h-20 rounded-2xl bg-slate-900" />
+          <div className="h-20 rounded-2xl bg-panel" />
+          <div className="h-20 rounded-2xl bg-panel" />
         </div>
         <div className="mt-4 space-y-2">
-          <div className="h-6 rounded-xl bg-slate-900" />
-          <div className="h-6 rounded-xl bg-slate-900" />
-          <div className="h-6 rounded-xl bg-slate-900" />
+          <div className="h-6 rounded-xl bg-panel" />
+          <div className="h-6 rounded-xl bg-panel" />
+          <div className="h-6 rounded-xl bg-panel" />
         </div>
       </div>
     ))}
@@ -111,19 +111,19 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
   };
 
   return (
-    <section className="rounded-[28px] border border-slate-800/80 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.12),_rgba(15,23,42,0.98)_45%,_rgba(2,6,23,1)_100%)] p-4 md:p-5">
+    <section className="rounded-[28px] border border-panel-border bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.12),_rgba(15,23,42,0.98)_45%,_rgba(2,6,23,1)_100%)] p-4 md:p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Catalog</div>
-          <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-100">Workflow Registry</h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Catalog</div>
+          <h2 className="mt-2 text-xl font-semibold tracking-tight text-panel-foreground">Workflow Registry</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Search aliases, correlation states, and evidence without leaving the hub.
           </p>
         </div>
         <button
           type="button"
           onClick={onRetry}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+          className="inline-flex items-center gap-2 rounded-full border border-panel-border bg-surface-overlay/80 px-3 py-1.5 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
         >
           <RefreshCcw size={12} />
           Refresh
@@ -132,13 +132,13 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
 
       <div className="mt-5 space-y-4">
         <label className="relative block">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             ref={searchInputRef}
             value={searchQuery}
             onChange={event => onSearchQueryChange(event.target.value)}
             placeholder="Search workflow names, aliases, or commands"
-            className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 py-3 pl-10 pr-4 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-indigo-500/40"
+            className="w-full rounded-2xl border border-panel-border bg-surface-overlay/80 py-3 pl-10 pr-4 text-sm text-panel-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-focus/40"
           />
         </label>
 
@@ -148,7 +148,7 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
           onChange={onActiveFilterChange}
         />
 
-        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{entitySummary}</span>
           <span>Arrow keys move, Enter opens, `/` focuses search</span>
         </div>
@@ -174,15 +174,15 @@ export const WorkflowCatalog: React.FC<WorkflowCatalogProps> = ({
             </button>
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-[24px] border border-slate-800 bg-slate-950/60 px-4 py-6 text-center">
-            <div className="text-base font-semibold text-slate-100">No workflows found</div>
-            <p className="mt-2 text-sm text-slate-400">
+          <div className="rounded-[24px] border border-panel-border bg-surface-overlay/70 px-4 py-6 text-center">
+            <div className="text-base font-semibold text-panel-foreground">No workflows found</div>
+            <p className="mt-2 text-sm text-muted-foreground">
               Try a different alias, remove the correlation filter, or refresh the cache.
             </p>
             <button
               type="button"
               onClick={onClearFilters}
-              className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-panel-border bg-panel px-3 py-1.5 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
             >
               Clear filters
             </button>

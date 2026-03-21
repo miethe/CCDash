@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import { TestStatus } from '../../types';
+import { Badge } from '../ui/badge';
 
 interface TestStatusBadgeProps {
   status: TestStatus;
@@ -21,7 +22,7 @@ interface TestStatusBadgeProps {
 
 interface StatusConfig {
   icon: LucideIcon;
-  colorClass: string;
+  tone: 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger';
   label: string;
   spin?: boolean;
 }
@@ -29,42 +30,42 @@ interface StatusConfig {
 const STATUS_CONFIG: Record<TestStatus, StatusConfig> = {
   passed: {
     icon: CheckCircle2,
-    colorClass: 'border-emerald-500/45 bg-emerald-500/12 text-emerald-200',
+    tone: 'success',
     label: 'Passing',
   },
   failed: {
     icon: XCircle,
-    colorClass: 'border-rose-500/45 bg-rose-500/12 text-rose-200',
+    tone: 'danger',
     label: 'Failing',
   },
   skipped: {
     icon: MinusCircle,
-    colorClass: 'border-amber-500/45 bg-amber-500/12 text-amber-200',
+    tone: 'warning',
     label: 'Skipped',
   },
   error: {
     icon: AlertCircle,
-    colorClass: 'border-rose-600/45 bg-rose-600/12 text-rose-300',
+    tone: 'danger',
     label: 'Error',
   },
   xfailed: {
     icon: AlertTriangle,
-    colorClass: 'border-amber-400/45 bg-amber-400/12 text-amber-200',
+    tone: 'warning',
     label: 'XFail',
   },
   xpassed: {
     icon: AlertTriangle,
-    colorClass: 'border-rose-400/45 bg-rose-400/12 text-rose-200',
+    tone: 'danger',
     label: 'XPass',
   },
   unknown: {
     icon: HelpCircle,
-    colorClass: 'border-slate-500/45 bg-slate-500/12 text-slate-300',
+    tone: 'muted',
     label: 'Unknown',
   },
   running: {
     icon: Loader2,
-    colorClass: 'border-indigo-400/45 bg-indigo-400/12 text-indigo-200',
+    tone: 'info',
     label: 'Running',
     spin: true,
   },
@@ -100,11 +101,14 @@ export const TestStatusBadge: React.FC<TestStatusBadgeProps> = ({
   const Icon = config.icon;
 
   return (
-    <span
+    <Badge
       role="status"
       aria-label={`Test status: ${config.label}`}
       aria-live={status === 'running' ? 'polite' : undefined}
-      className={`inline-flex items-center rounded border font-semibold ${sizeConfig.wrapper} ${sizeConfig.gap} ${config.colorClass} ${className}`.trim()}
+      size={size === 'lg' ? 'md' : 'sm'}
+      tone={config.tone}
+      mono={false}
+      className={`font-semibold ${sizeConfig.wrapper} ${sizeConfig.gap} ${className}`.trim()}
     >
       <Icon
         size={sizeConfig.icon}
@@ -112,7 +116,7 @@ export const TestStatusBadge: React.FC<TestStatusBadgeProps> = ({
         aria-hidden="true"
       />
       {shouldShowLabel && <span>{config.label}</span>}
-    </span>
+    </Badge>
   );
 };
 

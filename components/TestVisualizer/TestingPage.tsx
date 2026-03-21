@@ -468,7 +468,7 @@ export const TestingPage: React.FC = () => {
 
   if (!activeProject) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-300">
+      <div className="rounded-xl border border-panel-border bg-panel p-6 text-foreground">
         Select an active project to view test status.
       </div>
     );
@@ -476,7 +476,7 @@ export const TestingPage: React.FC = () => {
 
   if (testConfig.isLoading) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-300">
+      <div className="rounded-xl border border-panel-border bg-panel p-6 text-foreground">
         Loading test visualizer configuration...
       </div>
     );
@@ -503,18 +503,18 @@ export const TestingPage: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <header className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <header className="rounded-xl border border-panel-border bg-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">Test Visualizer</h1>
-            <nav className="mt-1 flex flex-wrap items-center gap-1 text-sm text-slate-400">
+            <h1 className="text-2xl font-bold text-panel-foreground">Test Visualizer</h1>
+            <nav className="mt-1 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
               {breadcrumbs.map((item, index) => (
                 <React.Fragment key={`${item.label}-${index}`}>
-                  {index > 0 && <span className="text-slate-500">›</span>}
+                  {index > 0 && <span className="text-muted-foreground">›</span>}
                   <button
                     type="button"
                     onClick={() => updateQueryParams(item.scope)}
-                    className="rounded px-1 py-0.5 hover:bg-slate-800/70 hover:text-slate-200"
+                    className="rounded px-1 py-0.5 hover:bg-surface-muted/70 hover:text-panel-foreground"
                   >
                     {item.label}
                   </button>
@@ -532,12 +532,12 @@ export const TestingPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              <span className="uppercase tracking-wider text-slate-500">Recent Run</span>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="uppercase tracking-wider text-muted-foreground">Recent Run</span>
               <select
                 value={activeRunId || ''}
                 onChange={event => updateQueryParams({ runId: event.target.value || null })}
-                className="max-w-[420px] rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                className="max-w-[420px] rounded border border-panel-border bg-surface-muted px-2 py-1.5 text-xs text-panel-foreground focus:border-focus focus:outline-none"
                 disabled={filteredRuns.length === 0}
               >
                 {filteredRuns.length === 0 && <option value="">No runs available</option>}
@@ -552,7 +552,7 @@ export const TestingPage: React.FC = () => {
             <button
               type="button"
               onClick={refreshPage}
-              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
+              className="inline-flex items-center gap-1 rounded border border-panel-border bg-surface-muted px-3 py-2 text-xs text-panel-foreground hover:border-hover"
             >
               <RefreshCw size={13} />
               Refresh
@@ -562,36 +562,36 @@ export const TestingPage: React.FC = () => {
       </header>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
-        <article className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <article className="rounded-xl border border-panel-border bg-panel p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-200">Run Details</h2>
-            {runs.isLoading && <span className="text-xs text-slate-500">Refreshing runs...</span>}
+            <h2 className="text-sm font-semibold text-panel-foreground">Run Details</h2>
+            {runs.isLoading && <span className="text-xs text-muted-foreground">Refreshing runs...</span>}
           </div>
 
           {!activeRun && (
-            <p className="mt-3 text-sm text-slate-500">
+            <p className="mt-3 text-sm text-muted-foreground">
               No runs match the current filters. Adjust filters or refresh to load the latest run.
             </p>
           )}
 
           {activeRun && (
             <div className="mt-3 space-y-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <TestStatusBadge status={normalizeRunStatus(activeRun.status)} size="sm" />
-                <span className="font-mono text-slate-200">{activeRun.runId}</span>
+                <span className="font-mono text-panel-foreground">{activeRun.runId}</span>
                 <span>{new Date(activeRun.timestamp).toLocaleString()}</span>
                 {activeRun.gitSha && (
-                  <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                  <span className="rounded border border-panel-border bg-surface-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                     {activeRun.gitSha.slice(0, 12)}
                   </span>
                 )}
                 {activeRun.branch && (
-                  <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                  <span className="rounded border border-panel-border bg-surface-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                     {activeRun.branch}
                   </span>
                 )}
                 {activeRun.agentSessionId && (
-                  <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                  <span className="rounded border border-panel-border bg-surface-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                     session: {activeRun.agentSessionId}
                   </span>
                 )}
@@ -608,11 +608,11 @@ export const TestingPage: React.FC = () => {
           )}
         </article>
 
-        <aside className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Test Health Metrics</p>
+        <aside className="rounded-xl border border-panel-border bg-panel p-4">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Test Health Metrics</p>
           <div className="mt-3 flex items-center justify-between gap-4">
             <HealthGauge passRate={viewingRunTotals.passRate} size="sm" />
-            <div className="text-right text-xs text-slate-400">
+            <div className="text-right text-xs text-muted-foreground">
               <p>
                 <span className="font-medium text-emerald-400">{viewingRunTotals.passed}</span> passing
               </p>
@@ -623,15 +623,15 @@ export const TestingPage: React.FC = () => {
                 <span className="font-medium text-amber-300">{viewingRunTotals.skipped}</span> skipped
               </p>
               <p>
-                <span className="font-medium text-slate-200">{viewingRunTotals.totalTests}</span> tests in scope
+                <span className="font-medium text-panel-foreground">{viewingRunTotals.totalTests}</span> tests in scope
               </p>
               <p>
                 <span className="font-medium text-indigo-300">{metricTotal}</span> collected metrics
               </p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Scope: <span className="text-slate-300">{viewingDomainLabel}</span>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Scope: <span className="text-foreground">{viewingDomainLabel}</span>
           </p>
         </aside>
       </section>
@@ -646,10 +646,10 @@ export const TestingPage: React.FC = () => {
 
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside
-          className="overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-3"
+          className="overflow-y-auto rounded-xl border border-panel-border bg-panel p-3"
           style={mappedPaneMaxHeight ? { maxHeight: `${mappedPaneMaxHeight}px` } : undefined}
         >
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Mapped Domains</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mapped Domains</h2>
           <DomainTreeView
             domains={status.domains}
             selectedDomainId={selectedDomainId}
@@ -659,25 +659,25 @@ export const TestingPage: React.FC = () => {
         </aside>
 
         <section ref={rightColumnRef} className="min-w-0 space-y-4">
-          <article className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <article className="rounded-xl border border-panel-border bg-panel p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-200">
+                <h2 className="text-sm font-semibold text-panel-foreground">
                   {selectedDomain ? `Domain Status: ${selectedDomain.domainName}` : 'Overall App Status'}
                 </h2>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-muted-foreground">
                   {selectedDomain
                     ? `Tier: ${selectedDomain.tier}. Drill into mapped sub-domains below.`
                     : 'Select a mapped domain to focus on domain-specific test health and results.'}
                 </p>
               </div>
               {status.lastFetchedAt && (
-                <p className="text-xs text-slate-500">Updated {status.lastFetchedAt.toLocaleTimeString()}</p>
+                <p className="text-xs text-muted-foreground">Updated {status.lastFetchedAt.toLocaleTimeString()}</p>
               )}
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+              <div className="rounded-xl border border-panel-border bg-surface-overlay/70 p-3">
                 <HealthGauge
                   passRate={focusScopeTotals.passRate}
                   integrityScore={selectedDomain?.integrityScore}
@@ -687,20 +687,20 @@ export const TestingPage: React.FC = () => {
 
               <div className="space-y-3">
                 <div className="grid gap-2 sm:grid-cols-4">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
-                    <p className="text-slate-500">Total</p>
-                    <p className="text-sm font-semibold text-slate-100">{focusScopeTotals.totalTests}</p>
+                  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs text-muted-foreground">
+                    <p className="text-muted-foreground">Total</p>
+                    <p className="text-sm font-semibold text-panel-foreground">{focusScopeTotals.totalTests}</p>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
-                    <p className="text-slate-500">Passing</p>
+                  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs text-muted-foreground">
+                    <p className="text-muted-foreground">Passing</p>
                     <p className="text-sm font-semibold text-emerald-400">{focusScopeTotals.passed}</p>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
-                    <p className="text-slate-500">Failing</p>
+                  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs text-muted-foreground">
+                    <p className="text-muted-foreground">Failing</p>
                     <p className="text-sm font-semibold text-rose-400">{focusScopeTotals.failed}</p>
                   </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
-                    <p className="text-slate-500">Skipped</p>
+                  <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs text-muted-foreground">
+                    <p className="text-muted-foreground">Skipped</p>
                     <p className="text-sm font-semibold text-amber-300">{focusScopeTotals.skipped}</p>
                   </div>
                 </div>
@@ -715,19 +715,19 @@ export const TestingPage: React.FC = () => {
             </div>
           </article>
 
-          <article className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <article className="rounded-xl border border-panel-border bg-panel p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-3">
-                <h3 className="text-sm font-semibold text-slate-200">Domain Drilldown</h3>
+                <h3 className="text-sm font-semibold text-panel-foreground">Domain Drilldown</h3>
                 <button
                   type="button"
                   onClick={() => updateQueryParams({ domainId: null })}
-                  className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:border-slate-600"
+                  className="rounded border border-panel-border bg-surface-muted px-2 py-1 text-[11px] text-panel-foreground hover:border-hover"
                 >
                   Reset View
                 </button>
               </div>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground">
                 {selectedDomain ? `${selectedDomain.children.length} sub-domains` : `${status.domains.length} top-level domains`}
               </span>
             </div>
@@ -739,13 +739,13 @@ export const TestingPage: React.FC = () => {
                     key={domain.domainId}
                     type="button"
                     onClick={() => updateQueryParams({ domainId: domain.domainId })}
-                    className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left text-xs text-slate-300 hover:border-slate-700"
+                    className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-left text-xs text-foreground hover:border-panel-border"
                   >
-                    <p className="font-medium text-slate-200">{domain.domainName}</p>
-                    <p className="mt-1 text-slate-500">{domain.totalTests} tests • {Math.round(domain.passRate * 100)}% pass rate</p>
+                    <p className="font-medium text-panel-foreground">{domain.domainName}</p>
+                    <p className="mt-1 text-muted-foreground">{domain.totalTests} tests • {Math.round(domain.passRate * 100)}% pass rate</p>
                   </button>
                 ))}
-                {status.domains.length === 0 && <p className="text-sm text-slate-500">No mapped domains found.</p>}
+                {status.domains.length === 0 && <p className="text-sm text-muted-foreground">No mapped domains found.</p>}
               </div>
             )}
 
@@ -756,33 +756,33 @@ export const TestingPage: React.FC = () => {
                     key={child.domainId}
                     type="button"
                     onClick={() => updateQueryParams({ domainId: child.domainId })}
-                    className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left text-xs text-slate-300 hover:border-slate-700"
+                    className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-left text-xs text-foreground hover:border-panel-border"
                   >
-                    <p className="font-medium text-slate-200">{child.domainName}</p>
-                    <p className="mt-1 text-slate-500">{child.totalTests} tests • {Math.round(child.passRate * 100)}% pass rate</p>
+                    <p className="font-medium text-panel-foreground">{child.domainName}</p>
+                    <p className="mt-1 text-muted-foreground">{child.totalTests} tests • {Math.round(child.passRate * 100)}% pass rate</p>
                   </button>
                 ))}
                 {selectedDomain.children.length === 0 && (
-                  <p className="text-sm text-slate-500">No mapped sub-domains for this selection.</p>
+                  <p className="text-sm text-muted-foreground">No mapped sub-domains for this selection.</p>
                 )}
               </div>
             )}
           </article>
 
-          <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-3">
+          <section className="space-y-3 rounded-xl border border-panel-border bg-panel p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-200">Test Details</h2>
-                <p className="text-xs text-slate-400">
-                  Viewing domain: <span className="text-slate-200">{viewingDomainLabel}</span>
+                <h2 className="text-sm font-semibold text-panel-foreground">Test Details</h2>
+                <p className="text-xs text-muted-foreground">
+                  Viewing domain: <span className="text-panel-foreground">{viewingDomainLabel}</span>
                   {activeRun && (
                     <>
-                      {' • '}run <span className="font-mono text-slate-200">{activeRun.runId}</span>
+                      {' • '}run <span className="font-mono text-panel-foreground">{activeRun.runId}</span>
                     </>
                   )}
                 </p>
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-muted-foreground">
                 {runResults.length} loaded / {resultsTotal} total
                 {' '}
                 (out of {activeRun?.totalTests || totals.totalTests} total tests)

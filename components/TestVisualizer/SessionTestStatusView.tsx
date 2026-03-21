@@ -150,22 +150,22 @@ export const SessionTestStatusView: React.FC<SessionTestStatusViewProps> = ({
   return (
     <div className="space-y-4">
       {modifiedTestFiles.length > 0 && (
-        <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <section className="rounded-xl border border-panel-border bg-panel p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Modified Tests During This Session
           </h3>
           <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
             {modifiedTestFiles.map((file, index) => (
               <div
                 key={`${file.filePath}-${file.timestamp}-${index}`}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-xs"
+                className="flex items-center justify-between gap-3 rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-mono text-slate-200">{file.filePath}</p>
-                  <p className="text-slate-500">{new Date(file.timestamp).toLocaleString()}</p>
+                  <p className="truncate font-mono text-panel-foreground">{file.filePath}</p>
+                  <p className="text-muted-foreground">{new Date(file.timestamp).toLocaleString()}</p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 text-slate-400">
-                  <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5">
+                <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 rounded border border-panel-border bg-surface-muted px-1.5 py-0.5">
                     <FileCode2 size={11} />
                     {file.action || 'update'}
                   </span>
@@ -177,26 +177,26 @@ export const SessionTestStatusView: React.FC<SessionTestStatusViewProps> = ({
         </section>
       )}
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+      <section className="rounded-xl border border-panel-border bg-panel p-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Tests Run During This Session
         </h3>
         {testRunsDuringSession.length === 0 ? (
-          <p className="text-xs text-slate-500">No test runs detected from transcript tool calls.</p>
+          <p className="text-xs text-muted-foreground">No test runs detected from transcript tool calls.</p>
         ) : (
           <div className="max-h-80 overflow-y-auto pr-1 space-y-2">
             {testRunsDuringSession.map((run, index) => (
               <div
                 key={`${run.logId}-${run.timestamp}-${index}`}
-                className="rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-xs space-y-2"
+                className="rounded-lg border border-panel-border bg-surface-overlay/70 px-3 py-2 text-xs space-y-2"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate font-mono text-slate-200">{run.command || `${run.framework} run`}</p>
-                    <p className="text-slate-500">{new Date(run.timestamp).toLocaleString()}</p>
+                    <p className="truncate font-mono text-panel-foreground">{run.command || `${run.framework} run`}</p>
+                    <p className="text-muted-foreground">{new Date(run.timestamp).toLocaleString()}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-slate-300">
+                    <span className="inline-flex items-center gap-1 rounded border border-panel-border bg-surface-muted px-1.5 py-0.5 text-foreground">
                       {run.framework}
                     </span>
                     <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 ${
@@ -204,14 +204,14 @@ export const SessionTestStatusView: React.FC<SessionTestStatusViewProps> = ({
                         ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
                         : run.status === 'failed'
                           ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-                          : 'border-slate-700 bg-slate-800 text-slate-300'
+                          : 'border-panel-border bg-surface-muted text-foreground'
                     }`}>
                       {run.status}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                   {run.total > 0 && <span>{run.total} tests</span>}
                   {run.durationSeconds > 0 && <span>{run.durationSeconds.toFixed(2)}s</span>}
                   {run.domain && <span>domain: {run.domain}</span>}
@@ -223,13 +223,13 @@ export const SessionTestStatusView: React.FC<SessionTestStatusViewProps> = ({
                 {(run.targets.length > 0 || run.domains.length > 0 || run.flags.length > 0) && (
                   <div className="space-y-1">
                     {run.targets.length > 0 && (
-                      <p className="text-slate-500 truncate">targets: {run.targets.join(', ')}</p>
+                      <p className="text-muted-foreground truncate">targets: {run.targets.join(', ')}</p>
                     )}
                     {run.domains.length > 0 && (
-                      <p className="text-slate-500 truncate">domains: {run.domains.join(', ')}</p>
+                      <p className="text-muted-foreground truncate">domains: {run.domains.join(', ')}</p>
                     )}
                     {run.flags.length > 0 && (
-                      <p className="text-slate-500 truncate">flags: {run.flags.join(' ')}</p>
+                      <p className="text-muted-foreground truncate">flags: {run.flags.join(' ')}</p>
                     )}
                   </div>
                 )}

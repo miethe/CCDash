@@ -32,10 +32,10 @@ const SummaryTile: React.FC<{
   value: string;
   caption: string;
 }> = ({ label, value, caption }) => (
-  <div className="rounded-2xl border border-slate-800/80 bg-slate-950/50 px-4 py-4">
-    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
-    <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">{value}</div>
-    <div className="mt-1 text-xs text-slate-500">{caption}</div>
+  <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+    <div className="mt-2 text-2xl font-semibold tracking-tight text-panel-foreground">{value}</div>
+    <div className="mt-1 text-xs text-muted-foreground">{caption}</div>
   </div>
 );
 
@@ -202,17 +202,17 @@ export const WorkflowRegistryPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-[32px] border border-slate-800/80 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.18),_rgba(15,23,42,0.96)_42%,_rgba(2,6,23,1)_100%)] px-6 py-6 md:px-7">
+      <section className="rounded-[32px] border border-panel-border bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.18),_rgba(15,23,42,0.96)_42%,_rgba(2,6,23,1)_100%)] px-6 py-6 md:px-7">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-100">
               <Sparkles size={12} />
               Workflow Intelligence
             </div>
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-100 md:text-4xl">
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-panel-foreground md:text-4xl">
               Workflow Registry
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-foreground md:text-base">
               Inspect workflow identity across CCDash and SkillMeat, verify correlation strength, and move directly into the evidence or definition that explains each workflow.
             </p>
           </div>
@@ -226,7 +226,7 @@ export const WorkflowRegistryPage: React.FC = () => {
       </section>
 
       {!activeProject ? (
-        <div className="rounded-[28px] border border-slate-800 bg-slate-950/55 px-5 py-5 text-sm text-slate-400">
+        <div className="rounded-[28px] border border-panel-border bg-surface-overlay/70 px-5 py-5 text-sm text-muted-foreground">
           Select an active project to load workflow registry data.
         </div>
       ) : !workflowAnalyticsAvailable ? (
@@ -267,17 +267,17 @@ export const WorkflowRegistryPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleBackToCatalog}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                className="inline-flex items-center gap-2 rounded-full border border-panel-border bg-surface-overlay/80 px-3 py-1.5 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
               >
                 <FolderKanban size={12} />
                 Catalog
               </button>
-              <div className="truncate text-sm text-slate-400">{detailTitle}</div>
+              <div className="truncate text-sm text-muted-foreground">{detailTitle}</div>
             </div>
 
             {!selectedWorkflowId && (
               <div className="mb-3 hidden items-center justify-between gap-3 xl:flex">
-                <div className="text-sm text-slate-500">
+                <div className="text-sm text-muted-foreground">
                   Choose a workflow from the catalog to inspect the detail panel.
                 </div>
                 <button
@@ -285,7 +285,7 @@ export const WorkflowRegistryPage: React.FC = () => {
                   onClick={() => {
                     void loadCatalog();
                   }}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-500"
+                  className="inline-flex items-center gap-2 rounded-full border border-panel-border bg-surface-overlay/80 px-3 py-1.5 text-xs font-semibold text-panel-foreground transition-colors hover:border-hover"
                 >
                   <RefreshCcw size={12} />
                   Refresh registry
@@ -311,30 +311,30 @@ export const WorkflowRegistryPage: React.FC = () => {
       )}
 
       <section className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 px-4 py-4">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <Blocks size={12} />
             Correlation Focus
           </div>
-          <div className="mt-2 text-sm leading-6 text-slate-300">
+          <div className="mt-2 text-sm leading-6 text-foreground">
             Strong and weak states are kept explicit so command-backed workflows do not masquerade as fully resolved definitions.
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 px-4 py-4">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <Sparkles size={12} />
             Evidence Bias
           </div>
-          <div className="mt-2 text-sm leading-6 text-slate-300">
+          <div className="mt-2 text-sm leading-6 text-foreground">
             Detail views keep SkillMeat metadata and CCDash effectiveness signals side by side instead of flattening them into one score.
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/45 px-4 py-4">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        <div className="rounded-2xl border border-panel-border bg-surface-overlay/70 px-4 py-4">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <FolderKanban size={12} />
             Deep Linking
           </div>
-          <div className="mt-2 text-sm leading-6 text-slate-300">
+          <div className="mt-2 text-sm leading-6 text-foreground">
             Workflow detail routes are encoded so hybrid and unresolved registry IDs remain safe for `HashRouter` path segments.
           </div>
         </div>

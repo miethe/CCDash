@@ -468,11 +468,11 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
   return (
     <section className="space-y-4">
       {!hideHeader && (
-        <header className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <header className="rounded-xl border border-panel-border bg-panel p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-slate-100">Test Status</h2>
-              <p className="text-sm text-slate-400">Shared status panel for features, sessions, and the testing page.</p>
+              <h2 className="text-lg font-semibold text-panel-foreground">Test Status</h2>
+              <p className="text-sm text-muted-foreground">Shared status panel for features, sessions, and the testing page.</p>
             </div>
             <div className="flex items-center gap-2">
               {isLive && (
@@ -483,7 +483,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
               )}
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
+                className="inline-flex items-center gap-2 rounded border border-panel-border bg-surface-muted px-3 py-2 text-xs text-panel-foreground hover:border-hover"
                 onClick={handleRefresh}
               >
                 <RefreshCw size={12} /> Refresh
@@ -514,11 +514,11 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         {showDomainTree && (
           <aside className="space-y-4">
             {topDomain && (
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Global Health</p>
+              <div className="rounded-xl border border-panel-border bg-panel p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Global Health</p>
                 <div className="mt-3 flex items-center justify-between">
                   <HealthGauge passRate={topDomain.passRate} integrityScore={topDomain.integrityScore} size="md" />
-                  <div className="text-right text-xs text-slate-400">
+                  <div className="text-right text-xs text-muted-foreground">
                     <p>{topDomain.totalTests.toLocaleString()} tests</p>
                     {live.lastUpdated && <p>Updated {live.lastUpdated.toLocaleTimeString()}</p>}
                   </div>
@@ -537,7 +537,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
         <div className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-slate-300">Recent Runs</h3>
+              <h3 className="text-sm font-semibold text-foreground">Recent Runs</h3>
               {resolvedActiveRun && (
                 <p className="text-xs text-indigo-300">
                   Viewing run <span className="font-mono">{resolvedActiveRun.runId}</span>
@@ -557,7 +557,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
                 />
               ))}
               {filteredRuns.length === 0 && (
-                <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+                <p className="rounded-xl border border-panel-border bg-panel p-4 text-sm text-muted-foreground">
                   No runs match the current filters.
                 </p>
               )}
@@ -566,7 +566,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
                 <button
                   type="button"
                   onClick={runs.loadMore}
-                  className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:border-slate-600"
+                  className="rounded border border-panel-border bg-surface-muted px-3 py-2 text-xs text-panel-foreground hover:border-hover"
                 >
                   Load more
                 </button>
@@ -574,8 +574,8 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-slate-300">Integrity Alerts</h3>
-              {alerts.length === 0 && <p className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">No alerts.</p>}
+              <h3 className="text-sm font-semibold text-foreground">Integrity Alerts</h3>
+              {alerts.length === 0 && <p className="rounded-xl border border-panel-border bg-panel p-4 text-sm text-muted-foreground">No alerts.</p>}
               {alerts.map(signal => (
                 <IntegrityAlertCard key={signal.signalId} signal={signal} />
               ))}
@@ -584,29 +584,29 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
 
           {mode !== 'compact' && (
             <>
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <div className="rounded-xl border border-panel-border bg-panel p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-slate-200">Run Details</h3>
+                  <h3 className="text-sm font-semibold text-panel-foreground">Run Details</h3>
                   {isRunDetailLoading && (
                     <span className="text-xs text-indigo-300">Loading selected run...</span>
                   )}
                 </div>
                 {resolvedActiveRun ? (
                   <div className="mt-3 space-y-3">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <TestStatusBadge
                         status={resolvedActiveRun.status === 'failed' ? 'failed' : resolvedActiveRun.status === 'running' ? 'running' : 'passed'}
                         size="sm"
                       />
-                      <span className="font-mono text-slate-200">{resolvedActiveRun.runId}</span>
+                      <span className="font-mono text-panel-foreground">{resolvedActiveRun.runId}</span>
                       <span>{new Date(resolvedActiveRun.timestamp).toLocaleString()}</span>
                       {resolvedActiveRun.gitSha && (
-                        <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                        <span className="rounded border border-panel-border bg-surface-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                           {resolvedActiveRun.gitSha.slice(0, 12)}
                         </span>
                       )}
                       {resolvedActiveRun.branch && (
-                        <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-300">
+                        <span className="rounded border border-panel-border bg-surface-muted px-2 py-0.5 font-mono text-[10px] text-foreground">
                           {resolvedActiveRun.branch}
                         </span>
                       )}
@@ -620,7 +620,7 @@ export const TestStatusView: React.FC<TestStatusViewProps> = ({
                     />
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-500">Select a run to view details.</p>
+                  <p className="mt-3 text-sm text-muted-foreground">Select a run to view details.</p>
                 )}
               </div>
               <TestResultTable
