@@ -11,7 +11,9 @@ title: Standard Mode Token Sets
 status: completed
 started: '2026-03-21'
 completed: '2026-03-21'
-commit_refs: []
+commit_refs:
+- 6d6f78f
+- 25e250c
 pr_refs: []
 overall_progress: 100
 completion_estimate: completed
