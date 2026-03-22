@@ -4,21 +4,34 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: pending
+status: in-progress
 category: enhancements
-title: "Implementation Plan: CCDash Standard Theme Modes V1"
-description: "Deliver standard app theme modes for CCDash after the theme-system foundation refactor: dark, light, and system."
-summary: "Introduce runtime theme resolution, persistence, first-paint correctness, light-mode token sets, and validation across shell, charts, content, and accessibility-sensitive surfaces."
+title: 'Implementation Plan: CCDash Standard Theme Modes V1'
+description: 'Deliver standard app theme modes for CCDash after the theme-system foundation
+  refactor: dark, light, and system.'
+summary: Introduce runtime theme resolution, persistence, first-paint correctness,
+  light-mode token sets, and validation across shell, charts, content, and accessibility-sensitive
+  surfaces.
 author: codex
-audience: [ai-agents, developers, fullstack-engineering, frontend-platform]
+audience:
+- ai-agents
+- developers
+- fullstack-engineering
+- frontend-platform
 created: 2026-03-19
-updated: 2026-03-21
-tags: [implementation, enhancement, theming, dark-mode, light-mode, system-theme]
+updated: '2026-03-21'
+tags:
+- implementation
+- enhancement
+- theming
+- dark-mode
+- light-mode
+- system-theme
 priority: high
 risk_level: medium
 complexity: medium
 track: UI Platform
-timeline_estimate: "2-3 weeks across 5 phases"
+timeline_estimate: 2-3 weeks across 5 phases
 feature_slug: ccdash-standard-theme-modes-v1
 feature_family: ccdash-theme-system-modernization
 feature_version: v1
@@ -27,24 +40,24 @@ lineage_parent:
   ref: docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
   kind: prerequisite
 lineage_children:
-  - docs/project_plans/implementation_plans/enhancements/ccdash-custom-theming-v1.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-custom-theming-v1.md
 lineage_type: enhancement
 linked_features: []
 related_documents:
-  - docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1.md
-  - docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
-  - docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md
-  - docs/project_plans/implementation_plans/enhancements/ccdash-custom-theming-v1.md
+- docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1.md
+- docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
+- docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md
+- docs/project_plans/implementation_plans/enhancements/ccdash-custom-theming-v1.md
 context_files:
-  - index.tsx
-  - App.tsx
-  - src/index.css
-  - components/Settings.tsx
-  - components/Layout.tsx
-  - components/Dashboard.tsx
-  - components/Analytics/TrendChart.tsx
-  - components/content/UnifiedContentViewer.tsx
-  - contexts/ModelColorsContext.tsx
+- index.tsx
+- App.tsx
+- src/index.css
+- components/Settings.tsx
+- components/Layout.tsx
+- components/Dashboard.tsx
+- components/Analytics/TrendChart.tsx
+- components/content/UnifiedContentViewer.tsx
+- contexts/ModelColorsContext.tsx
 ---
 
 # Implementation Plan: CCDash Standard Theme Modes V1
