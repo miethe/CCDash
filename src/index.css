@@ -211,6 +211,102 @@ body {
     background: hsl(var(--scrollbar-thumb-hover));
   }
 
+  /* Bridge remaining Settings palette literals onto semantic tokens in light mode. */
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-950,
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-950\/60 {
+    background-color: hsl(var(--surface-overlay)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900,
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900\/70 {
+    background-color: hsl(var(--surface-elevated)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-900\/30 {
+    background-color: hsl(var(--surface-muted) / 0.85) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-slate-800 {
+    background-color: hsl(var(--surface-muted)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-slate-900,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-800,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-700,
+  html[data-theme='light'] .settings-legacy-theme .border-slate-600 {
+    border-color: hsl(var(--panel-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-slate-100,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-200,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-300 {
+    color: hsl(var(--panel-foreground)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-slate-400,
+  html[data-theme='light'] .settings-legacy-theme .text-slate-500 {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-indigo-600,
+  html[data-theme='light'] .settings-legacy-theme .bg-indigo-500\/10 {
+    background-color: hsl(var(--info) / 0.14) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/20,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-indigo-500\/40 {
+    border-color: hsl(var(--info-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-200,
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-300,
+  html[data-theme='light'] .settings-legacy-theme .text-indigo-400 {
+    color: hsl(var(--info)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .bg-cyan-500\/8,
+  html[data-theme='light'] .settings-legacy-theme .bg-cyan-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-emerald-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-amber-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-500\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-600\/10,
+  html[data-theme='light'] .settings-legacy-theme .bg-emerald-900\/30,
+  html[data-theme='light'] .settings-legacy-theme .bg-rose-900\/30 {
+    background-color: hsl(var(--surface-muted)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-400\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-cyan-500\/35,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-500\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-600\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-emerald-700\/50,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/20,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/25,
+  html[data-theme='light'] .settings-legacy-theme .border-amber-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-500\/30,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-500\/40,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-600\/50,
+  html[data-theme='light'] .settings-legacy-theme .border-rose-700\/50 {
+    border-color: hsl(var(--panel-border)) !important;
+  }
+
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-100,
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-200,
+  html[data-theme='light'] .settings-legacy-theme .text-cyan-300,
+  html[data-theme='light'] .settings-legacy-theme .text-emerald-200,
+  html[data-theme='light'] .settings-legacy-theme .text-emerald-300,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-200,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-300,
+  html[data-theme='light'] .settings-legacy-theme .text-amber-400,
+  html[data-theme='light'] .settings-legacy-theme .text-rose-200,
+  html[data-theme='light'] .settings-legacy-theme .text-rose-300 {
+    color: hsl(var(--panel-foreground)) !important;
+  }
+
   .ccdash-content-viewer .ccdash-markdown {
     color: hsl(var(--markdown-foreground));
     line-height: 1.75;

@@ -2567,7 +2567,7 @@ export const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('projects');
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="settings-legacy-theme mx-auto max-w-4xl space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-app-foreground">Settings</h2>
         <p className="mt-2 text-muted-foreground">Manage projects, AI platforms, alerts, and application preferences.</p>

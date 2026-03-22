@@ -100,4 +100,22 @@ describe('theme foundation guardrails', () => {
       expect(darkBlock).toContain(token);
     }
   });
+
+  it('keeps the Settings theme control wired through the centralized theme provider', () => {
+    const settingsSource = readSource('components/Settings.tsx');
+
+    expect(settingsSource).toContain("useTheme");
+    expect(settingsSource).toContain("value={preference}");
+    expect(settingsSource).toContain("setPreference");
+    expect(settingsSource).not.toContain('localStorage');
+    expect(settingsSource).not.toContain("matchMedia('(prefers-color-scheme: dark)')");
+  });
+
+  it('keeps the settings light-mode compatibility bridge scoped to the settings surface', () => {
+    const settingsSource = readSource('components/Settings.tsx');
+    const cssSource = readSource('src/index.css');
+
+    expect(settingsSource).toContain('settings-legacy-theme');
+    expect(cssSource).toContain("html[data-theme='light'] .settings-legacy-theme");
+  });
 });
