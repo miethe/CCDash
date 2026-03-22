@@ -8,16 +8,16 @@ prd_ref: /docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1
 plan_ref: /docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md
 phase: 1
 title: Theme Runtime And Persistence
-status: in-progress
+status: completed
 started: '2026-03-21'
-completed: null
+completed: '2026-03-21'
 commit_refs: []
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -28,7 +28,7 @@ contributors:
 tasks:
 - id: MODE-001
   description: Define the theme preference model for dark, light, and system plus resolved runtime theme.
-  status: in_progress
+  status: completed
   assigned_to:
   - frontend-platform
   dependencies: []
@@ -36,7 +36,7 @@ tasks:
   priority: high
 - id: MODE-002
   description: Add a root provider that resolves, stores, and exposes current preference and effective theme.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -45,7 +45,7 @@ tasks:
   priority: high
 - id: MODE-003
   description: Replace the hard-forced dark bootstrap with resolved theme application and no incorrect default-mode flash.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-platform
   dependencies:
@@ -72,6 +72,14 @@ success_criteria:
 files_modified:
 - docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md
 - .claude/progress/ccdash-standard-theme-modes-v1/phase-1-progress.md
+- App.tsx
+- contexts/ThemeContext.tsx
+- index.html
+- index.tsx
+- lib/themeMode.ts
+- lib/__tests__/themeMode.test.ts
+- lib/__tests__/themeFoundationGuardrails.test.ts
+- src/index.css
 ---
 
 # ccdash-standard-theme-modes-v1 - Phase 1
@@ -79,3 +87,9 @@ files_modified:
 ## Objective
 
 Establish the app-wide theme runtime contract, persisted preference handling, and boot-time theme resolution without reintroducing dark-only assumptions.
+
+## Completion Notes
+
+- Added a dedicated theme runtime module and root `ThemeProvider` to centralize stored preference and resolved light/dark mode state.
+- Moved first-paint theme resolution into `index.html` so the app no longer forces dark mode before React mounts.
+- Added focused regression coverage for theme preference parsing, DOM application, and forced-dark bootstrap prevention.

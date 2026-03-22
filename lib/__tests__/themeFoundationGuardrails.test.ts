@@ -25,6 +25,28 @@ const CHART_ADAPTER_FILES = [
   'components/Analytics/TrendChart.tsx',
 ] as const;
 
+const ROOT_THEME_BOOTSTRAP_FILES = [
+  'index.html',
+  'index.tsx',
+] as const;
+
+const REQUIRED_MODE_TOKENS = [
+  '--app-background',
+  '--panel',
+  '--panel-border',
+  '--sidebar',
+  '--surface-muted',
+  '--surface-overlay',
+  '--chart-grid',
+  '--chart-axis',
+  '--chart-tooltip',
+  '--scrollbar-thumb',
+  '--viewer-shell',
+  '--viewer-inner-surface',
+  '--markdown-link',
+  '--markdown-table-head',
+] as const;
+
 const DISALLOWED_SHARED_THEME_LITERALS =
   /\b(?:bg|text|border|ring|from|to|via|stroke|fill)-(?:slate|indigo|emerald|amber|rose|sky)-[A-Za-z0-9_./%\[\]-]+/g;
 
@@ -46,6 +68,36 @@ describe('theme foundation guardrails', () => {
 
       expect(source).toContain('chartTheme');
       expect(source).toContain('getChartSeriesColor');
+    }
+  });
+
+  it('keeps theme bootstrap free from hard-forced dark mode', () => {
+    const htmlSource = readSource(ROOT_THEME_BOOTSTRAP_FILES[0]);
+    const entrySource = readSource(ROOT_THEME_BOOTSTRAP_FILES[1]);
+
+    expect(htmlSource).toContain('ccdash:theme-mode:v1');
+    expect(htmlSource).toContain('prefers-color-scheme: dark');
+    expect(entrySource).not.toContain("classList.add('dark')");
+    expect(entrySource).not.toContain("body.classList.add('dark')");
+  });
+
+  it('keeps shared theme tokens complete across light and dark mode blocks', () => {
+    const cssSource = readSource('src/index.css');
+
+    expect(cssSource).toContain('html {');
+    expect(cssSource).toContain('color-scheme: light;');
+    expect(cssSource).toContain('html.dark');
+    expect(cssSource).toContain('color-scheme: dark;');
+
+    const rootBlock = cssSource.match(/:root\s*\{([\s\S]*?)\n  \}/)?.[1] ?? '';
+    const darkBlock = cssSource.match(/\.dark\s*\{([\s\S]*?)\n  \}/)?.[1] ?? '';
+
+    expect(rootBlock).not.toBe('');
+    expect(darkBlock).not.toBe('');
+
+    for (const token of REQUIRED_MODE_TOKENS) {
+      expect(rootBlock).toContain(token);
+      expect(darkBlock).toContain(token);
     }
   });
 });

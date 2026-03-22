@@ -4,6 +4,37 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CCDash - Agentic Analytics</title>
+    <script>
+      (function () {
+        var storageKey = 'ccdash:theme-mode:v1';
+        var root = document.documentElement;
+        var preference = 'system';
+
+        try {
+          var storedPreference = window.localStorage.getItem(storageKey);
+          if (storedPreference === 'dark' || storedPreference === 'light' || storedPreference === 'system') {
+            preference = storedPreference;
+          }
+        } catch (error) {
+          preference = 'system';
+        }
+
+        var prefersDark =
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var resolvedTheme = preference === 'system' ? (prefersDark ? 'dark' : 'light') : preference;
+
+        if (resolvedTheme === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
+        }
+
+        root.dataset.theme = resolvedTheme;
+        root.dataset.themePreference = preference;
+        root.style.colorScheme = resolvedTheme;
+      })();
+    </script>
     <link rel="stylesheet" href="/src/index.css" />
   </head>
   <body>

@@ -8,15 +8,15 @@ prd_ref: /docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1
 plan_ref: /docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md
 phase: 2
 title: Standard Mode Token Sets
-status: planning
+status: completed
 started: '2026-03-21'
-completed: null
+completed: '2026-03-21'
 commit_refs: []
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -28,7 +28,7 @@ contributors:
 tasks:
 - id: MODE-101
   description: Validate and adjust dark token values after the foundation refactor to preserve the intended visual baseline.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   dependencies:
@@ -37,7 +37,7 @@ tasks:
   priority: high
 - id: MODE-102
   description: Define light token values for shell, surfaces, states, charts, and content surfaces.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-platform
@@ -47,7 +47,7 @@ tasks:
   priority: high
 - id: MODE-103
   description: Make color-scheme, scrollbars, and other browser-controlled surfaces follow the resolved theme correctly.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-platform
   dependencies:
@@ -72,6 +72,9 @@ success_criteria:
 files_modified:
 - docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md
 - .claude/progress/ccdash-standard-theme-modes-v1/phase-2-progress.md
+- index.html
+- lib/__tests__/themeFoundationGuardrails.test.ts
+- src/index.css
 ---
 
 # ccdash-standard-theme-modes-v1 - Phase 2
@@ -79,3 +82,9 @@ files_modified:
 ## Objective
 
 Preserve the current dark semantic baseline while completing the light token map and aligning browser-controlled surfaces with the resolved theme.
+
+## Completion Notes
+
+- Kept the existing `.dark` semantic token baseline intact while refining the light-mode token map for shell, charts, viewer surfaces, markdown, and scrollbar chrome.
+- Made browser-controlled surfaces follow the resolved theme through `color-scheme` changes on the root document contract.
+- Expanded the theme guardrail to ensure the shared light and dark token blocks stay complete for the foundation-owned surface roles.
