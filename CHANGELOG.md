@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-03-22
+
+### Added
+
+- Standard theme modes rollout docs:
+  - `docs/theme-modes-user-guide.md`
+  - `docs/theme-modes-developer-reference.md`
+- Theme-mode progress tracking for implementation phases 3-5:
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-3-progress.md`
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-4-progress.md`
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-5-progress.md`
+
+### Changed
+
+- `Settings > General > Theme` now controls the real app-wide theme preference and persists `dark`, `light`, and `system`.
+- The Settings route now includes a scoped light-mode compatibility bridge so legacy palette-literal controls remain usable under the shipped standard modes.
+- Theme guardrails now also cover Settings selector wiring and the scoped Settings compatibility bridge.
+- The CCDash standard theme modes implementation plan now marks phases 3-5 complete and the overall plan complete.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/project_plans/implementation_plans/enhancements/ccdash-standard-theme-modes-v1.md`
+- Added:
+  - `docs/theme-modes-user-guide.md`
+  - `docs/theme-modes-developer-reference.md`
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-3-progress.md`
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-4-progress.md`
+  - `.claude/progress/ccdash-standard-theme-modes-v1/phase-5-progress.md`
+
 ## 2026-03-21
 
 ### Added

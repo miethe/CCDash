@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: CCDash Standard Theme Modes V1'
 description: 'Deliver standard app theme modes for CCDash after the theme-system foundation
@@ -19,7 +19,7 @@ audience:
 - fullstack-engineering
 - frontend-platform
 created: 2026-03-19
-updated: '2026-03-21'
+updated: '2026-03-22'
 tags:
 - implementation
 - enhancement
@@ -207,3 +207,14 @@ This plan is complete when:
 2. Theme preference persists and resolves correctly at boot.
 3. Shared surfaces, charts, markdown, and app shell are validated in both modes.
 4. The platform is ready for user-defined theming on top of the standard theme contract.
+
+## Completion Notes
+
+Completed on 2026-03-22.
+
+1. `Settings > General > Theme` now writes through the centralized theme provider and persists the selected preference.
+2. The settings route includes a scoped light-mode compatibility bridge so the remaining legacy controls stay usable under the delivered standard modes while deeper semantic cleanup remains future work.
+3. Theme guardrails now also verify the Settings selector wiring and the scoped compatibility bridge alongside the existing bootstrap and shared-surface checks.
+4. Standard-mode rollout and extension guidance now live in:
+   - `docs/theme-modes-user-guide.md`
+   - `docs/theme-modes-developer-reference.md`

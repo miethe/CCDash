@@ -45,7 +45,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **Collapsible Sidebar**: Fluid-transition sidebar with icon-only mode to maximize workspace
 - Notification Badges: System alerts for cost overruns, quality drops, and threshold breaches
-- Semantic Theme Foundation: Token-backed dark baseline for shell, charts, and shared surfaces, ready for `light` and `system` expansion
+- Theme Modes: Persisted `dark`, `light`, and `system` preferences with first-paint resolution and browser-chrome alignment
 
 ### Dashboard & Analytics
 
@@ -259,7 +259,7 @@ CCDash is a full-stack local-first application with a split frontend/backend des
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 19, TypeScript, Vite (port 3000) |
-| Styling | Tailwind CSS (Slate dark mode) |
+| Styling | Tailwind CSS with semantic theme tokens (`dark`, `light`, `system`) |
 | Charts | Recharts (Area, Bar, Pie, Line, Composed) |
 | Routing | React Router DOM v7 (HashRouter) |
 | Backend | Python FastAPI (port 8000) |
@@ -329,11 +329,13 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | Guide | Audience |
 |-------|---------|
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
+| [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |
 | [`docs/testing-user-guide.md`](docs/testing-user-guide.md) | Test configuration and ingestion flow |
 | [`docs/shared-content-viewer-user-guide.md`](docs/shared-content-viewer-user-guide.md) | End-user content rendering behavior across documents, task sources, and sessions |
 | [`docs/execution-workbench-user-guide.md`](docs/execution-workbench-user-guide.md) | End-user execution workflow |
 | [`docs/agentic-sdlc-intelligence-user-guide.md`](docs/agentic-sdlc-intelligence-user-guide.md) | Workflow intelligence and recommended-stack usage |
 | [`docs/session-usage-attribution-user-guide.md`](docs/session-usage-attribution-user-guide.md) | Attribution semantics and interpretation |
+| [`docs/theme-modes-developer-reference.md`](docs/theme-modes-developer-reference.md) | Runtime contract, Settings bridge, and theme guardrails |
 | [`docs/shared-content-viewer-developer-reference.md`](docs/shared-content-viewer-developer-reference.md) | Wrapper architecture, heuristics, styling, and backend support for shared viewer flows |
 | [`docs/agentic-sdlc-intelligence-developer-reference.md`](docs/agentic-sdlc-intelligence-developer-reference.md) | Implementation details and rollout commands |
 | [`docs/session-usage-attribution-developer-reference.md`](docs/session-usage-attribution-developer-reference.md) | Attribution contracts, API details, and rollout controls |
