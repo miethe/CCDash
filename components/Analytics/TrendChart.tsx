@@ -9,7 +9,9 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import { analyticsService } from '../../services/analytics';
+import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../../lib/chartTheme';
 import { AnalyticsTrendPoint } from '../../types';
+import { Surface } from '../ui/surface';
 
 interface TrendChartProps {
     metric: string;
@@ -21,7 +23,7 @@ interface TrendChartProps {
 export const TrendChart: React.FC<TrendChartProps> = ({
     metric,
     title,
-    color = '#6366f1',
+    color = getChartSeriesColor('primary'),
     valueFormatter = (val) => val.toString(),
 }) => {
     const [data, setData] = useState<AnalyticsTrendPoint[]>([]);
@@ -42,11 +44,11 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     }, [metric]);
 
     if (loading) {
-        return <div className="h-64 flex items-center justify-center text-slate-500">Loading {title}...</div>;
+        return <Surface tone="overlay" padding="lg" className="flex h-64 items-center justify-center text-muted-foreground">Loading {title}...</Surface>;
     }
 
     if (data.length === 0) {
-        return <div className="h-64 flex items-center justify-center text-slate-500">No data for {title}</div>;
+        return <Surface tone="overlay" padding="lg" className="flex h-64 items-center justify-center text-muted-foreground">No data for {title}</Surface>;
     }
 
     // Transform for chart
@@ -57,35 +59,37 @@ export const TrendChart: React.FC<TrendChartProps> = ({
     }));
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-slate-200 mb-6">{title}</h3>
+        <Surface tone="panel" padding="lg">
+            <h3 className="mb-6 text-lg font-semibold text-panel-foreground">{title}</h3>
             <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData}>
                         <defs>
                             <linearGradient id={`gradient-${metric}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
-                                <stop offset="95%" stopColor={color} stopOpacity={0} />
+                                {getChartGradientStops(color).map((stop) => (
+                                    <stop
+                                        key={`${metric}-${stop.offset}`}
+                                        offset={stop.offset}
+                                        stopColor={stop.stopColor}
+                                        stopOpacity={stop.stopOpacity}
+                                    />
+                                ))}
                             </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                        <CartesianGrid {...chartTheme.grid} vertical={false} />
                         <XAxis
                             dataKey="date"
-                            stroke="#475569"
-                            tick={{ fill: '#64748b', fontSize: 12 }}
-                            axisLine={false}
-                            tickLine={false}
+                            {...chartTheme.axis}
                         />
                         <YAxis
-                            stroke="#475569"
-                            tick={{ fill: '#64748b', fontSize: 12 }}
-                            axisLine={false}
-                            tickLine={false}
+                            {...chartTheme.axis}
                             tickFormatter={valueFormatter}
                         />
                         <Tooltip
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                            itemStyle={{ color: '#e2e8f0' }}
+                            contentStyle={chartTheme.tooltip.contentStyle}
+                            itemStyle={chartTheme.tooltip.itemStyle}
+                            labelStyle={chartTheme.tooltip.labelStyle}
+                            cursor={chartTheme.tooltip.cursor}
                             labelFormatter={(label, payload) => payload[0]?.payload.fullDate || label}
                             formatter={(value: number) => [valueFormatter(value), title]}
                         />
@@ -100,6 +104,6 @@ export const TrendChart: React.FC<TrendChartProps> = ({
                     </AreaChart>
                 </ResponsiveContainer>
             </div>
-        </div>
+        </Surface>
     );
 };

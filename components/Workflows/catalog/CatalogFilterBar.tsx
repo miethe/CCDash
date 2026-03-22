@@ -25,7 +25,7 @@ export const CatalogFilterBar: React.FC<CatalogFilterBarProps> = ({
           className={
             active
               ? 'rounded-full border border-indigo-500/30 bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-200'
-              : 'rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-400 transition-colors hover:border-slate-600'
+              : 'rounded-full border border-panel-border bg-panel px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-hover'
           }
         >
           {option.label}

@@ -20,11 +20,11 @@ const ScoreBar: React.FC<{
   kind: 'success' | 'efficiency' | 'quality' | 'risk';
 }> = ({ label, value, kind }) => (
   <div className="space-y-2">
-    <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+    <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
       <span>{label}</span>
       <span className={`font-mono text-sm ${scoreValueClass(kind)}`}>{formatPercent(value)}</span>
     </div>
-    <div className="h-2 overflow-hidden rounded-full bg-slate-900">
+    <div className="h-2 overflow-hidden rounded-full bg-panel">
       <div
         className={`h-full rounded-full bg-gradient-to-r ${scoreBarClass(kind)}`}
         style={{ width: `${Math.max(8, Math.round(Math.max(0, Math.min(1, value)) * 100))}%` }}
@@ -38,12 +38,12 @@ const EvidenceMetric: React.FC<{
   label: string;
   value: string;
 }> = ({ icon, label, value }) => (
-  <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+  <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
       {icon}
       {label}
     </div>
-    <div className="mt-2 text-xl font-semibold tracking-tight text-slate-100">{value}</div>
+    <div className="mt-2 text-xl font-semibold tracking-tight text-panel-foreground">{value}</div>
   </div>
 );
 
@@ -51,12 +51,12 @@ export const EffectivenessSection: React.FC<EffectivenessSectionProps> = ({ effe
   const evidenceEntries = Object.entries(effectiveness?.evidenceSummary || {}).slice(0, 4);
 
   return (
-    <section className="rounded-[28px] border border-slate-800/80 bg-slate-950/55 px-5 py-5">
-      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Effectiveness</div>
-      <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-100">Outcome signals and quality evidence</h3>
+    <section className="rounded-[28px] border border-panel-border bg-surface-overlay/70 px-5 py-5">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Effectiveness</div>
+      <h3 className="mt-2 text-xl font-semibold tracking-tight text-panel-foreground">Outcome signals and quality evidence</h3>
 
       {!hasEffectivenessSummary(effectiveness) ? (
-        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4 text-sm text-slate-400">
+        <div className="mt-4 rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4 text-sm text-muted-foreground">
           No effectiveness rollup has been cached yet for this workflow entity.
         </div>
       ) : (
@@ -69,28 +69,28 @@ export const EffectivenessSection: React.FC<EffectivenessSectionProps> = ({ effe
           </div>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-            <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
+            <div className="space-y-4 rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
               <ScoreBar label="Success" value={effectiveness.successScore} kind="success" />
               <ScoreBar label="Efficiency" value={effectiveness.efficiencyScore} kind="efficiency" />
               <ScoreBar label="Quality" value={effectiveness.qualityScore} kind="quality" />
               <ScoreBar label="Risk" value={effectiveness.riskScore} kind="risk" />
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Evidence Summary</div>
+            <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Evidence Summary</div>
               {evidenceEntries.length > 0 ? (
                 <dl className="mt-3 grid gap-3">
                   {evidenceEntries.map(([key, value]) => (
-                    <div key={key} className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-3">
-                      <dt className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{key}</dt>
-                      <dd className="mt-1 text-sm text-slate-100 [overflow-wrap:anywhere]">
+                    <div key={key} className="rounded-xl border border-panel-border bg-surface-overlay/90 px-3 py-3">
+                      <dt className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{key}</dt>
+                      <dd className="mt-1 text-sm text-panel-foreground [overflow-wrap:anywhere]">
                         {typeof value === 'string' ? value : JSON.stringify(value)}
                       </dd>
                     </div>
                   ))}
                 </dl>
               ) : (
-                <div className="mt-3 text-sm text-slate-500">No structured evidence summary was attached.</div>
+                <div className="mt-3 text-sm text-muted-foreground">No structured evidence summary was attached.</div>
               )}
             </div>
           </div>

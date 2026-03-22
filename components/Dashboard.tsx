@@ -4,22 +4,34 @@ import { useData } from '../contexts/DataContext';
 import { TrendingUp, AlertTriangle, Zap, DollarSign, Cpu } from 'lucide-react';
 import { generateDashboardInsight } from '../services/geminiService';
 import { analyticsService } from '../services/analytics';
+import { chartTheme, getChartGradientStops, getChartSeriesColor } from '../lib/chartTheme';
 import { type AnalyticsOverview, type SessionCostCalibrationSummary } from '../types';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
+import { Button } from './ui/button';
+import { Surface, AlertSurface } from './ui/surface';
+import { cn } from '../lib/utils';
 
-const StatCard = ({ label, value, sub, icon: Icon, color }: any) => (
-  <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+const STAT_TONE_STYLES: Record<string, string> = {
+  primary: 'border-primary-border bg-primary/10 text-primary-foreground',
+  info: 'border-info-border bg-info/10 text-info-foreground',
+  success: 'border-success-border bg-success/10 text-success-foreground',
+  warning: 'border-warning-border bg-warning/10 text-warning-foreground',
+  danger: 'border-danger-border bg-danger/10 text-danger-foreground',
+};
+
+const StatCard = ({ label, value, sub, icon: Icon, tone }: any) => (
+  <Surface tone="panel" padding="lg" className="h-full">
     <div className="flex justify-between items-start mb-4">
       <div>
-        <p className="text-slate-400 text-sm font-medium">{label}</p>
-        <h3 className="text-2xl font-bold text-slate-100 mt-1">{value}</h3>
+        <p className="text-sm font-medium text-muted-foreground">{label}</p>
+        <h3 className="mt-1 text-2xl font-bold text-panel-foreground">{value}</h3>
       </div>
-      <div className={`p-2 rounded-lg bg-${color}-500/10 text-${color}-500`}>
+      <div className={cn('rounded-lg border p-2', STAT_TONE_STYLES[tone])}>
         <Icon size={20} />
       </div>
     </div>
-    <p className="text-xs text-slate-500">{sub}</p>
-  </div>
+    <p className="text-xs text-muted-foreground">{sub}</p>
+  </Surface>
 );
 
 export const Dashboard: React.FC = () => {
@@ -108,13 +120,13 @@ export const Dashboard: React.FC = () => {
     <div className="space-y-8">
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold text-slate-100">Analytics Overview</h2>
-          <p className="text-slate-400 mt-2">Performance metrics across all active agents and sessions.</p>
+          <h2 className="text-3xl font-bold text-panel-foreground">Analytics Overview</h2>
+          <p className="mt-2 text-muted-foreground">Performance metrics across all active agents and sessions.</p>
         </div>
-        <button
+        <Button
           onClick={handleGenerateInsight}
           disabled={loadingInsight}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+          size="sm"
         >
           {loadingInsight ? (
             <span className="animate-pulse">Analyzing...</span>
@@ -124,14 +136,14 @@ export const Dashboard: React.FC = () => {
               AI Insight
             </>
           )}
-        </button>
+        </Button>
       </div>
 
       {insight && (
-        <div className="bg-indigo-900/20 border border-indigo-500/30 p-4 rounded-xl text-indigo-200 text-sm leading-relaxed flex items-start gap-3">
-          <div className="mt-1"><Zap size={16} className="text-indigo-400" /></div>
+        <AlertSurface intent="info" className="flex items-start gap-3">
+          <div className="mt-1"><Zap size={16} className="text-info" /></div>
           <div>{insight}</div>
-        </div>
+        </AlertSurface>
       )}
 
       {/* KPI Cards */}
@@ -141,104 +153,117 @@ export const Dashboard: React.FC = () => {
           value={formatTokenCount(workloadMetrics.workloadTokens)}
           sub={`${formatTokenCount(workloadMetrics.cacheInputTokens)} cache input (${formatPercent(workloadMetrics.cacheShare)})`}
           icon={Cpu}
-          color="sky"
+          tone="info"
         />
         <StatCard
           label="Total Spend (30d)"
           value={`$${Number(overview?.kpis?.sessionCost || 0).toFixed(2)}`}
           sub={`${costCalibration?.comparableSessionCount || 0} comparable sessions • ${formatTokenCount(workloadMetrics.modelIOTokens)} model IO`}
           icon={DollarSign}
-          color="emerald"
+          tone="success"
         />
         <StatCard
           label="Avg. Session Quality"
           value={`${Number(overview?.kpis?.taskCompletionPct || 0).toFixed(1)}%`}
           sub="Task completion across done/deferred/completed"
           icon={TrendingUp}
-          color="indigo"
+          tone="primary"
         />
         <StatCard
           label="Tool Success Rate"
           value={`${Number(overview?.kpis?.toolSuccessRate || 0).toFixed(1)}%`}
           sub={`${Number(overview?.kpis?.toolCallCount || 0).toLocaleString()} tool calls tracked`}
           icon={AlertTriangle}
-          color="rose"
+          tone="danger"
         />
         <StatCard
           label="Features Shipped"
           value={`${Number(overview?.kpis?.taskVelocity || 0).toLocaleString()}`}
           sub={`${Number(overview?.kpis?.sessionCount || 0).toLocaleString()} sessions in scope`}
           icon={Zap}
-          color="amber"
+          tone="warning"
         />
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+      <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
         Display spend prefers reported cost, then recalculated cost, then estimated fallback. Current-context snapshots were captured for {Number(overview?.kpis?.contextSessionCount || 0).toLocaleString()} recent sessions at an average {Number(overview?.kpis?.avgContextUtilizationPct || 0).toFixed(1)}% utilization.
-      </div>
+      </AlertSurface>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+      <AlertSurface intent="neutral" className="text-xs text-muted-foreground">
         Calibration coverage: {Number(costCalibration?.comparableSessionCount || 0).toLocaleString()} comparable sessions, average mismatch {(Number(costCalibration?.avgMismatchPct || 0) * 100).toFixed(1)}%, average cost confidence {(Number(costCalibration?.avgCostConfidence || 0) * 100).toFixed(0)}%.
-      </div>
+      </AlertSurface>
 
       {/* Main Chart Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-slate-200 mb-6">Cost vs. Velocity</h3>
+        <Surface tone="panel" padding="lg" className="lg:col-span-2">
+          <h3 className="mb-6 text-lg font-semibold text-panel-foreground">Cost vs. Velocity</h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData.length > 0 ? chartData : analyticsData}>
                 <defs>
                   <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    {getChartGradientStops(getChartSeriesColor('primary')).map((stop) => (
+                      <stop
+                        key={`cost-${stop.offset}`}
+                        offset={stop.offset}
+                        stopColor={stop.stopColor}
+                        stopOpacity={stop.stopOpacity}
+                      />
+                    ))}
                   </linearGradient>
                   <linearGradient id="colorQuality" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    {getChartGradientStops(getChartSeriesColor('success')).map((stop) => (
+                      <stop
+                        key={`quality-${stop.offset}`}
+                        offset={stop.offset}
+                        stopColor={stop.stopColor}
+                        stopOpacity={stop.stopOpacity}
+                      />
+                    ))}
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <CartesianGrid {...chartTheme.grid} vertical={false} />
                 <XAxis
                   dataKey="date"
                   tickFormatter={(val) => val.slice(5)}
-                  stroke="#475569"
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...chartTheme.axis}
                 />
                 <YAxis
-                  stroke="#475569"
-                  tick={{ fill: '#64748b', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...chartTheme.axis}
                   tickFormatter={(val) => `$${val}`}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                  itemStyle={{ color: '#e2e8f0' }}
+                  contentStyle={chartTheme.tooltip.contentStyle}
+                  itemStyle={chartTheme.tooltip.itemStyle}
+                  labelStyle={chartTheme.tooltip.labelStyle}
+                  cursor={chartTheme.tooltip.cursor}
                 />
-                <Area type="monotone" dataKey="cost" stroke="#6366f1" fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} name="Daily Cost" />
-                <Area type="monotone" dataKey="velocity" stroke="#10b981" fillOpacity={1} fill="url(#colorQuality)" strokeWidth={2} name="Task Velocity" />
+                <Area type="monotone" dataKey="cost" stroke={getChartSeriesColor('primary')} fillOpacity={1} fill="url(#colorCost)" strokeWidth={2} name="Daily Cost" />
+                <Area type="monotone" dataKey="velocity" stroke={getChartSeriesColor('success')} fillOpacity={1} fill="url(#colorQuality)" strokeWidth={2} name="Task Velocity" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Surface>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h3 className="text-lg font-semibold text-slate-200 mb-6">Top Agent Models</h3>
+        <Surface tone="panel" padding="lg">
+          <h3 className="mb-6 text-lg font-semibold text-panel-foreground">Top Agent Models</h3>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={modelData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={true} vertical={false} />
+                <CartesianGrid {...chartTheme.grid} horizontal vertical={false} />
                 <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" stroke="#94a3b8" width={80} tick={{ fontSize: 12 }} />
-                <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                <Bar dataKey="usage" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                <YAxis dataKey="name" type="category" width={80} {...chartTheme.axis} />
+                <Tooltip
+                  cursor={{ fill: 'transparent' }}
+                  contentStyle={chartTheme.tooltip.contentStyle}
+                  itemStyle={chartTheme.tooltip.itemStyle}
+                  labelStyle={chartTheme.tooltip.labelStyle}
+                />
+                <Bar dataKey="usage" fill={getChartSeriesColor('info')} radius={[0, 4, 4, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Surface>
       </div>
     </div>
   );

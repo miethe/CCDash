@@ -45,7 +45,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **Collapsible Sidebar**: Fluid-transition sidebar with icon-only mode to maximize workspace
 - Notification Badges: System alerts for cost overruns, quality drops, and threshold breaches
-- Slate Dark Mode: Deep dark theme optimized for extended engineering sessions
+- Semantic Theme Foundation: Token-backed dark baseline for shell, charts, and shared surfaces, ready for `light` and `system` expansion
 
 ### Dashboard & Analytics
 

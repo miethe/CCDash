@@ -2,20 +2,23 @@ import React, { useState } from 'react';
 import { LayoutDashboard, ListTodo, Settings, Box, Terminal, Database, Bell, FileText, ChevronLeft, ChevronRight, LineChart, SlidersHorizontal, Activity, FolderTree, Command, TestTube2, Workflow } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
+import { cn } from '../lib/utils';
 import { ProjectSelector } from './ProjectSelector';
 
 const NavItem = ({ to, icon: Icon, label, active, isCollapsed }: { to: string; icon: any; label: string; active: boolean; isCollapsed: boolean }) => (
   <Link
     to={to}
-    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${active
-      ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-      : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-      }`}
+    className={cn(
+      'group relative flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-200',
+      active
+        ? 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-sm'
+        : 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground',
+    )}
   >
     <Icon size={20} className="shrink-0" />
     {!isCollapsed && <span className="font-medium text-sm truncate">{label}</span>}
     {isCollapsed && (
-      <div className="absolute left-16 bg-slate-900 border border-slate-800 px-2 py-1 rounded text-xs text-slate-200 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 whitespace-nowrap">
+      <div className="absolute left-16 z-50 whitespace-nowrap rounded-lg border border-panel-border bg-surface-overlay px-2 py-1 text-xs text-panel-foreground opacity-0 shadow-lg pointer-events-none transition-opacity group-hover:opacity-100">
         {label}
       </div>
     )}
@@ -29,16 +32,18 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   return (
-    <div className="flex h-screen bg-slate-950 overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-app-background text-app-foreground">
       {/* Sidebar */}
       <aside
-        className={`border-r border-slate-800 bg-slate-900 flex flex-col shrink-0 transition-all duration-300 ease-in-out relative overflow-x-hidden ${isCollapsed ? 'w-20' : 'w-64'
-          }`}
+        className={cn(
+          'relative flex shrink-0 flex-col overflow-x-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-300 ease-in-out',
+          isCollapsed ? 'w-20' : 'w-64',
+        )}
       >
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between overflow-hidden">
-          <div className="flex items-center gap-2 text-indigo-500 shrink-0">
-            <Box size={24} className="fill-indigo-500/20" />
-            {!isCollapsed && <h1 className="font-bold text-xl tracking-tight text-slate-100">CCDash</h1>}
+        <div className="flex items-center justify-between overflow-hidden border-b border-sidebar-border p-6">
+          <div className="flex shrink-0 items-center gap-2 text-info">
+            <Box size={24} className="fill-info/15" />
+            {!isCollapsed && <h1 className="text-xl font-bold tracking-tight text-sidebar-foreground">CCDash</h1>}
           </div>
         </div>
 
@@ -47,7 +52,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         {/* Collapse Toggle */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="absolute -right-3 top-20 w-6 h-6 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-indigo-600 transition-all z-40"
+          className="absolute -right-3 top-20 z-40 flex h-6 w-6 items-center justify-center rounded-full border border-panel-border bg-surface-elevated text-muted-foreground transition-all hover:border-focus hover:bg-hover hover:text-panel-foreground"
         >
           {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
@@ -66,23 +71,25 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <NavItem to="/workflows" icon={Workflow} label="Workflows" active={location.pathname.startsWith('/workflows')} isCollapsed={isCollapsed} />
           <NavItem to="/skills" icon={Database} label="SkillMeat Context" active={location.pathname === '/skills'} isCollapsed={isCollapsed} />
 
-          <div id="sidebar-portal" className={`mt-6 pt-6 border-t border-slate-800 empty:hidden w-full min-w-0 overflow-x-hidden ${isCollapsed ? 'hidden' : ''}`}></div>
+          <div id="sidebar-portal" className={`mt-6 w-full min-w-0 overflow-x-hidden border-t border-sidebar-border pt-6 empty:hidden ${isCollapsed ? 'hidden' : ''}`}></div>
         </nav>
 
-        <div className="p-4 border-t border-slate-800 space-y-1">
+        <div className="space-y-1 border-t border-sidebar-border p-4">
           <Link
             to="/settings"
-            className={`flex items-center justify-between px-4 py-3 rounded-lg transition-colors group relative ${location.pathname === '/settings'
-              ? 'bg-indigo-500/10 text-indigo-400'
-              : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
-              }`}
+            className={cn(
+              'group relative flex items-center justify-between rounded-lg border px-4 py-3 transition-colors',
+              location.pathname === '/settings'
+                ? 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-sm'
+                : 'border-transparent text-muted-foreground hover:bg-hover/60 hover:text-sidebar-foreground',
+            )}
           >
             <div className="flex items-center gap-3">
               <Bell size={20} className="shrink-0" />
               {!isCollapsed && <span className="font-medium text-sm">Notifications</span>}
             </div>
             {unreadCount > 0 && (
-              <span className={`${isCollapsed ? 'absolute -top-1 -right-1' : ''} bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center`}>
+              <span className={`${isCollapsed ? 'absolute -top-1 -right-1' : ''} min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-center text-[10px] font-bold text-danger-foreground`}>
                 {unreadCount}
               </span>
             )}
@@ -92,7 +99,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-x-auto overflow-y-hidden bg-slate-950">
+      <main className="flex min-w-0 flex-1 flex-col overflow-x-auto overflow-y-hidden bg-app-background">
         <div className="flex-1 min-w-[1024px] h-full overflow-y-auto p-4 md:p-8 scroll-smooth">
           {children}
         </div>

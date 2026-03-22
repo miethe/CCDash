@@ -26,10 +26,10 @@ const clamp01 = (value: number): number => {
 };
 
 const healthColorClass = (value: number): string => {
-  if (value >= 0.9) return 'text-emerald-400';
-  if (value >= 0.75) return 'text-indigo-400';
-  if (value >= 0.5) return 'text-amber-400';
-  return 'text-rose-400';
+  if (value >= 0.9) return 'text-success-foreground';
+  if (value >= 0.75) return 'text-info-foreground';
+  if (value >= 0.5) return 'text-warning-foreground';
+  return 'text-danger-foreground';
 };
 
 export const HealthGauge: React.FC<HealthGaugeProps> = ({
@@ -62,7 +62,7 @@ export const HealthGauge: React.FC<HealthGaugeProps> = ({
             fill="transparent"
             stroke="currentColor"
             strokeWidth={stroke}
-            className="text-slate-800"
+            className="text-panel-border"
           />
           <circle
             cx={dimension / 2}
@@ -84,7 +84,7 @@ export const HealthGauge: React.FC<HealthGaugeProps> = ({
           </span>
         </div>
       </div>
-      {showLabel && <span className="text-xs text-slate-400">Health</span>}
+      {showLabel && <span className="text-xs text-muted-foreground">Health</span>}
     </div>
   );
 };

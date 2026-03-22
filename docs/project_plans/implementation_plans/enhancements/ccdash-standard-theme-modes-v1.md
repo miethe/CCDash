@@ -12,7 +12,7 @@ summary: "Introduce runtime theme resolution, persistence, first-paint correctne
 author: codex
 audience: [ai-agents, developers, fullstack-engineering, frontend-platform]
 created: 2026-03-19
-updated: 2026-03-19
+updated: 2026-03-21
 tags: [implementation, enhancement, theming, dark-mode, light-mode, system-theme]
 priority: high
 risk_level: medium
@@ -33,6 +33,7 @@ linked_features: []
 related_documents:
   - docs/project_plans/PRDs/refactors/ccdash-theme-system-modernization-v1.md
   - docs/project_plans/implementation_plans/refactors/ccdash-theme-system-foundation-v1.md
+  - docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md
   - docs/project_plans/implementation_plans/enhancements/ccdash-custom-theming-v1.md
 context_files:
   - index.tsx
@@ -57,6 +58,12 @@ Ship the first user-facing theme modes for CCDash:
 3. `system`
 
 This plan assumes the foundation refactor is complete and the app now renders through semantic tokens rather than palette-literal shared surfaces.
+
+## Foundation Handoff Snapshot
+
+1. The shared theme foundation is now CI-guarded for [`components/ui/surface.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/ui/surface.tsx), [`components/ui/button.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/ui/button.tsx), [`components/ui/input.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/ui/input.tsx), [`components/ui/select.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/ui/select.tsx), [`components/ui/badge.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/ui/badge.tsx), [`components/Layout.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/Layout.tsx), [`components/Dashboard.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/Dashboard.tsx), [`components/Analytics/AnalyticsDashboard.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/Analytics/AnalyticsDashboard.tsx), [`components/Analytics/TrendChart.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/Analytics/TrendChart.tsx), [`components/content/UnifiedContentViewer.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/content/UnifiedContentViewer.tsx), [`components/featureStatus.ts`](/Users/miethe/dev/homelab/development/CCDash/components/featureStatus.ts), and [`lib/chartTheme.ts`](/Users/miethe/dev/homelab/development/CCDash/lib/chartTheme.ts).
+2. The dark baseline for those foundation-owned surfaces was revalidated in phase 6; see [`docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md`](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/reports/ccdash-theme-foundation-phase-6-guardrails-and-handoff-2026-03-21.md).
+3. Remaining palette-literal hotspots still exist in feature-local files such as [`components/Settings.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/Settings.tsx), [`components/SessionInspector.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/SessionInspector.tsx), and [`components/OpsPanel.tsx`](/Users/miethe/dev/homelab/development/CCDash/components/OpsPanel.tsx), but they no longer block runtime theme-mode delivery.
 
 ## Scope And Fixed Decisions
 

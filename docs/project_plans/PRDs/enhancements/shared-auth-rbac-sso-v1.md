@@ -9,7 +9,7 @@ title: "PRD: Shared Auth, RBAC, and SSO V1"
 description: "Add shared identity, role-based access control, and single sign-on across CCDash and SkillMeat using a common OIDC-based identity model."
 summary: "Introduce provider-agnostic SSO and authorization for hosted/shared use while preserving a deliberate local no-auth mode."
 created: 2026-03-11
-updated: 2026-03-11
+updated: 2026-03-20
 priority: critical
 risk_level: high
 complexity: High
@@ -40,7 +40,7 @@ context_files:
   - backend/services/integrations/skillmeat_client.py
   - backend/project_manager.py
   - contexts/DataContext.tsx
-implementation_plan_ref: ""
+implementation_plan_ref: "docs/project_plans/implementation_plans/enhancements/shared-auth-rbac-sso-v1.md"
 ---
 
 # PRD: Shared Auth, RBAC, and SSO V1

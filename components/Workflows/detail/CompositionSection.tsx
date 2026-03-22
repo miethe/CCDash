@@ -14,13 +14,13 @@ const StatCard: React.FC<{
   value: string;
   caption?: string;
 }> = ({ icon, label, value, caption }) => (
-  <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+  <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
       {icon}
       {label}
     </div>
-    <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">{value}</div>
-    {caption && <div className="mt-1 text-xs text-slate-500">{caption}</div>}
+    <div className="mt-2 text-2xl font-semibold tracking-tight text-panel-foreground">{value}</div>
+    {caption && <div className="mt-1 text-xs text-muted-foreground">{caption}</div>}
   </div>
 );
 
@@ -36,10 +36,10 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
   );
 
   return (
-    <section className="rounded-[28px] border border-slate-800/80 bg-slate-950/55 px-5 py-5">
-      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Composition</div>
+    <section className="rounded-[28px] border border-panel-border bg-surface-overlay/70 px-5 py-5">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Composition</div>
       <div className="mt-2 flex items-center justify-between gap-4">
-        <h3 className="text-xl font-semibold tracking-tight text-slate-100">Workflow shape and dependency surface</h3>
+        <h3 className="text-xl font-semibold tracking-tight text-panel-foreground">Workflow shape and dependency surface</h3>
         {composition.bundleAlignment?.bundleName && (
           <button
             type="button"
@@ -53,7 +53,7 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
       </div>
 
       {!hasCompositionData ? (
-        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4 text-sm text-slate-400">
+        <div className="mt-4 rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4 text-sm text-muted-foreground">
           This workflow has no extracted composition metadata yet. The registry is showing the gap explicitly instead of hiding it.
         </div>
       ) : (
@@ -76,8 +76,8 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
           </div>
 
           {composition.stageOrder.length > 0 && (
-            <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Stage Order</div>
+            <div className="mt-5 rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Stage Order</div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {composition.stageOrder.map((stage, index) => (
                   <React.Fragment key={`${stage}-${index}`}>
@@ -85,7 +85,7 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
                       {stage}
                     </span>
                     {index < composition.stageOrder.length - 1 && (
-                      <span className="text-slate-600">/</span>
+                      <span className="text-muted-foreground">/</span>
                     )}
                   </React.Fragment>
                 ))}
@@ -95,26 +95,26 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
 
           <div className="mt-5 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
             <div className="space-y-4">
-              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Artifact References</div>
+              <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Artifact References</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {composition.artifactRefs.length > 0 ? (
                     composition.artifactRefs.map(ref => (
                       <span
                         key={ref}
-                        className="rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-200"
+                        className="rounded-full border border-panel-border bg-panel/80 px-2.5 py-1 text-xs text-panel-foreground"
                       >
                         {ref}
                       </span>
                     ))
                   ) : (
-                    <span className="text-sm text-slate-500">No artifact references extracted.</span>
+                    <span className="text-sm text-muted-foreground">No artifact references extracted.</span>
                   )}
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Resolved Context Modules</div>
+              <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Resolved Context Modules</div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {composition.resolvedContextModules.length > 0 ? (
                     composition.resolvedContextModules.map(module => (
@@ -122,24 +122,24 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
                         key={`${module.moduleId}-${module.contextRef}`}
                         type="button"
                         onClick={() => openExternalUrl(module.sourceUrl)}
-                        className="rounded-2xl border border-slate-800 bg-slate-950/80 px-4 py-3 text-left transition-colors hover:border-slate-600"
+                        className="rounded-2xl border border-panel-border bg-surface-overlay/90 px-4 py-3 text-left transition-colors hover:border-hover"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-semibold text-slate-100 [overflow-wrap:anywhere]">
+                          <div className="text-sm font-semibold text-panel-foreground [overflow-wrap:anywhere]">
                             {module.moduleName || module.contextRef}
                           </div>
-                          <ExternalLink size={12} className="text-slate-500" />
+                          <ExternalLink size={12} className="text-muted-foreground" />
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
+                        <div className="mt-1 text-xs text-muted-foreground">
                           {module.contextRef} • {module.status || 'unknown'}
                         </div>
-                        <div className="mt-2 text-xs text-slate-300">
+                        <div className="mt-2 text-xs text-foreground">
                           Preview footprint {module.previewTokens.toLocaleString()} tok
                         </div>
                       </button>
                     ))
                   ) : (
-                    <div className="text-sm text-slate-500">No resolved context modules attached.</div>
+                    <div className="text-sm text-muted-foreground">No resolved context modules attached.</div>
                   )}
                 </div>
               </div>
@@ -159,7 +159,7 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
                     {composition.bundleAlignment.matchedRefs.map(ref => (
                       <span
                         key={`${composition.bundleAlignment?.bundleId}-${ref}`}
-                        className="rounded-full border border-cyan-500/20 bg-slate-950/40 px-2.5 py-1 text-xs text-cyan-50"
+                        className="rounded-full border border-cyan-500/20 bg-surface-overlay/70 px-2.5 py-1 text-xs text-cyan-50"
                       >
                         {ref}
                       </span>
@@ -168,24 +168,24 @@ export const CompositionSection: React.FC<CompositionSectionProps> = ({ composit
                 </div>
               )}
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-4">
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+              <div className="rounded-2xl border border-panel-border bg-surface-overlay/80 px-4 py-4">
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                   <ScrollText size={12} />
                   Plan Summary
                 </div>
                 {planSummaryEntries.length > 0 ? (
                   <dl className="mt-3 grid gap-3">
                     {planSummaryEntries.map(([key, value]) => (
-                      <div key={key} className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
-                        <dt className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{key}</dt>
-                        <dd className="mt-1 text-sm text-slate-100 [overflow-wrap:anywhere]">
+                      <div key={key} className="rounded-xl border border-panel-border bg-surface-overlay/80 px-3 py-3">
+                        <dt className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{key}</dt>
+                        <dd className="mt-1 text-sm text-panel-foreground [overflow-wrap:anywhere]">
                           {typeof value === 'string' ? value : JSON.stringify(value)}
                         </dd>
                       </div>
                     ))}
                   </dl>
                 ) : (
-                  <div className="mt-3 text-sm text-slate-500">No structured plan summary was cached.</div>
+                  <div className="mt-3 text-sm text-muted-foreground">No structured plan summary was cached.</div>
                 )}
               </div>
             </div>

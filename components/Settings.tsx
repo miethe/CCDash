@@ -46,6 +46,11 @@ import { refreshSkillMeatCache, validateSkillMeatConfig } from '../services/skil
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
+import { cn } from '../lib/utils';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Select } from './ui/select';
+import { AlertSurface, ControlRow, Surface } from './ui/surface';
 
 type SettingsTab = 'general' | 'projects' | 'integrations' | 'ai-platforms' | 'alerts';
 type IntegrationsSubtab = 'skillmeat' | 'github';
@@ -63,19 +68,51 @@ const SKILLMEAT_SETUP_COMMANDS: string[] = [
 
 const DEFAULT_SKILLMEAT_CONFIG: Project['skillMeat'] = defaultSkillMeatConfig();
 
-const SKILLMEAT_STATUS_STYLES: Record<SkillMeatProbeResult['state'], string> = {
-  idle: 'border-slate-700 text-slate-400 bg-slate-900',
-  success: 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10',
-  warning: 'border-amber-500/30 text-amber-300 bg-amber-500/10',
-  error: 'border-rose-500/30 text-rose-300 bg-rose-500/10',
-};
+const PROBE_STATE_BADGE_TONE = {
+  idle: 'muted',
+  success: 'success',
+  warning: 'warning',
+  error: 'danger',
+} as const;
 
-const GITHUB_STATUS_STYLES: Record<GitHubProbeResult['state'], string> = {
-  idle: 'border-slate-700 text-slate-400 bg-slate-900',
-  success: 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10',
-  warning: 'border-amber-500/30 text-amber-300 bg-amber-500/10',
-  error: 'border-rose-500/30 text-rose-300 bg-rose-500/10',
-};
+const SECTION_ICON_TONE_STYLES = {
+  primary: 'border-info-border bg-info/10 text-info-foreground',
+  accent: 'border-info-border bg-info/10 text-info-foreground',
+  neutral: 'border-panel-border bg-surface-muted text-panel-foreground',
+} as const;
+
+const SectionIcon: React.FC<{
+  icon: React.ElementType;
+  tone?: keyof typeof SECTION_ICON_TONE_STYLES;
+}> = ({ icon: Icon, tone = 'primary' }) => (
+  <div className={cn('rounded-lg border p-2', SECTION_ICON_TONE_STYLES[tone])}>
+    <Icon size={20} />
+  </div>
+);
+
+const SectionHeading: React.FC<{
+  icon: React.ElementType;
+  title: string;
+  description: string;
+  tone?: keyof typeof SECTION_ICON_TONE_STYLES;
+}> = ({ icon, title, description, tone = 'primary' }) => (
+  <div className="flex items-center gap-3">
+    <SectionIcon icon={icon} tone={tone} />
+    <div>
+      <h3 className="font-semibold text-panel-foreground">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </div>
+  </div>
+);
+
+const ConnectionStatusBadge: React.FC<{
+  label: string;
+  state: keyof typeof PROBE_STATE_BADGE_TONE;
+}> = ({ label, state }) => (
+  <Badge tone={PROBE_STATE_BADGE_TONE[state]} size="md" className="inline-flex max-w-full leading-none">
+    <span className="truncate">{label}</span>
+  </Badge>
+);
 
 const SkillMeatStatusBadge: React.FC<{
   result?: SkillMeatProbeResult | null;
@@ -83,11 +120,7 @@ const SkillMeatStatusBadge: React.FC<{
 }> = ({ result, fallback }) => {
   const label = result?.message || fallback;
   const state = result?.state || 'idle';
-  return (
-    <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-1 text-[11px] leading-none ${SKILLMEAT_STATUS_STYLES[state]}`}>
-      <span className="truncate">{label}</span>
-    </span>
-  );
+  return <ConnectionStatusBadge label={label} state={state} />;
 };
 
 const GitHubStatusBadge: React.FC<{
@@ -96,11 +129,7 @@ const GitHubStatusBadge: React.FC<{
 }> = ({ result, fallback }) => {
   const label = result?.message || fallback;
   const state = result?.state || 'idle';
-  return (
-    <span className={`inline-flex max-w-full items-center rounded-full border px-2 py-1 text-[11px] leading-none ${GITHUB_STATUS_STYLES[state]}`}>
-      <span className="truncate">{label}</span>
-    </span>
-  );
+  return <ConnectionStatusBadge label={label} state={state} />;
 };
 
 const SubtabButton: React.FC<{
@@ -111,10 +140,12 @@ const SubtabButton: React.FC<{
   <button
     type="button"
     onClick={onClick}
-    className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${active
-      ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
-      : 'border border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200'
-      }`}
+    className={cn(
+      'rounded-lg border px-3 py-2 text-xs font-semibold transition-colors',
+      active
+        ? 'border-focus/40 bg-info/10 text-info-foreground'
+        : 'border-panel-border bg-surface-overlay/80 text-muted-foreground hover:border-hover hover:bg-hover/60 hover:text-panel-foreground',
+    )}
   >
     {label}
   </button>
@@ -130,42 +161,42 @@ const ProjectPicker: React.FC<{
   const selectedProject = projects.find(project => project.id === selectedProjectId);
   return (
     <div className="relative">
-      <label className="block text-sm font-medium text-slate-400 mb-2">Select Project</label>
+      <label className="mb-2 block text-sm font-medium text-muted-foreground">Select Project</label>
       <button
         type="button"
         onClick={onToggleDropdown}
-        className="w-full flex items-center justify-between bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-left hover:border-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
+        className="flex w-full items-center justify-between rounded-lg border border-panel-border bg-surface-overlay/80 px-4 py-3 text-left transition-colors hover:border-hover focus:outline-none focus:border-focus"
       >
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-medium text-slate-200 truncate">
+          <span className="truncate text-sm font-medium text-panel-foreground">
             {selectedProject?.name || 'Select a project...'}
           </span>
           {selectedProject && (
-            <span className="text-xs text-slate-500 mt-0.5 font-mono truncate">
+            <span className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
               {selectedProject.path}
             </span>
           )}
         </div>
-        <ChevronDown size={16} className={`text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown size={16} className={`text-muted-foreground transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {dropdownOpen && (
         <>
           <div className="fixed inset-0 z-10" onClick={onToggleDropdown} />
-          <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl border border-slate-700 z-50 overflow-hidden max-h-72 overflow-y-auto">
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto overflow-hidden rounded-lg border border-panel-border bg-surface-elevated shadow-xl">
             {projects.map(project => (
               <button
                 key={project.id}
                 type="button"
                 onClick={() => onSelect(project.id)}
-                className="w-full text-left px-4 py-3 hover:bg-slate-700 flex items-center justify-between transition-colors border-b border-slate-700/50 last:border-0"
+                className="flex w-full items-center justify-between border-b border-panel-border px-4 py-3 text-left transition-colors last:border-0 hover:bg-hover/60"
               >
                 <div className="flex flex-col min-w-0">
-                  <span className="text-sm text-slate-200 font-medium truncate">{project.name}</span>
-                  <span className="text-xs text-slate-500 font-mono truncate">{project.path}</span>
+                  <span className="truncate text-sm font-medium text-panel-foreground">{project.name}</span>
+                  <span className="truncate font-mono text-xs text-muted-foreground">{project.path}</span>
                 </div>
                 {selectedProjectId === project.id && (
-                  <Check size={14} className="text-indigo-400 shrink-0 ml-2" />
+                  <Check size={14} className="ml-2 shrink-0 text-info-foreground" />
                 )}
               </button>
             ))}
@@ -405,10 +436,12 @@ const TabButton: React.FC<{
 }> = ({ tab, activeTab, icon: Icon, label, onClick }) => (
   <button
     onClick={() => onClick(tab)}
-    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${activeTab === tab
-      ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
-      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-      }`}
+    className={cn(
+      'flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all duration-200',
+      activeTab === tab
+        ? 'border-focus/40 bg-info/10 text-info-foreground'
+        : 'border-transparent text-muted-foreground hover:border-panel-border hover:bg-hover/60 hover:text-panel-foreground',
+    )}
   >
     <Icon size={16} />
     {label}
@@ -466,193 +499,192 @@ const GeneralTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="bg-indigo-500/10 p-2 rounded-lg text-indigo-400">
-            <Monitor size={20} />
-          </div>
-          <div>
-            <h3 className="font-semibold text-slate-100">General Preferences</h3>
-            <p className="text-sm text-slate-400">Application-wide settings and appearance.</p>
-          </div>
-        </div>
+      <Surface tone="panel" padding="lg" className="space-y-6">
+        <SectionHeading
+          icon={Monitor}
+          title="General Preferences"
+          description="Application-wide settings and appearance."
+        />
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2">Theme</label>
-            <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+            <label className="mb-2 block text-sm font-medium text-muted-foreground">Theme</label>
+            <Select tone="default" defaultValue="Dark (Default)">
               <option>Dark (Default)</option>
               <option>Light</option>
               <option>System</option>
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2">Polling Interval</label>
-            <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+            <label className="mb-2 block text-sm font-medium text-muted-foreground">Polling Interval</label>
+            <Select tone="default" defaultValue="30 seconds (Default)">
               <option>30 seconds (Default)</option>
               <option>15 seconds</option>
               <option>60 seconds</option>
               <option>5 minutes</option>
-            </select>
+            </Select>
           </div>
         </div>
-      </div>
+      </Surface>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="bg-cyan-500/10 p-2 rounded-lg text-cyan-300">
-            <Palette size={20} />
-          </div>
-          <div>
-            <h3 className="font-semibold text-slate-100">Model Color Mapping</h3>
-            <p className="text-sm text-slate-400">
-              Configure color coding by model family or exact model. Model-level overrides take precedence.
-            </p>
-          </div>
-        </div>
+      <Surface tone="panel" padding="lg" className="space-y-6">
+        <SectionHeading
+          icon={Palette}
+          tone="accent"
+          title="Model Color Mapping"
+          description="Configure color coding by model family or exact model. Model-level overrides take precedence."
+        />
 
         {modelFacetsLoading && (
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-400">
+          <AlertSurface intent="neutral">
             Loading model options from ingested session data...
-          </div>
+          </AlertSurface>
         )}
 
         {!modelFacetsLoading && registry.models.length === 0 && (
-          <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-sm text-amber-200">
+          <AlertSurface intent="warning">
             No model facets are available yet. Run a session sync to populate model families and models.
-          </div>
+          </AlertSurface>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-4">
-            <h4 className="text-sm font-semibold text-slate-200">Family Override</h4>
+          <Surface tone="muted" padding="md" className="space-y-4">
+            <h4 className="text-sm font-semibold text-panel-foreground">Family Override</h4>
             <div>
-              <label className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Model Family</label>
-              <select
+              <label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground">Model Family</label>
+              <Select
                 value={selectedFamily}
                 onChange={(event) => setSelectedFamily(event.target.value)}
+                tone="default"
                 disabled={registry.families.length === 0}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
               >
                 {registry.families.map(family => (
                   <option key={family.label} value={family.label}>
                     {family.label} ({family.count})
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
-            <div className="flex items-center gap-3">
-              <label className="text-xs uppercase tracking-wide text-slate-500">Color</label>
+            <ControlRow className="justify-between">
+              <label className="text-xs uppercase tracking-wide text-muted-foreground">Color</label>
               <input
                 type="color"
                 value={familyColor}
                 onChange={(event) => setFamilyColor(event.target.value)}
-                className="h-9 w-14 rounded border border-slate-700 bg-slate-950"
+                className="h-9 w-14 rounded border border-panel-border bg-surface-overlay"
               />
-              <button
+              <Button
                 onClick={() => selectedFamily && setFamilyColorOverride(selectedFamily, familyColor)}
                 disabled={!selectedFamily}
-                className="px-3 py-1.5 rounded-md text-xs font-medium border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 disabled:opacity-40"
+                variant="panel"
+                size="sm"
+                className="border-info-border bg-info/10 text-info-foreground hover:bg-info/20 disabled:opacity-40"
               >
                 Save Family Color
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => selectedFamily && clearFamilyColorOverride(selectedFamily)}
                 disabled={!selectedFamily || !getFamilyOverrideColor(selectedFamily)}
-                className="px-3 py-1.5 rounded-md text-xs font-medium border border-slate-700 bg-slate-900 text-slate-300 disabled:opacity-40"
+                variant="panel"
+                size="sm"
+                className="disabled:opacity-40"
               >
                 Clear
-              </button>
-            </div>
-          </div>
+              </Button>
+            </ControlRow>
+          </Surface>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-4">
-            <h4 className="text-sm font-semibold text-slate-200">Model Override</h4>
+          <Surface tone="muted" padding="md" className="space-y-4">
+            <h4 className="text-sm font-semibold text-panel-foreground">Model Override</h4>
             <div>
-              <label className="block text-xs uppercase tracking-wide text-slate-500 mb-2">Model</label>
-              <select
+              <label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground">Model</label>
+              <Select
                 value={selectedModel}
                 onChange={(event) => setSelectedModel(event.target.value)}
+                tone="default"
                 disabled={registry.models.length === 0}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
               >
                 {registry.models.map(model => (
                   <option key={model.raw} value={model.raw}>
                     {model.label} ({model.count})
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
-            <div className="flex items-center gap-3">
-              <label className="text-xs uppercase tracking-wide text-slate-500">Color</label>
+            <ControlRow className="justify-between">
+              <label className="text-xs uppercase tracking-wide text-muted-foreground">Color</label>
               <input
                 type="color"
                 value={modelColor}
                 onChange={(event) => setModelColor(event.target.value)}
-                className="h-9 w-14 rounded border border-slate-700 bg-slate-950"
+                className="h-9 w-14 rounded border border-panel-border bg-surface-overlay"
               />
-              <button
+              <Button
                 onClick={() => selectedModel && setModelColorOverride(selectedModel, modelColor)}
                 disabled={!selectedModel}
-                className="px-3 py-1.5 rounded-md text-xs font-medium border border-cyan-500/40 bg-cyan-500/15 text-cyan-200 disabled:opacity-40"
+                variant="panel"
+                size="sm"
+                className="border-info-border bg-info/10 text-info-foreground hover:bg-info/20 disabled:opacity-40"
               >
                 Save Model Color
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => selectedModel && clearModelColorOverride(selectedModel)}
                 disabled={!selectedModel || !getModelOverrideColor(selectedModel)}
-                className="px-3 py-1.5 rounded-md text-xs font-medium border border-slate-700 bg-slate-900 text-slate-300 disabled:opacity-40"
+                variant="panel"
+                size="sm"
+                className="disabled:opacity-40"
               >
                 Clear
-              </button>
-            </div>
-          </div>
+              </Button>
+            </ControlRow>
+          </Surface>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-            <h4 className="text-xs uppercase tracking-wide text-slate-500 mb-3">Family Overrides</h4>
+          <Surface tone="muted" padding="md">
+            <h4 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Family Overrides</h4>
             <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-              {familyOverrideRows.length === 0 && <div className="text-sm text-slate-500">None configured.</div>}
+              {familyOverrideRows.length === 0 && <div className="text-sm text-muted-foreground">None configured.</div>}
               {familyOverrideRows.map(([key, color]) => {
                 const label = registry.familyLabelByKey[key] || key;
                 return (
                   <div key={key} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="text-slate-300">{label}</span>
+                    <span className="text-panel-foreground">{label}</span>
                     <div className="flex items-center gap-2">
-                      <span className="h-5 w-5 rounded border border-slate-700" style={{ backgroundColor: color }} />
-                      <span className="font-mono text-xs text-slate-400">{color}</span>
+                      <span className="h-5 w-5 rounded border border-panel-border" style={{ backgroundColor: color }} />
+                      <span className="font-mono text-xs text-muted-foreground">{color}</span>
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Surface>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-            <h4 className="text-xs uppercase tracking-wide text-slate-500 mb-3">Model Overrides</h4>
+          <Surface tone="muted" padding="md">
+            <h4 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Model Overrides</h4>
             <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-              {modelOverrideRows.length === 0 && <div className="text-sm text-slate-500">None configured.</div>}
+              {modelOverrideRows.length === 0 && <div className="text-sm text-muted-foreground">None configured.</div>}
               {modelOverrideRows.map(([key, color]) => {
                 const label = registry.modelByKey[key]?.label || key;
                 return (
                   <div key={key} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="text-slate-300 truncate" title={label}>{label}</span>
+                    <span className="truncate text-panel-foreground" title={label}>{label}</span>
                     <div className="flex items-center gap-2">
-                      <span className="h-5 w-5 rounded border border-slate-700" style={{ backgroundColor: color }} />
-                      <span className="font-mono text-xs text-slate-400">{color}</span>
+                      <span className="h-5 w-5 rounded border border-panel-border" style={{ backgroundColor: color }} />
+                      <span className="font-mono text-xs text-muted-foreground">{color}</span>
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Surface>
         </div>
 
-        <div className="p-3 bg-slate-800/40 rounded-lg border border-slate-700/50 text-xs text-slate-500">
+        <AlertSurface intent="neutral" className="text-xs">
           Colors are sourced from session model facets and applied across Analytics, Session cards, and other model badges.
-        </div>
-      </div>
+        </AlertSurface>
+      </Surface>
     </div>
   );
 };
@@ -2421,53 +2453,46 @@ const AlertsTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-500/10 p-2 rounded-lg text-indigo-400">
-              <Bell size={20} />
-            </div>
-            <div>
-              <h3 className="font-semibold text-slate-100">Alert Configuration</h3>
-              <p className="text-sm text-slate-400">Define conditions for system notifications.</p>
-            </div>
-          </div>
-          <button
+      <Surface tone="panel" padding="none" className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-panel-border p-6">
+          <SectionHeading
+            icon={Bell}
+            title="Alert Configuration"
+            description="Define conditions for system notifications."
+          />
+          <Button
             onClick={createAlert}
             disabled={saving}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            size="sm"
           >
             <Plus size={16} />
             New Alert
-          </button>
+          </Button>
         </div>
 
         {error && (
-          <div className="px-6 py-3 bg-red-900/30 border-b border-red-700/50 text-red-300 text-sm">
+          <AlertSurface intent="danger" className="rounded-none border-x-0 border-t-0">
             {error}
-          </div>
+          </AlertSurface>
         )}
 
-        <div className="divide-y divide-slate-800">
+        <div className="divide-y divide-panel-border">
           {alerts.map((alert) => (
-            <div key={alert.id} className="p-6 flex items-center justify-between group hover:bg-slate-800/30 transition-colors">
+            <div key={alert.id} className="group flex items-center justify-between p-6 transition-colors hover:bg-hover/30">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
-                  <h4 className="font-medium text-slate-200">{alert.name}</h4>
-                  <span className={`text-[10px] px-2 py-0.5 rounded border ${alert.isActive
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-slate-800 text-slate-500 border-slate-700'
-                    }`}>
+                  <h4 className="font-medium text-panel-foreground">{alert.name}</h4>
+                  <Badge tone={alert.isActive ? 'success' : 'muted'}>
                     {alert.isActive ? 'ACTIVE' : 'INACTIVE'}
-                  </span>
+                  </Badge>
                 </div>
 
-                <div className="flex items-center gap-2 text-sm text-slate-400 mt-2">
-                  <span className="font-mono text-indigo-400 bg-indigo-500/10 px-1.5 rounded">{alert.scope}</span>
+                <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                  <Badge tone="info" mono>{alert.scope}</Badge>
                   <span>if</span>
-                  <span className="font-mono text-slate-300">{alert.metric}</span>
+                  <span className="font-mono text-panel-foreground">{alert.metric}</span>
                   <span>is</span>
-                  <span className="font-bold text-slate-200">{alert.operator} {alert.threshold}</span>
+                  <span className="font-bold text-panel-foreground">{alert.operator} {alert.threshold}</span>
                 </div>
               </div>
 
@@ -2485,7 +2510,7 @@ const AlertsTab: React.FC = () => {
                 </div>
                 <button
                   onClick={() => void deleteAlert(alert.id)}
-                  className="p-2 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                  className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger-foreground"
                 >
                   <Trash2 size={18} />
                 </button>
@@ -2494,13 +2519,13 @@ const AlertsTab: React.FC = () => {
           ))}
 
           {alerts.length === 0 && (
-            <div className="p-8 text-center text-slate-500 flex flex-col items-center">
+            <div className="flex flex-col items-center p-8 text-center text-muted-foreground">
               <AlertCircle size={32} className="mb-2 opacity-50" />
               <p>No alerts configured.</p>
             </div>
           )}
         </div>
-      </div>
+      </Surface>
     </div>
   );
 };
@@ -2513,18 +2538,18 @@ export const Settings: React.FC = () => {
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
-        <h2 className="text-3xl font-bold text-slate-100">Settings</h2>
-        <p className="text-slate-400 mt-2">Manage projects, AI platforms, alerts, and application preferences.</p>
+        <h2 className="text-3xl font-bold text-app-foreground">Settings</h2>
+        <p className="mt-2 text-muted-foreground">Manage projects, AI platforms, alerts, and application preferences.</p>
       </div>
 
       {/* Tab Bar */}
-      <div className="flex items-center gap-2 p-1 bg-slate-900/50 border border-slate-800 rounded-xl">
+      <Surface tone="overlay" padding="sm" shadow="none" className="flex items-center gap-2">
         <TabButton tab="general" activeTab={activeTab} icon={SettingsIcon} label="General" onClick={setActiveTab} />
         <TabButton tab="projects" activeTab={activeTab} icon={FolderOpen} label="Projects" onClick={setActiveTab} />
         <TabButton tab="integrations" activeTab={activeTab} icon={GitBranch} label="Integrations" onClick={setActiveTab} />
         <TabButton tab="ai-platforms" activeTab={activeTab} icon={Bot} label="AI Platforms" onClick={setActiveTab} />
         <TabButton tab="alerts" activeTab={activeTab} icon={Bell} label="Alerts" onClick={setActiveTab} />
-      </div>
+      </Surface>
 
       {/* Tab Content */}
       {activeTab === 'general' && <GeneralTab />}

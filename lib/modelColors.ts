@@ -95,6 +95,8 @@ const withAlpha = (rgb: { r: number; g: number; b: number }, alpha: number): str
 const brighten = (channel: number, amount: number): number =>
   Math.max(0, Math.min(255, Math.round(channel + (255 - channel) * amount)));
 
+// Model colors are domain accents. They intentionally remain data-driven and must
+// not replace the app's semantic theme tokens for shared surfaces or shell chrome.
 export const toColorBadgeStyle = (color: string): CSSProperties => {
   const rgb = hexToRgb(color) || hexToRgb(DEFAULT_COLOR)!;
   return {

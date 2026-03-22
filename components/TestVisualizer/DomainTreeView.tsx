@@ -150,14 +150,14 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
     return (
       <li key={node.domainId}>
         <div
-          className={`group flex items-center gap-2 rounded-lg border px-2 py-2 ${isSelected ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent hover:border-slate-700 hover:bg-slate-800/50'} ${isFocused ? 'ring-1 ring-indigo-500/50' : ''}`.trim()}
+          className={`group flex items-center gap-2 rounded-lg border px-2 py-2 ${isSelected ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent hover:border-panel-border hover:bg-surface-muted/60'} ${isFocused ? 'ring-1 ring-focus/40' : ''}`.trim()}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
         >
           {hasChildren ? (
             <button
               type="button"
               onClick={() => toggleExpanded(node.domainId)}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-panel-border/90 bg-panel text-muted-foreground transition-colors hover:border-hover hover:text-panel-foreground"
               aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${node.domainName} (${node.children.length} sub-domains)`}
             >
               <ChevronRight
@@ -167,7 +167,7 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
             </button>
           ) : (
             <span
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-dashed border-slate-700/70 bg-slate-900/70 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-dashed border-panel-border/80 bg-panel/70 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
               title="Leaf domain (no sub-domains)"
               aria-label="Leaf domain (no sub-domains)"
             >
@@ -183,8 +183,8 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
             className="flex flex-1 items-center justify-between gap-2 text-left"
           >
             <div>
-              <p className="text-sm font-medium text-slate-200">{node.domainName}</p>
-              <p className="text-[11px] uppercase tracking-wide text-slate-500">
+              <p className="text-sm font-medium text-panel-foreground">{node.domainName}</p>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 {node.tier}
                 {hasChildren ? ` · ${node.children.length} sub-domains` : ' · leaf'}
               </p>
@@ -201,7 +201,7 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
 
   if (domains.length === 0) {
     return (
-      <div className={`rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500 ${className}`.trim()}>
+      <div className={`rounded-xl border border-panel-border bg-panel p-4 text-sm text-muted-foreground ${className}`.trim()}>
         No domains found.
       </div>
     );
@@ -209,7 +209,7 @@ export const DomainTreeView: React.FC<DomainTreeViewProps> = ({
 
   return (
     <div
-      className={`rounded-xl border border-slate-800 bg-slate-900 p-2 ${className}`.trim()}
+      className={`rounded-xl border border-panel-border bg-panel p-2 ${className}`.trim()}
       role="tree"
       tabIndex={0}
       onKeyDown={onTreeKeyDown}

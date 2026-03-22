@@ -48,7 +48,7 @@ export const correlationBadgeClass = (state: WorkflowRegistryCorrelationState): 
 export const issueToneClass = (severity: WorkflowRegistryIssueSeverity): string => {
   if (severity === 'error') return 'border-rose-500/30 bg-rose-500/10 text-rose-100';
   if (severity === 'warning') return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
-  return 'border-slate-700 bg-slate-900/70 text-slate-300';
+  return 'border-panel-border bg-surface-overlay/70 text-foreground';
 };
 
 export const scoreBarClass = (
