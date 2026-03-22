@@ -46,6 +46,8 @@ import { refreshSkillMeatCache, validateSkillMeatConfig } from '../services/skil
 import { getTestSourcesStatus, syncTestSources } from '../services/testVisualizer';
 import { ensureProjectTestConfig } from '../services/testConfigDefaults';
 import { generateProjectTestSetupScript } from '../services/testSetupScript';
+import { useTheme } from '../contexts/ThemeContext';
+import { THEME_PREFERENCES, type ThemePreference } from '../lib/themeMode';
 import { cn } from '../lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -406,6 +408,12 @@ const formatPricingTimestamp = (value: string): string => {
   return parsed.toLocaleString();
 };
 
+const THEME_OPTION_LABELS: Record<ThemePreference, string> = {
+  dark: 'Dark',
+  light: 'Light',
+  system: 'System',
+};
+
 const pricingEntryTitle = (entry: PricingCatalogEntry): string => {
   if (entry.displayLabel?.trim()) return entry.displayLabel;
   if (entry.modelId?.trim()) return entry.modelId;
@@ -451,6 +459,7 @@ const TabButton: React.FC<{
 // ── General Tab ────────────────────────────────────────────────────
 
 const GeneralTab: React.FC = () => {
+  const { preference, resolvedTheme, setPreference } = useTheme();
   const {
     registry,
     modelFacetsLoading,
@@ -509,11 +518,22 @@ const GeneralTab: React.FC = () => {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm font-medium text-muted-foreground">Theme</label>
-            <Select tone="default" defaultValue="Dark (Default)">
-              <option>Dark (Default)</option>
-              <option>Light</option>
-              <option>System</option>
+            <Select
+              tone="default"
+              value={preference}
+              onChange={(event) => setPreference(event.target.value as ThemePreference)}
+              aria-label="Theme preference"
+            >
+              {THEME_PREFERENCES.map((themePreference) => (
+                <option key={themePreference} value={themePreference}>
+                  {THEME_OPTION_LABELS[themePreference]}
+                  {themePreference === 'system' ? ' (Follow OS)' : ''}
+                </option>
+              ))}
             </Select>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Persists across sessions. `system` follows the browser `prefers-color-scheme` setting.
+            </p>
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-muted-foreground">Polling Interval</label>
@@ -525,6 +545,17 @@ const GeneralTab: React.FC = () => {
             </Select>
           </div>
         </div>
+
+        <AlertSurface intent="neutral" className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-semibold text-panel-foreground">Theme debug</span>
+          <Badge tone="muted" size="sm">Preference: {THEME_OPTION_LABELS[preference]}</Badge>
+          <Badge tone={resolvedTheme === 'dark' ? 'info' : 'success'} size="sm">
+            Resolved: {THEME_OPTION_LABELS[resolvedTheme]}
+          </Badge>
+          <span className="text-muted-foreground">
+            Root contract: <code>data-theme="{resolvedTheme}"</code> and <code>data-theme-preference="{preference}"</code>
+          </span>
+        </AlertSurface>
       </Surface>
 
       <Surface tone="panel" padding="lg" className="space-y-6">
