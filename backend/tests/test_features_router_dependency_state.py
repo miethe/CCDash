@@ -15,6 +15,9 @@ from backend.models import (
 from backend.routers import features as features_router
 
 
+_USE_DEFAULT_RECOMMENDED_ITEM = object()
+
+
 class _FeatureRepo:
     def __init__(self, rows: list[dict]) -> None:
         self._rows = rows
@@ -63,36 +66,52 @@ class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):
         *,
         dependency_state: str = "blocked",
         gate_state: str = "blocked_dependency",
-        recommended_family_item: FeatureFamilyItem | None = None,
+        recommended_family_item: FeatureFamilyItem | None | object = _USE_DEFAULT_RECOMMENDED_ITEM,
         next_recommended_feature_id: str = "feature-a-v1",
     ) -> FeatureExecutionDerivedState:
+        is_unknown = dependency_state == "blocked_unknown"
+        dependency_evidence_state = "blocked_unknown" if is_unknown else "blocked"
+        dependency_status = "unknown" if is_unknown else "in-progress"
+        dependency_reason = "Dependency feature could not be resolved." if is_unknown else "Feature A must complete first."
         dependency = FeatureDependencyEvidence(
             dependencyFeatureId="feature-a-v1",
             dependencyFeatureName="Feature A V1",
-            dependencyStatus="in-progress",
+            dependencyStatus=dependency_status,
             dependencyCompletionEvidence=[],
             blockingDocumentIds=[],
-            blockingReason="Feature A must complete first.",
-            resolved=True,
-            state="blocked",
+            blockingReason=dependency_reason,
+            resolved=not is_unknown,
+            state=dependency_evidence_state,
         )
         family_item = FeatureFamilyItem(
             featureId="feature-a-v1",
             featureName="Feature A V1",
-            featureStatus="in-progress",
+            featureStatus="unknown" if is_unknown else "in-progress",
             featureFamily="dependency-family",
             sequenceOrder=0,
             familyIndex=1,
             totalFamilyItems=2,
             isCurrent=False,
             isSequenced=True,
-            isBlocked=True,
-            isBlockedUnknown=False,
+            isBlocked=not is_unknown,
+            isBlockedUnknown=is_unknown,
             isExecutable=False,
-            dependencyState=FeatureDependencyState(state=dependency_state, dependencyCount=1, blockedDependencyCount=1, dependencies=[dependency]),
+            dependencyState=FeatureDependencyState(
+                state=dependency_state,
+                dependencyCount=1,
+                resolvedDependencyCount=0 if is_unknown else 1,
+                blockedDependencyCount=0 if is_unknown else 1,
+                unknownDependencyCount=1 if is_unknown else 0,
+                blockingFeatureIds=["feature-a-v1"],
+                firstBlockingDependencyId="feature-a-v1",
+                blockingReason=dependency_reason,
+                dependencies=[dependency],
+            ),
             primaryDocId="plan:feature-a-v1",
             primaryDocPath="docs/project_plans/implementation_plans/enhancements/feature-a-v1.md",
         )
+        if recommended_family_item is _USE_DEFAULT_RECOMMENDED_ITEM:
+            recommended_family_item = family_item
         family_summary = FeatureFamilySummary(
             featureFamily="dependency-family",
             totalItems=2,
@@ -103,7 +122,7 @@ class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):
             currentPosition=2,
             currentSequencedPosition=2,
             nextRecommendedFeatureId=next_recommended_feature_id,
-            nextRecommendedFamilyItem=recommended_family_item or family_item,
+            nextRecommendedFamilyItem=recommended_family_item,
             items=[family_item],
         )
         family_position = FeatureFamilyPosition(
@@ -121,13 +140,13 @@ class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):
         dependency_state_model = FeatureDependencyState(
             state=dependency_state,
             dependencyCount=1,
-            resolvedDependencyCount=1,
-            blockedDependencyCount=1,
-            unknownDependencyCount=0,
+            resolvedDependencyCount=0 if is_unknown else 1,
+            blockedDependencyCount=0 if is_unknown else 1,
+            unknownDependencyCount=1 if is_unknown else 0,
             blockingFeatureIds=["feature-a-v1"],
             blockingDocumentIds=[],
             firstBlockingDependencyId="feature-a-v1",
-            blockingReason="Feature A must complete first.",
+            blockingReason=dependency_reason,
             completionEvidence=[],
             dependencies=[dependency],
         )
@@ -143,7 +162,7 @@ class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):
                 familyPosition=family_position,
                 dependencyState=dependency_state_model,
                 familySummary=family_summary,
-                reason="Feature A must complete first.",
+                reason=dependency_reason,
                 waitingOnFamilyPredecessor=False,
                 isReady=False,
             ),
@@ -195,15 +214,6 @@ class FeatureRouterDependencyStateTests(unittest.IsolatedAsyncioTestCase):
             recommended_family_item=None,
             next_recommended_feature_id="",
         )
-        derived.dependencyState.state = "blocked_unknown"
-        derived.dependencyState.unknownDependencyCount = 1
-        derived.dependencyState.blockedDependencyCount = 0
-        derived.dependencyState.firstBlockingDependencyId = "feature-unknown"
-        derived.dependencyState.blockingReason = "Dependency could not be resolved."
-        derived.executionGate.blockingDependencyId = "feature-unknown"
-        derived.executionGate.reason = "Dependency evidence is incomplete."
-        derived.familySummary.nextRecommendedFeatureId = ""
-        derived.familySummary.nextRecommendedFamilyItem = None
 
         with (
             patch.object(features_router.connection, "get_connection", return_value=object()),
