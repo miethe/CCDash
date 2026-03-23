@@ -10,7 +10,7 @@ summary: "Extend the shared SSE live-update platform with append-oriented sessio
 author: codex
 audience: [ai-agents, developers, platform-engineering, frontend-engineering]
 created: 2026-03-15
-updated: 2026-03-15
+updated: 2026-03-22
 
 tags: [design, sse, live-updates, sessions, transcript, optimization]
 feature_slug: session-transcript-append-deltas-v1
@@ -29,6 +29,8 @@ linked_features:
 related_documents:
   - docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
   - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
+  - docs/project_plans/PRDs/enhancements/session-transcript-append-deltas-v1.md
+  - docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
   - docs/live-update-platform-developer-reference.md
   - components/SessionInspector.tsx
   - backend/application/live_updates/domain_events.py
