@@ -7,15 +7,27 @@ from typing import Any
 
 import aiosqlite
 
-from backend.db.factory import get_document_repository
+from backend.db.factory import get_document_repository, get_feature_repository
+from backend.document_linking import canonical_slug, normalize_doc_status, normalize_doc_type
 from backend.models import (
     ExecutionRecommendation,
     ExecutionRecommendationEvidence,
     ExecutionRecommendationOption,
+    ExecutionGateState,
     Feature,
+    FeatureDependencyEvidence,
+    FeatureDependencyState,
     FeatureExecutionAnalyticsSummary,
+    FeatureExecutionDerivedState,
     FeatureExecutionContext,
     FeatureExecutionWarning,
+    FeatureFamilyItem,
+    FeatureFamilyPosition,
+    FeatureFamilySummary,
+    FeaturePhase,
+    FeaturePrimaryDocuments,
+    FeatureDocumentCoverage,
+    FeatureQualitySignals,
     LinkedDocument,
     RecommendedStack,
     StackRecommendationEvidence,
@@ -23,6 +35,9 @@ from backend.models import (
 
 _TERMINAL_PHASE_STATUSES = {"done", "deferred", "completed"}
 _FINAL_FEATURE_STATUSES = {"done", "deferred", "completed"}
+_DOC_COMPLETION_STATUSES = {"completed", "deferred", "inferred_complete"}
+_DOC_WRITE_THROUGH_TYPES = {"prd", "implementation_plan", "phase_plan"}
+_FAMILY_STATUS_ORDER = {"done": 0, "deferred": 0, "completed": 0, "review": 1, "in-progress": 2, "backlog": 3}
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -59,6 +74,11 @@ def _normalize_doc_type(value: str) -> str:
     return str(value or "").strip().lower().replace(" ", "_")
 
 
+def _feature_key(value: str) -> str:
+    token = canonical_slug(str(value or "").strip())
+    return token or str(value or "").strip().lower()
+
+
 def _document_to_linked(row: dict[str, Any]) -> LinkedDocument:
     metadata = row.get("metadata_json")
     frontmatter = row.get("frontmatter_json")
@@ -93,6 +113,10 @@ def _document_to_linked(row: dict[str, Any]) -> LinkedDocument:
     )
 
 
+def _is_completion_equivalent_doc_status(raw: str) -> bool:
+    return normalize_doc_status(raw, default="") in _DOC_COMPLETION_STATUSES
+
+
 def _phase_is_terminal(status: str) -> bool:
     return str(status or "").strip().lower() in _TERMINAL_PHASE_STATUSES
 
@@ -114,6 +138,556 @@ def _find_planning_seed(documents: list[LinkedDocument]) -> LinkedDocument | Non
     if not candidates:
         return None
     return sorted(candidates, key=lambda doc: (doc.docType != "prd", doc.filePath))[0]
+
+
+def _phase_is_completion_equivalent(phase: Any) -> bool:
+    status = str(getattr(phase, "status", "") or "").strip().lower()
+    if status in _TERMINAL_PHASE_STATUSES:
+        return True
+    total = max(_safe_int(getattr(phase, "totalTasks", 0), 0), 0)
+    completed = max(_safe_int(getattr(phase, "completedTasks", 0), 0), 0)
+    return total > 0 and completed >= total
+
+
+def _feature_from_row(row: dict[str, Any]) -> Feature:
+    data = row.get("data_json")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    linked_docs = data.get("linkedDocs") or []
+    phases = data.get("phases") or []
+    return Feature(
+        id=str(row.get("id") or data.get("id") or ""),
+        name=str(row.get("name") or data.get("name") or ""),
+        status=str(row.get("status") or data.get("status") or "backlog"),
+        totalTasks=_safe_int(row.get("total_tasks", data.get("totalTasks", 0)), 0),
+        completedTasks=_safe_int(row.get("completed_tasks", data.get("completedTasks", 0)), 0),
+        deferredTasks=_safe_int(data.get("deferredTasks", row.get("deferred_tasks", 0)), 0),
+        category=str(row.get("category") or data.get("category") or ""),
+        tags=[str(v) for v in (data.get("tags") or []) if str(v).strip()],
+        description=str(data.get("description") or ""),
+        summary=str(data.get("summary") or ""),
+        priority=str(data.get("priority") or ""),
+        riskLevel=str(data.get("riskLevel") or ""),
+        complexity=str(data.get("complexity") or ""),
+        track=str(data.get("track") or ""),
+        timelineEstimate=str(data.get("timelineEstimate") or ""),
+        targetRelease=str(data.get("targetRelease") or ""),
+        milestone=str(data.get("milestone") or ""),
+        owners=[str(v) for v in (data.get("owners") or []) if str(v).strip()],
+        contributors=[str(v) for v in (data.get("contributors") or []) if str(v).strip()],
+        requestLogIds=[str(v) for v in (data.get("requestLogIds") or []) if str(v).strip()],
+        commitRefs=[str(v) for v in (data.get("commitRefs") or []) if str(v).strip()],
+        prRefs=[str(v) for v in (data.get("prRefs") or []) if str(v).strip()],
+        executionReadiness=str(data.get("executionReadiness") or ""),
+        testImpact=str(data.get("testImpact") or ""),
+        featureFamily=str(data.get("featureFamily") or ""),
+        updatedAt=str(row.get("updated_at") or data.get("updatedAt") or ""),
+        plannedAt=str(data.get("plannedAt") or ""),
+        startedAt=str(data.get("startedAt") or ""),
+        completedAt=str(data.get("completedAt") or ""),
+        linkedDocs=[LinkedDocument.model_validate(doc) for doc in linked_docs if isinstance(doc, dict)],
+        linkedFeatures=[
+            ref.model_dump() if hasattr(ref, "model_dump") else dict(ref)
+            for ref in (data.get("linkedFeatures") or [])
+            if isinstance(ref, dict) or hasattr(ref, "model_dump")
+        ],
+        primaryDocuments=FeaturePrimaryDocuments.model_validate(data.get("primaryDocuments") or {}) if isinstance(data.get("primaryDocuments"), dict) else FeaturePrimaryDocuments(),
+        documentCoverage=FeatureDocumentCoverage.model_validate(data.get("documentCoverage") or {}) if isinstance(data.get("documentCoverage"), dict) else FeatureDocumentCoverage(),
+        qualitySignals=FeatureQualitySignals.model_validate(data.get("qualitySignals") or {}) if isinstance(data.get("qualitySignals"), dict) else FeatureQualitySignals(),
+        phases=[FeaturePhase.model_validate(phase) for phase in phases if isinstance(phase, dict)],
+        relatedFeatures=[str(v) for v in (data.get("relatedFeatures") or []) if str(v).strip()],
+        dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
+        timeline=data.get("timeline") if isinstance(data.get("timeline"), list) else [],
+    )
+
+
+def _feature_sequence_order(feature: Feature, documents: list[LinkedDocument]) -> int | None:
+    candidates: list[int] = []
+    for doc in documents:
+        if not isinstance(doc.sequenceOrder, int):
+            continue
+        if _feature_key(doc.featureFamily) and _feature_key(doc.featureFamily) != _feature_key(feature.featureFamily):
+            continue
+        candidates.append(int(doc.sequenceOrder))
+    if candidates:
+        return sorted(candidates)[0]
+    return None
+
+
+def _feature_completion_snapshot(feature: Feature, doc_rows: list[dict[str, Any]]) -> tuple[bool, list[str], list[str], list[str]]:
+    prd_statuses: list[str] = []
+    plan_statuses: list[str] = []
+    phase_plan_statuses: list[str] = []
+    completion_doc_ids: list[str] = []
+
+    for row in doc_rows:
+        doc_type = normalize_doc_type(str(row.get("doc_type") or row.get("docType") or ""))
+        if doc_type not in _DOC_WRITE_THROUGH_TYPES:
+            continue
+        status_value = normalize_doc_status(str(row.get("status") or ""), default="")
+        doc_id = str(row.get("id") or "")
+        if doc_id:
+            completion_doc_ids.append(doc_id)
+        if doc_type == "prd":
+            prd_statuses.append(status_value)
+        elif doc_type == "implementation_plan":
+            plan_statuses.append(status_value)
+        elif doc_type == "phase_plan":
+            phase_plan_statuses.append(status_value)
+
+    prd_complete = any(_is_completion_equivalent_doc_status(s) for s in prd_statuses)
+    plan_complete = any(_is_completion_equivalent_doc_status(s) for s in plan_statuses)
+    phased_plan_complete = bool(phase_plan_statuses) and all(_is_completion_equivalent_doc_status(s) for s in phase_plan_statuses)
+    progress_complete = bool(feature.phases) and all(_phase_is_completion_equivalent(phase) for phase in feature.phases)
+
+    evidence: list[str] = []
+    if prd_complete:
+        evidence.append("prd_completion_equivalent")
+    if plan_complete:
+        evidence.append("implementation_plan_completion_equivalent")
+    if phased_plan_complete:
+        evidence.append("phase_plan_completion_equivalent")
+    if progress_complete:
+        evidence.append("feature_phases_completion_equivalent")
+
+    return (prd_complete or plan_complete or phased_plan_complete or progress_complete, evidence, completion_doc_ids, [
+        f"prd:{status}" for status in prd_statuses
+    ] + [f"implementation_plan:{status}" for status in plan_statuses] + [f"phase_plan:{status}" for status in phase_plan_statuses])
+
+
+def _feature_dependency_evidence(
+    feature: Feature,
+    doc_rows: list[dict[str, Any]],
+    feature_index: dict[str, Feature],
+) -> list[FeatureDependencyEvidence]:
+    evidence_items: list[FeatureDependencyEvidence] = []
+    seen: set[str] = set()
+    for ref in feature.linkedFeatures:
+        relation = str(getattr(ref, "type", "") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        source = str(getattr(ref, "source", "") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if relation != "blocked_by" and source != "blocked_by":
+            continue
+        dependency_id = _feature_key(getattr(ref, "feature", ""))
+        if not dependency_id or dependency_id in seen:
+            continue
+        seen.add(dependency_id)
+        resolved_feature = feature_index.get(dependency_id)
+        if resolved_feature is None:
+            evidence_items.append(
+                FeatureDependencyEvidence(
+                    dependencyFeatureId=dependency_id,
+                    dependencyStatus="unknown",
+                    blockingReason=f"Dependency feature '{dependency_id}' could not be resolved.",
+                    resolved=False,
+                    state="blocked_unknown",
+                )
+            )
+            continue
+
+        dep_doc_rows = [
+            row
+            for row in doc_rows
+            if _feature_key(str(row.get("feature_slug_canonical") or row.get("feature_slug_hint") or "")) == _feature_key(resolved_feature.id)
+        ]
+        is_complete, completion_evidence, blocking_doc_ids, doc_statuses = _feature_completion_snapshot(resolved_feature, dep_doc_rows)
+        resolved_status = str(resolved_feature.status or "").strip().lower()
+        if is_complete:
+            evidence_items.append(
+                FeatureDependencyEvidence(
+                    dependencyFeatureId=resolved_feature.id,
+                    dependencyFeatureName=resolved_feature.name,
+                    dependencyStatus=resolved_status or "complete",
+                    dependencyCompletionEvidence=completion_evidence or ["dependency_completion_equivalent"],
+                    blockingDocumentIds=blocking_doc_ids,
+                    blockingReason="Dependency feature is completion-equivalent.",
+                    resolved=True,
+                    state="complete",
+                )
+            )
+            continue
+
+        if resolved_status and resolved_status not in {"backlog", "in-progress", "review", "done", "deferred", "completed"}:
+            evidence_items.append(
+                FeatureDependencyEvidence(
+                    dependencyFeatureId=resolved_feature.id,
+                    dependencyFeatureName=resolved_feature.name,
+                    dependencyStatus=resolved_status,
+                    dependencyCompletionEvidence=doc_statuses,
+                    blockingDocumentIds=blocking_doc_ids,
+                    blockingReason="Dependency status is present but not recognized as complete.",
+                    resolved=True,
+                    state="blocked_unknown",
+                )
+            )
+            continue
+
+        evidence_items.append(
+            FeatureDependencyEvidence(
+                dependencyFeatureId=resolved_feature.id,
+                dependencyFeatureName=resolved_feature.name,
+                dependencyStatus=resolved_status or "blocked",
+                dependencyCompletionEvidence=doc_statuses,
+                blockingDocumentIds=blocking_doc_ids,
+                blockingReason=f"Dependency feature '{resolved_feature.name or resolved_feature.id}' is not complete.",
+                resolved=True,
+                state="blocked",
+            )
+        )
+    return evidence_items
+
+
+def _feature_dependency_state(feature: Feature, doc_rows: list[dict[str, Any]], feature_index: dict[str, Feature]) -> FeatureDependencyState:
+    dependencies = _feature_dependency_evidence(feature, doc_rows, feature_index)
+    if not dependencies:
+        return FeatureDependencyState(
+            state="unblocked",
+            dependencyCount=0,
+            dependencies=[],
+        )
+
+    resolved = [dep for dep in dependencies if dep.resolved]
+    blocked = [dep for dep in dependencies if dep.state == "blocked"]
+    unknown = [dep for dep in dependencies if dep.state == "blocked_unknown"]
+    completion_evidence = [
+        evidence
+        for dep in dependencies
+        if dep.state == "complete"
+        for evidence in dep.dependencyCompletionEvidence
+    ]
+    blocking_feature_ids = [dep.dependencyFeatureId for dep in blocked + unknown if dep.dependencyFeatureId]
+    blocking_document_ids = [
+        doc_id
+        for dep in blocked + unknown
+        for doc_id in dep.blockingDocumentIds
+        if doc_id
+    ]
+    first_blocking = next((dep for dep in dependencies if dep.state in {"blocked", "blocked_unknown"}), None)
+    aggregate_state = "unblocked"
+    if unknown:
+        aggregate_state = "blocked_unknown"
+    elif blocked:
+        aggregate_state = "blocked"
+
+    return FeatureDependencyState(
+        state=aggregate_state,
+        dependencyCount=len(dependencies),
+        resolvedDependencyCount=len(resolved),
+        blockedDependencyCount=len(blocked),
+        unknownDependencyCount=len(unknown),
+        blockingFeatureIds=sorted(dict.fromkeys(blocking_feature_ids)),
+        blockingDocumentIds=sorted(dict.fromkeys(blocking_document_ids)),
+        firstBlockingDependencyId=first_blocking.dependencyFeatureId if first_blocking else "",
+        blockingReason=first_blocking.blockingReason if first_blocking else "",
+        completionEvidence=sorted(dict.fromkeys(completion_evidence)),
+        dependencies=dependencies,
+    )
+
+
+def _family_status_rank(status: str) -> int:
+    return _FAMILY_STATUS_ORDER.get(str(status or "").strip().lower(), 4)
+
+
+def _feature_family_item(
+    feature: Feature,
+    sequence_order: int | None,
+    current_feature_id: str,
+    dependency_state: FeatureDependencyState,
+    primary_doc: LinkedDocument | None,
+    completion_equivalent: bool = False,
+) -> FeatureFamilyItem:
+    effective_status = feature.status
+    if completion_equivalent and str(feature.status or "").strip().lower() not in _FINAL_FEATURE_STATUSES:
+        effective_status = "done"
+    return FeatureFamilyItem(
+        featureId=feature.id,
+        featureName=feature.name,
+        featureStatus=effective_status,
+        featureFamily=_feature_key(feature.featureFamily),
+        sequenceOrder=sequence_order,
+        isCurrent=_feature_key(feature.id) == _feature_key(current_feature_id),
+        isSequenced=sequence_order is not None,
+        isBlocked=dependency_state.state == "blocked",
+        isBlockedUnknown=dependency_state.state == "blocked_unknown",
+        isExecutable=(
+            not completion_equivalent
+            and dependency_state.state in {"unblocked", "ready_after_dependencies"}
+            and effective_status not in _FINAL_FEATURE_STATUSES
+        ),
+        dependencyState=dependency_state,
+        primaryDocId=str(primary_doc.id) if primary_doc else "",
+        primaryDocPath=str(primary_doc.filePath) if primary_doc else "",
+    )
+
+
+def _family_summary(
+    feature: Feature,
+    family_features: list[Feature],
+    doc_rows: list[dict[str, Any]],
+    feature_index: dict[str, Feature],
+) -> tuple[FeatureFamilySummary, FeatureFamilyPosition, FeatureFamilyItem | None]:
+    family_key = _feature_key(feature.featureFamily)
+    if not family_key:
+        family_key = _feature_key(feature.id)
+
+    family_members = [member for member in family_features if _feature_key(member.featureFamily or member.id) == family_key]
+    if not family_members:
+        family_members = [feature]
+
+    family_items: list[tuple[FeatureFamilyItem, tuple[Any, ...]]] = []
+    for member in family_members:
+        member_doc_rows = [
+            row
+            for row in doc_rows
+            if _feature_key(str(row.get("feature_slug_canonical") or row.get("feature_slug_hint") or "")) == _feature_key(member.id)
+        ]
+        member_docs = [_document_to_linked(row) for row in member_doc_rows]
+        member_seq = _feature_sequence_order(member, member_docs)
+        member_dependency_state = _feature_dependency_state(member, member_doc_rows, feature_index)
+        member_completion_equivalent, _, _, _ = _feature_completion_snapshot(member, member_doc_rows)
+        primary_doc = next((doc for doc in member_docs if _normalize_doc_type(doc.docType) == "implementation_plan"), None)
+        item = _feature_family_item(
+            member,
+            member_seq,
+            feature.id,
+            member_dependency_state,
+            primary_doc,
+            completion_equivalent=member_completion_equivalent,
+        )
+        sort_key = (
+            0 if item.isSequenced else 1,
+            member_seq if member_seq is not None else 10_000,
+            _family_status_rank(item.featureStatus),
+            (member.name or member.id).strip().lower(),
+            member.id.strip().lower(),
+        )
+        family_items.append((item, sort_key))
+
+    ordered_items = [item for item, _ in sorted(family_items, key=lambda pair: pair[1])]
+    for index, item in enumerate(ordered_items, start=1):
+        item.familyIndex = index
+        item.totalFamilyItems = len(ordered_items)
+
+    preceding_open_item_seen = False
+    next_recommended_item: FeatureFamilyItem | None = None
+    for item in ordered_items:
+        if item.featureStatus in _FINAL_FEATURE_STATUSES:
+            item.isExecutable = False
+            continue
+        if preceding_open_item_seen:
+            item.isExecutable = False
+            continue
+        item.isExecutable = item.dependencyState.state in {"unblocked", "ready_after_dependencies"}
+        if item.isExecutable and next_recommended_item is None:
+            next_recommended_item = item
+        preceding_open_item_seen = True
+
+    current_item = next((item for item in ordered_items if item.isCurrent), None)
+    if current_item is None:
+        current_item = ordered_items[0] if ordered_items else None
+
+    sequenced_count = sum(1 for item in ordered_items if item.isSequenced)
+    unsequenced_count = len(ordered_items) - sequenced_count
+    current_index = current_item.familyIndex if current_item else 0
+    current_sequenced_index = current_index if current_item and current_item.isSequenced else 0
+    if next_recommended_item is None and current_item and current_item.dependencyState.state in {"unblocked", "ready_after_dependencies"}:
+        next_recommended_item = current_item
+
+    summary = FeatureFamilySummary(
+        featureFamily=family_key,
+        totalItems=len(ordered_items),
+        sequencedItems=sequenced_count,
+        unsequencedItems=unsequenced_count,
+        currentFeatureId=feature.id,
+        currentFeatureName=feature.name,
+        currentPosition=current_index,
+        currentSequencedPosition=current_sequenced_index,
+        nextRecommendedFeatureId=next_recommended_item.featureId if next_recommended_item else "",
+        nextRecommendedFamilyItem=next_recommended_item,
+        items=ordered_items,
+    )
+    position = FeatureFamilyPosition(
+        familyKey=family_key,
+        currentIndex=current_index,
+        sequencedIndex=current_sequenced_index,
+        totalItems=len(ordered_items),
+        sequencedItems=sequenced_count,
+        unsequencedItems=unsequenced_count,
+        display=(
+            f"{current_index} of {len(ordered_items)}" if current_index and current_item and current_item.isSequenced
+            else (f"Unsequenced, {current_index} of {len(ordered_items)}" if current_index else "Unsequenced")
+        ),
+        currentItemId=current_item.featureId if current_item else "",
+        nextItemId=next_recommended_item.featureId if next_recommended_item else "",
+        nextItemLabel=next_recommended_item.featureName if next_recommended_item else "",
+    )
+    return summary, position, next_recommended_item
+
+
+def _execution_gate_state(
+    feature: Feature,
+    dependency_state: FeatureDependencyState,
+    family_summary: FeatureFamilySummary,
+    family_position: FeatureFamilyPosition,
+    recommended_family_item: FeatureFamilyItem | None,
+) -> ExecutionGateState:
+    if dependency_state.state == "blocked_unknown":
+        return ExecutionGateState(
+            state="unknown_dependency_state",
+            blockingDependencyId=dependency_state.firstBlockingDependencyId,
+            firstExecutableFamilyItemId=recommended_family_item.featureId if recommended_family_item else "",
+            recommendedFamilyItemId=recommended_family_item.featureId if recommended_family_item else "",
+            familyPosition=family_position,
+            dependencyState=dependency_state,
+            familySummary=family_summary,
+            reason=dependency_state.blockingReason or "Dependency evidence is incomplete.",
+            waitingOnFamilyPredecessor=False,
+            isReady=False,
+        )
+    if dependency_state.state == "blocked":
+        return ExecutionGateState(
+            state="blocked_dependency",
+            blockingDependencyId=dependency_state.firstBlockingDependencyId,
+            firstExecutableFamilyItemId=recommended_family_item.featureId if recommended_family_item else "",
+            recommendedFamilyItemId=recommended_family_item.featureId if recommended_family_item else "",
+            familyPosition=family_position,
+            dependencyState=dependency_state,
+            familySummary=family_summary,
+            reason=dependency_state.blockingReason or "Dependency must be completed first.",
+            waitingOnFamilyPredecessor=False,
+            isReady=False,
+        )
+
+    current_item = next((item for item in family_summary.items if item.isCurrent), None)
+    predecessor_item = next(
+        (
+            item
+            for item in family_summary.items
+            if current_item
+            and item.familyIndex < current_item.familyIndex
+            and item.featureStatus not in _FINAL_FEATURE_STATUSES
+        ),
+        None,
+    )
+    if current_item and recommended_family_item and recommended_family_item.featureId != feature.id:
+        return ExecutionGateState(
+            state="waiting_on_family_predecessor",
+            blockingDependencyId=dependency_state.firstBlockingDependencyId,
+            firstExecutableFamilyItemId=recommended_family_item.featureId,
+            recommendedFamilyItemId=recommended_family_item.featureId,
+            familyPosition=family_position,
+            dependencyState=dependency_state,
+            familySummary=family_summary,
+            reason=(
+                f"Family predecessor '{recommended_family_item.featureName or recommended_family_item.featureId}' should execute first."
+            ),
+            waitingOnFamilyPredecessor=True,
+            isReady=False,
+        )
+    if current_item and predecessor_item and not current_item.isExecutable and current_item.featureStatus not in _FINAL_FEATURE_STATUSES:
+        return ExecutionGateState(
+            state="waiting_on_family_predecessor",
+            blockingDependencyId=predecessor_item.featureId,
+            firstExecutableFamilyItemId=recommended_family_item.featureId if recommended_family_item else "",
+            recommendedFamilyItemId=recommended_family_item.featureId if recommended_family_item else predecessor_item.featureId,
+            familyPosition=family_position,
+            dependencyState=dependency_state,
+            familySummary=family_summary,
+            reason=(
+                f"Family predecessor '{predecessor_item.featureName or predecessor_item.featureId}' should complete before this item."
+            ),
+            waitingOnFamilyPredecessor=True,
+            isReady=False,
+        )
+
+    return ExecutionGateState(
+        state="ready",
+        blockingDependencyId="",
+        firstExecutableFamilyItemId=recommended_family_item.featureId if recommended_family_item else feature.id,
+        recommendedFamilyItemId=recommended_family_item.featureId if recommended_family_item else feature.id,
+        familyPosition=family_position,
+        dependencyState=dependency_state,
+        familySummary=family_summary,
+        reason="Dependency and family ordering are clear.",
+        waitingOnFamilyPredecessor=False,
+        isReady=True,
+    )
+
+
+async def load_feature_execution_derived_state(
+    db: Any,
+    project_id: str,
+    feature: Feature,
+    documents: list[LinkedDocument] | None = None,
+) -> FeatureExecutionDerivedState:
+    feature_repo = get_feature_repository(db)
+    doc_repo = get_document_repository(db)
+
+    feature_rows = await feature_repo.list_all(project_id)
+    family_features = [_feature_from_row(row) for row in feature_rows]
+    feature_index: dict[str, Feature] = {}
+    for item in family_features:
+        feature_index[_feature_key(item.id)] = item
+
+    doc_rows = await doc_repo.list_all(project_id)
+    dependency_state = _feature_dependency_state(feature, doc_rows, feature_index)
+    family_summary, family_position, recommended_family_item = _family_summary(feature, family_features, doc_rows, feature_index)
+
+    execution_gate = _execution_gate_state(feature, dependency_state, family_summary, family_position, recommended_family_item)
+
+    return FeatureExecutionDerivedState(
+        dependencyState=dependency_state,
+        familySummary=family_summary,
+        familyPosition=family_position,
+        executionGate=execution_gate,
+        recommendedFamilyItem=recommended_family_item,
+    )
+
+
+async def load_feature_execution_derived_states(
+    db: Any,
+    project_id: str,
+    features: list[Feature],
+) -> dict[str, FeatureExecutionDerivedState]:
+    feature_repo = get_feature_repository(db)
+    doc_repo = get_document_repository(db)
+
+    feature_rows = await feature_repo.list_all(project_id)
+    family_features = [_feature_from_row(row) for row in feature_rows]
+    feature_index: dict[str, Feature] = {_feature_key(item.id): item for item in family_features}
+    doc_rows = await doc_repo.list_all(project_id)
+
+    derived: dict[str, FeatureExecutionDerivedState] = {}
+    for feature in features:
+        dependency_state = _feature_dependency_state(feature, doc_rows, feature_index)
+        family_summary, family_position, recommended_family_item = _family_summary(
+            feature,
+            family_features,
+            doc_rows,
+            feature_index,
+        )
+
+        execution_gate = _execution_gate_state(
+            feature,
+            dependency_state,
+            family_summary,
+            family_position,
+            recommended_family_item,
+        )
+        derived[feature.id] = FeatureExecutionDerivedState(
+            dependencyState=dependency_state,
+            familySummary=family_summary,
+            familyPosition=family_position,
+            executionGate=execution_gate,
+            recommendedFamilyItem=recommended_family_item,
+        )
+
+    return derived
 
 
 def _phase_snapshot(feature: Feature) -> list[dict[str, Any]]:
@@ -426,6 +1000,7 @@ def build_execution_context(
     stack_alternatives: list[RecommendedStack] | None = None,
     stack_evidence: list[StackRecommendationEvidence] | None = None,
     definition_resolution_warnings: list[FeatureExecutionWarning] | None = None,
+    derived_state: FeatureExecutionDerivedState | None = None,
 ) -> FeatureExecutionContext:
     recommendation = build_execution_recommendation(feature, documents)
     return FeatureExecutionContext(
@@ -434,6 +1009,11 @@ def build_execution_context(
         sessions=[session.model_dump() if hasattr(session, "model_dump") else dict(session) for session in sessions],
         analytics=analytics,
         recommendations=recommendation,
+        dependencyState=derived_state.dependencyState if derived_state else None,
+        familySummary=derived_state.familySummary if derived_state else None,
+        familyPosition=derived_state.familyPosition if derived_state else None,
+        executionGate=derived_state.executionGate if derived_state else None,
+        recommendedFamilyItem=derived_state.recommendedFamilyItem if derived_state else None,
         warnings=warnings or [],
         recommendedStack=recommended_stack,
         stackAlternatives=stack_alternatives or [],

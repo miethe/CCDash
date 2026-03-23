@@ -8,16 +8,16 @@ prd_ref: /docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-fa
 plan_ref: /docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
 phase: 1
 title: Derived State Model
-status: in-progress
+status: completed
 started: '2026-03-23'
-completed: null
+completed: '2026-03-23'
 commit_refs: []
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -29,7 +29,7 @@ tasks:
 - id: DEP-001
   description: Implement the rule set that evaluates each blocked_by dependency
     against feature status and existing completion evidence.
-  status: in_progress
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -39,7 +39,7 @@ tasks:
 - id: DEP-002
   description: Resolve family siblings, sort by sequence_order, and preserve
     unsequenced items with stable fallback ordering.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -50,7 +50,7 @@ tasks:
 - id: DEP-003
   description: Compute the gate state used by execution surfaces, including first
     blocking feature and first executable family item.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -82,6 +82,7 @@ files_modified:
 - backend/services/feature_execution.py
 - backend/tests/test_feature_execution_service.py
 progress: 0
+progress: 100
 updated: '2026-03-23'
 ---
 
@@ -99,4 +100,6 @@ Add the canonical backend derivation layer for dependency state, family ordering
 
 ## Completion Notes
 
-- Pending.
+- Added derived dependency, family, and execution-gate models to the shared backend contract.
+- Implemented completion-equivalent dependency resolution and stable family ordering in `backend/services/feature_execution.py`.
+- Added backend tests covering completion-equivalent dependencies, missing dependency evidence, family ordering, and waiting-on-predecessor execution gates.

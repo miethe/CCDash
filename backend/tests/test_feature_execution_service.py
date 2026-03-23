@@ -1,7 +1,9 @@
+import json
 import unittest
+from unittest.mock import patch
 
 from backend.models import Feature, FeaturePhase, LinkedDocument
-from backend.services.feature_execution import build_execution_recommendation
+from backend.services.feature_execution import build_execution_recommendation, load_feature_execution_derived_state
 
 
 class FeatureExecutionRecommendationTests(unittest.TestCase):
@@ -164,6 +166,190 @@ class FeatureExecutionRecommendationTests(unittest.TestCase):
 
         self.assertEqual(recommendation.ruleId, "R6_FALLBACK_QUICK_FEATURE")
         self.assertEqual(recommendation.primary.command, "/dev:quick-feature feat-1")
+
+
+class FeatureExecutionDerivedStateTests(unittest.IsolatedAsyncioTestCase):
+    def _feature(self, feature_id: str, *, name: str, status: str, family: str = "", linked_features: list[dict] | None = None) -> Feature:
+        return Feature(
+            id=feature_id,
+            name=name,
+            status=status,
+            totalTasks=0,
+            completedTasks=0,
+            category="enhancement",
+            tags=[],
+            updatedAt="",
+            linkedDocs=[],
+            linkedFeatures=linked_features or [],
+            featureFamily=family,
+            phases=[],
+            relatedFeatures=[],
+        )
+
+    def _feature_row(
+        self,
+        feature_id: str,
+        *,
+        name: str,
+        status: str,
+        family: str = "",
+        linked_features: list[dict] | None = None,
+        phases: list[dict] | None = None,
+    ) -> dict:
+        normalized_linked_features = [
+            ref.model_dump() if hasattr(ref, "model_dump") else dict(ref)
+            for ref in (linked_features or [])
+        ]
+        data = {
+            "id": feature_id,
+            "name": name,
+            "status": status,
+            "featureFamily": family,
+            "linkedFeatures": normalized_linked_features,
+            "phases": phases or [],
+            "linkedDocs": [],
+            "relatedFeatures": [],
+        }
+        return {
+            "id": feature_id,
+            "name": name,
+            "status": status,
+            "category": "enhancement",
+            "total_tasks": 0,
+            "completed_tasks": 0,
+            "updated_at": "",
+            "data_json": json.dumps(data),
+        }
+
+    def _doc_row(
+        self,
+        *,
+        doc_id: str,
+        feature_slug: str,
+        doc_type: str,
+        status: str,
+        sequence_order: int | None = None,
+        file_path: str | None = None,
+    ) -> dict:
+        metadata = {}
+        frontmatter = {}
+        if sequence_order is not None:
+            metadata["sequenceOrder"] = sequence_order
+            frontmatter["sequence_order"] = sequence_order
+        return {
+            "id": doc_id,
+            "title": file_path or doc_id,
+            "file_path": file_path or f"docs/{doc_id}.md",
+            "doc_type": doc_type,
+            "status": status,
+            "feature_slug_canonical": feature_slug,
+            "metadata_json": json.dumps(metadata),
+            "frontmatter_json": json.dumps(frontmatter),
+        }
+
+    async def _load_state(self, current_feature: Feature, feature_rows: list[dict], doc_rows: list[dict]):
+        class _FeatureRepo:
+            def __init__(self, rows: list[dict]) -> None:
+                self.rows = rows
+
+            async def list_all(self, project_id: str | None = None) -> list[dict]:
+                return self.rows
+
+        class _DocumentRepo:
+            def __init__(self, rows: list[dict]) -> None:
+                self.rows = rows
+
+            async def list_all(self, project_id: str | None = None) -> list[dict]:
+                return self.rows
+
+        project = "project-1"
+        with (
+            patch("backend.services.feature_execution.get_feature_repository", return_value=_FeatureRepo(feature_rows)),
+            patch("backend.services.feature_execution.get_document_repository", return_value=_DocumentRepo(doc_rows)),
+        ):
+            return await load_feature_execution_derived_state(object(), project, current_feature, [])
+
+    async def test_dependency_completion_uses_reconciliation_equivalence_from_owned_plan_docs(self) -> None:
+        current = self._feature(
+            "feat-current",
+            name="Current",
+            status="backlog",
+            family="alpha",
+            linked_features=[{"feature": "feat-dependency", "type": "blocked_by", "source": "blocked_by"}],
+        )
+        feature_rows = [
+            self._feature_row("feat-current", name="Current", status="backlog", family="alpha", linked_features=current.linkedFeatures),
+            self._feature_row("feat-dependency", name="Dependency", status="backlog", family="alpha"),
+        ]
+        doc_rows = [
+            self._doc_row(
+                doc_id="doc-dep-plan",
+                feature_slug="feat-dependency",
+                doc_type="implementation_plan",
+                status="completed",
+                sequence_order=1,
+            )
+        ]
+
+        state = await self._load_state(current, feature_rows, doc_rows)
+
+        self.assertEqual(state.dependencyState.state, "unblocked")
+        self.assertIn("implementation_plan_completion_equivalent", state.dependencyState.completionEvidence)
+        self.assertEqual(state.executionGate.state, "ready")
+
+    async def test_missing_dependency_feature_surfaces_blocked_unknown(self) -> None:
+        current = self._feature(
+            "feat-current",
+            name="Current",
+            status="backlog",
+            family="alpha",
+            linked_features=[{"feature": "feat-missing", "type": "blocked_by", "source": "blocked_by"}],
+        )
+        feature_rows = [self._feature_row("feat-current", name="Current", status="backlog", family="alpha", linked_features=current.linkedFeatures)]
+
+        state = await self._load_state(current, feature_rows, [])
+
+        self.assertEqual(state.dependencyState.state, "blocked_unknown")
+        self.assertEqual(state.executionGate.state, "unknown_dependency_state")
+        self.assertEqual(state.dependencyState.firstBlockingDependencyId, "feat-missing")
+
+    async def test_family_order_places_sequenced_items_before_unsequenced_items(self) -> None:
+        current = self._feature("feat-2", name="Second", status="backlog", family="alpha")
+        feature_rows = [
+            self._feature_row("feat-1", name="First", status="done", family="alpha"),
+            self._feature_row("feat-2", name="Second", status="backlog", family="alpha"),
+            self._feature_row("feat-3", name="Third", status="backlog", family="alpha"),
+        ]
+        doc_rows = [
+            self._doc_row(doc_id="doc-1", feature_slug="feat-1", doc_type="implementation_plan", status="completed", sequence_order=1),
+            self._doc_row(doc_id="doc-2", feature_slug="feat-2", doc_type="implementation_plan", status="pending", sequence_order=2),
+            self._doc_row(doc_id="doc-3", feature_slug="feat-3", doc_type="implementation_plan", status="pending"),
+        ]
+
+        state = await self._load_state(current, feature_rows, doc_rows)
+
+        self.assertEqual([item.featureId for item in state.familySummary.items], ["feat-1", "feat-2", "feat-3"])
+        self.assertEqual(state.familyPosition.display, "2 of 3")
+        self.assertEqual(state.executionGate.state, "ready")
+        self.assertEqual(state.recommendedFamilyItem.featureId if state.recommendedFamilyItem else "", "feat-2")
+
+    async def test_execution_gate_waits_on_family_predecessor_when_earlier_item_is_incomplete(self) -> None:
+        current = self._feature("feat-2", name="Second", status="backlog", family="alpha")
+        feature_rows = [
+            self._feature_row("feat-1", name="First", status="backlog", family="alpha"),
+            self._feature_row("feat-2", name="Second", status="backlog", family="alpha"),
+        ]
+        doc_rows = [
+            self._doc_row(doc_id="doc-1", feature_slug="feat-1", doc_type="implementation_plan", status="pending", sequence_order=1),
+            self._doc_row(doc_id="doc-2", feature_slug="feat-2", doc_type="implementation_plan", status="pending", sequence_order=2),
+        ]
+
+        state = await self._load_state(current, feature_rows, doc_rows)
+
+        self.assertEqual(state.dependencyState.state, "unblocked")
+        self.assertEqual(state.executionGate.state, "waiting_on_family_predecessor")
+        self.assertEqual(state.executionGate.firstExecutableFamilyItemId, "feat-1")
+        self.assertEqual(state.executionGate.recommendedFamilyItemId, "feat-1")
 
 
 if __name__ == "__main__":
