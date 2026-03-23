@@ -36,6 +36,7 @@ linked_features:
   - feature-execution-workbench-v1
 related_documents:
   - docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
+  - docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
   - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
   - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
   - docs/schemas/document_frontmatter/document-and-feature-mapping.md
@@ -52,6 +53,9 @@ context_files:
   - components/DocumentModal.tsx
   - services/execution.ts
   - types.ts
+prd: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
+prd_ref: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
+plan_ref: dependency-aware-execution-and-family-views-v1
 
 request_log_id: ""
 commits: []

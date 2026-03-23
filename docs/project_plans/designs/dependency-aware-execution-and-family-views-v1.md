@@ -27,6 +27,8 @@ primary_doc_role: supporting_design
 linked_features:
   - feature-execution-workbench-v1
 related_documents:
+  - docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
+  - docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
   - docs/schemas/document_frontmatter/document-and-feature-mapping.md
   - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
   - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
