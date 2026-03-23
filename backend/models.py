@@ -1174,6 +1174,102 @@ class FeatureQualitySignals(BaseModel):
     hasBlockingSignals: bool = False
 
 
+class FeatureDependencyEvidence(BaseModel):
+    dependencyFeatureId: str = ""
+    dependencyFeatureName: str = ""
+    dependencyStatus: str = ""
+    dependencyCompletionEvidence: list[str] = Field(default_factory=list)
+    blockingDocumentIds: list[str] = Field(default_factory=list)
+    blockingReason: str = ""
+    resolved: bool = False
+    state: Literal["complete", "blocked", "blocked_unknown"] = "blocked_unknown"
+
+
+class FeatureDependencyState(BaseModel):
+    state: Literal["unblocked", "blocked", "blocked_unknown", "ready_after_dependencies"] = "unblocked"
+    dependencyCount: int = 0
+    resolvedDependencyCount: int = 0
+    blockedDependencyCount: int = 0
+    unknownDependencyCount: int = 0
+    blockingFeatureIds: list[str] = Field(default_factory=list)
+    blockingDocumentIds: list[str] = Field(default_factory=list)
+    firstBlockingDependencyId: str = ""
+    blockingReason: str = ""
+    completionEvidence: list[str] = Field(default_factory=list)
+    dependencies: list[FeatureDependencyEvidence] = Field(default_factory=list)
+
+
+class FeatureFamilyItem(BaseModel):
+    featureId: str
+    featureName: str = ""
+    featureStatus: str = ""
+    featureFamily: str = ""
+    sequenceOrder: Optional[int] = None
+    familyIndex: int = 0
+    totalFamilyItems: int = 0
+    isCurrent: bool = False
+    isSequenced: bool = True
+    isBlocked: bool = False
+    isBlockedUnknown: bool = False
+    isExecutable: bool = False
+    dependencyState: FeatureDependencyState = Field(default_factory=FeatureDependencyState)
+    primaryDocId: str = ""
+    primaryDocPath: str = ""
+
+
+class FeatureFamilyPosition(BaseModel):
+    familyKey: str = ""
+    currentIndex: int = 0
+    sequencedIndex: int = 0
+    totalItems: int = 0
+    sequencedItems: int = 0
+    unsequencedItems: int = 0
+    display: str = ""
+    currentItemId: str = ""
+    nextItemId: str = ""
+    nextItemLabel: str = ""
+
+
+class FeatureFamilySummary(BaseModel):
+    featureFamily: str = ""
+    totalItems: int = 0
+    sequencedItems: int = 0
+    unsequencedItems: int = 0
+    currentFeatureId: str = ""
+    currentFeatureName: str = ""
+    currentPosition: int = 0
+    currentSequencedPosition: int = 0
+    nextRecommendedFeatureId: str = ""
+    nextRecommendedFamilyItem: Optional[FeatureFamilyItem] = None
+    items: list[FeatureFamilyItem] = Field(default_factory=list)
+
+
+class ExecutionGateState(BaseModel):
+    state: Literal[
+        "ready",
+        "blocked_dependency",
+        "waiting_on_family_predecessor",
+        "unknown_dependency_state",
+    ] = "ready"
+    blockingDependencyId: str = ""
+    firstExecutableFamilyItemId: str = ""
+    recommendedFamilyItemId: str = ""
+    familyPosition: Optional[FeatureFamilyPosition] = None
+    dependencyState: FeatureDependencyState = Field(default_factory=FeatureDependencyState)
+    familySummary: FeatureFamilySummary = Field(default_factory=FeatureFamilySummary)
+    reason: str = ""
+    waitingOnFamilyPredecessor: bool = False
+    isReady: bool = True
+
+
+class FeatureExecutionDerivedState(BaseModel):
+    dependencyState: FeatureDependencyState = Field(default_factory=FeatureDependencyState)
+    familySummary: FeatureFamilySummary = Field(default_factory=FeatureFamilySummary)
+    familyPosition: FeatureFamilyPosition = Field(default_factory=FeatureFamilyPosition)
+    executionGate: ExecutionGateState = Field(default_factory=ExecutionGateState)
+    recommendedFamilyItem: Optional[FeatureFamilyItem] = None
+
+
 class Feature(BaseModel):
     id: str  # slug, e.g. "discovery-import-fixes-v1"
     name: str
@@ -1209,6 +1305,12 @@ class Feature(BaseModel):
     primaryDocuments: FeaturePrimaryDocuments = Field(default_factory=FeaturePrimaryDocuments)
     documentCoverage: FeatureDocumentCoverage = Field(default_factory=FeatureDocumentCoverage)
     qualitySignals: FeatureQualitySignals = Field(default_factory=FeatureQualitySignals)
+    dependencyState: Optional[FeatureDependencyState] = None
+    blockingFeatures: list[FeatureDependencyEvidence] = Field(default_factory=list)
+    familySummary: Optional[FeatureFamilySummary] = None
+    familyPosition: Optional[FeatureFamilyPosition] = None
+    executionGate: Optional[ExecutionGateState] = None
+    nextRecommendedFamilyItem: Optional[FeatureFamilyItem] = None
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
     dates: EntityDates = Field(default_factory=EntityDates)
@@ -1350,6 +1452,11 @@ class FeatureExecutionContext(BaseModel):
     sessions: list[dict[str, Any]] = Field(default_factory=list)
     analytics: FeatureExecutionAnalyticsSummary = Field(default_factory=FeatureExecutionAnalyticsSummary)
     recommendations: ExecutionRecommendation
+    dependencyState: Optional[FeatureDependencyState] = None
+    familySummary: Optional[FeatureFamilySummary] = None
+    familyPosition: Optional[FeatureFamilyPosition] = None
+    executionGate: Optional[ExecutionGateState] = None
+    recommendedFamilyItem: Optional[FeatureFamilyItem] = None
     warnings: list[FeatureExecutionWarning] = Field(default_factory=list)
     recommendedStack: Optional[RecommendedStack] = None
     stackAlternatives: list[RecommendedStack] = Field(default_factory=list)

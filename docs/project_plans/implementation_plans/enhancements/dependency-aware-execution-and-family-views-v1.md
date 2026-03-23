@@ -4,25 +4,40 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: completed
 category: enhancements
-
-title: "Implementation Plan: Dependency-Aware Execution and Family Views V1"
-description: "Implement derived dependency state, family sequencing, and dependency-aware execution guidance across board, execution, plan catalog, and document views."
-summary: "Turn blocked_by, feature_family, and sequence_order metadata into operational UI and backend behavior with blocker evidence, family ordering, and safer execution recommendations."
+title: 'Implementation Plan: Dependency-Aware Execution and Family Views V1'
+description: Implement derived dependency state, family sequencing, and dependency-aware
+  execution guidance across board, execution, plan catalog, and document views.
+summary: Turn blocked_by, feature_family, and sequence_order metadata into operational
+  UI and backend behavior with blocker evidence, family ordering, and safer execution
+  recommendations.
 author: codex
 owner: fullstack-engineering
-owners: [fullstack-engineering]
-contributors: [ai-agents]
-audience: [ai-agents, developers, fullstack-engineering]
+owners:
+- fullstack-engineering
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- fullstack-engineering
 created: 2026-03-22
-updated: 2026-03-22
-tags: [implementation, dependencies, execution, feature-family, planning, workflow, frontend, backend]
+updated: '2026-03-23'
+tags:
+- implementation
+- dependencies
+- execution
+- feature-family
+- planning
+- workflow
+- frontend
+- backend
 priority: high
 risk_level: medium
 complexity: high
 track: Dependency Awareness
-timeline_estimate: "2-3 weeks across 5 phases"
+timeline_estimate: 2-3 weeks across 5 phases
 feature_slug: dependency-aware-execution-and-family-views-v1
 feature_family: dependency-aware-execution-and-family-views
 feature_version: v1
@@ -33,32 +48,41 @@ lineage_parent:
 lineage_children: []
 lineage_type: enhancement
 linked_features:
-  - feature-execution-workbench-v1
+- feature-execution-workbench-v1
 related_documents:
-  - docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
-  - docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-  - docs/schemas/document_frontmatter/document-and-feature-mapping.md
+- docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
+- docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+- docs/schemas/document_frontmatter/document-and-feature-mapping.md
 context_files:
-  - backend/services/feature_execution.py
-  - backend/routers/features.py
-  - backend/routers/api.py
-  - backend/parsers/documents.py
-  - backend/parsers/features.py
-  - backend/models.py
-  - components/ProjectBoard.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/PlanCatalog.tsx
-  - components/DocumentModal.tsx
-  - services/execution.ts
-  - types.ts
+- backend/services/feature_execution.py
+- backend/routers/features.py
+- backend/routers/api.py
+- backend/parsers/documents.py
+- backend/parsers/features.py
+- backend/models.py
+- components/ProjectBoard.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/PlanCatalog.tsx
+- components/DocumentModal.tsx
+- services/execution.ts
+- types.ts
 prd: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
 plan_ref: dependency-aware-execution-and-family-views-v1
-
-request_log_id: ""
-commits: []
+request_log_id: ''
+commits:
+- 37b1277
+- 0802ffe
+- 1ddfc8f
+- c5d5f82
+- bff3e8d
+- 839d801
+- 76dc881
+- 065076d
+- 46fb6d6
+- 0a03b41
 prs: []
 ---
 
@@ -67,6 +91,18 @@ prs: []
 ## Objective
 
 Deliver a dependency-aware experience that makes blocked work, family order, and the next executable item explicit across the board, execution workbench, plan catalog, and document modal.
+
+## Delivery Status
+
+This plan is complete as of 2026-03-23.
+
+Delivered outcomes:
+
+1. Backend-derived dependency, family, and execution-gate state now flows through the feature and execution APIs.
+2. Shared dependency/family UI primitives now exist for execution-aware surfaces.
+3. The board, execution workbench, plan catalog, and document modal all render dependency-aware execution guidance.
+4. Telemetry distinguishes blocked-state views, dependency navigation, and family-item selection.
+5. README, CHANGELOG, and the relevant user/developer guides were updated to document the rollout.
 
 ## Current Baseline
 

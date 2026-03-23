@@ -54,6 +54,8 @@ from backend.services.feature_execution import (
     build_execution_context,
     load_execution_analytics,
     load_execution_documents,
+    load_feature_execution_derived_state,
+    load_feature_execution_derived_states,
 )
 from backend.services.agentic_intelligence_flags import stack_recommendations_enabled
 from backend.services.stack_recommendations import build_stack_recommendations
@@ -66,6 +68,9 @@ _EXECUTION_TELEMETRY_EVENTS = {
     "execution_workbench_opened",
     "execution_begin_work_clicked",
     "execution_recommendation_generated",
+    "execution_blocked_state_viewed",
+    "execution_dependency_navigated",
+    "execution_family_item_selected",
     "execution_command_copied",
     "execution_source_link_clicked",
 }
@@ -290,6 +295,32 @@ def _normalize_quality_signals(raw: Any) -> dict[str, Any]:
         "testImpact": str(payload.get("testImpact") or ""),
         "hasBlockingSignals": bool(payload.get("hasBlockingSignals", False)),
     }
+
+
+def _blocking_features_from_dependency_state(feature: Feature) -> list[Any]:
+    if not feature.dependencyState:
+        return []
+    items: list[Any] = []
+    for dependency in feature.dependencyState.dependencies:
+        state = str(getattr(dependency, "state", "")).strip().lower()
+        if not state and isinstance(dependency, dict):
+            state = str(dependency.get("state", "")).strip().lower()
+        if state not in {"blocked", "blocked_unknown"}:
+            continue
+        items.append(dependency)
+    return items
+
+
+def _apply_feature_execution_derived_state(feature: Feature, derived_state: Any) -> Feature:
+    if not derived_state:
+        return feature
+    feature.dependencyState = derived_state.dependencyState
+    feature.blockingFeatures = _blocking_features_from_dependency_state(feature)
+    feature.familySummary = derived_state.familySummary
+    feature.familyPosition = derived_state.familyPosition
+    feature.executionGate = derived_state.executionGate
+    feature.nextRecommendedFamilyItem = derived_state.recommendedFamilyItem
+    return feature
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -742,6 +773,14 @@ async def list_features(
         except Exception:
             logger.exception("Failed to serialize feature row '%s' in list_features", f.get("id"))
             continue
+
+    if results:
+        try:
+            derived_states = await load_feature_execution_derived_states(db, project.id, results)
+            for feature in results:
+                _apply_feature_execution_derived_state(feature, derived_states.get(feature.id))
+        except Exception:
+            logger.exception("Failed to derive dependency/family state for feature list")
     return PaginatedResponse(items=results, total=total, offset=offset, limit=limit)
 
 
@@ -934,6 +973,18 @@ async def get_feature_execution_context(feature_id: str):
             )
         )
 
+    derived_state = None
+    try:
+        derived_state = await load_feature_execution_derived_state(
+            db,
+            active_project.id,
+            feature,
+            documents,
+        )
+        _apply_feature_execution_derived_state(feature, derived_state)
+    except Exception:
+        logger.exception("Failed to derive execution dependency/family state for '%s'", feature.id)
+
     recommendation = build_execution_recommendation(feature, documents)
     recommended_stack = None
     stack_alternatives = []
@@ -978,6 +1029,7 @@ async def get_feature_execution_context(feature_id: str):
         stack_alternatives=stack_alternatives,
         stack_evidence=stack_evidence,
         definition_resolution_warnings=definition_resolution_warnings,
+        derived_state=derived_state,
     )
 
 
@@ -1068,7 +1120,7 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
     if not isinstance(related_features, list):
         related_features = []
 
-    return Feature(
+    feature = Feature(
         id=str(f.get("id") or ""),
         name=str(f.get("name") or ""),
         status=str(f.get("status") or "backlog"),
@@ -1108,6 +1160,14 @@ async def get_feature(feature_id: str, include_tasks: bool = True):
         dates=data.get("dates") if isinstance(data.get("dates"), dict) else {},
         timeline=data.get("timeline") if isinstance(data.get("timeline"), list) else [],
     )
+    project_id = str(f.get("project_id") or "")
+    if project_id:
+        try:
+            derived_state = await load_feature_execution_derived_state(db, project_id, feature, feature.linkedDocs)
+            _apply_feature_execution_derived_state(feature, derived_state)
+        except Exception:
+            logger.exception("Failed to derive dependency/family state for feature '%s'", feature.id)
+    return feature
 
 
 @features_router.get("/{feature_id}/linked-sessions", response_model=list[FeatureSessionLink])

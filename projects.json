@@ -1,5 +1,5 @@
 {
-  "activeProjectId": "3df0ff70-85fd-402f-a028-83cae8bcedc2",
+  "activeProjectId": "3da60e0c-a928-4b78-abd7-a74731e995c6",
   "projects": [
     {
       "id": "default-skillmeat",
@@ -148,6 +148,7 @@
       "skillMeat": {
         "enabled": false,
         "baseUrl": "",
+        "webBaseUrl": "",
         "projectId": "",
         "collectionId": "",
         "aaaEnabled": false,
@@ -308,6 +309,7 @@
       "skillMeat": {
         "enabled": false,
         "baseUrl": "",
+        "webBaseUrl": "",
         "projectId": "",
         "collectionId": "",
         "aaaEnabled": false,
@@ -468,11 +470,173 @@
       "skillMeat": {
         "enabled": true,
         "baseUrl": "http://127.0.0.1:8080",
+        "webBaseUrl": "",
         "projectId": "L1VzZXJzL21pZXRoZS9kZXYvaG9tZWxhYi9kZXZlbG9wbWVudC9za2lsbG1lYXQ=",
         "collectionId": "default",
         "aaaEnabled": false,
         "apiKey": "",
         "requestTimeoutSeconds": 10.0,
+        "featureFlags": {
+          "stackRecommendationsEnabled": true,
+          "workflowAnalyticsEnabled": true,
+          "usageAttributionEnabled": true,
+          "sessionBlockInsightsEnabled": true
+        }
+      }
+    },
+    {
+      "id": "3da60e0c-a928-4b78-abd7-a74731e995c6",
+      "name": "CCDash",
+      "path": "/Users/miethe/dev/homelab/development/CCDash",
+      "description": "",
+      "repoUrl": "https://github.com/miethe/ccdash",
+      "agentPlatforms": [
+        "Claude Code"
+      ],
+      "planDocsPath": "docs/project_plans/",
+      "sessionsPath": "~/.codex/sessions/",
+      "progressPath": "progress",
+      "pathConfig": {
+        "root": {
+          "field": "root",
+          "sourceKind": "filesystem",
+          "displayValue": "/Users/miethe/dev/homelab/development/CCDash",
+          "filesystemPath": "/Users/miethe/dev/homelab/development/CCDash",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "planDocs": {
+          "field": "plan_docs",
+          "sourceKind": "project_root",
+          "displayValue": "docs/project_plans/",
+          "filesystemPath": "",
+          "relativePath": "docs/project_plans/",
+          "repoRef": null
+        },
+        "sessions": {
+          "field": "sessions",
+          "sourceKind": "filesystem",
+          "displayValue": "~/.codex/sessions/",
+          "filesystemPath": "~/.codex/sessions/",
+          "relativePath": "",
+          "repoRef": null
+        },
+        "progress": {
+          "field": "progress",
+          "sourceKind": "project_root",
+          "displayValue": "progress",
+          "filesystemPath": "",
+          "relativePath": "progress",
+          "repoRef": null
+        }
+      },
+      "testConfig": {
+        "flags": {
+          "testVisualizerEnabled": true,
+          "integritySignalsEnabled": true,
+          "liveTestUpdatesEnabled": true,
+          "semanticMappingEnabled": true
+        },
+        "platforms": [
+          {
+            "id": "pytest",
+            "enabled": true,
+            "resultsDir": "test-results",
+            "watch": true,
+            "patterns": [
+              "**/*.xml",
+              "**/junit*.xml",
+              "**/pytest*.xml"
+            ]
+          },
+          {
+            "id": "jest",
+            "enabled": false,
+            "resultsDir": "skillmeat/web",
+            "watch": true,
+            "patterns": [
+              "**/jest-results*.json",
+              "**/coverage/coverage-final.json"
+            ]
+          },
+          {
+            "id": "playwright",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/test-results",
+            "watch": true,
+            "patterns": [
+              "**/results.json"
+            ]
+          },
+          {
+            "id": "coverage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/coverage.xml",
+              "**/coverage.json",
+              "**/lcov.info",
+              "**/coverage-final.json"
+            ]
+          },
+          {
+            "id": "benchmark",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/benchmark*_results.json",
+              "**/benchmark*.json"
+            ]
+          },
+          {
+            "id": "lighthouse",
+            "enabled": false,
+            "resultsDir": "skillmeat/web/lighthouse-reports",
+            "watch": false,
+            "patterns": [
+              "**/*.json",
+              "**/*.html"
+            ]
+          },
+          {
+            "id": "locust",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/locust_report.html",
+              "**/locust_results*.csv"
+            ]
+          },
+          {
+            "id": "triage",
+            "enabled": false,
+            "resultsDir": ".",
+            "watch": false,
+            "patterns": [
+              "**/test-failures.json",
+              "**/test-failures-summary.txt",
+              "**/test-failures.md"
+            ]
+          }
+        ],
+        "autoSyncOnStartup": true,
+        "maxFilesPerScan": 500,
+        "maxParseConcurrency": 4,
+        "instructionProfile": "skillmeat",
+        "instructionNotes": ""
+      },
+      "skillMeat": {
+        "enabled": false,
+        "baseUrl": "",
+        "webBaseUrl": "",
+        "projectId": "",
+        "collectionId": "",
+        "aaaEnabled": false,
+        "apiKey": "",
+        "requestTimeoutSeconds": 5.0,
         "featureFlags": {
           "stackRecommendationsEnabled": true,
           "workflowAnalyticsEnabled": true,

@@ -4,6 +4,29 @@
 
 ### Added
 
+- Dependency-aware execution validation coverage:
+  - `components/__tests__/dependencyAwareExecutionUi.test.tsx`
+
+### Changed
+
+- Feature Board, Execution Workbench, Plan Catalog, and Document Modal now surface dependency-aware execution and family-view metadata directly in the shipped UI:
+  - blocked-by dependency chips and execution-gate summaries
+  - family position and family-sequence metadata
+  - navigation affordances back to the board, plans, sessions, analytics, and linked documents
+- The dependency-aware execution implementation plan remains the source of truth for the shipped family-view rollout and the linked docs now describe the released behavior.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/execution-workbench-user-guide.md`
+  - `docs/execution-workbench-developer-reference.md`
+  - `docs/document-entity-user-guide.md`
+  - `docs/document-entity-developer-reference.md`
+
+### Added
+
 - Session transcript append rollout docs and progress tracking:
   - `docs/live-update-platform-developer-reference.md`
   - `docs/setup-user-guide.md`

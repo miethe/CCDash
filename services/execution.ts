@@ -2,6 +2,13 @@ import {
   ExecutionPolicyResult,
   ExecutionRun,
   ExecutionRunEventPage,
+  Feature,
+  FeatureDependencyEvidence,
+  FeatureDependencyState,
+  FeatureFamilyItem,
+  FeatureFamilyPosition,
+  FeatureFamilySummary,
+  ExecutionGateState,
   FeatureExecutionWarning,
   FeatureExecutionContext,
   RecommendedStack,
@@ -34,10 +41,101 @@ const normalizeRecommendedStack = (stack?: RecommendedStack | null): Recommended
   };
 };
 
+const normalizeFeatureDependencyEvidence = (
+  evidence?: FeatureDependencyEvidence | null,
+): FeatureDependencyEvidence | null | undefined => {
+  if (!evidence) return evidence;
+  return {
+    ...evidence,
+    dependencyCompletionEvidence: asArray<string>(evidence.dependencyCompletionEvidence),
+    blockingDocumentIds: asArray<string>(evidence.blockingDocumentIds),
+  };
+};
+
+const normalizeFeatureDependencyState = (
+  state?: FeatureDependencyState | null,
+): FeatureDependencyState | null | undefined => {
+  if (!state) return state;
+  return {
+    ...state,
+    blockingFeatureIds: asArray<string>(state.blockingFeatureIds),
+    blockingDocumentIds: asArray<string>(state.blockingDocumentIds),
+    completionEvidence: asArray<string>(state.completionEvidence),
+    dependencies: asArray<FeatureDependencyEvidence>(state.dependencies).map((evidence) =>
+      normalizeFeatureDependencyEvidence(evidence) ?? evidence,
+    ),
+  };
+};
+
+const normalizeFeatureFamilyItem = (item?: FeatureFamilyItem | null): FeatureFamilyItem | null | undefined => {
+  if (!item) return item;
+  return {
+    ...item,
+    dependencyState: normalizeFeatureDependencyState(item.dependencyState) ?? item.dependencyState,
+  };
+};
+
+const normalizeFeatureFamilySummary = (
+  summary?: FeatureFamilySummary | null,
+): FeatureFamilySummary | null | undefined => {
+  if (!summary) return summary;
+  return {
+    ...summary,
+    items: asArray<FeatureFamilyItem>(summary.items).map((item) => normalizeFeatureFamilyItem(item) ?? item),
+    nextRecommendedFamilyItem: normalizeFeatureFamilyItem(summary.nextRecommendedFamilyItem) ?? summary.nextRecommendedFamilyItem,
+  };
+};
+
+const normalizeFeatureFamilyPosition = (
+  position?: FeatureFamilyPosition | null,
+): FeatureFamilyPosition | null | undefined => {
+  if (!position) return position;
+  return { ...position };
+};
+
+const normalizeExecutionGate = (gate?: ExecutionGateState | null): ExecutionGateState | null | undefined => {
+  if (!gate) return gate;
+  return {
+    ...gate,
+    dependencyState: normalizeFeatureDependencyState(gate.dependencyState) ?? gate.dependencyState,
+    familySummary: normalizeFeatureFamilySummary(gate.familySummary) ?? gate.familySummary,
+    familyPosition: normalizeFeatureFamilyPosition(gate.familyPosition) ?? gate.familyPosition,
+  };
+};
+
+const normalizeFeature = (feature?: Feature | null): Feature | null | undefined => {
+  if (!feature) return feature;
+  return {
+    ...feature,
+    linkedDocs: asArray(feature.linkedDocs),
+    linkedFeatures: asArray(feature.linkedFeatures),
+    phases: asArray(feature.phases),
+    relatedFeatures: asArray<string>(feature.relatedFeatures),
+    blockingFeatures: asArray<FeatureDependencyEvidence>(feature.blockingFeatures).map((evidence) =>
+      normalizeFeatureDependencyEvidence(evidence) ?? evidence,
+    ),
+    dependencyState: normalizeFeatureDependencyState(feature.dependencyState) ?? feature.dependencyState,
+    familySummary: normalizeFeatureFamilySummary(feature.familySummary) ?? feature.familySummary,
+    familyPosition: normalizeFeatureFamilyPosition(feature.familyPosition) ?? feature.familyPosition,
+    executionGate: normalizeExecutionGate(feature.executionGate) ?? feature.executionGate,
+    nextRecommendedFamilyItem:
+      normalizeFeatureFamilyItem(feature.nextRecommendedFamilyItem) ?? feature.nextRecommendedFamilyItem,
+  };
+};
+
 const normalizeFeatureExecutionContext = (context: FeatureExecutionContext): FeatureExecutionContext => ({
   ...context,
+  feature: normalizeFeature(context?.feature) ?? context.feature,
+  documents: asArray(context?.documents),
+  sessions: asArray(context?.sessions),
   warnings: asArray<FeatureExecutionWarning>(context?.warnings),
   recommendedStack: normalizeRecommendedStack(context?.recommendedStack),
+  dependencyState: normalizeFeatureDependencyState(context?.dependencyState) ?? context.dependencyState,
+  familySummary: normalizeFeatureFamilySummary(context?.familySummary) ?? context.familySummary,
+  familyPosition: normalizeFeatureFamilyPosition(context?.familyPosition) ?? context.familyPosition,
+  executionGate: normalizeExecutionGate(context?.executionGate) ?? context.executionGate,
+  recommendedFamilyItem:
+    normalizeFeatureFamilyItem(context?.recommendedFamilyItem) ?? context.recommendedFamilyItem,
   stackAlternatives: asArray<RecommendedStack>(context?.stackAlternatives).map((stack) => {
     const normalized = normalizeRecommendedStack(stack);
     return normalized ?? {
@@ -50,7 +148,15 @@ const normalizeFeatureExecutionContext = (context: FeatureExecutionContext): Fea
 });
 
 export interface ExecutionEventPayload {
-  eventType: 'execution_workbench_opened' | 'execution_begin_work_clicked' | 'execution_recommendation_generated' | 'execution_command_copied' | 'execution_source_link_clicked';
+  eventType:
+    | 'execution_workbench_opened'
+    | 'execution_begin_work_clicked'
+    | 'execution_recommendation_generated'
+    | 'execution_blocked_state_viewed'
+    | 'execution_dependency_navigated'
+    | 'execution_family_item_selected'
+    | 'execution_command_copied'
+    | 'execution_source_link_clicked';
   featureId?: string;
   recommendationRuleId?: string;
   command?: string;

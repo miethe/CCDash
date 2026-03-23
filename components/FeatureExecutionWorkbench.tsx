@@ -30,9 +30,13 @@ import {
   ExecutionRun,
   ExecutionRunEvent,
   Feature,
+  FeatureDependencyState,
   FeatureExecutionContext,
   FeatureExecutionSessionLink,
   FeaturePhase,
+  FeatureFamilyItem,
+  FeatureFamilyPosition,
+  FeatureFamilySummary,
   LinkedDocument,
   PlanDocument,
   ProjectTask,
@@ -54,6 +58,8 @@ import { listTestRuns } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
 import { SessionArtifactsView } from './SessionArtifactsView';
 import { DocumentModal } from './DocumentModal';
+import { ExecutionGateCard } from './ExecutionGateCard';
+import { FamilySequenceLane } from './FamilySequenceLane';
 import { getFeatureStatusStyle } from './featureStatus';
 import { TestStatusView } from './TestVisualizer/TestStatusView';
 import { ExecutionApprovalDialog } from './execution/ExecutionApprovalDialog';
@@ -614,6 +620,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
   const [approvalRun, setApprovalRun] = useState<ExecutionRun | null>(null);
   const selectedRunNextSequenceRef = useRef(0);
   const initialHasQueryFeatureRef = useRef(Boolean(searchParams.get('feature')));
+  const blockedStateTelemetryKeyRef = useRef('');
   const isAnalyticsTabActive = activeTab === 'analytics';
   const executionLiveEnabled = isExecutionLiveUpdatesEnabled();
 
@@ -1125,11 +1132,70 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     return map;
   }, [context?.documents]);
 
+  const documentById = useMemo(() => {
+    const map = new Map<string, PlanDocument>();
+    documents.forEach(doc => {
+      const id = String(doc.id || '').trim();
+      if (id) map.set(id, doc);
+    });
+    return map;
+  }, [documents]);
+
+  const linkedDocumentById = useMemo(() => {
+    const map = new Map<string, LinkedDocument>();
+    (context?.documents || []).forEach(doc => {
+      const id = String(doc.id || '').trim();
+      if (id) map.set(id, doc);
+    });
+    return map;
+  }, [context?.documents]);
+
   const openBoardFeature = useCallback(
     (featureId: string, tab: FeatureModalTab = 'overview') => {
       navigate(`/board?feature=${encodeURIComponent(featureId)}&tab=${encodeURIComponent(tab)}`);
     },
     [navigate],
+  );
+
+  const openDependencyFeature = useCallback(
+    (featureId: string, metadata: Record<string, unknown> = {}) => {
+      const targetFeatureId = String(featureId || '').trim();
+      if (!targetFeatureId) return;
+      void trackExecutionEvent({
+        eventType: 'execution_dependency_navigated',
+        featureId: context?.feature.id,
+        metadata: {
+          targetFeatureId,
+          gateState: context?.executionGate?.state,
+          ...metadata,
+        },
+      });
+      openBoardFeature(targetFeatureId, 'overview');
+    },
+    [context?.executionGate?.state, context?.feature.id, openBoardFeature],
+  );
+
+  const openFamilyItemFeature = useCallback(
+    (item: FeatureFamilyItem, metadata: Record<string, unknown> = {}) => {
+      const targetFeatureId = String(item.featureId || '').trim();
+      if (!targetFeatureId) return;
+      void trackExecutionEvent({
+        eventType: 'execution_family_item_selected',
+        featureId: context?.feature.id,
+        metadata: {
+          targetFeatureId,
+          familyKey: item.featureFamily,
+          sequenceOrder: item.sequenceOrder,
+          familyIndex: item.familyIndex,
+          isCurrent: item.isCurrent,
+          isExecutable: item.isExecutable,
+          gateState: context?.executionGate?.state,
+          ...metadata,
+        },
+      });
+      openBoardFeature(targetFeatureId, 'overview');
+    },
+    [context?.executionGate?.state, context?.feature.id, openBoardFeature],
   );
 
   const openSession = useCallback(
@@ -1172,6 +1238,25 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     [documentByPath],
   );
 
+  const openDocumentReference = useCallback(
+    (documentRef: string) => {
+      const normalizedRef = String(documentRef || '').trim();
+      if (!normalizedRef) return;
+      const matchedDocument = documentById.get(normalizedRef);
+      if (matchedDocument) {
+        setViewingDoc(matchedDocument);
+        return;
+      }
+      const matchedLinkedDocument = linkedDocumentById.get(normalizedRef);
+      if (matchedLinkedDocument) {
+        openLinkedDoc(matchedLinkedDocument);
+        return;
+      }
+      openDocFromPath(normalizedRef);
+    },
+    [documentById, linkedDocumentById, openDocFromPath, openLinkedDoc],
+  );
+
   const sourceDocPath = useMemo(
     () => context?.recommendations.evidence.find(item => item.sourcePath)?.sourcePath || '',
     [context],
@@ -1204,14 +1289,14 @@ export const FeatureExecutionWorkbench: React.FC = () => {
       if (opened) return;
     }
     if (text.startsWith('feature:')) {
-      openBoardFeature(text.slice('feature:'.length), 'overview');
+      openDependencyFeature(text.slice('feature:'.length), { source: 'evidence_link' });
       return;
     }
     if (text.startsWith('active_phase:') || text.startsWith('next_phase:') || text.startsWith('highest_completed_phase:')) {
       if (context?.feature.id) openBoardFeature(context.feature.id, 'phases');
       return;
     }
-  }, [context?.feature.id, openBoardFeature, openDocFromPath]);
+  }, [context?.feature.id, openBoardFeature, openDependencyFeature, openDocFromPath]);
 
   const openSourceDoc = useCallback(() => {
     if (!sourceDocPath) return;
@@ -1262,6 +1347,29 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     return context.feature;
   }, [context, fullFeature]);
 
+  const dependencyState = useMemo<FeatureDependencyState | null>(
+    () => context?.dependencyState ?? featureDetail?.dependencyState ?? null,
+    [context?.dependencyState, featureDetail?.dependencyState],
+  );
+  const familySummary = useMemo<FeatureFamilySummary | null>(
+    () => context?.familySummary ?? featureDetail?.familySummary ?? null,
+    [context?.familySummary, featureDetail?.familySummary],
+  );
+  const familyPosition = useMemo<FeatureFamilyPosition | null>(
+    () => context?.familyPosition ?? featureDetail?.familyPosition ?? null,
+    [context?.familyPosition, featureDetail?.familyPosition],
+  );
+  const executionGate = useMemo(
+    () => context?.executionGate ?? featureDetail?.executionGate ?? null,
+    [context?.executionGate, featureDetail?.executionGate],
+  );
+  const familyItems = useMemo(
+    () => familySummary?.items || [],
+    [familySummary],
+  );
+  const isGateBlocking = Boolean(executionGate && !executionGate.isReady);
+  const isGateWaiting = executionGate?.state === 'waiting_on_family_predecessor';
+
   const phases = useMemo(
     () => featureDetail?.phases || [],
     [featureDetail],
@@ -1274,6 +1382,48 @@ export const FeatureExecutionWorkbench: React.FC = () => {
     () => (context?.documents || []).filter(doc => typeof doc.sequenceOrder === 'number'),
     [context?.documents],
   );
+
+  const openExecutionGateFeature = useCallback(
+    (featureId: string) => {
+      const targetFeatureId = String(featureId || '').trim();
+      if (!targetFeatureId) return;
+      const familyItem = familyItems.find(item => item.featureId === targetFeatureId) || null;
+      if (familyItem) {
+        openFamilyItemFeature(familyItem, { source: 'execution_gate_surface' });
+        return;
+      }
+      openDependencyFeature(targetFeatureId, { source: 'execution_gate_surface' });
+    },
+    [familyItems, openDependencyFeature, openFamilyItemFeature],
+  );
+
+  useEffect(() => {
+    const featureId = context?.feature.id || '';
+    if (!featureId || !executionGate || executionGate.isReady) return;
+
+    const telemetryKey = [
+      featureId,
+      executionGate.state,
+      executionGate.firstExecutableFamilyItemId,
+      executionGate.recommendedFamilyItemId,
+    ].join(':');
+    if (blockedStateTelemetryKeyRef.current === telemetryKey) return;
+    blockedStateTelemetryKeyRef.current = telemetryKey;
+
+    void trackExecutionEvent({
+      eventType: 'execution_blocked_state_viewed',
+      featureId,
+      metadata: {
+        gateState: executionGate.state,
+        reason: executionGate.reason,
+        blockingDependencyId: executionGate.blockingDependencyId,
+        firstExecutableFamilyItemId: executionGate.firstExecutableFamilyItemId,
+        recommendedFamilyItemId: executionGate.recommendedFamilyItemId,
+        waitingOnFamilyPredecessor: executionGate.waitingOnFamilyPredecessor,
+        isReady: executionGate.isReady,
+      },
+    });
+  }, [context?.feature.id, executionGate]);
 
   const phaseSessionLinks = useMemo(() => {
     const byPhase = new Map<string, FeatureExecutionSessionLink[]>();
@@ -1930,10 +2080,32 @@ export const FeatureExecutionWorkbench: React.FC = () => {
           <div className="space-y-4">
             <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
             <div className="h-fit space-y-4 xl:sticky xl:top-0">
+              <ExecutionGateCard
+                executionGate={executionGate}
+                onOpenFeature={openExecutionGateFeature}
+                onOpenDocument={openDocumentReference}
+              />
+              {familyItems.length > 0 && (
+                <FamilySequenceLane
+                  familySummary={familySummary}
+                  familyPosition={familyPosition}
+                  onOpenFeature={featureId => {
+                    const familyItem = familyItems.find(item => item.featureId === featureId);
+                    if (!familyItem) {
+                      openDependencyFeature(featureId, { source: 'family_sequence_lane' });
+                      return;
+                    }
+                    openFamilyItemFeature(familyItem, { source: 'family_sequence_lane' });
+                  }}
+                />
+              )}
+
               <section className="rounded-xl border border-panel-border bg-panel p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Recommendation</p>
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                      {isGateBlocking || isGateWaiting ? 'Suggested Command' : 'Recommendation'}
+                    </p>
                     <h2 className="text-lg font-semibold text-panel-foreground mt-1">Next Command</h2>
                   </div>
                   <span className="text-[10px] font-bold px-2 py-1 rounded border border-indigo-500/40 text-indigo-200 bg-indigo-500/20">
@@ -1941,8 +2113,18 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </span>
                 </div>
 
+                {(isGateBlocking || isGateWaiting) && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    {executionGate?.state === 'waiting_on_family_predecessor'
+                      ? 'The current feature is waiting on an earlier family item. The command below remains available, but it is not the first executable path.'
+                      : 'The current feature is blocked by dependency state. The command below remains available, but it is not the first executable path.'}
+                  </div>
+                )}
+
                 <div className="rounded-lg border border-panel-border bg-surface-overlay p-3">
-                  <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Primary</p>
+                  <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">
+                    {isGateBlocking || isGateWaiting ? 'Fallback route' : 'Primary'}
+                  </p>
                   <code className="text-sm text-emerald-300 block whitespace-pre-wrap break-all">{context.recommendations.primary.command}</code>
                 </div>
 
@@ -2209,7 +2391,7 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                               {blockedByRelations.map((relation, index) => (
                                 <button
                                   key={`blocked-by-${relation.feature}-${index}`}
-                                  onClick={() => openBoardFeature(relation.feature, 'overview')}
+                                  onClick={() => openDependencyFeature(relation.feature, { source: 'legacy_blocked_by_relation' })}
                                   className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-200"
                                 >
                                   Blocked by {relation.feature}

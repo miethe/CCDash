@@ -1,6 +1,6 @@
 # Execution Workbench User Guide
 
-Last updated: 2026-03-14
+Last updated: 2026-03-23
 
 Use the Execution Workbench to launch, monitor, and control local terminal commands from inside CCDash.
 
@@ -15,6 +15,10 @@ Route:
 - Resolved SkillMeat definition chips plus fallback warnings when only local CCDash evidence is available.
 - Inline V2 insight panels for context coverage, curated bundle fit, and recent SkillMeat execution activity.
 - Embedded Workflow Intelligence panel in the `Analytics` tab for feature-scoped effectiveness and failure-pattern review.
+- Dependency-aware execution context in the overview view:
+  - blocked-by dependency chips and execution-gate status
+  - family position, next item, and family-sequence summaries
+  - linked document chips that open the document modal for the selected plan or progress file
 - Pre-run policy review (command, working directory, env profile).
 - Approval workflow for high-risk commands.
 - Live run history and output streaming in a dedicated `Runs` tab.
@@ -33,6 +37,17 @@ Route:
    - alternatives if the primary suggestion looks too risky
    - similar-work examples for prior sessions/features that produced the recommendation
 4. If the project disables stack recommendations, the workbench keeps command guidance available and shows a disabled-state notice instead.
+
+## Dependency-aware overview
+
+When a feature carries dependency and family metadata, the workbench overview now shows:
+
+- the current execution gate and why the feature is blocked or ready
+- family position and the next recommended family item
+- blocked-by feature chips that navigate back to the feature board
+- sequenced document chips that open the selected document in the modal
+
+The top navigation row also keeps direct routes to `Board`, `Plans`, `Sessions`, and `Analytics` so you can jump between the family view, the plan catalog, and the broader analytics surfaces without leaving the workbench context.
 
 ## How to run a command
 

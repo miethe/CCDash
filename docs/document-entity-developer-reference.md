@@ -1,6 +1,6 @@
 # Document Entity Developer Reference
 
-Last updated: 2026-02-19
+Last updated: 2026-03-23
 
 This is the implementation-level reference for the document-entity enhancement pass.
 
@@ -70,8 +70,8 @@ Enhancements include typed columns in `documents` and normalized `document_refs`
 - `contexts/AppEntityDataContext.tsx`: paged document fetching and document-state refresh
 - `contexts/DataContext.tsx`: compatibility facade consumed by existing UI components
 - `components/PlanCatalog.tsx`: scope tabs, facets, metadata-aware search
-- `components/DocumentModal.tsx`: typed metadata + normalized links panels
-- `components/ProjectBoard.tsx`: canonical path doc resolution fallback
+- `components/DocumentModal.tsx`: typed metadata + normalized links panels, plus dependency-aware family/blocked-by presentation
+- `components/ProjectBoard.tsx`: canonical path doc resolution fallback and dependency-aware execution summaries
 
 ## Canonical Identity Rules
 
@@ -197,6 +197,7 @@ This backfills existing rows; no manual per-file migration is required.
 
 - `backend/tests/test_document_linking.py`
 - `backend/tests/test_documents_parser.py`
+- `components/__tests__/dependencyAwareExecutionUi.test.tsx`
 
 Coverage includes:
 
@@ -204,3 +205,4 @@ Coverage includes:
 - subtype classification
 - expanded frontmatter key extraction
 - typed progress metadata parsing
+- dependency-aware family and blocked-by rendering across the board, plan catalog, and document modal
