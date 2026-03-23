@@ -7,6 +7,7 @@ import {
   projectFeaturesTopic,
   projectOpsTopic,
   projectTestsTopic,
+  sessionTranscriptTopic,
 } from '../live/topics';
 import type { EventSourceLike } from '../live/types';
 
@@ -76,6 +77,7 @@ describe('live topic helpers', () => {
     expect(projectFeaturesTopic('Project-1')).toBe('project.project-1.features');
     expect(projectTestsTopic('Project-1')).toBe('project.project-1.tests');
     expect(projectOpsTopic('Project-1')).toBe('project.project-1.ops');
+    expect(sessionTranscriptTopic('Session-1')).toBe('session.session-1.transcript');
   });
 });
 
@@ -165,6 +167,62 @@ describe('LiveConnectionManager', () => {
     expect(sources[2]?.url).not.toContain('cursor=cursor-9');
   });
 
+  it('keeps transcript-topic cursors for append replay and clears them on transcript snapshot recovery', () => {
+    vi.useFakeTimers();
+    const sources: FakeEventSource[] = [];
+    const recover = vi.fn();
+    const manager = new LiveConnectionManager({
+      reconnectBaseMs: 5,
+      reconnectMaxMs: 5,
+      createEventSource: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    manager.subscribe({
+      topic: sessionTranscriptTopic('session-42'),
+      onSnapshotRequired: recover,
+    });
+
+    sources[0]?.emit('append', {
+      topic: sessionTranscriptTopic('session-42'),
+      kind: 'append',
+      cursor: 'transcript-cursor-1',
+      sequence: 1,
+      occurredAt: '2026-03-15T10:00:00Z',
+      payload: {
+        sessionId: 'session-42',
+        entryId: 'log-1',
+        sequenceNo: 1,
+      },
+      delivery: { replayable: true, recoveryHint: null },
+    });
+
+    sources[0]?.emit('error');
+    vi.advanceTimersByTime(5);
+    expect(sources).toHaveLength(2);
+    expect(sources[1]?.url).toContain('topic=session.session-42.transcript');
+    expect(sources[1]?.url).toContain('cursor=transcript-cursor-1');
+
+    sources[1]?.emit('snapshot_required', {
+      topic: sessionTranscriptTopic('session-42'),
+      kind: 'snapshot_required',
+      cursor: null,
+      sequence: null,
+      occurredAt: '2026-03-15T10:00:01Z',
+      payload: { latestSequence: 12 },
+      delivery: { replayable: false, recoveryHint: 'rest_snapshot' },
+    });
+    expect(recover).toHaveBeenCalledTimes(1);
+
+    sources[1]?.emit('error');
+    vi.advanceTimersByTime(5);
+    expect(sources).toHaveLength(3);
+    expect(sources[2]?.url).not.toContain('cursor=transcript-cursor-1');
+  });
+
   it('pauses when the document is hidden and resumes when visible again', () => {
     const doc = createVisibilityDocument();
     const sources: FakeEventSource[] = [];
@@ -188,6 +246,41 @@ describe('LiveConnectionManager', () => {
     doc.hidden = false;
     doc.emitVisibility();
     expect(sources).toHaveLength(2);
+    expect(manager.getSnapshot().status).toBe('connecting');
+  });
+
+  it('resubscribes to transcript topics after hidden-tab resume with cursor retention intact', () => {
+    const doc = createVisibilityDocument();
+    const sources: FakeEventSource[] = [];
+    const manager = new LiveConnectionManager({
+      documentRef: doc,
+      createEventSource: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
+    });
+
+    manager.subscribe({ topic: sessionTranscriptTopic('session-88') });
+    sources[0]?.emit('append', {
+      topic: sessionTranscriptTopic('session-88'),
+      kind: 'append',
+      cursor: 'transcript-cursor-88',
+      sequence: 1,
+      occurredAt: '2026-03-15T10:00:00Z',
+      payload: { sessionId: 'session-88', entryId: 'log-88', sequenceNo: 1 },
+      delivery: { replayable: true, recoveryHint: null },
+    });
+
+    doc.hidden = true;
+    doc.emitVisibility();
+    expect(manager.getSnapshot().status).toBe('paused');
+
+    doc.hidden = false;
+    doc.emitVisibility();
+    expect(sources).toHaveLength(2);
+    expect(sources[1]?.url).toContain('topic=session.session-88.transcript');
+    expect(sources[1]?.url).toContain('cursor=transcript-cursor-88');
     expect(manager.getSnapshot().status).toBe('connecting');
   });
 });
