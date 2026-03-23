@@ -17,7 +17,7 @@ from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext, WorkspaceScope
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveTopicCursor
 from backend.application.ports import CorePorts
-from backend.application.live_updates.topics import encode_cursor
+from backend.application.live_updates.topics import encode_cursor, session_transcript_topic
 from backend.project_manager import ProjectManager
 from backend.routers.live import stream_live_updates
 
@@ -164,3 +164,72 @@ class LiveRouterTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(exc_info.exception.status_code, 400)
         self.assertIn("Cursor topics must be part of the subscription", str(exc_info.exception.detail))
+
+    async def test_transcript_topic_replay_and_gap_snapshot_required(self) -> None:
+        topic = session_transcript_topic("session-123")
+        first = await self.publisher.publish_append(
+            topic=topic,
+            payload={
+                "sessionId": "session-123",
+                "entryId": "log-1",
+                "sequenceNo": 1,
+                "kind": "message",
+                "createdAt": "2026-03-14T10:00:00+00:00",
+                "payload": {"id": "log-1", "content": "hello"},
+            },
+            occurred_at="2026-03-14T10:00:00+00:00",
+        )
+        await self.publisher.publish_append(
+            topic=topic,
+            payload={
+                "sessionId": "session-123",
+                "entryId": "log-2",
+                "sequenceNo": 2,
+                "kind": "message",
+                "createdAt": "2026-03-14T10:00:01+00:00",
+                "payload": {"id": "log-2", "content": "world"},
+            },
+            occurred_at="2026-03-14T10:00:01+00:00",
+        )
+        await self.publisher.publish_append(
+            topic=topic,
+            payload={
+                "sessionId": "session-123",
+                "entryId": "log-3",
+                "sequenceNo": 3,
+                "kind": "message",
+                "createdAt": "2026-03-14T10:00:02+00:00",
+                "payload": {"id": "log-3", "content": "buffer overflow"},
+            },
+            occurred_at="2026-03-14T10:00:02+00:00",
+        )
+
+        response = await stream_live_updates(
+            request=_FakeRequest(),
+            topic=[topic],
+            cursor=[first.cursor],
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+            live_broker=self.broker,
+        )
+
+        replay_chunk = await anext(response.body_iterator)
+        replay_payload = _decode_frame(replay_chunk)
+        self.assertEqual(replay_payload["event"], "append")
+        self.assertEqual(replay_payload["payload"]["entryId"], "log-2")
+
+        await response.body_iterator.aclose()
+
+        gap_response = await stream_live_updates(
+            request=_FakeRequest(disconnect_after_checks=4),
+            topic=[topic],
+            cursor=[encode_cursor(LiveTopicCursor(topic=topic, sequence=0))],
+            request_context=self.request_context,
+            core_ports=self.core_ports,
+            live_broker=self.broker,
+        )
+        gap_chunk = await anext(gap_response.body_iterator)
+        gap_payload = _decode_frame(gap_chunk)
+        self.assertEqual(gap_payload["event"], "snapshot_required")
+        self.assertEqual(gap_payload["topic"], topic)
+        await gap_response.body_iterator.aclose()

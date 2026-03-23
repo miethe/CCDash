@@ -14,6 +14,10 @@ export const isSessionLiveUpdatesEnabled = (): boolean => (
   readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_SESSIONS_ENABLED, true)
 );
 
+export const isSessionTranscriptAppendEnabled = (): boolean => (
+  readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED, false)
+);
+
 export const isFeatureLiveUpdatesEnabled = (): boolean => (
   readBooleanEnv(import.meta.env.VITE_CCDASH_LIVE_FEATURES_ENABLED, false)
 );

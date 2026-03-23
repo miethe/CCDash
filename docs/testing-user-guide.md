@@ -11,6 +11,7 @@ This guide explains how to configure a Project so the `/tests` page ingests and 
    - `CCDASH_LIVE_TEST_UPDATES_ENABLED=true` (optional, backend live-update gate)
    - `CCDASH_SEMANTIC_MAPPING_ENABLED=true` (optional, for semantic mapping)
    - `VITE_CCDASH_LIVE_TESTS_ENABLED=true` (optional, frontend live-update rollout)
+   - `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED=true` (optional, frontend transcript append rollout)
 
 Effective behavior is `env_flag && project_flag`. If env is `false`, project settings cannot override it.
 
@@ -124,7 +125,7 @@ The frontend includes a circuit breaker for `feature_disabled` responses to prev
 
 ### High CPU or constant polling previously observed
 
-Current behavior uses stream-first invalidation when both backend and frontend live gates are enabled, then falls back to polling on disconnect/backoff. If you still see churn, re-check env/project flags and browser console errors.
+Current behavior uses stream-first invalidation when both backend and frontend live gates are enabled, then falls back to polling on disconnect/backoff. Session transcript append is separate: if the transcript append flag is off, or if replay gaps/mismatches occur, Session Inspector refetches the session detail instead of trying to merge unsafe transcript changes. If you still see churn, re-check env/project flags and browser console errors.
 
 ## 9) Mapping Coverage and Reuse Workflow
 

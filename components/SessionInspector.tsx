@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData, type SessionFilters } from '../contexts/DataContext';
 import { useModelColors } from '../contexts/ModelColorsContext';
-import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink, LiveAgentActivity, LiveTranscriptState } from '../types';
+import { AgentSession, SessionLog, LogType, SessionArtifact, PlanDocument, SessionActivityItem, SessionFileAggregateRow, SessionFileUpdate, Feature, ProjectTask, FeatureExecutionSessionLink, LiveAgentActivity, LiveTranscriptState, SessionTranscriptAppendPayload } from '../types';
 import { Clock, Database, Terminal, Search, Edit3, GitCommit, GitBranch, ArrowLeft, Bot, Activity, Archive, PlayCircle, Cpu, Zap, Box, ChevronRight, MessageSquare, Code, ChevronDown, Calendar, BarChart2, PieChart as PieChartIcon, Users, TrendingUp, ShieldAlert, FileText, ExternalLink, Link as LinkIcon, HardDrive, Scroll, Maximize2, X, MoreHorizontal, Layers, RefreshCw, LayoutGrid, TestTube2 } from 'lucide-react';
 import { Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Legend, ComposedChart, Line } from 'recharts';
 import { DocumentModal } from './DocumentModal';
@@ -23,10 +23,13 @@ import { getInlineContentViewerPayload, getTranscriptContentViewerPayload } from
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, resolveDisplayCost } from '../lib/sessionSemantics';
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
+import { mergeSessionTranscriptAppend } from '../lib/sessionTranscriptLive';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
 import {
     isSessionLiveUpdatesEnabled,
+    isSessionTranscriptAppendEnabled,
     sessionTopic,
+    sessionTranscriptTopic,
     sharedLiveConnectionManager,
     type LiveConnectionStatus,
 } from '../services/live';
@@ -116,6 +119,28 @@ const formatTimeAgo = (timestamp?: string): string => {
     if (days < 7) return `${days}d ago`;
 
     return new Date(epoch).toLocaleDateString();
+};
+
+const asSessionTranscriptAppendPayload = (raw: unknown): SessionTranscriptAppendPayload | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const candidate = raw as Record<string, unknown>;
+    const payload = candidate.payload;
+    if (!payload || typeof payload !== 'object') return null;
+    const sessionId = String(candidate.sessionId || '').trim();
+    const entryId = String(candidate.entryId || '').trim();
+    const createdAt = String(candidate.createdAt || '').trim();
+    const sequenceNo = Number(candidate.sequenceNo);
+    if (!sessionId || !entryId || !createdAt || !Number.isFinite(sequenceNo)) {
+        return null;
+    }
+    return {
+        sessionId,
+        entryId,
+        sequenceNo,
+        kind: String(candidate.kind || ''),
+        createdAt,
+        payload: payload as SessionTranscriptAppendPayload['payload'],
+    };
 };
 
 const formatBlockWindow = (startAt: string, endAt: string): string => {
@@ -8132,6 +8157,8 @@ export const SessionInspector: React.FC = () => {
     const [selectedSessionLiveStatus, setSelectedSessionLiveStatus] = useState<LiveConnectionStatus>('idle');
     const openSessionRequestRef = useRef(0);
     const sessionLiveEnabled = isSessionLiveUpdatesEnabled();
+    const selectedSessionId = selectedSession?.id ?? null;
+    const selectedSessionStatus = selectedSession?.status ?? null;
 
     const updateSessionSearchParams = useCallback((
         sessionId: string | null,
@@ -8226,13 +8253,16 @@ export const SessionInspector: React.FC = () => {
     }, [getSessionById]);
 
     useEffect(() => {
-        if (!sessionLiveEnabled || !selectedSession || selectedSession.status !== 'active') {
+        if (!sessionLiveEnabled || !selectedSessionId || selectedSessionStatus !== 'active') {
             setSelectedSessionLiveStatus(prev => (prev === 'idle' ? prev : 'idle'));
             return undefined;
         }
 
-        const sessionId = selectedSession.id;
-        return sharedLiveConnectionManager.subscribe({
+        const sessionId = selectedSessionId;
+        const transcriptAppendEnabled = isSessionTranscriptAppendEnabled();
+        const unsubscribers: Array<() => void> = [];
+
+        unsubscribers.push(sharedLiveConnectionManager.subscribe({
             topic: sessionTopic(sessionId),
             pauseWhenHidden: true,
             onStatusChange: status => {
@@ -8240,17 +8270,102 @@ export const SessionInspector: React.FC = () => {
             },
             onEvent: event => {
                 if (event.kind !== 'invalidate' || event.payload.resource !== 'session') return;
-                void refreshSelectedSessionDetail(sessionId).catch(() => {
-                    // Polling fallback handles transient errors.
+                if (!transcriptAppendEnabled) {
+                    void refreshSelectedSessionDetail(sessionId).catch(() => {
+                        // Polling fallback handles transient errors.
+                    });
+                    return;
+                }
+
+                let shouldRefetch = false;
+                setSelectedSession(current => {
+                    if (!current || current.id !== sessionId) return current;
+                    const logCount = typeof event.payload.logCount === 'number' && Number.isFinite(event.payload.logCount)
+                        ? event.payload.logCount
+                        : current.logs.length;
+                    const nextStatus = typeof event.payload.status === 'string' && event.payload.status.trim()
+                        ? event.payload.status
+                        : current.status;
+                    const nextUpdatedAt = typeof event.payload.updatedAt === 'string' && event.payload.updatedAt.trim()
+                        ? event.payload.updatedAt
+                        : current.updatedAt;
+                    shouldRefetch = nextStatus !== current.status || logCount < current.logs.length;
+                    if (shouldRefetch) return current;
+                    if (nextStatus === current.status && nextUpdatedAt === current.updatedAt) return current;
+                    return {
+                        ...current,
+                        status: nextStatus,
+                        updatedAt: nextUpdatedAt,
+                    };
                 });
+                if (shouldRefetch) {
+                    void refreshSelectedSessionDetail(sessionId).catch(() => {
+                        // Polling fallback handles transient errors.
+                    });
+                }
             },
             onSnapshotRequired: () => {
                 void refreshSelectedSessionDetail(sessionId).catch(() => {
                     // Polling fallback handles transient errors.
                 });
             },
-        });
-    }, [refreshSelectedSessionDetail, selectedSession, sessionLiveEnabled]);
+        }));
+
+        if (transcriptAppendEnabled) {
+            unsubscribers.push(sharedLiveConnectionManager.subscribe({
+                topic: sessionTranscriptTopic(sessionId),
+                pauseWhenHidden: true,
+                onStatusChange: status => {
+                    setSelectedSessionLiveStatus(status);
+                },
+                onEvent: event => {
+                    if (event.kind !== 'append') return;
+                    const payload = asSessionTranscriptAppendPayload(event.payload);
+                    if (!payload || payload.sessionId !== sessionId) {
+                        void refreshSelectedSessionDetail(sessionId).catch(() => {
+                            // Polling fallback handles transient errors.
+                        });
+                        return;
+                    }
+                    let shouldRefetch = false;
+                    setSelectedSession(current => {
+                        if (!current || current.id !== sessionId) return current;
+                        if (event.topic !== sessionTranscriptTopic(sessionId)) {
+                            shouldRefetch = true;
+                            return current;
+                        }
+                        const decision = mergeSessionTranscriptAppend(current.logs, payload);
+                        if (decision.action === 'refetch') {
+                            shouldRefetch = true;
+                            return current;
+                        }
+                        if (decision.action === 'skip') {
+                            return current;
+                        }
+                        return {
+                            ...current,
+                            logs: decision.nextLogs,
+                            updatedAt: payload.createdAt || current.updatedAt,
+                        };
+                    });
+                    if (shouldRefetch) {
+                        void refreshSelectedSessionDetail(sessionId).catch(() => {
+                            // Polling fallback handles transient errors.
+                        });
+                    }
+                },
+                onSnapshotRequired: () => {
+                    void refreshSelectedSessionDetail(sessionId).catch(() => {
+                        // Polling fallback handles transient errors.
+                    });
+                },
+            }));
+        }
+
+        return () => {
+            unsubscribers.forEach(unsubscribe => unsubscribe());
+        };
+    }, [refreshSelectedSessionDetail, selectedSessionId, selectedSessionStatus, sessionLiveEnabled]);
 
     useEffect(() => {
         if (!selectedSession || selectedSession.status !== 'active') {
