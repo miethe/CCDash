@@ -57,8 +57,10 @@ from backend.document_linking import (
     slug_from_path,
 )
 from backend.application.live_updates.domain_events import (
+    SessionTranscriptAppendPayload,
     publish_feature_invalidation,
     publish_ops_invalidation,
+    publish_session_transcript_append,
     publish_session_snapshot,
 )
 from backend.link_audit import analyze_suspect_links, suspects_as_dicts
@@ -253,6 +255,71 @@ def _safe_json_dict(value: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _normalize_log_identity(log: dict[str, Any], fallback_index: int) -> str:
+    source_log_id = str(log.get("source_log_id") or log.get("sourceLogId") or "").strip()
+    if source_log_id:
+        return source_log_id
+    legacy_id = str(log.get("id") or "").strip()
+    if legacy_id:
+        return legacy_id
+    return f"log-{fallback_index}"
+
+
+def _build_transcript_append_payload(
+    session_dict: dict[str, Any],
+    log: dict[str, Any],
+    sequence_no: int,
+) -> SessionTranscriptAppendPayload:
+    entry_id = _normalize_log_identity(log, sequence_no)
+    return SessionTranscriptAppendPayload(
+        session_id=str(session_dict.get("id") or ""),
+        entry_id=entry_id,
+        sequence_no=sequence_no,
+        kind=str(log.get("type") or "message"),
+        created_at=str(log.get("timestamp") or session_dict.get("updatedAt") or session_dict.get("updated_at") or ""),
+        payload={
+            "id": entry_id,
+            "timestamp": str(log.get("timestamp") or ""),
+            "speaker": str(log.get("speaker") or ""),
+            "type": str(log.get("type") or "message"),
+            "content": str(log.get("content") or ""),
+            "agentName": str(log.get("agentName") or ""),
+            "linkedSessionId": log.get("linkedSessionId"),
+            "relatedToolCallId": log.get("relatedToolCallId"),
+            "metadata": log.get("metadata") if isinstance(log.get("metadata"), dict) else {},
+            "toolCall": log.get("toolCall") if isinstance(log.get("toolCall"), dict) else None,
+        },
+    )
+
+
+async def _publish_session_transcript_appends(
+    session_dict: dict[str, Any],
+    *,
+    previous_logs: list[dict[str, Any]],
+    current_logs: list[dict[str, Any]],
+) -> bool:
+    if not current_logs:
+        return False
+
+    previous_ids = [_normalize_log_identity(log, idx) for idx, log in enumerate(previous_logs)]
+    current_ids = [_normalize_log_identity(log, idx) for idx, log in enumerate(current_logs)]
+
+    if len(previous_ids) > len(current_ids):
+        return False
+    if current_ids[: len(previous_ids)] != previous_ids:
+        return False
+
+    session_id = str(session_dict.get("id") or "").strip()
+    if not session_id:
+        return False
+
+    for sequence_no, log in enumerate(current_logs[len(previous_ids) :], start=len(previous_ids) + 1):
+        await publish_session_transcript_append(
+            _build_transcript_append_payload(session_dict, log, sequence_no),
+        )
+    return True
 
 
 def _coerce_int(value: Any) -> int:
@@ -3546,6 +3613,7 @@ class SyncEngine:
                     if not session_id:
                         continue
 
+                    previous_logs = await self.session_repo.get_logs(session_id)
                     await self.session_repo.upsert(session_dict, project_id)
 
                     logs = session_dict.get("logs", [])
@@ -3594,7 +3662,21 @@ class SyncEngine:
                         files,
                         source="sync",
                     )
+                    append_published = await _publish_session_transcript_appends(
+                        session_dict,
+                        previous_logs=previous_logs,
+                        current_logs=logs,
+                    )
                     await publish_session_snapshot(session_dict, log_count=len(logs), source="sync")
+                    if not append_published and logs:
+                        logger.debug(
+                            "session transcript append fallback to invalidation",
+                            extra={
+                                "session_id": session_id,
+                                "project_id": project_id,
+                                "log_count": len(logs),
+                            },
+                        )
 
                     model = _first_non_empty(session_dict, "model")
                     feature_id = _first_non_empty(session_dict, "featureId", "feature_id")
