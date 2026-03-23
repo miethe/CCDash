@@ -8,15 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-fa
 plan_ref: /docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
 phase: 4
 title: Surface Integration
-status: planning
+status: completed
 started: '2026-03-23'
-completed: null
-commit_refs: []
+completed: '2026-03-23'
+commit_refs:
+- 065076d
+- 0a03b41
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +31,7 @@ contributors:
 tasks:
 - id: DEP-301
   description: Integrate dependency state and family summary into the feature modal on the board.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -40,7 +42,7 @@ tasks:
   priority: high
 - id: DEP-302
   description: Update the execution workbench to pre-pass on dependency state and recommend navigation to the first executable family item.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - frontend-developer
@@ -51,7 +53,7 @@ tasks:
   priority: high
 - id: DEP-303
   description: Add family-oriented scanning to the catalog so grouped lanes and unsequenced items are visible there as well.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -61,7 +63,7 @@ tasks:
   priority: high
 - id: DEP-304
   description: Update document detail to explain family position, blocker evidence, and the next item in family.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -89,7 +91,7 @@ files_modified:
 - components/FeatureExecutionWorkbench.tsx
 - components/PlanCatalog.tsx
 - components/DocumentModal.tsx
-progress: 0
+progress: 100
 updated: '2026-03-23'
 ---
 
@@ -107,4 +109,6 @@ Wire the shared dependency and family model into the board, workbench, catalog, 
 
 ## Completion Notes
 
-- Pending.
+- Delivered board, catalog, and document-modal integration in `065076d` (`feat(ui): surface dependency-aware plan metadata`).
+- Delivered execution-workbench dependency-aware routing and telemetry integration in `0a03b41` (`feat(execution): add dependency-aware workbench routing`).
+- Shared dependency/family derived state now renders across the board modal, execution workbench, plan catalog, and document modal.

@@ -51,6 +51,7 @@ const resetStateOverrides = () => {
 
 vi.mock('react', async () => {
   const actual = await vi.importActual<typeof import('react')>('react');
+  const actualDefault = (actual as { default?: Record<string, unknown> }).default ?? {};
   const mockedUseState = <T,>(initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
     const overrideIndex = stateCallIndex++;
     if (stateOverrides.has(overrideIndex)) {
@@ -61,7 +62,7 @@ vi.mock('react', async () => {
   return {
     ...actual,
     default: {
-      ...(actual as unknown as Record<string, unknown>).default,
+      ...actualDefault,
       useState: mockedUseState,
     },
     useState: mockedUseState,
@@ -458,7 +459,7 @@ const sampleDocument: PlanDocument = {
   frontmatter: {
     tags: ['dependency-aware', 'family'],
     linkedFeatures: ['feature-1'],
-    linkedFeatureRefs: ['feature-1'],
+    linkedFeatureRefs: [{ feature: 'feature-1', type: 'implements', source: 'frontmatter', confidence: 1 }],
     blockedBy: ['feature-0'],
     sequenceOrder: 1,
     linkedSessions: [],
@@ -508,9 +509,9 @@ const sampleExecutionContext: FeatureExecutionContext = {
     explanation: 'The feature is blocked, but the family sequence is still visible and ready for review.',
     primary: {
       command: '/dev:execute-phase docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md',
-      cwd: '.',
-      envProfile: 'default',
       ruleId: 'family-aware',
+      confidence: 0.92,
+      explanation: 'Review the family lane before starting implementation work.',
       evidenceRefs: [],
     },
     alternatives: [],

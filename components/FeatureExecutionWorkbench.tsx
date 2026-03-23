@@ -1166,13 +1166,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
         featureId: context?.feature.id,
         metadata: {
           targetFeatureId,
-          gateState: executionGate?.state,
+          gateState: context?.executionGate?.state,
           ...metadata,
         },
       });
       openBoardFeature(targetFeatureId, 'overview');
     },
-    [context?.feature.id, executionGate?.state, openBoardFeature],
+    [context?.executionGate?.state, context?.feature.id, openBoardFeature],
   );
 
   const openFamilyItemFeature = useCallback(
@@ -1189,13 +1189,13 @@ export const FeatureExecutionWorkbench: React.FC = () => {
           familyIndex: item.familyIndex,
           isCurrent: item.isCurrent,
           isExecutable: item.isExecutable,
-          gateState: executionGate?.state,
+          gateState: context?.executionGate?.state,
           ...metadata,
         },
       });
       openBoardFeature(targetFeatureId, 'overview');
     },
-    [context?.feature.id, executionGate?.state, openBoardFeature],
+    [context?.executionGate?.state, context?.feature.id, openBoardFeature],
   );
 
   const openSession = useCallback(

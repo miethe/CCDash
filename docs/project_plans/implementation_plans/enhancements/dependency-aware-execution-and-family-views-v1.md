@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Dependency-Aware Execution and Family Views V1'
 description: Implement derived dependency state, family sequencing, and dependency-aware
@@ -72,7 +72,17 @@ prd: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-
 prd_ref: docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-family-views-v1.md
 plan_ref: dependency-aware-execution-and-family-views-v1
 request_log_id: ''
-commits: []
+commits:
+- 37b1277
+- 0802ffe
+- 1ddfc8f
+- c5d5f82
+- bff3e8d
+- 839d801
+- 76dc881
+- 065076d
+- 46fb6d6
+- 0a03b41
 prs: []
 ---
 
@@ -81,6 +91,18 @@ prs: []
 ## Objective
 
 Deliver a dependency-aware experience that makes blocked work, family order, and the next executable item explicit across the board, execution workbench, plan catalog, and document modal.
+
+## Delivery Status
+
+This plan is complete as of 2026-03-23.
+
+Delivered outcomes:
+
+1. Backend-derived dependency, family, and execution-gate state now flows through the feature and execution APIs.
+2. Shared dependency/family UI primitives now exist for execution-aware surfaces.
+3. The board, execution workbench, plan catalog, and document modal all render dependency-aware execution guidance.
+4. Telemetry distinguishes blocked-state views, dependency navigation, and family-item selection.
+5. README, CHANGELOG, and the relevant user/developer guides were updated to document the rollout.
 
 ## Current Baseline
 

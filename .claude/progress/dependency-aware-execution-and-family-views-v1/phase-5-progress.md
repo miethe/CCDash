@@ -8,15 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-fa
 plan_ref: /docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
 phase: 5
 title: Validation and Rollout
-status: planning
+status: completed
 started: '2026-03-23'
-completed: null
-commit_refs: []
+completed: '2026-03-23'
+commit_refs:
+- 46fb6d6
+- 0a03b41
 pr_refs: []
-overall_progress: 0
+overall_progress: 100
 completion_estimate: on-track
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +31,7 @@ contributors:
 tasks:
 - id: DEP-401
   description: Add unit and router tests for dependency derivation, family ordering, and blocked_unknown behavior.
-  status: pending
+  status: completed
   assigned_to:
   - testing-specialist
   - python-backend-engineer
@@ -40,7 +42,7 @@ tasks:
   priority: high
 - id: DEP-402
   description: Add UI tests for blocked-state banners, family lanes, and navigation actions across the updated surfaces.
-  status: pending
+  status: completed
   assigned_to:
   - testing-specialist
   - frontend-developer
@@ -52,7 +54,7 @@ tasks:
   priority: high
 - id: DEP-403
   description: Add telemetry events for blocked-state views and update user-facing planning notes if needed.
-  status: pending
+  status: completed
   assigned_to:
   - documentation-writer
   - frontend-developer
@@ -83,7 +85,7 @@ files_modified:
 - docs/document-entity-developer-reference.md
 - README.md
 - CHANGELOG.md
-progress: 0
+progress: 100
 updated: '2026-03-23'
 ---
 
@@ -101,4 +103,6 @@ Finish the rollout with UI validation, telemetry coverage, and the user and deve
 
 ## Completion Notes
 
-- Pending.
+- Added dependency-aware frontend smoke coverage and rollout documentation in `46fb6d6` (`test(docs): add dependency-aware execution phase 5 coverage`).
+- Added execution-workbench telemetry coverage and router allowlist updates in `0a03b41` (`feat(execution): add dependency-aware workbench routing`).
+- Updated README, CHANGELOG, and the execution/document user and developer references to describe the derived dependency/family model and dependency-aware execution routing.
