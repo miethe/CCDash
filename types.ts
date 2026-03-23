@@ -1711,6 +1711,12 @@ export interface Feature {
   primaryDocuments?: FeaturePrimaryDocuments;
   documentCoverage?: FeatureDocumentCoverage;
   qualitySignals?: FeatureQualitySignals;
+  dependencyState?: FeatureDependencyState | null;
+  blockingFeatures?: FeatureDependencyEvidence[];
+  familySummary?: FeatureFamilySummary | null;
+  familyPosition?: FeatureFamilyPosition | null;
+  executionGate?: ExecutionGateState | null;
+  nextRecommendedFamilyItem?: FeatureFamilyItem | null;
   phases: FeaturePhase[];
   relatedFeatures: string[];
   dates?: EntityDates;
@@ -1739,6 +1745,97 @@ export interface FeatureQualitySignals {
   reportFindingsBySeverity: Record<string, number>;
   testImpact: string;
   hasBlockingSignals: boolean;
+}
+
+export type FeatureDependencyResolutionState = 'complete' | 'blocked' | 'blocked_unknown';
+export type FeatureDependencyStateValue = 'unblocked' | 'blocked' | 'blocked_unknown' | 'ready_after_dependencies';
+export type ExecutionGateStateValue =
+  | 'ready'
+  | 'blocked_dependency'
+  | 'waiting_on_family_predecessor'
+  | 'unknown_dependency_state';
+
+export interface FeatureDependencyEvidence {
+  dependencyFeatureId: string;
+  dependencyFeatureName: string;
+  dependencyStatus: string;
+  dependencyCompletionEvidence: string[];
+  blockingDocumentIds: string[];
+  blockingReason: string;
+  resolved: boolean;
+  state: FeatureDependencyResolutionState;
+}
+
+export interface FeatureDependencyState {
+  state: FeatureDependencyStateValue;
+  dependencyCount: number;
+  resolvedDependencyCount: number;
+  blockedDependencyCount: number;
+  unknownDependencyCount: number;
+  blockingFeatureIds: string[];
+  blockingDocumentIds: string[];
+  firstBlockingDependencyId: string;
+  blockingReason: string;
+  completionEvidence: string[];
+  dependencies: FeatureDependencyEvidence[];
+}
+
+export interface FeatureFamilyItem {
+  featureId: string;
+  featureName: string;
+  featureStatus: string;
+  featureFamily: string;
+  sequenceOrder?: number | null;
+  familyIndex: number;
+  totalFamilyItems: number;
+  isCurrent: boolean;
+  isSequenced: boolean;
+  isBlocked: boolean;
+  isBlockedUnknown: boolean;
+  isExecutable: boolean;
+  dependencyState: FeatureDependencyState;
+  primaryDocId: string;
+  primaryDocPath: string;
+}
+
+export interface FeatureFamilyPosition {
+  familyKey: string;
+  currentIndex: number;
+  sequencedIndex: number;
+  totalItems: number;
+  sequencedItems: number;
+  unsequencedItems: number;
+  display: string;
+  currentItemId: string;
+  nextItemId: string;
+  nextItemLabel: string;
+}
+
+export interface FeatureFamilySummary {
+  featureFamily: string;
+  totalItems: number;
+  sequencedItems: number;
+  unsequencedItems: number;
+  currentFeatureId: string;
+  currentFeatureName: string;
+  currentPosition: number;
+  currentSequencedPosition: number;
+  nextRecommendedFeatureId: string;
+  nextRecommendedFamilyItem?: FeatureFamilyItem | null;
+  items: FeatureFamilyItem[];
+}
+
+export interface ExecutionGateState {
+  state: ExecutionGateStateValue;
+  blockingDependencyId: string;
+  firstExecutableFamilyItemId: string;
+  recommendedFamilyItemId: string;
+  familyPosition?: FeatureFamilyPosition | null;
+  dependencyState: FeatureDependencyState;
+  familySummary: FeatureFamilySummary;
+  reason: string;
+  waitingOnFamilyPredecessor: boolean;
+  isReady: boolean;
 }
 
 export interface ExecutionRecommendationEvidence {
@@ -1984,6 +2081,11 @@ export interface FeatureExecutionContext {
   sessions: FeatureExecutionSessionLink[];
   analytics: FeatureExecutionAnalyticsSummary;
   recommendations: ExecutionRecommendation;
+  dependencyState?: FeatureDependencyState | null;
+  familySummary?: FeatureFamilySummary | null;
+  familyPosition?: FeatureFamilyPosition | null;
+  executionGate?: ExecutionGateState | null;
+  recommendedFamilyItem?: FeatureFamilyItem | null;
   warnings: FeatureExecutionWarning[];
   recommendedStack?: RecommendedStack | null;
   stackAlternatives: RecommendedStack[];

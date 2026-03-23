@@ -495,7 +495,12 @@ def _family_summary(
     unsequenced_count = len(ordered_items) - sequenced_count
     current_index = current_item.familyIndex if current_item else 0
     current_sequenced_index = current_index if current_item and current_item.isSequenced else 0
-    if next_recommended_item is None and current_item and current_item.dependencyState.state in {"unblocked", "ready_after_dependencies"}:
+    if (
+        next_recommended_item is None
+        and current_item
+        and current_item.isExecutable
+        and current_item.dependencyState.state in {"unblocked", "ready_after_dependencies"}
+    ):
         next_recommended_item = current_item
 
     summary = FeatureFamilySummary(
