@@ -68,6 +68,9 @@ _EXECUTION_TELEMETRY_EVENTS = {
     "execution_workbench_opened",
     "execution_begin_work_clicked",
     "execution_recommendation_generated",
+    "execution_blocked_state_viewed",
+    "execution_dependency_navigated",
+    "execution_family_item_selected",
     "execution_command_copied",
     "execution_source_link_clicked",
 }

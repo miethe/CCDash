@@ -2,6 +2,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 from backend.models import (
     ExecutionGateState,
     Feature,
@@ -15,6 +17,18 @@ from backend.models import (
     LinkedDocument,
 )
 from backend.routers import features as features_router
+
+
+class _FakeTelemetryDb:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.commits = 0
+
+    async def execute(self, sql: str, *params: object) -> None:
+        self.calls.append((sql, params))
+
+    async def commit(self) -> None:
+        self.commits += 1
 
 
 class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
@@ -426,6 +440,47 @@ class FeaturesExecutionContextRouterTests(unittest.IsolatedAsyncioTestCase):
 
         build_stack_recommendations.assert_not_called()
         self.assertTrue(any("disabled for this project" in warning.message for warning in payload.warnings))
+
+    async def test_execution_telemetry_accepts_dependency_navigation_and_family_selection_events(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        fake_db = _FakeTelemetryDb()
+        allowed_events = [
+            "execution_blocked_state_viewed",
+            "execution_dependency_navigated",
+            "execution_family_item_selected",
+        ]
+
+        with (
+            patch.object(features_router.project_manager, "get_active_project", return_value=project),
+            patch.object(features_router.connection, "get_connection", return_value=fake_db),
+        ):
+            for event_type in allowed_events:
+                response = await features_router.track_execution_event(
+                    features_router.ExecutionTelemetryRequest(
+                        eventType=event_type,
+                        featureId="feat-1",
+                        metadata={"targetFeatureId": "feat-0"},
+                    ),
+                )
+                self.assertEqual(response["status"], "ok")
+
+        self.assertEqual(len(fake_db.calls), len(allowed_events))
+        self.assertEqual([call[1][8] for call in fake_db.calls], allowed_events)
+
+    async def test_execution_telemetry_rejects_unknown_event_type(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+
+        with patch.object(features_router.project_manager, "get_active_project", return_value=project):
+            with self.assertRaises(HTTPException) as ctx:
+                await features_router.track_execution_event(
+                    features_router.ExecutionTelemetryRequest(
+                        eventType="execution_unknown_event",
+                        featureId="feat-1",
+                    ),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Unsupported event type", str(ctx.exception.detail))
 
 
 if __name__ == "__main__":
