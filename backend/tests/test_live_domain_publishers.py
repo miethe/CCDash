@@ -6,9 +6,12 @@ from backend.application.live_updates.domain_events import (
     publish_ops_invalidation,
     publish_execution_run_events,
     publish_execution_run_snapshot,
+    publish_session_transcript_append,
     publish_session_snapshot,
     publish_test_invalidation,
+    SessionTranscriptAppendPayload,
 )
+from backend.application.live_updates.topics import session_transcript_topic
 
 
 class _RecordingPublisher:
@@ -122,3 +125,38 @@ class LiveDomainPublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.publisher.invalidate_calls[0]["payload"]["runId"], "run-1")
         self.assertEqual(self.publisher.invalidate_calls[1]["topic"], "project.project-1.ops")
         self.assertEqual(self.publisher.invalidate_calls[1]["payload"]["operationId"], "OP-1")
+
+    async def test_session_transcript_topic_helper_and_append_payload(self) -> None:
+        self.assertEqual(session_transcript_topic("session-1"), "session.session-1.transcript")
+
+        payload = SessionTranscriptAppendPayload(
+            session_id="session-1",
+            entry_id="log-1",
+            sequence_no=12,
+            kind="assistant_message",
+            created_at="2026-03-15T14:03:00Z",
+            payload={
+                "id": "log-1",
+                "timestamp": "2026-03-15T14:03:00Z",
+                "speaker": "agent",
+                "type": "message",
+                "content": "hello",
+                "agentName": "Claude",
+                "linkedSessionId": "session-child",
+                "relatedToolCallId": "tool-1",
+                "metadata": {"foo": "bar"},
+                "toolCall": {"name": "write_file", "status": "success"},
+            },
+        )
+
+        await publish_session_transcript_append(payload)
+
+        self.assertEqual(len(self.publisher.append_calls), 1)
+        call = self.publisher.append_calls[0]
+        self.assertEqual(call["topic"], "session.session-1.transcript")
+        self.assertEqual(call["payload"]["sessionId"], "session-1")
+        self.assertEqual(call["payload"]["entryId"], "log-1")
+        self.assertEqual(call["payload"]["sequenceNo"], 12)
+        self.assertEqual(call["payload"]["kind"], "assistant_message")
+        self.assertEqual(call["payload"]["payload"]["metadata"]["foo"], "bar")
+        self.assertEqual(call["payload"]["payload"]["toolCall"]["name"], "write_file")

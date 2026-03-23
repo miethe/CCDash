@@ -4,24 +4,44 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: enhancements
-title: "Implementation Plan: Session Transcript Append Deltas V1"
-description: "Implement a transcript-specific live append path for active sessions so Session Inspector can merge newly persisted log entries incrementally while preserving coarse invalidation and REST recovery."
-summary: "Add shared transcript topic helpers, publish append-safe session log deltas from ingestion, migrate Session Inspector to append-first behavior, and harden fallback coverage before rollout."
+title: 'Implementation Plan: Session Transcript Append Deltas V1'
+description: Implement a transcript-specific live append path for active sessions
+  so Session Inspector can merge newly persisted log entries incrementally while preserving
+  coarse invalidation and REST recovery.
+summary: Add shared transcript topic helpers, publish append-safe session log deltas
+  from ingestion, migrate Session Inspector to append-first behavior, and harden fallback
+  coverage before rollout.
 author: codex
 owner: platform-engineering
-owners: [platform-engineering, frontend-engineering, backend-platform]
-contributors: [ai-agents]
-audience: [ai-agents, developers, platform-engineering, frontend-engineering]
+owners:
+- platform-engineering
+- frontend-engineering
+- backend-platform
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- platform-engineering
+- frontend-engineering
 created: 2026-03-22
-updated: 2026-03-22
-tags: [implementation, sse, live-updates, sessions, transcript, append, frontend, backend]
+updated: '2026-03-23'
+tags:
+- implementation
+- sse
+- live-updates
+- sessions
+- transcript
+- append
+- frontend
+- backend
 priority: medium
 risk_level: medium
 complexity: medium
 track: Platform
-timeline_estimate: "4-6 days across 5 phases"
+timeline_estimate: 4-6 days across 5 phases
 feature_slug: session-transcript-append-deltas-v1
 feature_family: live-update-platform
 feature_version: v1
@@ -32,27 +52,26 @@ lineage_parent:
 lineage_children: []
 lineage_type: enhancement
 linked_features:
-  - sse-live-update-platform-v1
+- sse-live-update-platform-v1
 related_documents:
-  - docs/project_plans/PRDs/enhancements/session-transcript-append-deltas-v1.md
-  - docs/project_plans/designs/session-transcript-append-deltas-v1.md
-  - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
-  - docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
-  - docs/live-update-platform-developer-reference.md
+- docs/project_plans/PRDs/enhancements/session-transcript-append-deltas-v1.md
+- docs/project_plans/designs/session-transcript-append-deltas-v1.md
+- docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
+- docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
+- docs/live-update-platform-developer-reference.md
 context_files:
-  - backend/application/live_updates/domain_events.py
-  - backend/application/live_updates/topics.py
-  - backend/db/sync_engine.py
-  - backend/routers/live.py
-  - backend/tests/test_live_domain_publishers.py
-  - backend/tests/test_live_router.py
-  - components/SessionInspector.tsx
-  - services/live/topics.ts
-  - services/live/connectionManager.ts
-  - services/live/config.ts
-  - services/__tests__/liveConnectionManager.test.ts
-
-request_log_id: ""
+- backend/application/live_updates/domain_events.py
+- backend/application/live_updates/topics.py
+- backend/db/sync_engine.py
+- backend/routers/live.py
+- backend/tests/test_live_domain_publishers.py
+- backend/tests/test_live_router.py
+- components/SessionInspector.tsx
+- services/live/topics.ts
+- services/live/connectionManager.ts
+- services/live/config.ts
+- services/__tests__/liveConnectionManager.test.ts
+request_log_id: ''
 commits: []
 prs: []
 ---
