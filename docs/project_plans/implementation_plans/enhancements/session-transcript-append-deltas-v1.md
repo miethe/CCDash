@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Session Transcript Append Deltas V1'
 description: Implement a transcript-specific live append path for active sessions
@@ -289,6 +289,16 @@ Responsibilities:
 
 1. Rollout is reversible through one dedicated flag.
 2. Developer docs and validation notes are sufficient for future follow-on work.
+
+## Rollout Snapshot
+
+The phase 3-5 rollout is documented and ready for follow-on implementation and validation work:
+
+1. Phase 3 defines the append-first Session Inspector migration path and dedicated feature flag.
+2. Phase 4 defines the reconnect, hidden-tab, duplicate, and rewrite guardrails.
+3. Phase 5 defines the rollout docs, metrics notes, and user/developer references required for safe adoption.
+
+This plan remains the canonical execution reference for the transcript append rollout, even as implementation and documentation are staged across separate commits.
 
 ## Risks and Mitigations
 
