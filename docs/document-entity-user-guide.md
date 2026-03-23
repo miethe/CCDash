@@ -93,6 +93,12 @@ Across these tabs it shows:
 
 Linked entities are sourced from normalized entity links, not from ad-hoc assumptions on frontmatter fields.
 
+The dependency-aware execution rollout also surfaces a few document-specific behaviors in the modal:
+
+- `Relationships` now includes linked feature pills that navigate back to the feature board.
+- `Blocked By` metadata is rendered as hard dependency chips so blocked plans and progress files are obvious at a glance.
+- Family lineage and sequence metadata remain visible in the `Summary` tab, matching the family-aware summaries in the board and workbench.
+
 ## Editing and save behavior
 
 - Plan documents (`rootKind = project_plans`) can be edited directly from the modal `Content` view.

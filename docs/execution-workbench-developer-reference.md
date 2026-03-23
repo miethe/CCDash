@@ -1,6 +1,6 @@
 # Execution Workbench Developer Reference
 
-Last updated: 2026-03-08
+Last updated: 2026-03-23
 
 This reference documents the local-terminal execution integration for the Execution Workbench.
 
@@ -24,6 +24,12 @@ Client service + shared types:
 - `/Users/miethe/dev/homelab/development/CCDash/services/analytics.ts`
 - `/Users/miethe/dev/homelab/development/CCDash/services/agenticIntelligence.ts`
 - `/Users/miethe/dev/homelab/development/CCDash/types.ts`
+
+Dependency-aware execution contract:
+
+- `FeatureExecutionContext` now carries `dependencyState`, `familySummary`, `familyPosition`, `executionGate`, and `recommendedFamilyItem` alongside the existing recommendation and analytics payloads.
+- The workbench overview reads those fields directly to render the execution-gate card, family position, blocked-by evidence, and linked document actions.
+- Route buttons on the overview header intentionally point back to the board, plans, sessions, and analytics so the family view stays connected to the rest of CCDash.
 
 Route wiring:
 
@@ -99,6 +105,12 @@ Key columns:
 - Stack recommendations are only rendered when project SkillMeat feature flags keep them enabled.
 - Workflow intelligence can be disabled independently; the workbench and analytics dashboard render explicit fallback notices instead of firing disabled requests.
 
+## Dependency-aware execution rendering
+
+- The feature board and document modal now expose the same family/dependency surfaces as the workbench, so `blocked_by` relations and `sequenceOrder` values should stay normalized across the API payloads.
+- `FeatureExecutionContext.documents` should include the linked documents used for sequence chips, and the `feature` payload should already contain the derived dependency/family summary fields when the workbench renders.
+- The workbench should treat the blocked-state banner as a review-only affordance. It is present when `reviewPolicy.verdict === 'deny'` and `reviewOpen` is true, with the button state disabled until the policy is reconsidered.
+
 ## Validation
 
 Backend tests:
@@ -118,6 +130,7 @@ Additional intelligence checks:
 ```bash
 python3 -m pytest backend/tests/test_agentic_intelligence_flags.py backend/tests/test_integrations_router.py backend/tests/test_features_execution_context_router.py backend/tests/test_analytics_router.py -q
 npm test -- --run services/__tests__/agenticIntelligence.test.ts
+npm test -- --run components/__tests__/dependencyAwareExecutionUi.test.tsx
 ```
 
 See `/Users/miethe/dev/homelab/development/CCDash/docs/agentic-sdlc-intelligence-developer-reference.md` for rollout and flag details.

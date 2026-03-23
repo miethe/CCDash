@@ -39,7 +39,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 ## Features
 
-59 capabilities across 12 categories.
+60+ capabilities across 12 categories.
 
 ### Global Navigation & Layout
 
@@ -75,6 +75,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **Feature-Centric Board**: Kanban and list views grouping work by feature stage with drill-down modals
 - **Document-First Discovery**: Cross-references PRDs, implementation plans, and progress files automatically
+- Dependency-Aware Execution: Feature modals now surface blocked-by chips, execution-gate summaries, family position, and family-sequence order
 - Kanban & List Views: Toggle between visual Kanban board and sortable list for different workflows
 - Drill-Down Modal: Overview, phases accordion, documents tab, and session summaries per feature
 - Phase & Task Tracking: Accordion phase view with real-time task checklist and deferred caveat indicators
@@ -93,6 +94,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **Card Grid View**: Visual overview of PRDs, RFCs, and architecture docs in scannable card format
 - Folder Explorer: 3-pane IDE-style file explorer for navigating documentation hierarchies
 - Document Modal: Tabbed modal with Summary, Delivery, Relationships, Content, and Timeline views
+- Dependency-Aware Document Views: plan cards and the document modal surface family lineage, sequence order, blocked-by links, and board-navigation affordances
 - Shared Viewer Rendering: Documents, plans, reports, and task sources share the same formatted content shell with frontmatter-aware markdown rendering
 - Inline Document Editing: Edit plan documents in-modal with local save and GitHub write-back support
 
@@ -113,6 +115,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **Execution Workbench**: Feature-scoped execution with safety pipeline, env profiles, and run history
 - **Recommended Stack**: Confidence-scored workflow suggestions based on historical outcomes and SkillMeat definitions
+- Dependency-Aware Review: The workbench overview now shows execution gates, family position, blocked-by evidence, and direct navigation back to board/plans/sessions/analytics
 - Run Launch UX: Pre-run review modal with editable command, working directory, and env profile selection
 - Safety Pipeline: Allow, approval-required, and deny command policies for auditable run lifecycles
 - Run History & Output: Streamed terminal output with run history, active run metadata, cancel, and retry
