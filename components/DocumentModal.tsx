@@ -1,5 +1,13 @@
 import React from 'react';
-import { PlanDocument } from '../types';
+import {
+   ExecutionGateStateValue,
+   Feature,
+   FeatureDependencyEvidence,
+   FeatureFamilyItem,
+   FeatureFamilyPosition,
+   FeatureFamilySummary,
+   PlanDocument,
+} from '../types';
 import {
    ArrowLeft,
    FileText,
@@ -68,6 +76,41 @@ interface DocumentLinksResponse {
    sessions: DocumentLinkSession[];
    documents: DocumentLinkDocument[];
 }
+
+const EXECUTION_GATE_LABELS: Record<ExecutionGateStateValue, string> = {
+   ready: 'Ready',
+   blocked_dependency: 'Blocked by dependency',
+   waiting_on_family_predecessor: 'Waiting on family predecessor',
+   unknown_dependency_state: 'Dependency state unknown',
+};
+
+const getExecutionGateLabel = (gate?: ExecutionGateStateValue | string | null): string => {
+   if (!gate) return 'Unknown';
+   return EXECUTION_GATE_LABELS[gate as ExecutionGateStateValue] || gate;
+};
+
+const getFamilyPositionLabel = (position?: FeatureFamilyPosition | null): string => {
+   if (!position) return 'Unsequenced';
+   if (position.display) return position.display;
+   if (!position.currentIndex) return 'Unsequenced';
+   return `${position.currentIndex} of ${position.totalItems || position.currentIndex}`;
+};
+
+const getFamilyItemLabel = (item?: FeatureFamilyItem | null): string => {
+   if (!item) return 'No recommendation';
+   return [
+      item.featureName || item.featureId,
+      item.sequenceOrder !== null && item.sequenceOrder !== undefined ? `seq ${item.sequenceOrder}` : '',
+      item.isBlocked ? 'blocked' : '',
+      item.isBlockedUnknown ? 'unknown blocker' : '',
+   ].filter(Boolean).join(' • ');
+};
+
+const getDependencyEvidenceLabel = (evidence: FeatureDependencyEvidence): string => (
+   [evidence.dependencyFeatureName || evidence.dependencyFeatureId || 'Unknown dependency', evidence.dependencyStatus || 'unknown']
+      .filter(Boolean)
+      .join(' • ')
+);
 
 interface DocumentModalProps {
    doc: PlanDocument;
@@ -337,20 +380,17 @@ export const DocumentModal = ({
          throw error;
       }
    }, [commitMessage, doc, refreshDocuments]);
-   const linkedFeatures = React.useMemo(() => {
-      const featureById = new Map<string, { id: string; name: string; status: string; category: string }>();
+   const featureIndex = React.useMemo(() => {
+      const index = new Map<string, Feature>();
       features.forEach(feature => {
-         featureById.set(feature.id.toLowerCase(), {
-            id: feature.id,
-            name: feature.name,
-            status: feature.status,
-            category: feature.category,
-         });
+         index.set(feature.id.toLowerCase(), feature);
       });
-
+      return index;
+   }, [features]);
+   const linkedFeatures = React.useMemo(() => {
       const merged = new Map<string, DocumentLinkFeature>();
       (links?.features || []).forEach(feature => {
-         const matched = featureById.get((feature.id || '').toLowerCase());
+         const matched = featureIndex.get((feature.id || '').toLowerCase());
          const resolvedId = matched?.id || feature.id;
          if (!resolvedId) return;
          merged.set(resolvedId, {
@@ -362,7 +402,7 @@ export const DocumentModal = ({
       });
 
       (doc.frontmatter.linkedFeatures || []).forEach(ref => {
-         const matched = featureById.get((ref || '').toLowerCase());
+         const matched = featureIndex.get((ref || '').toLowerCase());
          const resolvedId = matched?.id || ref;
          if (!resolvedId || merged.has(resolvedId)) return;
          merged.set(resolvedId, {
@@ -374,7 +414,39 @@ export const DocumentModal = ({
       });
 
       return Array.from(merged.values());
-   }, [features, links?.features, doc.frontmatter.linkedFeatures]);
+   }, [featureIndex, links?.features, doc.frontmatter.linkedFeatures]);
+   const primaryExecutionFeature = React.useMemo(() => {
+      const referenceIds = [
+         doc.featureSlugCanonical,
+         doc.featureSlugHint,
+         doc.featureSlug,
+         doc.metadata?.featureSlug,
+         doc.featureFamily,
+         doc.metadata?.featureFamily,
+         doc.frontmatter?.linkedFeatures?.[0],
+         linkedFeatures[0]?.id,
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      for (const ref of referenceIds) {
+         const matched = featureIndex.get(ref.toLowerCase());
+         if (matched) return matched;
+      }
+      return null;
+   }, [
+      doc.featureFamily,
+      doc.featureSlug,
+      doc.featureSlugCanonical,
+      doc.featureSlugHint,
+      doc.frontmatter?.linkedFeatures,
+      doc.metadata?.featureFamily,
+      doc.metadata?.featureSlug,
+      featureIndex,
+      linkedFeatures,
+   ]);
+   const executionGate = primaryExecutionFeature?.executionGate || null;
+   const familySummary = primaryExecutionFeature?.familySummary || null;
+   const familyPosition = primaryExecutionFeature?.familyPosition || primaryExecutionFeature?.executionGate?.familyPosition || null;
+   const nextFamilyItem = familySummary?.nextRecommendedFamilyItem || primaryExecutionFeature?.nextRecommendedFamilyItem || null;
+   const blockerEvidence = primaryExecutionFeature?.blockingFeatures || primaryExecutionFeature?.dependencyState?.dependencies || [];
    const blockedByFeatures = React.useMemo(() => {
       const blockedIds = new Set(
          [
@@ -588,6 +660,31 @@ export const DocumentModal = ({
                            </div>
                         </div>
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Execution Context</h3>
+                           <div className="space-y-2 text-xs">
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Gate</span>
+                                 <span className="text-slate-200 text-right">{getExecutionGateLabel(executionGate?.state)}</span>
+                              </div>
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Family</span>
+                                 <span className="text-slate-200 text-right font-mono">{familySummary?.featureFamily || doc.featureFamily || doc.metadata?.featureFamily || '-'}</span>
+                              </div>
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Position</span>
+                                 <span className="text-slate-200 text-right">{getFamilyPositionLabel(familyPosition)}</span>
+                              </div>
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Next item</span>
+                                 <span className="text-slate-200 text-right font-mono">{nextFamilyItem ? getFamilyItemLabel(nextFamilyItem) : (familySummary?.nextRecommendedFeatureId || '-')}</span>
+                              </div>
+                              <div className="text-slate-400">
+                                 <span className="uppercase mb-1 block">Gate Reason</span>
+                                 <div className="text-slate-300 leading-relaxed">{executionGate?.reason || primaryExecutionFeature?.dependencyState?.blockingReason || '-'}</div>
+                              </div>
+                           </div>
+                        </div>
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
                            <h3 className="text-sm font-semibold text-slate-200 mb-3">Anchors</h3>
                            <div className="space-y-2 text-xs">
                               <div className="flex justify-between text-slate-400"><span>Feature</span><span className="text-slate-200 font-mono">{doc.featureSlugCanonical || doc.featureSlugHint || '-'}</span></div>
@@ -613,6 +710,10 @@ export const DocumentModal = ({
                            <div className="flex justify-between text-slate-400"><span>Test Impact</span><span className="text-slate-200">{doc.testImpact || doc.metadata?.testImpact || '-'}</span></div>
                            <div className="flex justify-between text-slate-400"><span>Completion Estimate</span><span className="text-slate-200">{doc.completionEstimate || doc.metadata?.completionEstimate || '-'}</span></div>
                            <div className="flex justify-between text-slate-400"><span>Overall Progress</span><span className="text-slate-200">{doc.overallProgress ?? doc.metadata?.overallProgress ?? '-'}%</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Gate</span><span className="text-slate-200">{getExecutionGateLabel(executionGate?.state)}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Family</span><span className="text-slate-200 font-mono">{familySummary?.featureFamily || doc.featureFamily || doc.metadata?.featureFamily || '-'}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Position</span><span className="text-slate-200">{getFamilyPositionLabel(familyPosition)}</span></div>
+                           <div className="flex justify-between text-slate-400"><span>Next item</span><span className="text-slate-200 font-mono">{nextFamilyItem ? getFamilyItemLabel(nextFamilyItem) : (familySummary?.nextRecommendedFeatureId || '-')}</span></div>
                         </div>
                      </div>
                      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
@@ -671,6 +772,58 @@ export const DocumentModal = ({
                                  </div>
                               </div>
                            )}
+                        </div>
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                           <h3 className="text-sm font-semibold text-slate-200 mb-3">Dependency Evidence</h3>
+                           <div className="space-y-2">
+                              {blockerEvidence.length > 0 ? blockerEvidence.map(evidence => (
+                                 <div key={`${doc.id}-${evidence.dependencyFeatureId}`} className="rounded border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs">
+                                    <div className="flex items-center justify-between gap-2">
+                                       <button
+                                          onClick={() => {
+                                             if (!evidence.dependencyFeatureId) return;
+                                             onClose();
+                                             navigate(`/board?feature=${encodeURIComponent(evidence.dependencyFeatureId)}`);
+                                          }}
+                                          className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
+                                       >
+                                          {getDependencyEvidenceLabel(evidence)}
+                                       </button>
+                                       <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
+                                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                          : evidence.state === 'blocked_unknown'
+                                             ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                             : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                                          }`}>
+                                          {evidence.state}
+                                       </span>
+                                    </div>
+                                    <div className="mt-1 text-slate-400">{evidence.blockingReason || 'No blocker reason recorded.'}</div>
+                                    {evidence.dependencyCompletionEvidence.length > 0 && (
+                                       <div className="mt-1 text-slate-500">
+                                          Evidence: <span className="font-mono text-slate-200">{evidence.dependencyCompletionEvidence.join(', ')}</span>
+                                       </div>
+                                    )}
+                                    {evidence.blockingDocumentIds.length > 0 && (
+                                       <div className="mt-1 text-slate-500">
+                                          Docs: <span className="font-mono text-slate-200">{evidence.blockingDocumentIds.join(', ')}</span>
+                                       </div>
+                                    )}
+                                 </div>
+                              )) : (
+                                 <p className="text-xs text-slate-500 italic">No blocker evidence available.</p>
+                              )}
+                           </div>
+                           <div className="mt-3 border-t border-slate-800 pt-3 text-xs space-y-1">
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Next item</span>
+                                 <span className="text-slate-200 text-right font-mono">{nextFamilyItem ? getFamilyItemLabel(nextFamilyItem) : (familySummary?.nextRecommendedFeatureId || '-')}</span>
+                              </div>
+                              <div className="flex justify-between gap-3 text-slate-400">
+                                 <span>Recommended</span>
+                                 <span className="text-slate-200 text-right font-mono">{familySummary?.nextRecommendedFeatureId || '-'}</span>
+                              </div>
+                           </div>
                         </div>
                         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
                            <h3 className="text-sm font-semibold text-slate-200 mb-3">Lineage</h3>

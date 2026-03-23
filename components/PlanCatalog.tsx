@@ -2,7 +2,15 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FileTree } from '@miethe/ui/content-viewer';
 import { useData } from '../contexts/DataContext';
-import { PlanDocument } from '../types';
+import {
+    ExecutionGateStateValue,
+    Feature,
+    FeatureDependencyEvidence,
+    FeatureFamilyItem,
+    FeatureFamilyPosition,
+    FeatureFamilySummary,
+    PlanDocument,
+} from '../types';
 import { FileText, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDown, User, Maximize2 } from 'lucide-react';
 import { DocumentModal, getFileContent } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
@@ -14,7 +22,46 @@ import { buildDocumentFileTree } from '../lib/documentFileTree';
 // --- Types ---
 type ViewMode = 'card' | 'list' | 'folder';
 type ScopeMode = 'plans' | 'prds' | 'reports' | 'progress' | 'all';
-type ResolvedLinkedFeature = { id: string; status: string };
+type ResolvedLinkedFeature = {
+    id: string;
+    status: string;
+    feature?: Feature;
+};
+
+const EXECUTION_GATE_LABELS: Record<ExecutionGateStateValue, string> = {
+    ready: 'Ready',
+    blocked_dependency: 'Blocked',
+    waiting_on_family_predecessor: 'Family wait',
+    unknown_dependency_state: 'Unknown',
+};
+
+const getExecutionGateLabel = (gate?: ExecutionGateStateValue | string | null): string => {
+    if (!gate) return 'Unknown';
+    return EXECUTION_GATE_LABELS[gate as ExecutionGateStateValue] || gate;
+};
+
+const getFamilyPositionLabel = (position?: FeatureFamilyPosition | null): string => {
+    if (!position) return 'Unsequenced';
+    if (position.display) return position.display;
+    if (!position.currentIndex) return 'Unsequenced';
+    return `${position.currentIndex} of ${position.totalItems || position.currentIndex}`;
+};
+
+const getFamilyItemLabel = (item?: FeatureFamilyItem | null): string => {
+    if (!item) return 'No recommendation';
+    return [
+        item.featureName || item.featureId,
+        item.sequenceOrder !== null && item.sequenceOrder !== undefined ? `seq ${item.sequenceOrder}` : '',
+        item.isBlocked ? 'blocked' : '',
+        item.isBlockedUnknown ? 'unknown blocker' : '',
+    ].filter(Boolean).join(' • ');
+};
+
+const getDependencyEvidenceLabel = (evidence: FeatureDependencyEvidence): string => (
+    [evidence.dependencyFeatureName || evidence.dependencyFeatureId || 'Unknown dependency', evidence.dependencyStatus || 'unknown']
+        .filter(Boolean)
+        .join(' • ')
+);
 
 const normalizeToken = (value: string): string =>
     (value || '')
@@ -206,6 +253,24 @@ const getSecondaryMetadataLine = (doc: PlanDocument): string => {
     return 'Supporting document';
 };
 
+const getDocumentFamilyLabel = (doc: PlanDocument): string => {
+    const family = doc.featureFamily || doc.metadata?.featureFamily || doc.frontmatter?.lineageFamily || '';
+    const sequence = doc.sequenceOrder ?? doc.metadata?.sequenceOrder ?? doc.frontmatter?.sequenceOrder;
+    const parts = [
+        family ? `family ${family}` : '',
+        typeof sequence === 'number' ? `seq ${sequence}` : '',
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' • ') : 'Family metadata unavailable';
+};
+
+const getFamilyRecommendationLabel = (summary?: FeatureFamilySummary | null): string => {
+    if (!summary) return 'No family recommendation';
+    if (summary.nextRecommendedFamilyItem) {
+        return getFamilyItemLabel(summary.nextRecommendedFamilyItem);
+    }
+    return summary.nextRecommendedFeatureId || 'No family recommendation';
+};
+
 // --- Main Page Component ---
 
 export const PlanCatalog: React.FC = () => {
@@ -267,9 +332,9 @@ export const PlanCatalog: React.FC = () => {
     // State for Folder View
     const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
     const featureById = useMemo(() => {
-        const map = new Map<string, { id: string; status: string }>();
+        const map = new Map<string, Feature>();
         features.forEach(feature => {
-            map.set(feature.id.toLowerCase(), { id: feature.id, status: feature.status });
+            map.set(feature.id.toLowerCase(), feature);
         });
         return map;
     }, [features]);
@@ -281,6 +346,7 @@ export const PlanCatalog: React.FC = () => {
             return {
                 id: matched?.id || ref,
                 status: matched?.status || 'backlog',
+                feature: matched,
             };
         });
     };
@@ -387,6 +453,8 @@ export const PlanCatalog: React.FC = () => {
 
     // Handle tree Selection
     const activeDoc = activeFilePath ? filteredDocs.find(d => d.filePath === activeFilePath) : null;
+    const activeLinkedFeatures = activeDoc ? resolveLinkedFeatures(activeDoc) : [];
+    const activePrimaryLinkedFeature = activeLinkedFeatures[0]?.feature || null;
     const hasPendingChanges = (
         draftSearchQuery !== searchQuery
         || draftDocSubtypeFilter !== docSubtypeFilter
@@ -691,7 +759,19 @@ export const PlanCatalog: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 overflow-y-auto h-full pb-6">
                         {filteredDocs.map(doc => {
                             const linkedFeatures = resolveLinkedFeatures(doc);
+                            const primaryFeature = linkedFeatures[0]?.feature;
                             const primaryDate = getPrimaryDocumentDate(doc);
+                            const executionGateState = primaryFeature?.executionGate?.state;
+                            const familyPosition = primaryFeature?.familyPosition || primaryFeature?.executionGate?.familyPosition || null;
+                            const familySummary = primaryFeature?.familySummary || null;
+                            const nextFamilyItem = familySummary?.nextRecommendedFamilyItem || primaryFeature?.nextRecommendedFamilyItem || null;
+                            const blockerEvidence = primaryFeature?.blockingFeatures || primaryFeature?.dependencyState?.dependencies || [];
+                            const blockerIds = Array.from(new Set([
+                                ...(doc.frontmatter?.blockedBy || []),
+                                ...(doc.metadata?.blockedBy || []),
+                                ...(doc.blockedBy || []),
+                                ...(primaryFeature?.dependencyState?.blockingFeatureIds || []),
+                            ].map(value => String(value || '').trim()).filter(Boolean)));
                             return (
                                 <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-all cursor-pointer group hover:shadow-lg">
                                     {linkedFeatures.length > 0 && (
@@ -720,6 +800,36 @@ export const PlanCatalog: React.FC = () => {
                                             )}
                                         </div>
                                     )}
+                                    <div className="mb-3 flex flex-wrap gap-1.5 text-[10px]">
+                                        <span className="rounded-full border border-panel-border bg-slate-950 px-2 py-0.5 text-slate-300">
+                                            {getDocumentFamilyLabel(doc)}
+                                        </span>
+                                        <span className={`rounded-full border px-2 py-0.5 font-semibold uppercase ${executionGateState === 'ready'
+                                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                            : executionGateState === 'blocked_dependency'
+                                                ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                                                : executionGateState === 'waiting_on_family_predecessor'
+                                                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                                    : 'border-slate-500/30 bg-slate-500/10 text-slate-200'
+                                            }`}>
+                                            {getExecutionGateLabel(executionGateState)}
+                                        </span>
+                                        {familyPosition?.display && (
+                                            <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-indigo-200">
+                                                {getFamilyPositionLabel(familyPosition)}
+                                            </span>
+                                        )}
+                                        {nextFamilyItem && (
+                                            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-200">
+                                                Next {nextFamilyItem.featureName || nextFamilyItem.featureId}
+                                            </span>
+                                        )}
+                                        {blockerIds.slice(0, 2).map(blockerId => (
+                                            <span key={`${doc.id}-blocker-${blockerId}`} className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                                                Blocked {blockerId}
+                                            </span>
+                                        ))}
+                                    </div>
                                     <div className="flex items-start justify-between mb-4">
                                         <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
                                             <FileText size={24} />
@@ -732,6 +842,29 @@ export const PlanCatalog: React.FC = () => {
                                     <p className="text-xs text-slate-500 font-mono mb-4 truncate">{doc.filePath}</p>
                                     <p className="text-xs text-slate-300 mb-2 line-clamp-2">{getDocumentSummaryLine(doc) || 'No summary available.'}</p>
                                     <p className="text-[11px] text-slate-500 mb-3">{getSecondaryMetadataLine(doc)}</p>
+                                    {primaryFeature?.dependencyState && blockerEvidence.length > 0 && (
+                                        <div className="mb-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+                                            <div className="mb-2 flex items-center justify-between gap-2">
+                                                <span className="uppercase tracking-wider text-slate-500">Blocker Evidence</span>
+                                                <span className="font-mono text-slate-400">{blockerEvidence.length}</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {blockerEvidence.slice(0, 2).map(evidence => (
+                                                    <div key={`${doc.id}-${evidence.dependencyFeatureId}`} className="flex items-center justify-between gap-2">
+                                                        <span className="truncate font-mono text-slate-200">{getDependencyEvidenceLabel(evidence)}</span>
+                                                        <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
+                                                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                                            : evidence.state === 'blocked_unknown'
+                                                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                                                : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                                                            }`}>
+                                                            {evidence.state}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="flex flex-wrap gap-2 mb-4">
                                         {doc.frontmatter.tags.slice(0, 3).map(tag => (
@@ -759,15 +892,19 @@ export const PlanCatalog: React.FC = () => {
                             <div className="col-span-4">Name</div>
                             <div className="col-span-2">Type</div>
                             <div className="col-span-2">Subtype</div>
-                            <div className="col-span-2">Linked Feature</div>
+                            <div className="col-span-2">Family</div>
+                            <div className="col-span-2">Gate</div>
                             <div className="col-span-1">Priority</div>
-                            <div className="col-span-3">Updated</div>
+                            <div className="col-span-1">Updated</div>
                             <div className="col-span-2">Date Confidence</div>
                         </div>
                         <div className="overflow-y-auto flex-1">
                             {filteredDocs.map(doc => {
                                 const primaryDate = getPrimaryDocumentDate(doc);
-                                const linkedFeature = resolveLinkedFeatures(doc)[0]?.id || doc.featureSlugCanonical || doc.featureSlugHint || '-';
+                                const linkedFeature = resolveLinkedFeatures(doc)[0];
+                                const primaryFeature = linkedFeature?.feature;
+                                const executionGateState = primaryFeature?.executionGate?.state;
+                                const familyPosition = primaryFeature?.familyPosition || primaryFeature?.executionGate?.familyPosition || null;
                                 return (
                                     <div key={doc.id} onClick={() => setSelectedDoc(doc)} className="grid grid-cols-16 gap-3 p-4 border-b border-slate-800 hover:bg-slate-800/30 cursor-pointer transition-colors items-center text-sm">
                                         <div className="col-span-4 font-semibold text-slate-200 flex items-center gap-2 min-w-0">
@@ -775,9 +912,26 @@ export const PlanCatalog: React.FC = () => {
                                         </div>
                                         <div className="col-span-2 text-xs text-slate-300">{doc.docType || 'document'}</div>
                                         <div className="col-span-2 text-xs text-slate-400">{doc.docSubtype || '-'}</div>
-                                        <div className="col-span-2 text-xs text-slate-300 font-mono truncate">{linkedFeature}</div>
+                                        <div className="col-span-2 text-xs text-slate-300 font-mono truncate">
+                                            {getDocumentFamilyLabel(doc)}
+                                        </div>
+                                        <div className="col-span-2">
+                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${executionGateState === 'ready'
+                                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                                : executionGateState === 'blocked_dependency'
+                                                    ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                                                    : executionGateState === 'waiting_on_family_predecessor'
+                                                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                                        : 'border-slate-500/30 bg-slate-500/10 text-slate-200'
+                                                }`}>
+                                                {getExecutionGateLabel(executionGateState)}
+                                            </span>
+                                            <div className="mt-1 text-[10px] text-slate-500 truncate">
+                                                {familyPosition?.display || linkedFeature?.id || doc.featureSlugCanonical || doc.featureSlugHint || '-'}
+                                            </div>
+                                        </div>
                                         <div className="col-span-1 text-xs text-slate-300">{doc.priority || doc.metadata?.priority || '-'}</div>
-                                        <div className="col-span-3 text-xs text-slate-400">
+                                        <div className="col-span-1 text-xs text-slate-400">
                                             {primaryDate.value ? new Date(primaryDate.value).toLocaleDateString() : '-'}
                                         </div>
                                         <div className="col-span-2 text-xs text-slate-400">
@@ -861,14 +1015,48 @@ export const PlanCatalog: React.FC = () => {
                                             }`}>{activeDoc.statusNormalized || activeDoc.status}</span>
                                     </div>
                                     <div>
+                                        <div className="text-[10px] text-slate-500 uppercase mb-1">Family</div>
+                                        <div className="text-xs text-slate-300 space-y-1">
+                                            <div>{getDocumentFamilyLabel(activeDoc)}</div>
+                                            <div>{getFamilyPositionLabel(activePrimaryLinkedFeature?.familyPosition || activePrimaryLinkedFeature?.executionGate?.familyPosition || null)}</div>
+                                        </div>
+                                    </div>
+                                    <div>
                                         <div className="text-[10px] text-slate-500 uppercase mb-1">Delivery</div>
                                         <div className="text-xs text-slate-300 space-y-1">
                                             <div>Priority: {activeDoc.priority || activeDoc.metadata?.priority || '-'}</div>
                                             <div>Risk: {activeDoc.riskLevel || activeDoc.metadata?.riskLevel || '-'}</div>
                                             <div>Readiness: {activeDoc.executionReadiness || activeDoc.metadata?.executionReadiness || '-'}</div>
                                             <div>Track: {activeDoc.track || activeDoc.metadata?.track || '-'}</div>
+                                            <div>Gate: {getExecutionGateLabel(activePrimaryLinkedFeature?.executionGate?.state)}</div>
+                                            <div>Next: {getFamilyRecommendationLabel(activePrimaryLinkedFeature?.familySummary || null)}</div>
                                         </div>
                                     </div>
+                                    {activePrimaryLinkedFeature?.dependencyState && (
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 uppercase mb-1">Blocker Evidence</div>
+                                            <div className="space-y-1">
+                                                {(activePrimaryLinkedFeature.blockingFeatures || activePrimaryLinkedFeature.dependencyState.dependencies || []).slice(0, 3).map(evidence => (
+                                                    <div key={`${activeDoc.id}-${evidence.dependencyFeatureId}`} className="rounded border border-slate-800 bg-slate-950/60 px-2 py-1 text-[11px] text-slate-300">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className="font-mono truncate">{getDependencyEvidenceLabel(evidence)}</span>
+                                                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
+                                                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                                                : evidence.state === 'blocked_unknown'
+                                                                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                                                    : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                                                                }`}>
+                                                                {evidence.state}
+                                                            </span>
+                                                        </div>
+                                                        {evidence.blockingReason && (
+                                                            <div className="mt-1 text-slate-400">{evidence.blockingReason}</div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                     <div>
                                         <div className="text-[10px] text-slate-500 uppercase mb-1">Primary Date</div>
                                         <div className="text-xs text-slate-300">
@@ -882,7 +1070,7 @@ export const PlanCatalog: React.FC = () => {
                                     <div>
                                         <div className="text-[10px] text-slate-500 uppercase mb-2">Linked Features</div>
                                         <div className="flex flex-wrap gap-1.5">
-                                            {resolveLinkedFeatures(activeDoc).map(linkedFeature => {
+                                            {activeLinkedFeatures.map(linkedFeature => {
                                                 const style = getFeatureStatusStyle(linkedFeature.status);
                                                 return (
                                                     <button
@@ -893,9 +1081,9 @@ export const PlanCatalog: React.FC = () => {
                                                     >
                                                         {linkedFeature.id}
                                                     </button>
-                                                );
-                                            })}
-                                            {resolveLinkedFeatures(activeDoc).length === 0 && (
+                                                    );
+                                                })}
+                                            {activeLinkedFeatures.length === 0 && (
                                                 <span className="text-[11px] text-slate-500">None</span>
                                             )}
                                         </div>

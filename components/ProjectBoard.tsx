@@ -3,7 +3,19 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { Feature, FeaturePhase, FeatureTestHealth, LinkedDocument, PlanDocument, ProjectTask, SessionModelInfo } from '../types';
+import {
+  ExecutionGateStateValue,
+  Feature,
+  FeatureDependencyEvidence,
+  FeatureFamilyItem,
+  FeatureFamilyPosition,
+  FeaturePhase,
+  FeatureTestHealth,
+  LinkedDocument,
+  PlanDocument,
+  ProjectTask,
+  SessionModelInfo,
+} from '../types';
 import { trackExecutionEvent } from '../services/execution';
 import { getFeatureHealth } from '../services/testVisualizer';
 import { SessionCard, SessionCardDetailSection, deriveSessionCardTitle } from './SessionCard';
@@ -868,6 +880,67 @@ const getFeatureLinkedFeatureCount = (feature: Feature): number => {
   return feature.relatedFeatures?.length || 0;
 };
 
+const EXECUTION_GATE_LABELS: Record<ExecutionGateStateValue, string> = {
+  ready: 'Ready',
+  blocked_dependency: 'Blocked by dependency',
+  waiting_on_family_predecessor: 'Waiting on family predecessor',
+  unknown_dependency_state: 'Dependency state unknown',
+};
+
+const EXECUTION_GATE_STYLES: Record<ExecutionGateStateValue, string> = {
+  ready: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
+  blocked_dependency: 'bg-rose-500/10 text-rose-200 border-rose-500/30',
+  waiting_on_family_predecessor: 'bg-amber-500/10 text-amber-200 border-amber-500/30',
+  unknown_dependency_state: 'bg-slate-500/10 text-slate-200 border-slate-500/30',
+};
+
+const getExecutionGateLabel = (gate?: ExecutionGateStateValue | string | null): string => {
+  if (!gate) return 'Unknown';
+  return EXECUTION_GATE_LABELS[gate as ExecutionGateStateValue] || gate;
+};
+
+const getExecutionGateStyle = (gate?: ExecutionGateStateValue | string | null): string => {
+  if (!gate) return EXECUTION_GATE_STYLES.unknown_dependency_state;
+  return EXECUTION_GATE_STYLES[gate as ExecutionGateStateValue] || EXECUTION_GATE_STYLES.unknown_dependency_state;
+};
+
+const getDependencyEvidenceLabel = (evidence: FeatureDependencyEvidence): string => {
+  const parts = [
+    evidence.dependencyFeatureName || evidence.dependencyFeatureId || 'Unknown dependency',
+    evidence.dependencyStatus || 'unknown',
+  ].filter(Boolean);
+  return parts.join(' • ');
+};
+
+const getFamilyPositionLabel = (position?: FeatureFamilyPosition | null): string => {
+  if (!position) return 'Unsequenced';
+  if (position.display) return position.display;
+  if (!position.currentIndex) return 'Unsequenced';
+  return `${position.currentIndex} of ${position.totalItems || position.currentIndex}`;
+};
+
+const getFamilyItemLabel = (item?: FeatureFamilyItem | null): string => {
+  if (!item) return 'No family recommendation';
+  const parts = [
+    item.featureName || item.featureId,
+    item.sequenceOrder !== null && item.sequenceOrder !== undefined ? `seq ${item.sequenceOrder}` : '',
+    item.isBlocked ? 'blocked' : '',
+    item.isBlockedUnknown ? 'blocked unknown' : '',
+  ].filter(Boolean);
+  return parts.join(' • ');
+};
+
+const resolveNextFamilyItem = (
+  feature: Feature,
+): FeatureFamilyItem | null => {
+  const summary = feature.familySummary;
+  const fromSummary = summary?.nextRecommendedFamilyItem || null;
+  if (fromSummary) return fromSummary;
+  const recommendedId = feature.executionGate?.recommendedFamilyItemId || feature.familyPosition?.nextItemId || '';
+  if (!recommendedId) return null;
+  return summary?.items?.find(item => item.featureId === recommendedId) || null;
+};
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   prd: 'PRD',
   implementation_plan: 'Plan',
@@ -1354,6 +1427,14 @@ const FeatureModal = ({
   const featureDoneTasks = Math.max(featureCompletedTasks - featureDeferredTasks, 0);
   const pct = activeFeature.totalTasks > 0 ? Math.round((featureCompletedTasks / activeFeature.totalTasks) * 100) : 0;
   const linkedDocs = activeFeature.linkedDocs || [];
+  const dependencyState = activeFeature.dependencyState || null;
+  const familySummary = activeFeature.familySummary || null;
+  const familyPosition = activeFeature.familyPosition || activeFeature.executionGate?.familyPosition || null;
+  const executionGate = activeFeature.executionGate || null;
+  const blockingEvidence = activeFeature.blockingFeatures?.length
+    ? activeFeature.blockingFeatures
+    : dependencyState?.dependencies || [];
+  const nextFamilyItem = resolveNextFamilyItem(activeFeature);
   const filteredPhases = useMemo(() => {
     return phases.filter(phase => {
       if (phaseStatusFilter !== 'all' && phase.status !== phaseStatusFilter) return false;
@@ -2507,6 +2588,93 @@ const FeatureModal = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h3 className="text-sm font-semibold text-panel-foreground">Execution Gate</h3>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${getExecutionGateStyle(executionGate?.state)}`}>
+                      {getExecutionGateLabel(executionGate?.state)}
+                    </span>
+                  </div>
+                  <div className="space-y-2 text-xs">
+                    <div className="text-muted-foreground">
+                      Reason <span className="text-panel-foreground ml-1">{executionGate?.reason || dependencyState?.blockingReason || '-'}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Ready <span className="text-panel-foreground ml-1">{executionGate?.isReady ? 'yes' : 'no'}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Waiting on family <span className="text-panel-foreground ml-1">{executionGate?.waitingOnFamilyPredecessor ? 'yes' : 'no'}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Next item <span className="text-panel-foreground ml-1 font-mono">{familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h3 className="text-sm font-semibold text-panel-foreground">Family Position</h3>
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-200">
+                      {familySummary?.featureFamily || activeFeature.featureFamily || '-'}
+                    </span>
+                  </div>
+                  <div className="space-y-2 text-xs">
+                    <div className="text-muted-foreground">
+                      Position <span className="text-panel-foreground ml-1">{getFamilyPositionLabel(familyPosition)}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Sequenced <span className="text-panel-foreground ml-1">{familySummary?.sequencedItems ?? familyPosition?.sequencedItems ?? 0}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Unsequenced <span className="text-panel-foreground ml-1">{familySummary?.unsequencedItems ?? familyPosition?.unsequencedItems ?? 0}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Next feature <span className="text-panel-foreground ml-1 font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-panel border border-panel-border p-4 rounded-lg">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h3 className="text-sm font-semibold text-panel-foreground">Blocker Evidence</h3>
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-rose-500/30 bg-rose-500/10 text-rose-200">
+                      {blockingEvidence.length}
+                    </span>
+                  </div>
+                  {blockingEvidence.length > 0 ? (
+                    <div className="space-y-2">
+                      {blockingEvidence.slice(0, 3).map(evidence => (
+                        <div key={evidence.dependencyFeatureId} className="rounded border border-panel-border bg-surface-overlay px-3 py-2 text-[11px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-foreground truncate">{getDependencyEvidenceLabel(evidence)}</span>
+                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                              : evidence.state === 'blocked_unknown'
+                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                                : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                              }`}>
+                              {evidence.state}
+                            </span>
+                          </div>
+                          {evidence.blockingReason && (
+                            <div className="mt-1 text-muted-foreground">{evidence.blockingReason}</div>
+                          )}
+                          {(evidence.blockingDocumentIds || []).length > 0 && (
+                            <div className="mt-1 text-muted-foreground">
+                              Docs: <span className="font-mono text-foreground">{evidence.blockingDocumentIds.join(', ')}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {blockingEvidence.length > 3 && (
+                        <div className="text-[11px] text-muted-foreground">+{blockingEvidence.length - 3} more blocker entries</div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">No blocker evidence is attached.</p>
+                  )}
+                </div>
+              </div>
+
               <div className="bg-panel border border-panel-border p-4 rounded-lg">
                 <h3 className="text-sm font-semibold text-panel-foreground mb-3">Date Signals</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
@@ -2871,6 +3039,30 @@ const FeatureModal = ({
           {/* Documents Tab — clickable */}
           {activeTab === 'docs' && (
             <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-panel border border-panel-border rounded-lg p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Family Position</div>
+                  <div className="text-sm text-panel-foreground font-medium">{getFamilyPositionLabel(familyPosition)}</div>
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    {familySummary?.featureFamily || activeFeature.featureFamily || 'No family assigned'}
+                  </div>
+                </div>
+                <div className="bg-panel border border-panel-border rounded-lg p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Next Item</div>
+                  <div className="text-sm text-panel-foreground font-medium font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</div>
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    {familyPosition?.nextItemLabel || nextFamilyItem?.featureName || 'No next item resolved'}
+                  </div>
+                </div>
+                <div className="bg-panel border border-panel-border rounded-lg p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Execution Gate</div>
+                  <div className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${getExecutionGateStyle(executionGate?.state)}`}>
+                    {getExecutionGateLabel(executionGate?.state)}
+                  </div>
+                  <div className="mt-2 text-[11px] text-muted-foreground">{executionGate?.reason || dependencyState?.blockingReason || 'No gate reason available'}</div>
+                </div>
+              </div>
+
               {linkedDocs.length === 0 && (
                 <div className="text-center py-12 text-muted-foreground border border-dashed border-panel-border rounded-xl">
                   <FileText size={32} className="mx-auto mb-3 opacity-50" />
@@ -2955,6 +3147,60 @@ const FeatureModal = ({
           )}
           {activeTab === 'relations' && (
             <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-panel border border-panel-border rounded-lg p-4">
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Dependency Evidence</h3>
+                  <div className="space-y-2">
+                    {blockingEvidence.length > 0 ? blockingEvidence.map(evidence => (
+                      <div key={`dependency-${evidence.dependencyFeatureId}`} className="rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => {
+                              if (!evidence.dependencyFeatureId) return;
+                              onClose();
+                              navigate(`/board?feature=${encodeURIComponent(evidence.dependencyFeatureId)}&tab=overview`);
+                            }}
+                            className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
+                          >
+                            {evidence.dependencyFeatureName || evidence.dependencyFeatureId}
+                          </button>
+                          <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${evidence.state === 'complete'
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                            : evidence.state === 'blocked_unknown'
+                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                              : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                            }`}>
+                            {evidence.state}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-muted-foreground">{evidence.blockingReason || 'No blocker reason recorded.'}</div>
+                        {evidence.dependencyCompletionEvidence.length > 0 && (
+                          <div className="mt-1 text-muted-foreground">
+                            Evidence: <span className="font-mono text-foreground">{evidence.dependencyCompletionEvidence.join(', ')}</span>
+                          </div>
+                        )}
+                        {(evidence.blockingDocumentIds || []).length > 0 && (
+                          <div className="mt-1 text-muted-foreground">
+                            Documents: <span className="font-mono text-foreground">{evidence.blockingDocumentIds.join(', ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    )) : (
+                      <p className="text-xs text-muted-foreground italic">No dependency evidence is attached.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-panel border border-panel-border rounded-lg p-4">
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Family Order</h3>
+                  <div className="space-y-2 text-xs">
+                    <div className="text-muted-foreground">Family <span className="text-panel-foreground ml-1 font-mono">{familySummary?.featureFamily || activeFeature.featureFamily || '-'}</span></div>
+                    <div className="text-muted-foreground">Position <span className="text-panel-foreground ml-1">{getFamilyPositionLabel(familyPosition)}</span></div>
+                    <div className="text-muted-foreground">Next item <span className="text-panel-foreground ml-1 font-mono">{familyPosition?.nextItemLabel || nextFamilyItem?.featureName || '-'}</span></div>
+                    <div className="text-muted-foreground">Recommended feature <span className="text-panel-foreground ml-1 font-mono">{familySummary?.nextRecommendedFeatureId || nextFamilyItem?.featureId || '-'}</span></div>
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-panel border border-panel-border rounded-lg p-4">
                 <h3 className="text-xs font-bold text-muted-foreground uppercase mb-3">Typed Feature Relations</h3>
                 <div className="space-y-2">
