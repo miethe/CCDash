@@ -25,6 +25,25 @@
   - `docs/document-entity-user-guide.md`
   - `docs/document-entity-developer-reference.md`
 
+### Added
+
+- Session transcript append rollout docs and progress tracking:
+  - `docs/live-update-platform-developer-reference.md`
+  - `docs/setup-user-guide.md`
+  - `docs/testing-user-guide.md`
+  - `.claude/progress/session-transcript-append-deltas-v1/phase-3-progress.md`
+  - `.claude/progress/session-transcript-append-deltas-v1/phase-4-progress.md`
+  - `.claude/progress/session-transcript-append-deltas-v1/phase-5-progress.md`
+
+### Changed
+
+- Session Inspector now subscribes to `session.{session_id}.transcript` alongside coarse session invalidation and merges safe active-session transcript appends in place.
+- Transcript append merge rules now suppress duplicates and fall back to `GET /api/sessions/{id}` on sequence mismatch, missing identifiers, replay gaps, and rewrite-like conflicts.
+- Added regression coverage for transcript-topic reconnect, hidden-tab pause/resume, and snapshot-required cursor recovery semantics.
+- Live-update developer docs now describe the `session.{session_id}.transcript` append topic, the normalized append contract, and the `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` rollout flag.
+- Setup and testing guides now call out the transcript append gate and when Session Inspector appends locally versus refetches the full session detail.
+- The session transcript append implementation plan now marks phases 3-5 complete and records the rollout/validation workflow.
+
 ## 2026-03-22
 
 ### Added

@@ -8,6 +8,8 @@ export const executionRunTopic = (runId: string): string => joinLiveTopic('execu
 
 export const sessionTopic = (sessionId: string): string => joinLiveTopic('session', sessionId);
 
+export const sessionTranscriptTopic = (sessionId: string): string => joinLiveTopic('session', sessionId, 'transcript');
+
 export const featureTopic = (featureId: string): string => joinLiveTopic('feature', featureId);
 
 export const projectFeaturesTopic = (projectId: string): string => joinLiveTopic('project', projectId, 'features');

@@ -28,6 +28,7 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_SEMANTIC_MAPPING_ENABLED` (default `false`; semantic mapping features)
 - `VITE_CCDASH_LIVE_EXECUTION_ENABLED` (default `true`; execution live updates)
 - `VITE_CCDASH_LIVE_SESSIONS_ENABLED` (default `true`; session live updates)
+- `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` (default `false`; active-session transcript append delivery)
 - `VITE_CCDASH_LIVE_FEATURES_ENABLED` (default `false`; feature board/modal live invalidation)
 - `VITE_CCDASH_LIVE_TESTS_ENABLED` (default `false`; test visualizer live invalidation)
 - `VITE_CCDASH_LIVE_OPS_ENABLED` (default `false`; Ops panel live invalidation)
@@ -117,7 +118,7 @@ Check both layers of rollout:
 1. backend env/project gates for the domain (`CCDASH_LIVE_TEST_UPDATES_ENABLED`, project testing flags, etc.)
 2. matching frontend `VITE_CCDASH_LIVE_*` toggle for the surface you expect to stream
 
-Feature, test, and ops live invalidation stay on their polling fallback paths when either gate is off.
+Feature, test, and ops live invalidation stay on their polling fallback paths when either gate is off. Session transcript append can be toggled independently of coarse session live updates; when it is off, Session Inspector keeps using the existing invalidation-plus-REST recovery path.
 
 ### `ECONNREFUSED` for `/api/*` in Vite
 

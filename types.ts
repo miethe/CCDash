@@ -86,6 +86,15 @@ export interface SessionLog {
   };
 }
 
+export interface SessionTranscriptAppendPayload {
+  sessionId: string;
+  entryId: string;
+  sequenceNo: number;
+  kind: LogType | string;
+  createdAt: string;
+  payload: Pick<SessionLog, 'id' | 'timestamp' | 'speaker' | 'type' | 'agentName' | 'content' | 'linkedSessionId' | 'relatedToolCallId' | 'metadata' | 'toolCall'>;
+}
+
 export interface SessionImpactPoint {
   timestamp: string; // ISO timestamp or relative time (e.g., "00:05")
   // Event-style fields captured by current parser pipelines.

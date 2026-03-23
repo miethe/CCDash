@@ -96,6 +96,10 @@ def session_topic(session_id: str) -> str:
     return join_topic("session", session_id)
 
 
+def session_transcript_topic(session_id: str) -> str:
+    return join_topic("session", session_id, "transcript")
+
+
 def feature_topic(feature_id: str) -> str:
     return join_topic("feature", feature_id)
 

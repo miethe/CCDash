@@ -1,7 +1,8 @@
 """Domain-oriented helpers for emitting live update payloads."""
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from backend.application.live_updates.runtime_state import publish_live_append, publish_live_invalidation
 from backend.application.live_updates.topics import (
@@ -11,7 +12,18 @@ from backend.application.live_updates.topics import (
     project_ops_topic,
     project_tests_topic,
     session_topic,
+    session_transcript_topic,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionTranscriptAppendPayload:
+    session_id: str
+    entry_id: str
+    sequence_no: int
+    kind: str
+    created_at: str
+    payload: Mapping[str, Any] = field(default_factory=dict)
 
 
 def _as_text(value: Any) -> str:
@@ -73,6 +85,25 @@ async def publish_session_snapshot(session_row: dict[str, Any], *, log_count: in
             "updatedAt": _as_text(session_row.get("updatedAt") or session_row.get("updated_at")),
             "logCount": max(0, int(log_count or 0)),
             "source": source,
+        },
+    )
+
+
+async def publish_session_transcript_append(payload: SessionTranscriptAppendPayload) -> None:
+    session_id = _as_text(payload.session_id)
+    entry_id = _as_text(payload.entry_id)
+    if not session_id or not entry_id:
+        return
+    await publish_live_append(
+        topic=session_transcript_topic(session_id),
+        occurred_at=_as_text(payload.created_at) or None,
+        payload={
+            "sessionId": session_id,
+            "entryId": entry_id,
+            "sequenceNo": max(0, int(payload.sequence_no or 0)),
+            "kind": _as_text(payload.kind),
+            "createdAt": _as_text(payload.created_at),
+            "payload": dict(payload.payload or {}),
         },
     )
 

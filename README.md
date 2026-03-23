@@ -62,6 +62,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 ### Session Inspector & Forensics
 
 - **3-Pane Transcript**: Fluid layout with log list, detail view, and metadata sidebar
+- Append-First Transcript Live Updates: Safe active-session deltas merge in place, with coarse invalidation and targeted REST recovery as fallback
 - Shared Content Viewer: Long-form prompts, markdown-like detail payloads, and raw file-backed session rows open in the standardized viewer shell
 - **Deep Forensics**: Queue pressure, resource footprint, subagent topology, and hook signals
 - Session Analytics: Token timeline, model allocation, session block insights, and master timeline
@@ -70,6 +71,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - Test Status: Track modified test files and run telemetry including framework, status, and timing
 - File Activity: Per-file action chips, touch counts, net diff, and session history in one table
 - Agent Cards: Card view of participating agents with click-to-filter transcript navigation
+- Session transcript live updates use append-first delivery for safe growth and refetch on ambiguous updates or gaps.
 
 ### Feature Board
 
@@ -226,6 +228,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 |----------|---------|-------------|
 | `VITE_CCDASH_LIVE_EXECUTION_ENABLED` | `true` | Stream-first execution run updates |
 | `VITE_CCDASH_LIVE_SESSIONS_ENABLED` | `true` | Stream-first active session invalidation/recovery |
+| `VITE_CCDASH_LIVE_SESSION_TRANSCRIPT_APPEND_ENABLED` | `false` | Append-first active session transcript updates with REST fallback on gaps/mismatches |
 | `VITE_CCDASH_LIVE_FEATURES_ENABLED` | `false` | Feature board and feature-modal invalidation topics |
 | `VITE_CCDASH_LIVE_TESTS_ENABLED` | `false` | Test visualizer invalidation topics (requires backend test live gate too) |
 | `VITE_CCDASH_LIVE_OPS_ENABLED` | `false` | Ops panel live operation/status invalidation topics |
