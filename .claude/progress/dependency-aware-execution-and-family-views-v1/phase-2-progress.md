@@ -8,15 +8,15 @@ prd_ref: /docs/project_plans/PRDs/enhancements/dependency-aware-execution-and-fa
 plan_ref: /docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
 phase: 2
 title: API Extensions
-status: planning
+status: completed
 started: '2026-03-23'
-completed: null
+completed: '2026-03-23'
 commit_refs: []
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: completed
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ tasks:
 - id: DEP-101
   description: Extend feature detail and list responses with dependency state, family
     summary, and family position fields.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -40,7 +40,7 @@ tasks:
 - id: DEP-102
   description: Extend the execution context payload with gate and family fields
     so the workbench can react before recommendation rendering.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -50,7 +50,7 @@ tasks:
 - id: DEP-103
   description: Add response typing and serialization tests for new fields in router
     and service payloads.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   dependencies:
@@ -81,10 +81,12 @@ files_modified:
 - backend/models.py
 - backend/routers/features.py
 - backend/services/feature_execution.py
+- backend/tests/test_feature_execution_derived_state.py
 - backend/tests/test_features_execution_context_router.py
-- types.ts
+- backend/tests/test_features_router_dependency_state.py
 - services/execution.ts
-progress: 0
+- types.ts
+progress: 100
 updated: '2026-03-23'
 ---
 
@@ -102,4 +104,9 @@ Expose the derived dependency, family, and execution-gate fields through the fea
 
 ## Completion Notes
 
-- Pending.
+- Wired derived dependency, family, and execution-gate data into feature list/detail
+  payloads and execution-context responses.
+- Added router and service tests for missing dependency evidence, family predecessor
+  gating, and feature payload augmentation.
+- Updated shared TypeScript types so the frontend can consume the new Phase 2
+  response shape without ad hoc casting.
