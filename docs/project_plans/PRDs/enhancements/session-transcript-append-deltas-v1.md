@@ -3,11 +3,15 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: product_prd
-status: draft
+status: inferred_complete
 category: enhancements
-title: "PRD: Session Transcript Append Deltas V1"
-description: "Add transcript-specific live append delivery so active Session Inspector views can merge new log entries incrementally instead of re-fetching full session detail on every update."
-summary: "Extend the shared live-update platform with a dedicated session transcript topic, append-safe payloads, and bounded recovery so hot session views stay fresh with lower request volume."
+title: 'PRD: Session Transcript Append Deltas V1'
+description: Add transcript-specific live append delivery so active Session Inspector
+  views can merge new log entries incrementally instead of re-fetching full session
+  detail on every update.
+summary: Extend the shared live-update platform with a dedicated session transcript
+  topic, append-safe payloads, and bounded recovery so hot session views stay fresh
+  with lower request volume.
 author: codex
 created: 2026-03-22
 updated: 2026-03-22
@@ -15,7 +19,7 @@ priority: medium
 risk_level: medium
 complexity: medium
 track: Platform
-timeline_estimate: "4-6 days across 5 phases"
+timeline_estimate: 4-6 days across 5 phases
 feature_slug: session-transcript-append-deltas-v1
 feature_family: live-update-platform
 feature_version: v1
@@ -25,29 +29,45 @@ lineage_parent:
   kind: follow_up
 lineage_children: []
 lineage_type: enhancement
-problem_statement: "Session live updates already use SSE invalidations, but active transcript views still pay the cost of targeted full session-detail refreshes for append-only growth."
+problem_statement: Session live updates already use SSE invalidations, but active
+  transcript views still pay the cost of targeted full session-detail refreshes for
+  append-only growth.
 owner: platform-engineering
-owners: [platform-engineering, frontend-engineering, backend-platform]
-contributors: [ai-agents]
-audience: [ai-agents, developers, frontend-engineering, backend-platform]
-tags: [prd, sse, live-updates, sessions, transcript, append, performance]
+owners:
+- platform-engineering
+- frontend-engineering
+- backend-platform
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- frontend-engineering
+- backend-platform
+tags:
+- prd
+- sse
+- live-updates
+- sessions
+- transcript
+- append
+- performance
 related_documents:
-  - docs/project_plans/designs/session-transcript-append-deltas-v1.md
-  - docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
-  - docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
-  - docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
-  - docs/live-update-platform-developer-reference.md
+- docs/project_plans/designs/session-transcript-append-deltas-v1.md
+- docs/project_plans/PRDs/enhancements/sse-live-update-platform-v1.md
+- docs/project_plans/implementation_plans/enhancements/sse-live-update-platform-v1.md
+- docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
+- docs/live-update-platform-developer-reference.md
 context_files:
-  - backend/application/live_updates/domain_events.py
-  - backend/application/live_updates/topics.py
-  - backend/db/sync_engine.py
-  - backend/routers/live.py
-  - components/SessionInspector.tsx
-  - services/live/topics.ts
-  - services/live/connectionManager.ts
+- backend/application/live_updates/domain_events.py
+- backend/application/live_updates/topics.py
+- backend/db/sync_engine.py
+- backend/routers/live.py
+- components/SessionInspector.tsx
+- services/live/topics.ts
+- services/live/connectionManager.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
 ---
-
 # PRD: Session Transcript Append Deltas V1
 
 ## Executive Summary

@@ -3,47 +3,63 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: research_prd
-status: pending
+status: inferred_complete
 category: refactors
-title: "PRD: CCDash Hexagonal Foundation V1"
-description: "Refactor CCDash from a singleton-heavy local-first composition into a modular application foundation with explicit ports, adapters, and runtime boundaries."
-summary: "Establish the architectural seams required for shared auth, hosted deployment, and multi-backend data strategies."
+title: 'PRD: CCDash Hexagonal Foundation V1'
+description: Refactor CCDash from a singleton-heavy local-first composition into a
+  modular application foundation with explicit ports, adapters, and runtime boundaries.
+summary: Establish the architectural seams required for shared auth, hosted deployment,
+  and multi-backend data strategies.
 created: 2026-03-11
 updated: 2026-03-11
 priority: critical
 risk_level: high
 complexity: High
 track: Foundation
-timeline_estimate: "4-6 weeks across 5 phases"
+timeline_estimate: 4-6 weeks across 5 phases
 feature_slug: ccdash-hexagonal-foundation-v1
 feature_family: ccdash-platform-foundation
 feature_version: v1
 lineage_family: ccdash-platform-foundation
-lineage_parent: ""
+lineage_parent: ''
 lineage_children: []
 lineage_type: refactor
-problem_statement: "CCDash still composes API, sync, watcher, project state, and persistence through process-level singletons and direct adapter access, which blocks clean identity, authorization, deployment, and storage evolution."
+problem_statement: CCDash still composes API, sync, watcher, project state, and persistence
+  through process-level singletons and direct adapter access, which blocks clean identity,
+  authorization, deployment, and storage evolution.
 owner: platform-engineering
-owners: [platform-engineering, backend-platform, fullstack-engineering]
-contributors: [ai-agents]
-audience: [ai-agents, developers, platform-engineering]
-tags: [prd, architecture, refactor, hexagonal, ports-adapters, foundation]
+owners:
+- platform-engineering
+- backend-platform
+- fullstack-engineering
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- platform-engineering
+tags:
+- prd
+- architecture
+- refactor
+- hexagonal
+- ports-adapters
+- foundation
 related_documents:
-  - CLAUDE.md
-  - docs/setup-user-guide.md
-  - docs/project_plans/implementation_plans/db-caching-layer-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
+- CLAUDE.md
+- docs/setup-user-guide.md
+- docs/project_plans/implementation_plans/db-caching-layer-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
 context_files:
-  - backend/main.py
-  - backend/db/factory.py
-  - backend/db/connection.py
-  - backend/project_manager.py
-  - backend/routers/api.py
-  - backend/routers/analytics.py
-  - contexts/DataContext.tsx
+- backend/main.py
+- backend/db/factory.py
+- backend/db/connection.py
+- backend/project_manager.py
+- backend/routers/api.py
+- backend/routers/analytics.py
+- contexts/DataContext.tsx
 implementation_plan_ref: docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md
 ---
-
 # PRD: CCDash Hexagonal Foundation V1
 
 ## Executive Summary

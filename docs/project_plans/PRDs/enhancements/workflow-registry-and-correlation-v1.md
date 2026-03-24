@@ -3,18 +3,22 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: draft
+status: inferred_complete
 category: enhancements
-title: "PRD: Workflow Registry and Correlation Surface V1"
-description: "Add a dedicated Workflow page in CCDash that unifies SkillMeat definitions, CCDash-observed workflow families, workflow composition, and effectiveness evidence into one developer-facing control plane."
-summary: "Create a read-only workflow registry in CCDash so teams can inspect workflow identity, structure, correlation quality, and performance across CCDash and SkillMeat from one place."
+title: 'PRD: Workflow Registry and Correlation Surface V1'
+description: Add a dedicated Workflow page in CCDash that unifies SkillMeat definitions,
+  CCDash-observed workflow families, workflow composition, and effectiveness evidence
+  into one developer-facing control plane.
+summary: Create a read-only workflow registry in CCDash so teams can inspect workflow
+  identity, structure, correlation quality, and performance across CCDash and SkillMeat
+  from one place.
 created: 2026-03-13
 updated: 2026-03-13
 priority: high
 risk_level: medium
 complexity: High
 track: Workflow Intelligence / Integrations
-timeline_estimate: "3-5 weeks"
+timeline_estimate: 3-5 weeks
 feature_slug: workflow-registry-and-correlation-v1
 feature_family: workflow-intelligence-and-integration
 feature_version: v1
@@ -22,34 +26,50 @@ lineage_family: workflow-intelligence-and-integration
 lineage_parent: null
 lineage_children: []
 lineage_type: enhancement
-problem_statement: "Workflow data is currently split across SkillMeat definitions, CCDash observations, effectiveness rollups, and execution-page recommendations, which makes workflow tuning and trust hard."
+problem_statement: Workflow data is currently split across SkillMeat definitions,
+  CCDash observations, effectiveness rollups, and execution-page recommendations,
+  which makes workflow tuning and trust hard.
 owner: platform-engineering
-owners: [platform-engineering, ai-integrations, fullstack-engineering]
-contributors: [ai-agents]
-audience: [developers, platform-engineering, engineering-leads, workflow-authors]
-tags: [prd, workflows, skillmeat, analytics, integrations, execution, recommendations]
+owners:
+- platform-engineering
+- ai-integrations
+- fullstack-engineering
+contributors:
+- ai-agents
+audience:
+- developers
+- platform-engineering
+- engineering-leads
+- workflow-authors
+tags:
+- prd
+- workflows
+- skillmeat
+- analytics
+- integrations
+- execution
+- recommendations
 related_documents:
-  - docs/workflow-skillmeat-integration-developer-reference.md
-  - docs/agentic-sdlc-intelligence-developer-reference.md
-  - docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
-  - docs/project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md
+- docs/workflow-skillmeat-integration-developer-reference.md
+- docs/agentic-sdlc-intelligence-developer-reference.md
+- docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
+- docs/project_plans/reports/agentic-sdlc-intelligence-v2-integration-overview-2026-03-08.md
 context_files:
-  - backend/services/integrations/skillmeat_sync.py
-  - backend/services/integrations/skillmeat_resolver.py
-  - backend/services/stack_observations.py
-  - backend/services/workflow_effectiveness.py
-  - backend/services/stack_recommendations.py
-  - backend/routers/analytics.py
-  - backend/routers/features.py
-  - backend/models.py
-  - components/Analytics/AnalyticsDashboard.tsx
-  - components/execution/WorkflowEffectivenessSurface.tsx
-  - components/execution/RecommendedStackCard.tsx
-  - components/Layout.tsx
-  - types.ts
+- backend/services/integrations/skillmeat_sync.py
+- backend/services/integrations/skillmeat_resolver.py
+- backend/services/stack_observations.py
+- backend/services/workflow_effectiveness.py
+- backend/services/stack_recommendations.py
+- backend/routers/analytics.py
+- backend/routers/features.py
+- backend/models.py
+- components/Analytics/AnalyticsDashboard.tsx
+- components/execution/WorkflowEffectivenessSurface.tsx
+- components/execution/RecommendedStackCard.tsx
+- components/Layout.tsx
+- types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
 ---
-
 # PRD: Workflow Registry and Correlation Surface V1
 
 ## Executive Summary

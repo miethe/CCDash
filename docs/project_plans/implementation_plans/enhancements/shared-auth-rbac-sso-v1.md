@@ -15,13 +15,13 @@ owners: [platform-engineering, security-engineering, fullstack-engineering]
 contributors: [ai-agents]
 audience: [ai-agents, developers, platform-engineering, security-engineering]
 created: 2026-03-20
-updated: 2026-03-20
+updated: 2026-03-24
 tags: [implementation, auth, oidc, rbac, sso, security, skillmeat]
 priority: critical
 risk_level: high
 complexity: high
 track: Identity
-timeline_estimate: "4-6 weeks across 7 phases"
+timeline_estimate: "5-7 weeks across 8 phases"
 feature_slug: shared-auth-rbac-sso-v1
 feature_family: shared-identity-access
 feature_version: v1
@@ -65,9 +65,10 @@ Introduce a hosted-safe identity and authorization layer for CCDash using OIDC, 
 2. `backend/adapters/auth/local.py` provides a permissive local adapter, but there is no hosted identity adapter, no token/session verification path, and no deny-capable authorization policy.
 3. `backend/runtime/container.py` already builds request context per request, which is the correct seam for hosted auth.
 4. Several routers and application services accept `RequestContext`, but most business flows still behave as if every caller is the same trusted local operator.
-5. `backend/routers/projects.py` still uses the global `project_manager` singleton directly, which is incompatible with real request-scoped tenancy.
+5. `backend/routers/projects.py` still uses the global `project_manager` singleton directly, and many adjacent routers still rely on active-project/path globals that are incompatible with real request-scoped tenancy.
 6. `contexts/AppSessionContext.tsx` models project switching only; there is no frontend auth/session state or 401/403 handling path.
-7. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics.
+7. `services/apiClient.ts` performs plain `fetch()` calls with no auth/session-aware retry or denial semantics, and many protected frontend surfaces still bypass it with direct `fetch()` usage.
+8. The integrations surface has code/test drift and should be stabilized before it becomes an auth-enforcement migration target.
 
 ## Fixed Decisions
 
@@ -90,7 +91,7 @@ Backend:
 6. `backend/routers/auth.py`
 7. `backend/runtime_ports.py`
 8. `backend/runtime/bootstrap_api.py`
-9. request-context-aware updates in `backend/routers/projects.py`, `backend/routers/integrations.py`, `backend/routers/execution.py`, `backend/routers/live.py`, and hot-path endpoints in `backend/routers/api.py`
+9. request-context-aware updates in `backend/routers/projects.py`, `backend/routers/integrations.py`, `backend/routers/execution.py`, `backend/routers/live.py`, `backend/routers/features.py`, `backend/routers/analytics.py`, `backend/routers/codebase.py`, `backend/routers/cache.py`, `backend/routers/session_mappings.py`, `backend/routers/test_visualizer.py`, sensitive `backend/routers/pricing.py`, and hot-path endpoints in `backend/routers/api.py`
 
 Frontend:
 
@@ -98,7 +99,9 @@ Frontend:
 2. `contexts/AppAuthContext.tsx`
 3. `contexts/AppSessionContext.tsx`
 4. `services/apiClient.ts`
-5. app-shell entry points and protected-route handling around existing runtime/data providers
+5. `services/request.ts` or equivalent shared auth-aware fetch wrapper
+6. migration of protected request paths in existing services/components onto the shared auth-aware transport
+7. app-shell entry points and protected-route handling around existing runtime/data providers
 
 Exact paths may shift, but the end state must keep issuer integration, session transport, authorization logic, and UI session state separated.
 
@@ -106,39 +109,59 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Phase | Title | Effort | Duration | Critical Path | Objective |
 |------|-------|--------|----------|---------------|-----------|
+| 0 | Preflight Stabilization and Scope Inventory | 6 pts | 2-3 days | Yes | Stabilize auth-adjacent seams and inventory the real backend/frontend migration surface before auth implementation begins |
 | 1 | Identity Contracts and Configuration | 8 pts | 3-4 days | Yes | Finalize the principal, role, resource, and runtime config model for hosted auth |
 | 2 | OIDC Adapter and Hosted Session Flow | 11 pts | 4-5 days | Yes | Add issuer validation, login/callback/logout flow, and secure hosted session handling |
 | 3 | Authorization Policy and RBAC Matrix | 10 pts | 4 days | Yes | Implement a deny-capable policy layer and canonical permission vocabulary |
 | 4 | Workspace Mapping and SkillMeat Trust Alignment | 8 pts | 3-4 days | Partial | Map issuer claims to CCDash scopes and align outbound SkillMeat auth |
 | 5 | Backend Enforcement Migration | 11 pts | 4-5 days | Yes | Move sensitive routes and services onto real authorization checks |
-| 6 | Frontend Session UX and Protected Shell | 9 pts | 4 days | Partial | Add auth-aware client/session UX without regressing local mode |
+| 6 | Frontend Session UX and Protected Shell | 12 pts | 4-5 days | Partial | Add auth-aware client/session UX and migrate protected request paths without regressing local mode |
 | 7 | Audit, Testing, and Rollout Hardening | 9 pts | 3-4 days | Final gate | Add attribution, observability, operator docs, and staged rollout safety |
 
-**Total**: ~66 story points over 4-6 weeks
+**Total**: ~75 story points over 5-7 weeks
 
 ## Implementation Strategy
 
 ### Sequencing Rationale
 
-1. Lock the identity and permission vocabulary before implementing provider-specific auth logic.
-2. Land hosted OIDC session handling before migrating route enforcement so the policy layer has real principals to evaluate.
-3. Define the RBAC matrix before broad router migration to avoid duplicating authorization rules in many endpoints.
-4. Align workspace/project claim mapping before wiring SkillMeat trust and before finalizing frontend workspace UX.
-5. Keep local no-auth behavior working throughout by using runtime-profile composition instead of conditionals spread through routers.
+1. Stabilize the current integrations/request-scope baseline and inventory the real migration surface before landing auth-specific code.
+2. Lock the identity and permission vocabulary before implementing provider-specific auth logic.
+3. Land hosted OIDC session handling before migrating route enforcement so the policy layer has real principals to evaluate.
+4. Define the RBAC matrix before broad router migration to avoid duplicating authorization rules in many endpoints.
+5. Align workspace/project claim mapping before wiring SkillMeat trust and before finalizing frontend workspace UX.
+6. Keep local no-auth behavior working throughout by using runtime-profile composition instead of conditionals spread through routers.
 
 ### Parallel Work Opportunities
 
-1. Once Phase 1 contracts are stable, Phase 2 backend OIDC work and Phase 3 policy-matrix drafting can run in parallel.
-2. Phase 4 claim-mapping work can overlap with the latter half of Phase 6 once `/api/auth/session` and role payload shapes are stable.
-3. Documentation, operator setup, and audit dashboard work can begin during Phase 6 after enforcement coverage is clear.
+1. Once Phase 0 inventory is complete, Phase 1 identity contracts and frontend transport planning can run in parallel.
+2. Once Phase 1 contracts are stable, Phase 2 backend OIDC work and Phase 3 policy-matrix drafting can run in parallel.
+3. Phase 4 claim-mapping work can overlap with the latter half of Phase 6 once `/api/auth/session` and role payload shapes are stable.
+4. Documentation, operator setup, and audit dashboard work can begin during Phase 6 after enforcement coverage is clear.
 
 ### Critical Path
 
-1. Phase 1 contracts
-2. Phase 2 hosted session flow
-3. Phase 3 policy engine
-4. Phase 5 backend enforcement migration
-5. Phase 7 rollout validation
+1. Phase 0 preflight stabilization
+2. Phase 1 contracts
+3. Phase 2 hosted session flow
+4. Phase 3 policy engine
+5. Phase 5 backend enforcement migration
+6. Phase 7 rollout validation
+
+## Phase 0: Preflight Stabilization and Scope Inventory
+
+**Assigned Subagent(s)**: `backend-architect`, `python-backend-engineer`, `frontend-developer`
+
+| Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
+|---------|-----------|-------------|---------------------|----------|-------------|--------------|
+| AUTH-090 | Integrations Baseline Repair | Resolve the current request-scope/integration drift so auth work does not stack on top of unstable assumptions in `backend/routers/integrations.py` and its tests. | Integrations router code and tests agree on current helper/module boundaries, and the touched request-scoped integration flows are green again. | 2 pts | python-backend-engineer | None |
+| AUTH-091 | Backend Enforcement Surface Inventory | Enumerate routers/services still relying on active-project globals or direct singleton path access, classify them by sensitivity, and map them onto the RBAC/resource model. | The plan has an explicit migration inventory for high-risk router surfaces instead of a partial hot-path list. | 2 pts | backend-architect | None |
+| AUTH-092 | Frontend Transport Inventory and Migration Strategy | Inventory direct `fetch()` callers that will need auth/session-aware behavior and define the shared transport abstraction plus migration order for protected surfaces. | Frontend auth work is no longer limited to `services/apiClient.ts`; protected request paths have an explicit migration strategy. | 2 pts | frontend-developer | None |
+
+**Phase 0 Quality Gates**
+
+1. Integrations/request-scope drift is reduced enough that auth work starts from a stable baseline.
+2. The backend enforcement inventory covers singleton-dependent routes beyond `projects.py`.
+3. The frontend transport plan explicitly accounts for protected direct `fetch()` callers.
 
 ## Phase 1: Identity Contracts and Configuration
 
@@ -146,8 +169,8 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-001 | Principal Contract Refinement | Extend the existing application identity model to cover issuer, subject, email, groups, role bindings, auth mode, and service-account identity without breaking local mode. | `Principal` and related request-context contracts can represent both hosted OIDC users and local operators. | 3 pts | backend-architect, python-backend-engineer | None |
-| AUTH-002 | Permission Vocabulary and Resource Matrix | Define the canonical resource/action matrix for projects, documents, sessions, tests, execution, integrations, analytics, and admin settings. | The plan has a documented role-resource matrix that can be implemented without reopening product questions. | 3 pts | security-engineering, backend-architect | AUTH-001 |
+| AUTH-001 | Principal Contract Refinement | Extend the existing application identity model to cover issuer, subject, email, groups, role bindings, auth mode, and service-account identity without breaking local mode. | `Principal` and related request-context contracts can represent both hosted OIDC users and local operators. | 3 pts | backend-architect, python-backend-engineer | AUTH-090 |
+| AUTH-002 | Permission Vocabulary and Resource Matrix | Define the canonical resource/action matrix for projects, documents, sessions, tests, execution, integrations, analytics, admin settings, codebase access, and file-backed maintenance endpoints. | The plan has a documented role-resource matrix that can be implemented without reopening product questions. | 3 pts | security-engineering, backend-architect | AUTH-001, AUTH-091 |
 | AUTH-003 | Hosted Auth Configuration Surface | Define environment/config settings for issuer URL, audience/client IDs, callback URL, secure cookies, trusted proxy expectations, and explicit local-mode enablement. | Hosted and local runtime configuration is explicit, fail-closed, and documented for composition code. | 2 pts | backend-architect, security-engineering | AUTH-001 |
 
 **Phase 1 Quality Gates**
@@ -194,8 +217,8 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-301 | Claim-to-Scope Mapping | Define how issuer claims, groups, and workspace/project identifiers map into CCDash workspace and project scopes. | Hosted principals resolve to deterministic workspace/project scope without relying on global process state. | 3 pts | backend-architect, security-engineering | AUTH-201 |
-| AUTH-302 | SkillMeat Trust Contract | Align outbound SkillMeat integration auth with the shared issuer/delegation model and remove the need for a separate hosted-only credential story. | Hosted CCDash can call SkillMeat under the shared trust model or a documented delegated token path. | 3 pts | integrations, security-engineering | AUTH-101, AUTH-301 |
+| AUTH-301 | Claim-to-Scope Mapping | Define how issuer claims, groups, and workspace/project identifiers map into CCDash workspace and project scopes. | Hosted principals resolve to deterministic workspace/project scope without relying on global process state. | 3 pts | backend-architect, security-engineering | AUTH-201, AUTH-091 |
+| AUTH-302 | SkillMeat Trust Contract | Align outbound SkillMeat integration auth with the shared issuer/delegation model and remove the need for a separate hosted-only credential story. | Hosted CCDash can call SkillMeat under the shared trust model or a documented delegated token path. | 3 pts | integrations, security-engineering | AUTH-101, AUTH-301, AUTH-090 |
 | AUTH-303 | Workspace Registry and Project Selection Semantics | Refine workspace registry behavior so active project selection, project lookup, and scope resolution are compatible with hosted multi-user usage. | Hosted request scope no longer depends on a single global active-project assumption. | 2 pts | backend-architect | AUTH-301 |
 
 **Phase 4 Quality Gates**
@@ -210,14 +233,14 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-401 | Projects and Workspace Router Migration | Refactor `backend/routers/projects.py` and related workspace flows to use request context and workspace registry instead of the global singleton path. | Project list, active project, and update flows are request-scoped and authorization-ready. | 4 pts | python-backend-engineer, backend-architect | AUTH-202, AUTH-303 |
-| AUTH-402 | Sensitive Route Authorization Coverage | Apply authorization checks to execution, integrations, live topics, document/task mutation endpoints, analytics exports, and admin settings. | All sensitive write/admin/execute paths require named permissions and produce audited denials. | 5 pts | python-backend-engineer, security-engineering | AUTH-202 |
+| AUTH-401 | Workspace and Singleton Router Migration | Refactor `backend/routers/projects.py` plus the inventory-defined singleton-dependent router paths onto request context and workspace registry semantics. | High-risk router flows no longer depend on process-global active project selection in hosted mode. | 4 pts | python-backend-engineer, backend-architect | AUTH-202, AUTH-303, AUTH-091 |
+| AUTH-402 | Sensitive Route Authorization Coverage | Apply authorization checks to execution, integrations, live topics, document/task mutation endpoints, analytics exports, admin settings, codebase access, cache/maintenance operations, and other inventory-classified protected surfaces. | All sensitive write/admin/execute paths require named permissions and produce audited denials. | 5 pts | python-backend-engineer, security-engineering | AUTH-202, AUTH-091 |
 | AUTH-403 | Service-Layer Guard Rails | Add architecture tests or guardrails that prevent new hot-path routers from bypassing request context and authorization helpers. | New endpoints in covered areas cannot regress to direct router-level singleton or unchecked writes. | 2 pts | backend-architect | AUTH-401, AUTH-402 |
 
 **Phase 5 Quality Gates**
 
 1. Sensitive hosted endpoints enforce named permissions end to end.
-2. `projects.py` no longer behaves as a process-global tenant selector in hosted mode.
+2. Inventory-defined singleton-dependent routers no longer behave as process-global tenant selectors in hosted mode.
 3. Authorization is enforced in reusable service or dependency seams, not repeated inline across every route.
 
 ## Phase 6: Frontend Session UX and Protected Shell
@@ -226,15 +249,17 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| AUTH-501 | Auth-Aware Client and Session Context | Add a frontend auth/session context, `/api/auth/session` integration, and shared 401/403 handling in `services/apiClient.ts`. | The UI can distinguish loading, authenticated, unauthenticated, and unauthorized states without breaking local mode. | 4 pts | frontend-developer | AUTH-102, AUTH-202 |
-| AUTH-502 | Hosted Sign-In/Sign-Out and Protected Shell | Add hosted sign-in/out flows, session-aware app shell behavior, and clear local-vs-hosted runtime messaging. | Hosted users can sign in/out cleanly; local users still enter the app without auth friction and with explicit runtime labeling. | 3 pts | ui-engineer-enhanced, frontend-developer | AUTH-501 |
-| AUTH-503 | Permission-Aware Workspace UX | Update project/workspace selection and sensitive UI affordances so they reflect backend permissions without relying on UI-only protection. | UI hides or disables protected actions appropriately, but the backend remains the source of truth. | 2 pts | frontend-developer | AUTH-301, AUTH-501 |
+| AUTH-501 | Auth-Aware Client and Session Context | Add a frontend auth/session context, `/api/auth/session` integration, and shared 401/403 handling in the canonical request client/wrapper. | The UI can distinguish loading, authenticated, unauthenticated, and unauthorized states without breaking local mode. | 4 pts | frontend-developer | AUTH-092, AUTH-102, AUTH-202 |
+| AUTH-502 | Protected Request Transport Migration | Move inventory-defined protected request paths off ad hoc `fetch()` calls and onto the shared auth-aware transport, starting with execution, feature detail/modals, integrations, analytics mutation paths, and operational panels. | Protected frontend surfaces consistently inherit auth/session semantics instead of reimplementing them locally. | 3 pts | frontend-developer | AUTH-501 |
+| AUTH-503 | Hosted Sign-In/Sign-Out and Protected Shell | Add hosted sign-in/out flows, session-aware app shell behavior, and clear local-vs-hosted runtime messaging. | Hosted users can sign in/out cleanly; local users still enter the app without auth friction and with explicit runtime labeling. | 3 pts | ui-engineer-enhanced, frontend-developer | AUTH-501 |
+| AUTH-504 | Permission-Aware Workspace UX | Update project/workspace selection and sensitive UI affordances so they reflect backend permissions without relying on UI-only protection. | UI hides or disables protected actions appropriately, but the backend remains the source of truth. | 2 pts | frontend-developer | AUTH-301, AUTH-502 |
 
 **Phase 6 Quality Gates**
 
 1. UI session state is separate from project data-loading state.
 2. Local runtime remains deliberate and obvious in the shell.
 3. Hosted 401/403 flows do not strand the app in infinite refresh or blank-screen states.
+4. Protected request paths do not bypass the shared auth-aware transport.
 
 ## Phase 7: Audit, Testing, and Rollout Hardening
 
@@ -243,7 +268,7 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
 | AUTH-601 | Audit Attribution and Auth Observability | Record principal attribution for privileged actions and add metrics/logging for login failures, denied actions, token/session errors, and issuer health. | Operators can identify who performed sensitive actions and diagnose auth failures in hosted mode. | 3 pts | security-engineering, python-backend-engineer | AUTH-402 |
-| AUTH-602 | Validation Suite | Add backend unit/integration tests plus frontend interaction coverage for login, denial, local mode, and protected action scenarios. | Critical auth journeys are covered in automated tests across local and hosted profiles. | 4 pts | python-backend-engineer, frontend-developer | AUTH-402, AUTH-503 |
+| AUTH-602 | Validation Suite | Add backend unit/integration tests plus frontend interaction coverage for login, denial, local mode, protected action scenarios, and migrated transport behavior. | Critical auth journeys are covered in automated tests across local and hosted profiles. | 4 pts | python-backend-engineer, frontend-developer | AUTH-402, AUTH-504 |
 | AUTH-603 | Rollout and Operator Documentation | Document issuer setup, runtime flags, local-mode behavior, bootstrap admin rules, and staged rollout guidance. | Operators can configure hosted auth safely and developers can still run explicit local no-auth mode. | 2 pts | documentation-writer | AUTH-601, AUTH-602 |
 
 **Phase 7 Quality Gates**
@@ -268,6 +293,9 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 4. Audit and observability:
    - privileged actions capture subject attribution
    - denial/failure metrics are queryable
+5. Preflight stabilization:
+   - integration-router baseline tests are green for the touched request-scoped paths
+   - protected frontend request paths use the shared auth-aware transport
 
 ## Major Risks and Mitigations
 
@@ -277,6 +305,8 @@ Exact paths may shift, but the end state must keep issuer integration, session t
 | Role model is too coarse for approvals and integrations | High | Medium | Finalize the role-resource matrix in Phase 1 and validate against real sensitive workflows in Phase 5 |
 | Local users are accidentally forced into hosted assumptions | High | Medium | Keep adapter selection in runtime composition and test local profile explicitly in Phase 7 |
 | SkillMeat and CCDash workspace identifiers drift | High | Medium | Treat claim mapping and SkillMeat trust alignment as one planned phase with shared acceptance gates |
+| Frontend protected flows keep bypassing the shared auth-aware transport | High | Medium | Inventory direct `fetch()` callers up front and make transport migration an explicit Phase 6 task |
+| Auth work lands on top of unstable integration/request-scope seams | Medium | Medium | Add a preflight stabilization phase and require green targeted tests before Phase 1 begins |
 
 ## Definition of Done
 

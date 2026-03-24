@@ -3,18 +3,21 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: draft
+status: inferred_complete
 category: enhancements
-title: "PRD: Dependency-Aware Execution and Family Views V1"
-description: "Make blocked work, family ordering, and sequence-aware execution first-class behaviors across board, execution, catalog, and document views."
-summary: "Turn `blocked_by`, `feature_family`, and `sequence_order` from descriptive metadata into derived dependency states, family navigation, and execution gating that steer users to the first actionable item."
+title: 'PRD: Dependency-Aware Execution and Family Views V1'
+description: Make blocked work, family ordering, and sequence-aware execution first-class
+  behaviors across board, execution, catalog, and document views.
+summary: Turn `blocked_by`, `feature_family`, and `sequence_order` from descriptive
+  metadata into derived dependency states, family navigation, and execution gating
+  that steer users to the first actionable item.
 created: 2026-03-22
 updated: 2026-03-22
 priority: high
 risk_level: medium
 complexity: High
 track: Dependency Awareness
-timeline_estimate: "2-3 weeks"
+timeline_estimate: 2-3 weeks
 feature_slug: dependency-aware-execution-and-family-views-v1
 feature_family: dependency-aware-execution-and-family-views
 feature_version: v1
@@ -22,33 +25,46 @@ lineage_family: dependency-aware-execution-and-family-views
 lineage_parent: docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
 lineage_children: []
 lineage_type: enhancement
-problem_statement: "CCDash captures dependency and family metadata, but execution surfaces still treat it as passive context instead of operational state, which leads users toward blocked work and hides the correct next item in a family."
+problem_statement: CCDash captures dependency and family metadata, but execution surfaces
+  still treat it as passive context instead of operational state, which leads users
+  toward blocked work and hides the correct next item in a family.
 owner: fullstack-engineering
-owners: [fullstack-engineering]
-contributors: [ai-agents]
-audience: [ai-agents, developers, engineering-leads, product-design]
-tags: [prd, execution, dependencies, feature-family, planning, workflow]
+owners:
+- fullstack-engineering
+contributors:
+- ai-agents
+audience:
+- ai-agents
+- developers
+- engineering-leads
+- product-design
+tags:
+- prd
+- execution
+- dependencies
+- feature-family
+- planning
+- workflow
 linked_features:
-  - feature-execution-workbench-v1
+- feature-execution-workbench-v1
 related_documents:
-  - docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
-  - docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
-  - docs/schemas/document_frontmatter/document-and-feature-mapping.md
+- docs/project_plans/designs/dependency-aware-execution-and-family-views-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-v1.md
+- docs/project_plans/implementation_plans/enhancements/feature-execution-workbench-v1.md
+- docs/schemas/document_frontmatter/document-and-feature-mapping.md
 context_files:
-  - backend/parsers/documents.py
-  - backend/parsers/features.py
-  - backend/services/feature_execution.py
-  - backend/routers/features.py
-  - backend/models.py
-  - components/ProjectBoard.tsx
-  - components/FeatureExecutionWorkbench.tsx
-  - components/PlanCatalog.tsx
-  - components/DocumentModal.tsx
-  - types.ts
+- backend/parsers/documents.py
+- backend/parsers/features.py
+- backend/services/feature_execution.py
+- backend/routers/features.py
+- backend/models.py
+- components/ProjectBoard.tsx
+- components/FeatureExecutionWorkbench.tsx
+- components/PlanCatalog.tsx
+- components/DocumentModal.tsx
+- types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
 ---
-
 # PRD: Dependency-Aware Execution and Family Views V1
 
 ## Executive Summary
