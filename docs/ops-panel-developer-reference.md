@@ -84,6 +84,16 @@ Router integration:
 
 ## API payload notes
 
+`GET /api/health` now includes:
+
+- `storageProfile`
+- `storageBackend`
+- `recommendedStorageProfile`
+- `filesystemSourceOfTruth`
+- `sharedPostgresEnabled`
+- `storageIsolationMode`
+- `storageSchema`
+
 `GET /api/cache/status` now includes:
 
 - `projectId`, `projectName`
@@ -108,6 +118,7 @@ The panel surfaces queue depth, last push time, last error, and enabled/disabled
 
 - [`docs/guides/telemetry-exporter-guide.md`](guides/telemetry-exporter-guide.md)
 - [`docs/guides/telemetry-exporter-troubleshooting.md`](guides/telemetry-exporter-troubleshooting.md)
+- [`docs/guides/storage-profiles-guide.md`](guides/storage-profiles-guide.md)
 
 ## Live invalidation path
 
