@@ -1,7 +1,10 @@
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
+from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.routers import analytics as analytics_router
 
 
@@ -69,11 +72,143 @@ class _FakeAlertRepo:
         self.items.pop(config_id, None)
 
 
+class _FakeIdentityProvider:
+    async def get_principal(self, metadata, *, runtime_profile):
+        _ = metadata, runtime_profile
+        return Principal(subject="test:operator", display_name="Test Operator", auth_mode="test")
+
+
+class _FakeAuthorizationPolicy:
+    async def authorize(self, context, *, action, resource=None):
+        _ = context, action, resource
+        return AuthorizationDecision(allowed=True)
+
+
+class _FakeJobScheduler:
+    def schedule(self, job, *, name=None):
+        _ = name
+        return job
+
+
+class _FakeIntegrationClient:
+    async def invoke(self, integration, operation, payload=None):
+        _ = integration, operation, payload
+        return {}
+
+
+class _FakeWorkspaceRegistry:
+    def __init__(self, project) -> None:
+        self.project = project
+
+    def get_project(self, project_id):
+        if self.project and str(getattr(self.project, "id", "")) == project_id:
+            return self.project
+        return None
+
+    def get_active_project(self):
+        return self.project
+
+
+class _FakeStorage:
+    def __init__(
+        self,
+        *,
+        db=None,
+        analytics_repo=None,
+        session_repo=None,
+        task_repo=None,
+        link_repo=None,
+        feature_repo=None,
+        alert_repo=None,
+    ) -> None:
+        self.db = db if db is not None else object()
+        self._analytics_repo = analytics_repo
+        self._session_repo = session_repo
+        self._task_repo = task_repo
+        self._link_repo = link_repo
+        self._feature_repo = feature_repo
+        self._alert_repo = alert_repo
+
+    def analytics(self):
+        return self._analytics_repo
+
+    def sessions(self):
+        return self._session_repo
+
+    def tasks(self):
+        return self._task_repo
+
+    def entity_links(self):
+        return self._link_repo
+
+    def features(self):
+        return self._feature_repo
+
+    def alert_configs(self):
+        return self._alert_repo
+
+
+def _request_context(project_id: str = "project-1") -> RequestContext:
+    return RequestContext(
+        principal=Principal(subject="test:operator", display_name="Test Operator", auth_mode="test"),
+        workspace=None,
+        project=ProjectScope(
+            project_id=project_id,
+            project_name="Project 1",
+            root_path=Path("/tmp/project"),
+            sessions_dir=Path("/tmp/sessions"),
+            docs_dir=Path("/tmp/docs"),
+            progress_dir=Path("/tmp/progress"),
+        ),
+        runtime_profile="test",
+        trace=TraceContext(request_id="req-1"),
+    )
+
+
+def _core_ports(
+    *,
+    project=None,
+    db=None,
+    analytics_repo=None,
+    session_repo=None,
+    task_repo=None,
+    link_repo=None,
+    feature_repo=None,
+    alert_repo=None,
+) -> CorePorts:
+    resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
+    return CorePorts(
+        identity_provider=_FakeIdentityProvider(),
+        authorization_policy=_FakeAuthorizationPolicy(),
+        workspace_registry=_FakeWorkspaceRegistry(resolved_project),
+        storage=_FakeStorage(
+            db=db,
+            analytics_repo=analytics_repo,
+            session_repo=session_repo,
+            task_repo=task_repo,
+            link_repo=link_repo,
+            feature_repo=feature_repo,
+            alert_repo=alert_repo,
+        ),
+        job_scheduler=_FakeJobScheduler(),
+        integration_client=_FakeIntegrationClient(),
+    )
+
+
 class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_series_session_tokens_uses_log_usage_metadata(self) -> None:
         project = types.SimpleNamespace(id="project-1")
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_FakeSessionRepo()), patch.object(analytics_router, "get_analytics_repository", return_value=_FakeAnalyticsRepo()):
-            payload = await analytics_router.get_series(metric="session_tokens", period="point", session_id="S-1")
+        payload = await analytics_router.get_series(
+            metric="session_tokens",
+            period="point",
+            session_id="S-1",
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(
+                project=project,
+                analytics_repo=_FakeAnalyticsRepo(),
+                session_repo=_FakeSessionRepo(),
+            ),
+        )
 
         self.assertEqual(payload["total"], 2)
         self.assertEqual(payload["items"][0]["value"], 30)
@@ -82,29 +217,37 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_alert_crud_roundtrip(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         repo = _FakeAlertRepo()
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_alert_config_repository", return_value=repo):
-            created = await analytics_router.create_alert(
-                analytics_router.AlertConfigCreate(
-                    id="alert-new",
-                    name="New",
-                    metric="session_cost",
-                    operator=">",
-                    threshold=10.5,
-                    isActive=True,
-                    scope="session",
-                )
-            )
-            self.assertEqual(created.id, "alert-new")
+        core_ports = _core_ports(project=project, alert_repo=repo)
+        created = await analytics_router.create_alert(
+            analytics_router.AlertConfigCreate(
+                id="alert-new",
+                name="New",
+                metric="session_cost",
+                operator=">",
+                threshold=10.5,
+                isActive=True,
+                scope="session",
+            ),
+            request_context=_request_context(project.id),
+            core_ports=core_ports,
+        )
+        self.assertEqual(created.id, "alert-new")
 
-            updated = await analytics_router.update_alert(
-                "alert-new",
-                analytics_router.AlertConfigPatch(threshold=42.0, isActive=False),
-            )
-            self.assertEqual(updated.threshold, 42.0)
-            self.assertFalse(updated.isActive)
+        updated = await analytics_router.update_alert(
+            "alert-new",
+            analytics_router.AlertConfigPatch(threshold=42.0, isActive=False),
+            request_context=_request_context(project.id),
+            core_ports=core_ports,
+        )
+        self.assertEqual(updated.threshold, 42.0)
+        self.assertFalse(updated.isActive)
 
-            deleted = await analytics_router.delete_alert("alert-new")
-            self.assertEqual(deleted["status"], "ok")
+        deleted = await analytics_router.delete_alert(
+            "alert-new",
+            request_context=_request_context(project.id),
+            core_ports=core_ports,
+        )
+        self.assertEqual(deleted["status"], "ok")
 
     async def test_artifacts_endpoint_returns_artifact_analytics_payload(self) -> None:
         project = types.SimpleNamespace(id="project-1")
@@ -149,8 +292,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             "detailLimit": 120,
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "_load_artifact_analytics_payload", return_value=payload):
-            response = await analytics_router.get_artifacts(start="2026-02-01", end="2026-02-22")
+        with patch.object(analytics_router, "_load_artifact_analytics_payload", return_value=payload):
+            response = await analytics_router.get_artifacts(
+                start="2026-02-01",
+                end="2026-02-22",
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response["totals"]["artifactCount"], 5)
         self.assertEqual(response["range"]["start"], "2026-02-01")
@@ -195,8 +343,15 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                     },
                 ]
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_analytics_repository", return_value=_FakeAnalyticsRepo()), patch.object(analytics_router, "get_task_repository", return_value=_TaskRepo()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
-            response = await analytics_router.get_overview()
+        response = await analytics_router.get_overview(
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(
+                project=project,
+                analytics_repo=_FakeAnalyticsRepo(),
+                task_repo=_TaskRepo(),
+                session_repo=_SessionRepo(),
+            ),
+        )
 
         self.assertEqual(response["kpis"]["sessionTokens"], 9876)
         self.assertEqual(response["kpis"]["modelIOTokens"], 350)
@@ -242,8 +397,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             "generatedAt": "2026-03-07T00:00:00+00:00",
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_workflow_effectiveness", return_value=payload):
-            response = await analytics_router.workflow_effectiveness(limit=20, offset=0)
+        with patch.object(analytics_router, "get_workflow_effectiveness", return_value=payload):
+            response = await analytics_router.workflow_effectiveness(
+                limit=20,
+                offset=0,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.projectId, "project-1")
         self.assertEqual(response.items[0].scopeType, "workflow")
@@ -304,12 +464,15 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             "generatedAt": "2026-03-14T00:00:00+00:00",
         }
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router.connection, "get_connection", return_value=object()),
-            patch.object(analytics_router, "list_workflow_registry", return_value=payload),
-        ):
-            response = await analytics_router.workflow_registry(limit=20, offset=0, search="phase", correlation_state="strong")
+        with patch.object(analytics_router, "list_workflow_registry", return_value=payload):
+            response = await analytics_router.workflow_registry(
+                limit=20,
+                offset=0,
+                search="phase",
+                correlation_state="strong",
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.projectId, "project-1")
         self.assertEqual(response.items[0].id, "workflow:phase-execution")
@@ -399,12 +562,12 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router.connection, "get_connection", return_value=object()),
-            patch.object(analytics_router, "get_workflow_registry_detail", return_value=detail),
-        ):
-            response = await analytics_router.workflow_registry_detail(registry_id="workflow:phase-execution")
+        with patch.object(analytics_router, "get_workflow_registry_detail", return_value=detail):
+            response = await analytics_router.workflow_registry_detail(
+                registry_id="workflow:phase-execution",
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.projectId, "project-1")
         self.assertEqual(response.item.id, "workflow:phase-execution")
@@ -414,13 +577,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_workflow_registry_detail_endpoint_returns_404_when_missing(self) -> None:
         project = types.SimpleNamespace(id="project-1")
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router.connection, "get_connection", return_value=object()),
-            patch.object(analytics_router, "get_workflow_registry_detail", return_value=None),
-        ):
+        with patch.object(analytics_router, "get_workflow_registry_detail", return_value=None):
             with self.assertRaises(analytics_router.HTTPException) as ctx:
-                await analytics_router.workflow_registry_detail(registry_id="workflow:missing")
+                await analytics_router.workflow_registry_detail(
+                    registry_id="workflow:missing",
+                    request_context=_request_context(project.id),
+                    core_ports=_core_ports(project=project, db=object()),
+                )
 
         self.assertEqual(ctx.exception.status_code, 404)
         self.assertIn("workflow:missing", str(ctx.exception.detail))
@@ -451,8 +614,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             "generatedAt": "2026-03-07T00:00:00+00:00",
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "detect_failure_patterns", return_value=payload):
-            response = await analytics_router.failure_patterns(limit=20, offset=0)
+        with patch.object(analytics_router, "detect_failure_patterns", return_value=payload):
+            response = await analytics_router.failure_patterns(
+                limit=20,
+                offset=0,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.projectId, "project-1")
         self.assertEqual(response.items[0].patternType, "queue_waste")
@@ -500,24 +668,36 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_workflow_registry_endpoint_returns_503_when_disabled(self) -> None:
         project = types.SimpleNamespace(id="project-1")
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router, "require_workflow_analytics_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        with patch.object(
+            analytics_router,
+            "require_workflow_analytics_enabled",
+            side_effect=analytics_router.HTTPException(status_code=503, detail="disabled"),
         ):
             with self.assertRaises(analytics_router.HTTPException) as ctx:
-                await analytics_router.workflow_registry(limit=10, offset=0)
+                await analytics_router.workflow_registry(
+                    limit=10,
+                    offset=0,
+                    request_context=_request_context(project.id),
+                    core_ports=_core_ports(project=project, db=object()),
+                )
 
         self.assertEqual(ctx.exception.status_code, 503)
 
     async def test_workflow_effectiveness_endpoint_returns_503_when_disabled(self) -> None:
         project = types.SimpleNamespace(id="project-1")
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router, "require_workflow_analytics_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        with patch.object(
+            analytics_router,
+            "require_workflow_analytics_enabled",
+            side_effect=analytics_router.HTTPException(status_code=503, detail="disabled"),
         ):
             with self.assertRaises(analytics_router.HTTPException) as ctx:
-                await analytics_router.workflow_effectiveness(limit=20, offset=0)
+                await analytics_router.workflow_effectiveness(
+                    limit=20,
+                    offset=0,
+                    request_context=_request_context(project.id),
+                    core_ports=_core_ports(project=project, db=object()),
+                )
 
         self.assertEqual(ctx.exception.status_code, 503)
 
@@ -612,8 +792,15 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_analytics_repository", return_value=_FakeAnalyticsRepo()), patch.object(analytics_router, "_load_artifact_analytics_payload", return_value=artifact_payload):
-            response = await analytics_router.export_prometheus()
+        with patch.object(analytics_router, "_load_artifact_analytics_payload", return_value=artifact_payload):
+            response = await analytics_router.export_prometheus(
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(
+                    project=project,
+                    db=object(),
+                    analytics_repo=_FakeAnalyticsRepo(),
+                ),
+            )
 
         body = response.body.decode("utf-8")
         self.assertIn("ccdash_artifacts_total", body)
@@ -654,8 +841,11 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
         request = types.SimpleNamespace(
             app=types.SimpleNamespace(state=types.SimpleNamespace(sync_engine=_SyncEngine()))
         )
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
-            notifications = await analytics_router.get_notifications(request)
+        notifications = await analytics_router.get_notifications(
+            request,
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(project=project, session_repo=_SessionRepo()),
+        )
 
         self.assertGreaterEqual(len(notifications), 2)
         self.assertIn("Mapping backfill completed", notifications[0].message)
@@ -756,8 +946,15 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                     return {"name": "Feature One"}
                 return None
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()), patch.object(analytics_router, "get_entity_link_repository", return_value=_LinkRepo()), patch.object(analytics_router, "get_feature_repository", return_value=_FeatureRepo()):
-            payload = await analytics_router.get_correlation()
+        payload = await analytics_router.get_correlation(
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(
+                project=project,
+                session_repo=_SessionRepo(),
+                link_repo=_LinkRepo(),
+                feature_repo=_FeatureRepo(),
+            ),
+        )
 
         self.assertEqual(payload["total"], 2)
         linked_row = next(row for row in payload["items"] if row["sessionId"] == "S-1")
@@ -835,8 +1032,10 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
                     },
                 ]
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_session_repository", return_value=_SessionRepo()):
-            payload = await analytics_router.get_session_cost_calibration()
+        payload = await analytics_router.get_session_cost_calibration(
+            request_context=_request_context(project.id),
+            core_ports=_core_ports(project=project, session_repo=_SessionRepo()),
+        )
 
         self.assertEqual(payload.sessionCount, 3)
         self.assertEqual(payload.comparableSessionCount, 1)
@@ -887,8 +1086,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_rollup", return_value=payload):
-            response = await analytics_router.get_usage_attribution(limit=50, offset=0)
+        with patch.object(analytics_router, "get_usage_attribution_rollup", return_value=payload):
+            response = await analytics_router.get_usage_attribution(
+                limit=50,
+                offset=0,
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.rows[0].entityType, "skill")
         self.assertEqual(response.summary.totalExclusiveTokens, 80)
@@ -940,8 +1144,13 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_drilldown", return_value=payload):
-            response = await analytics_router.get_usage_attribution_drilldown_view(entity_type="skill", entity_id="symbols")
+        with patch.object(analytics_router, "get_usage_attribution_drilldown", return_value=payload):
+            response = await analytics_router.get_usage_attribution_drilldown_view(
+                entity_type="skill",
+                entity_id="symbols",
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.items[0].entityId, "symbols")
         self.assertEqual(response.summary.totalExclusiveModelIOTokens, 60)
@@ -970,8 +1179,11 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
             "generatedAt": "2026-03-10T00:00:00+00:00",
         }
 
-        with patch.object(analytics_router.project_manager, "get_active_project", return_value=project), patch.object(analytics_router.connection, "get_connection", return_value=object()), patch.object(analytics_router, "get_usage_attribution_calibration", return_value=payload):
-            response = await analytics_router.get_usage_attribution_calibration_view()
+        with patch.object(analytics_router, "get_usage_attribution_calibration", return_value=payload):
+            response = await analytics_router.get_usage_attribution_calibration_view(
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project, db=object()),
+            )
 
         self.assertEqual(response.eventCount, 3)
         self.assertEqual(response.modelIOGap, 0)
@@ -979,12 +1191,18 @@ class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_usage_attribution_endpoint_returns_503_when_disabled(self) -> None:
         project = types.SimpleNamespace(id="project-1")
 
-        with (
-            patch.object(analytics_router.project_manager, "get_active_project", return_value=project),
-            patch.object(analytics_router, "require_usage_attribution_enabled", side_effect=analytics_router.HTTPException(status_code=503, detail="disabled")),
+        with patch.object(
+            analytics_router,
+            "require_usage_attribution_enabled",
+            side_effect=analytics_router.HTTPException(status_code=503, detail="disabled"),
         ):
             with self.assertRaises(analytics_router.HTTPException) as ctx:
-                await analytics_router.get_usage_attribution(limit=10, offset=0)
+                await analytics_router.get_usage_attribution(
+                    limit=10,
+                    offset=0,
+                    request_context=_request_context(project.id),
+                    core_ports=_core_ports(project=project, db=object()),
+                )
 
         self.assertEqual(ctx.exception.status_code, 503)
 

@@ -13,6 +13,22 @@ MIGRATED_ROUTER_RULES = (
         ),
     ),
     (
+        ROOT / "backend" / "routers" / "analytics.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "api.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
+    (
         ROOT / "backend" / "routers" / "execution.py",
         (
             "from backend.db import connection",

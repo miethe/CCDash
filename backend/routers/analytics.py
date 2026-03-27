@@ -15,6 +15,7 @@ from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.analytics import AnalyticsOverviewService
+from backend.application.services.common import resolve_project
 from backend.models import (
     AlertConfig,
     AnalyticsMetric,
@@ -32,16 +33,6 @@ from backend.models import (
     WorkflowEffectivenessResponse,
 )
 from backend.model_identity import canonical_model_name, derive_model_identity, model_family_name
-from backend.project_manager import project_manager
-from backend.db import connection
-from backend.db.factory import (
-    get_analytics_repository,
-    get_alert_config_repository,
-    get_entity_link_repository,
-    get_feature_repository,
-    get_session_repository,
-    get_task_repository,
-)
 from backend.request_scope import get_core_ports, get_request_context
 from backend.services.agentic_intelligence_flags import require_workflow_analytics_enabled
 from backend.services.agentic_intelligence_flags import require_usage_attribution_enabled
@@ -55,6 +46,17 @@ from backend.services.workflow_registry import get_workflow_registry_detail, lis
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
+
+
+async def _resolve_app_request(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+):
+    return await resolve_application_request(
+        request_context,
+        core_ports,
+        core_ports.storage.db,
+    )
 
 
 def _safe_json(value: Any) -> dict[str, Any]:
@@ -1517,15 +1519,17 @@ class AlertConfigPatch(BaseModel):
 
 
 @analytics_router.get("/metrics", response_model=list[AnalyticsMetric])
-async def get_metrics():
+async def get_metrics(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Legacy metrics endpoint."""
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return []
 
-    db = await connection.get_connection()
-    repo = get_analytics_repository(db)
-    session_repo = get_session_repository(db)
+    repo = core_ports.storage.analytics()
+    session_repo = core_ports.storage.sessions()
 
     types = [
         "session_cost", "session_tokens", "session_count",
@@ -1549,85 +1553,13 @@ async def get_overview(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ):
-    if isinstance(request_context, RequestContext) or isinstance(core_ports, CorePorts):
-        db = await connection.get_connection()
-        app_request = await resolve_application_request(request_context, core_ports, db)
-        return await analytics_overview_service.get_overview(
-            app_request.context,
-            app_request.ports,
-            start=start,
-            end=end,
-        )
-
-    project = project_manager.get_active_project()
-    if not project:
-        return {"kpis": {}, "generatedAt": datetime.now(timezone.utc).isoformat()}
-
-    db = await connection.get_connection()
-    analytics_repo = get_analytics_repository(db)
-    task_repo = get_task_repository(db)
-    session_repo = get_session_repository(db)
-
-    latest = await analytics_repo.get_latest_entries(
-        project.id,
-        [
-            "session_cost",
-            "session_tokens",
-            "session_count",
-            "session_duration",
-            "task_velocity",
-            "task_completion_pct",
-            "tool_call_count",
-            "tool_success_rate",
-            "feature_progress",
-        ],
+    app_request = await _resolve_app_request(request_context, core_ports)
+    return await analytics_overview_service.get_overview(
+        app_request.context,
+        app_request.ports,
+        start=start,
+        end=end,
     )
-    task_stats = await task_repo.get_project_stats(project.id)
-    session_stats = await session_repo.get_project_stats(project.id)
-    session_filters: dict[str, Any] = {"include_subagents": True}
-    if start:
-        session_filters["start_date"] = start
-    if end:
-        session_filters["end_date"] = end
-    recent_sessions = await session_repo.list_paginated(0, 250, project.id, "started_at", "desc", session_filters)
-
-    model_counts: dict[str, int] = defaultdict(int)
-    for row in recent_sessions:
-        model = canonical_model_name(str(row.get("model") or "").strip())
-        if model:
-            model_counts[model] += 1
-    top_models = [
-        {"name": name, "usage": count}
-        for name, count in sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:8]
-    ]
-    context_rows = [row for row in recent_sessions if _coerce_int(row.get("current_context_tokens")) > 0]
-    avg_context_utilization_pct = round(
-        sum(_coerce_float(row.get("context_utilization_pct")) for row in context_rows) / len(context_rows),
-        2,
-    ) if context_rows else 0.0
-
-    return {
-        "kpis": {
-            "sessionCost": float(session_stats.get("cost", latest.get("session_cost", 0.0))),
-            "sessionTokens": int(session_stats.get("tokens", latest.get("session_tokens", 0))),
-            "sessionCount": int(session_stats.get("count", latest.get("session_count", 0))),
-            "sessionDurationAvg": float(session_stats.get("duration", latest.get("session_duration", 0.0))),
-            "modelIOTokens": sum(_session_usage_metrics(row)["modelIOTokens"] for row in recent_sessions),
-            "cacheInputTokens": sum(_session_usage_metrics(row)["cacheInputTokens"] for row in recent_sessions),
-            "observedTokens": sum(_session_usage_metrics(row)["observedTokens"] for row in recent_sessions),
-            "toolReportedTokens": sum(_session_usage_metrics(row)["toolReportedTokens"] for row in recent_sessions),
-            "contextSessionCount": len(context_rows),
-            "avgContextUtilizationPct": avg_context_utilization_pct,
-            "taskVelocity": int(latest.get("task_velocity", task_stats.get("completed", 0))),
-            "taskCompletionPct": float(latest.get("task_completion_pct", task_stats.get("completion_pct", 0.0))),
-            "featureProgress": float(latest.get("feature_progress", 0.0)),
-            "toolCallCount": int(latest.get("tool_call_count", 0)),
-            "toolSuccessRate": float(latest.get("tool_success_rate", 0.0)),
-        },
-        "topModels": top_models,
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "range": {"start": start or "", "end": end or ""},
-    }
 
 
 @analytics_router.get("/series")
@@ -1640,14 +1572,15 @@ async def get_series(
     session_id: str | None = None,
     offset: int = 0,
     limit: int = 500,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
 
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
-    analytics_repo = get_analytics_repository(db)
+    session_repo = core_ports.storage.sessions()
+    analytics_repo = core_ports.storage.analytics()
 
     if metric == "session_tokens" and session_id:
         logs = await session_repo.get_logs(session_id)
@@ -1811,14 +1744,15 @@ async def get_breakdown(
     end: str | None = None,
     offset: int = 0,
     limit: int = 100,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
 
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
-    link_repo = get_entity_link_repository(db)
+    session_repo = core_ports.storage.sessions()
+    link_repo = core_ports.storage.entity_links()
 
     filters: dict[str, Any] = {"include_subagents": True}
     if start:
@@ -1921,15 +1855,16 @@ async def get_breakdown(
 async def get_correlation(
     offset: int = 0,
     limit: int = 100,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return {"items": [], "total": 0, "offset": offset, "limit": limit}
 
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
-    link_repo = get_entity_link_repository(db)
-    feature_repo = get_feature_repository(db)
+    session_repo = core_ports.storage.sessions()
+    link_repo = core_ports.storage.entity_links()
+    feature_repo = core_ports.storage.features()
 
     sessions = await session_repo.list_paginated(0, 1200, project.id, "started_at", "desc", {"include_subagents": True})
     items: list[dict[str, Any]] = []
@@ -1996,13 +1931,14 @@ async def get_correlation(
 async def get_session_cost_calibration(
     start: str | None = Query(None),
     end: str | None = Query(None),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return SessionCostCalibrationSummary(generatedAt=datetime.now(timezone.utc).isoformat())
 
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
+    session_repo = core_ports.storage.sessions()
     filters: dict[str, Any] = {"include_subagents": True}
     if start:
         filters["start_date"] = start
@@ -2096,14 +2032,15 @@ async def get_usage_attribution(
     entity_id: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
     require_usage_attribution_enabled(project)
-    db = await connection.get_connection()
     payload = await get_usage_attribution_rollup(
-        db,
+        core_ports.storage.db,
         project_id=project.id,
         start=start,
         end=end,
@@ -2123,14 +2060,15 @@ async def get_usage_attribution_drilldown_view(
     end: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
     require_usage_attribution_enabled(project)
-    db = await connection.get_connection()
     payload = await get_usage_attribution_drilldown(
-        db,
+        core_ports.storage.db,
         project_id=project.id,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -2146,14 +2084,15 @@ async def get_usage_attribution_drilldown_view(
 async def get_usage_attribution_calibration_view(
     start: str | None = Query(None),
     end: str | None = Query(None),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
     require_usage_attribution_enabled(project)
-    db = await connection.get_connection()
     payload = await get_usage_attribution_calibration(
-        db,
+        core_ports.storage.db,
         project_id=project.id,
         start=start,
         end=end,
@@ -2171,9 +2110,11 @@ async def get_artifacts(
     tool: str | None = Query(None, description="Filter by source tool"),
     feature_id: str | None = Query(None, description="Filter by feature ID"),
     limit: int = Query(120, ge=10, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Artifact-centric analytics across all tracked sessions."""
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return {
             "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -2199,9 +2140,8 @@ async def get_artifacts(
             "detailLimit": limit,
         }
 
-    db = await connection.get_connection()
     payload = await _load_artifact_analytics_payload(
-        db,
+        core_ports.storage.db,
         project_id=project.id,
         start=start,
         end=end,
@@ -2232,8 +2172,10 @@ async def workflow_effectiveness(
     recompute: bool = False,
     offset: int = 0,
     limit: int = 100,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return WorkflowEffectivenessResponse(
             projectId="",
@@ -2245,9 +2187,8 @@ async def workflow_effectiveness(
         )
     require_workflow_analytics_enabled(project)
 
-    db = await connection.get_connection()
     payload = await get_workflow_effectiveness(
-        db,
+        core_ports.storage.db,
         project,
         period=period,
         scope_type=scope_type,
@@ -2268,8 +2209,10 @@ async def workflow_registry(
     correlation_state: str | None = Query(None, alias="correlationState", pattern="^(strong|hybrid|weak|unresolved)$"),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return WorkflowRegistryListResponse(
             projectId="",
@@ -2286,9 +2229,8 @@ async def workflow_registry(
         )
     require_workflow_analytics_enabled(project)
 
-    db = await connection.get_connection()
     payload = await list_workflow_registry(
-        db,
+        core_ports.storage.db,
         project,
         search=search,
         correlation_state=correlation_state,
@@ -2301,15 +2243,16 @@ async def workflow_registry(
 @analytics_router.get("/workflow-registry/detail", response_model=WorkflowRegistryDetailResponse)
 async def workflow_registry_detail(
     registry_id: str = Query(..., alias="registryId"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         raise HTTPException(status_code=404, detail="No active project")
     require_workflow_analytics_enabled(project)
 
-    db = await connection.get_connection()
     detail = await get_workflow_registry_detail(
-        db,
+        core_ports.storage.db,
         project,
         registry_id=registry_id,
     )
@@ -2335,8 +2278,10 @@ async def failure_patterns(
     end: str | None = None,
     offset: int = 0,
     limit: int = 100,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return FailurePatternResponse(
             projectId="",
@@ -2347,9 +2292,8 @@ async def failure_patterns(
         )
     require_workflow_analytics_enabled(project)
 
-    db = await connection.get_connection()
     payload = await detect_failure_patterns(
-        db,
+        core_ports.storage.db,
         project,
         scope_type=scope_type,
         scope_id=scope_id,
@@ -2363,10 +2307,12 @@ async def failure_patterns(
 
 
 @analytics_router.get("/alerts", response_model=list[AlertConfig])
-async def get_alerts():
-    db = await connection.get_connection()
-    repo = get_alert_config_repository(db)
-    project = project_manager.get_active_project()
+async def get_alerts(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    repo = core_ports.storage.alert_configs()
+    project = resolve_project(request_context, core_ports)
     configs = await repo.list_all(project.id if project else None)
     return [
         AlertConfig(
@@ -2383,10 +2329,13 @@ async def get_alerts():
 
 
 @analytics_router.post("/alerts", response_model=AlertConfig)
-async def create_alert(payload: AlertConfigCreate):
-    db = await connection.get_connection()
-    repo = get_alert_config_repository(db)
-    project = project_manager.get_active_project()
+async def create_alert(
+    payload: AlertConfigCreate,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    repo = core_ports.storage.alert_configs()
+    project = resolve_project(request_context, core_ports)
     alert_id = payload.id or f"alert-{uuid.uuid4().hex[:8]}"
     data = {
         "id": alert_id,
@@ -2411,10 +2360,14 @@ async def create_alert(payload: AlertConfigCreate):
 
 
 @analytics_router.patch("/alerts/{alert_id}", response_model=AlertConfig)
-async def update_alert(alert_id: str, payload: AlertConfigPatch):
-    db = await connection.get_connection()
-    repo = get_alert_config_repository(db)
-    project = project_manager.get_active_project()
+async def update_alert(
+    alert_id: str,
+    payload: AlertConfigPatch,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    repo = core_ports.storage.alert_configs()
+    project = resolve_project(request_context, core_ports)
     configs = await repo.list_all(project.id if project else None)
     current = next((c for c in configs if c.get("id") == alert_id), None)
     if not current:
@@ -2442,21 +2395,28 @@ async def update_alert(alert_id: str, payload: AlertConfigPatch):
 
 
 @analytics_router.delete("/alerts/{alert_id}")
-async def delete_alert(alert_id: str):
-    db = await connection.get_connection()
-    repo = get_alert_config_repository(db)
+async def delete_alert(
+    alert_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    _ = request_context
+    repo = core_ports.storage.alert_configs()
     await repo.delete(alert_id)
     return {"status": "ok", "id": alert_id}
 
 
 @analytics_router.get("/notifications", response_model=list[Notification])
-async def get_notifications(request: Request):
-    project = project_manager.get_active_project()
+async def get_notifications(
+    request: Request,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    project = resolve_project(request_context, core_ports)
     if not project:
         return []
 
-    db = await connection.get_connection()
-    repo = get_session_repository(db)
+    repo = core_ports.storage.sessions()
     sessions = await repo.list_paginated(0, 5, project.id, sort_by="started_at", sort_order="desc")
 
     notifications: list[Notification] = []
@@ -2523,20 +2483,36 @@ async def get_trends(
     period: str = "daily",
     start: str | None = None,
     end: str | None = None,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Legacy trends endpoint."""
-    payload = await get_series(metric=metric, period=period, start=start, end=end, group_by=None, session_id=None, offset=0, limit=500)
+    payload = await get_series(
+        metric=metric,
+        period=period,
+        start=start,
+        end=end,
+        group_by=None,
+        session_id=None,
+        offset=0,
+        limit=500,
+        request_context=request_context,
+        core_ports=core_ports,
+    )
     return payload["items"]
 
 
 @analytics_router.get("/export/prometheus")
-async def export_prometheus():
-    project = project_manager.get_active_project()
+async def export_prometheus(
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    project = resolve_project(request_context, core_ports)
     if not project:
         return Response("", media_type="text/plain")
 
-    db = await connection.get_connection()
-    repo = get_analytics_repository(db)
+    db = core_ports.storage.db
+    repo = core_ports.storage.analytics()
     types = [
         "session_cost", "session_tokens", "session_count",
         "task_velocity", "task_completion_pct", "tool_call_count", "tool_success_rate",
