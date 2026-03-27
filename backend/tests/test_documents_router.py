@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 from fastapi import HTTPException
 
+from backend.adapters.storage.local import FactoryStorageUnitOfWork
+from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import GitHubIntegrationSettings, Project
 from backend.routers import api as api_router
@@ -163,21 +165,45 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    def _request_context(self, project: Project) -> RequestContext:
+        return RequestContext(
+            principal=Principal(subject="test:operator", display_name="Test Operator", auth_mode="test"),
+            workspace=None,
+            project=ProjectScope(
+                project_id=project.id,
+                project_name=project.name,
+                root_path=self.project_root,
+                sessions_dir=self.sessions_dir,
+                docs_dir=self.docs_dir,
+                progress_dir=self.progress_dir,
+            ),
+            runtime_profile="test",
+            trace=TraceContext(request_id="req-1"),
+        )
+
+    def _core_ports(self, project: Project, bundle: ResolvedProjectPaths):
+        registry = types.SimpleNamespace(
+            get_project=lambda project_id: project if project_id == project.id else None,
+            get_active_project=lambda: project,
+            resolve_project_paths=lambda resolved_project: bundle,
+        )
+        return types.SimpleNamespace(
+            workspace_registry=registry,
+            storage=FactoryStorageUnitOfWork(self.db),
+        )
+
     async def test_update_document_writes_local_plan_doc(self) -> None:
         project = self._local_project()
         bundle = self._bundle(project)
         sync_engine = AsyncMock()
 
-        with (
-            patch.object(api_router.connection, "get_connection", new=AsyncMock(return_value=self.db)),
-            patch.object(api_router.project_manager, "get_active_project", return_value=project),
-            patch.object(api_router.project_manager, "get_active_path_bundle", return_value=bundle),
-        ):
-            response = await api_router.update_document(
-                "DOC-plan",
-                api_router.DocumentUpdateRequest(content="# Updated\n"),
-                _make_request(sync_engine),
-            )
+        response = await api_router.update_document(
+            "DOC-plan",
+            api_router.DocumentUpdateRequest(content="# Updated\n"),
+            _make_request(sync_engine),
+            self._request_context(project),
+            self._core_ports(project, bundle),
+        )
 
         self.assertEqual(self.plan_file.read_text(encoding="utf-8"), "# Updated\n")
         self.assertEqual(response.writeMode, "local")
@@ -202,16 +228,13 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.db.commit()
 
-        with (
-            patch.object(api_router.connection, "get_connection", new=AsyncMock(return_value=self.db)),
-            patch.object(api_router.project_manager, "get_active_project", return_value=project),
-            patch.object(api_router.project_manager, "get_active_path_bundle", return_value=bundle),
-        ):
-            response = await api_router.update_document(
-                "DOC-plan",
-                api_router.DocumentUpdateRequest(content="# Updated\n"),
-                _make_request(sync_engine),
-            )
+        response = await api_router.update_document(
+            "DOC-plan",
+            api_router.DocumentUpdateRequest(content="# Updated\n"),
+            _make_request(sync_engine),
+            self._request_context(project),
+            self._core_ports(project, bundle),
+        )
 
         self.assertEqual(
             self.plan_file.read_text(encoding="utf-8"),
@@ -225,21 +248,18 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         bundle = self._bundle(project)
         sync_engine = AsyncMock()
 
-        with (
-            patch.object(api_router.connection, "get_connection", new=AsyncMock(return_value=self.db)),
-            patch.object(api_router.project_manager, "get_active_project", return_value=project),
-            patch.object(api_router.project_manager, "get_active_path_bundle", return_value=bundle),
-            patch.object(
-                api_router.GitHubSettingsStore,
-                "load",
-                return_value=GitHubIntegrationSettings(enabled=False, writeEnabled=True, token="secret"),
-            ),
+        with patch.object(
+            api_router.GitHubSettingsStore,
+            "load",
+            return_value=GitHubIntegrationSettings(enabled=False, writeEnabled=True, token="secret"),
         ):
             with self.assertRaises(HTTPException) as exc:
                 await api_router.update_document(
                     "DOC-plan",
                     api_router.DocumentUpdateRequest(content="# Updated\n"),
                     _make_request(sync_engine),
+                    self._request_context(project),
+                    self._core_ports(project, bundle),
                 )
 
         self.assertEqual(exc.exception.status_code, 403)
@@ -255,9 +275,6 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
             return "abc1234"
 
         with (
-            patch.object(api_router.connection, "get_connection", new=AsyncMock(return_value=self.db)),
-            patch.object(api_router.project_manager, "get_active_project", return_value=project),
-            patch.object(api_router.project_manager, "get_active_path_bundle", return_value=bundle),
             patch.object(
                 api_router.GitHubSettingsStore,
                 "load",
@@ -270,6 +287,8 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
                 "DOC-plan",
                 api_router.DocumentUpdateRequest(content="# Repo Updated\n", commitMessage="ccdash: update plan"),
                 _make_request(sync_engine),
+                self._request_context(project),
+                self._core_ports(project, bundle),
             )
 
         self.assertEqual(response.writeMode, "github_repo")

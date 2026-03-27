@@ -13,21 +13,13 @@ from pydantic import BaseModel, Field
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
+from backend.application.services.common import resolve_project
 from backend.application.services.documents import DocumentQueryService
 from backend.application.services.sessions import SessionFacetService
 from backend import config
 from backend.models import (
     AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference,
     PaginatedResponse,
-)
-from backend.project_manager import project_manager
-from backend.db import connection
-from backend.db.factory import (
-    get_session_repository,
-    get_document_repository,
-    get_task_repository,
-    get_entity_link_repository,
-    get_feature_repository,
 )
 from backend.session_mappings import (
     classify_bash_command,
@@ -58,6 +50,17 @@ _SUBAGENT_TOOL_NAMES = {"task", "agent"}
 logger = logging.getLogger("ccdash.api")
 session_facet_service = SessionFacetService()
 document_query_service = DocumentQueryService()
+
+
+async def _resolve_app_request(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+):
+    return await resolve_application_request(
+        request_context,
+        core_ports,
+        core_ports.storage.db,
+    )
 
 
 def _safe_json(raw: str | dict | None) -> dict:
@@ -502,15 +505,16 @@ async def list_sessions(
     updated_end: str | None = Query(None, description="ISO timestamp for updated-at range end"),
     min_duration: int | None = Query(None, description="Minimum duration in seconds"),
     max_duration: int | None = Query(None, description="Maximum duration in seconds"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return paginated sessions from DB."""
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
-    db = await connection.get_connection()
-    repo = get_session_repository(db)
-    mappings = await load_session_mappings(db, project.id)
+    repo = core_ports.storage.sessions()
+    mappings = await load_session_mappings(core_ports.storage.db, project.id)
     
     # Construct filter dict
     filters = {}
@@ -685,25 +689,7 @@ async def get_session_model_facets(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return normalized model facets for Session Forensics filters."""
-    db = await connection.get_connection()
-    if not isinstance(request_context, RequestContext) and not isinstance(core_ports, CorePorts):
-        project = project_manager.get_active_project()
-        if not project:
-            return []
-        repo = get_session_repository(db)
-        rows = await repo.get_model_facets(project.id, include_subagents=include_subagents)
-        return [
-            SessionModelFacet(
-                raw=str(row.get("model") or ""),
-                modelDisplayName=derive_model_identity(str(row.get("model") or ""))["modelDisplayName"],
-                modelProvider=derive_model_identity(str(row.get("model") or ""))["modelProvider"],
-                modelFamily=derive_model_identity(str(row.get("model") or ""))["modelFamily"],
-                modelVersion=derive_model_identity(str(row.get("model") or ""))["modelVersion"],
-                count=int(row.get("count") or 0),
-            )
-            for row in rows
-        ]
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     rows = await session_facet_service.get_model_facets(
         app_request.context,
         app_request.ports,
@@ -719,22 +705,7 @@ async def get_session_platform_facets(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return platform facets for Session Forensics platform filters."""
-    db = await connection.get_connection()
-    if not isinstance(request_context, RequestContext) and not isinstance(core_ports, CorePorts):
-        project = project_manager.get_active_project()
-        if not project:
-            return []
-        repo = get_session_repository(db)
-        rows = await repo.get_platform_facets(project.id, include_subagents=include_subagents)
-        return [
-            SessionPlatformFacet(
-                platformType=str(row.get("platform_type") or "Claude Code").strip() or "Claude Code",
-                platformVersion=str(row.get("platform_version") or "").strip(),
-                count=int(row.get("count") or 0),
-            )
-            for row in rows
-        ]
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     rows = await session_facet_service.get_platform_facets(
         app_request.context,
         app_request.ports,
@@ -744,12 +715,15 @@ async def get_session_platform_facets(
 
 
 @sessions_router.get("/{session_id}", response_model=AgentSession)
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return a single session by ID with full details."""
-    db = await connection.get_connection()
-    repo = get_session_repository(db)
-    project = project_manager.get_active_project()
-    mappings = await load_session_mappings(db, project.id) if project else []
+    repo = core_ports.storage.sessions()
+    project = resolve_project(request_context, core_ports)
+    mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     
     s = await repo.get_by_id(session_id)
     if not s:
@@ -898,7 +872,7 @@ async def get_session(session_id: str):
     ]
     usage_attribution_details = (
         await get_session_usage_attribution_details(
-            db,
+            core_ports.storage.db,
             project_id=project.id,
             session_id=session_id,
         )
@@ -1046,19 +1020,22 @@ async def get_session(session_id: str):
 
 
 @sessions_router.get("/{session_id}/linked-features", response_model=list[SessionFeatureLink])
-async def get_session_linked_features(session_id: str):
+async def get_session_linked_features(
+    session_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return linked features for a session using the same confidence logic as feature→session links."""
-    db = await connection.get_connection()
-    project = project_manager.get_active_project()
-    mappings = await load_session_mappings(db, project.id) if project else []
+    project = resolve_project(request_context, core_ports)
+    mappings = await load_session_mappings(core_ports.storage.db, project.id) if project else []
     workflow_markers = workflow_command_markers(mappings) if mappings else workflow_command_markers()
-    session_repo = get_session_repository(db)
+    session_repo = core_ports.storage.sessions()
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
-    link_repo = get_entity_link_repository(db)
-    feature_repo = get_feature_repository(db)
+    link_repo = core_ports.storage.entity_links()
+    feature_repo = core_ports.storage.features()
     links = await link_repo.get_links_for("session", session_id, "related")
 
     items: list[SessionFeatureLink] = []
@@ -1146,10 +1123,14 @@ async def get_session_linked_features(session_id: str):
 
 
 @sessions_router.post("/{session_id}/linked-features", response_model=list[SessionFeatureLink])
-async def upsert_session_linked_feature(session_id: str, request: SessionFeatureLinkMutationRequest):
+async def upsert_session_linked_feature(
+    session_id: str,
+    request: SessionFeatureLinkMutationRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Create/update a manual session↔feature link as primary or related."""
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
+    session_repo = core_ports.storage.sessions()
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
@@ -1158,12 +1139,12 @@ async def upsert_session_linked_feature(session_id: str, request: SessionFeature
     if not feature_id:
         raise HTTPException(status_code=400, detail="featureId is required")
 
-    feature_repo = get_feature_repository(db)
+    feature_repo = core_ports.storage.features()
     feature_row = await feature_repo.get_by_id(feature_id)
     if not feature_row:
         raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found")
 
-    link_repo = get_entity_link_repository(db)
+    link_repo = core_ports.storage.entity_links()
     existing_links = await link_repo.get_links_for("session", session_id, "related")
 
     existing_link_for_target: dict[str, Any] | None = None
@@ -1233,14 +1214,22 @@ async def upsert_session_linked_feature(session_id: str, request: SessionFeature
             "metadata_json": json.dumps(next_metadata),
         }
     )
-    return await get_session_linked_features(session_id)
+    return await get_session_linked_features(
+        session_id,
+        request_context=request_context,
+        core_ports=core_ports,
+    )
 
 
 @sessions_router.delete("/{session_id}/linked-features/{feature_id}", response_model=list[SessionFeatureLink])
-async def delete_session_linked_feature(session_id: str, feature_id: str):
+async def delete_session_linked_feature(
+    session_id: str,
+    feature_id: str,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Remove a session↔feature link."""
-    db = await connection.get_connection()
-    session_repo = get_session_repository(db)
+    session_repo = core_ports.storage.sessions()
     session_row = await session_repo.get_by_id(session_id)
     if not session_row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
@@ -1249,7 +1238,7 @@ async def delete_session_linked_feature(session_id: str, feature_id: str):
     if not normalized_feature_id:
         raise HTTPException(status_code=400, detail="feature_id is required")
 
-    link_repo = get_entity_link_repository(db)
+    link_repo = core_ports.storage.entity_links()
     await link_repo.delete_link(
         "feature",
         normalized_feature_id,
@@ -1257,7 +1246,11 @@ async def delete_session_linked_feature(session_id: str, feature_id: str):
         session_id,
         "related",
     )
-    return await get_session_linked_features(session_id)
+    return await get_session_linked_features(
+        session_id,
+        request_context=request_context,
+        core_ports=core_ports,
+    )
 
 
 # ── Documents router ────────────────────────────────────────────────
@@ -1536,8 +1529,7 @@ async def list_documents(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return paginated typed documents with optional filters."""
-    db = await connection.get_connection()
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     filters = {
         "q": q,
         "doc_subtype": doc_subtype,
@@ -1575,8 +1567,7 @@ async def get_documents_catalog(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return DB-backed document facet counts for filters."""
-    db = await connection.get_connection()
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     filters = {
         "q": q,
         "doc_subtype": doc_subtype,
@@ -1603,8 +1594,7 @@ async def get_document_links(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return linked entities for a document."""
-    db = await connection.get_connection()
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     return await document_query_service.get_document_links(
         app_request.context,
         app_request.ports,
@@ -1619,8 +1609,7 @@ async def get_document(
     core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return a single document with full content."""
-    db = await connection.get_connection()
-    app_request = await resolve_application_request(request_context, core_ports, db)
+    app_request = await _resolve_app_request(request_context, core_ports)
     return await document_query_service.get_document(
         app_request.context,
         app_request.ports,
@@ -1630,14 +1619,16 @@ async def get_document(
 
 
 @documents_router.put("/{doc_id}", response_model=DocumentUpdateResponse)
-async def update_document(doc_id: str, req: DocumentUpdateRequest, request: Request):
+async def update_document(
+    doc_id: str,
+    req: DocumentUpdateRequest,
+    request: Request,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Update a plan document through the local path or managed GitHub workspace."""
-    active_project = project_manager.get_active_project()
-    if not active_project:
-        raise HTTPException(status_code=404, detail="No active project")
-
-    db = await connection.get_connection()
-    repo = get_document_repository(db)
+    active_project = resolve_project(request_context, core_ports, required=True)
+    repo = core_ports.storage.documents()
 
     row = await repo.get_by_id(doc_id)
     if not row:
@@ -1658,7 +1649,7 @@ async def update_document(doc_id: str, req: DocumentUpdateRequest, request: Requ
     if not str(source_file):
         raise HTTPException(status_code=400, detail="The document does not have a writable source file.")
 
-    bundle = project_manager.get_active_path_bundle()
+    bundle = core_ports.workspace_registry.resolve_project_paths(active_project)
     source_file = source_file.resolve(strict=False)
     try:
         source_file.relative_to(bundle.plan_docs.path.resolve(strict=False))
@@ -1748,14 +1739,15 @@ tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 async def list_tasks(
     offset: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=5000),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return paginated tasks from DB."""
-    project = project_manager.get_active_project()
+    project = resolve_project(request_context, core_ports)
     if not project:
         return PaginatedResponse(items=[], total=0, offset=offset, limit=limit)
 
-    db = await connection.get_connection()
-    repo = get_task_repository(db)
+    repo = core_ports.storage.tasks()
     tasks = await repo.list_paginated(project.id, offset, limit)
     total = await repo.count(project.id)
 
