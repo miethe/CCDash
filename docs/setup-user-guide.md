@@ -39,6 +39,23 @@ Copy `.env.example` to `.env` and set values as needed:
 - `CCDASH_STARTUP_DEFERRED_REBUILD_DELAY_SECONDS` (default `45`)
 - `CCDASH_STARTUP_DEFERRED_CAPTURE_ANALYTICS` (default `false`)
 
+Telemetry exporter configuration is documented in the dedicated guide:
+
+- [`docs/guides/telemetry-exporter-guide.md`](./guides/telemetry-exporter-guide.md) covers the exporter settings, worker behavior, queue cap, purge behavior, and security rules.
+- [`docs/guides/telemetry-exporter-troubleshooting.md`](./guides/telemetry-exporter-troubleshooting.md) covers common failure modes and recovery steps.
+
+The exporter uses these telemetry-specific environment variables:
+
+- `CCDASH_TELEMETRY_EXPORT_ENABLED` (default `false`; master enable for telemetry export)
+- `CCDASH_SAM_ENDPOINT` (required when export is enabled; SAM ingestion URL)
+- `CCDASH_SAM_API_KEY` (required when export is enabled; SAM authentication key)
+- `CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS` (default `900`; scheduled export cadence)
+- `CCDASH_TELEMETRY_EXPORT_BATCH_SIZE` (default `50`; rows pushed per run)
+- `CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS` (default `30`; outbound request timeout)
+- `CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE` (default `10000`; pending-row cap)
+- `CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS` (default `30`; synced-row retention window)
+- `CCDASH_TELEMETRY_ALLOW_INSECURE` (default `false`; allow non-HTTPS SAM endpoints for local testing only)
+
 ## 3) Install Backend Dependencies
 
 ```bash
