@@ -1,16 +1,25 @@
 ---
 schema_version: 3
 doc_type: implementation_plan
-status: draft
+status: in-progress
 category: integrations
-title: "Implementation Plan: CCDash Telemetry Exporter V1"
-description: "Phased implementation plan for the CCDash Closed-Loop Telemetry Exporter, a background worker system for pushing anonymized workflow metrics to SAM"
+title: 'Implementation Plan: CCDash Telemetry Exporter V1'
+description: Phased implementation plan for the CCDash Closed-Loop Telemetry Exporter,
+  a background worker system for pushing anonymized workflow metrics to SAM
 author: implementation-planner
 created: 2026-03-24
-updated: 2026-03-24
+updated: '2026-03-26'
 feature_slug: ccdash-telemetry-exporter
 prd_ref: docs/project_plans/PRDs/integrations/ccdash-telemetry-exporter.md
-tags: [implementation-plan, ccdash, telemetry, exporter, sam, integration, background-jobs, observability]
+tags:
+- implementation-plan
+- ccdash
+- telemetry
+- exporter
+- sam
+- integration
+- background-jobs
+- observability
 ---
 
 # Implementation Plan: CCDash Telemetry Exporter V1

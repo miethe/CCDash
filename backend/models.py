@@ -1,9 +1,12 @@
 """Pydantic models matching the frontend TypeScript types."""
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from typing import Any, Generic, Literal, Optional, TypeVar
+from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 T = TypeVar("T")
 
@@ -234,6 +237,79 @@ class AgentSession(BaseModel):
     usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+
+
+class ExecutionOutcomePayload(BaseModel):
+    event_id: UUID
+    project_slug: str = Field(min_length=1)
+    session_id: UUID
+    workflow_type: Optional[str] = None
+    model_family: str = Field(min_length=1)
+    token_input: int = Field(ge=0)
+    token_output: int = Field(ge=0)
+    token_cache_read: Optional[int] = Field(default=None, ge=0)
+    token_cache_write: Optional[int] = Field(default=None, ge=0)
+    cost_usd: float = Field(ge=0.0)
+    tool_call_count: int = Field(ge=0)
+    tool_call_success_count: Optional[int] = Field(default=None, ge=0)
+    duration_seconds: int = Field(ge=0)
+    message_count: int = Field(ge=0)
+    outcome_status: Literal["completed", "interrupted", "errored"]
+    test_pass_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    context_utilization_peak: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    feature_slug: Optional[str] = None
+    timestamp: datetime
+    ccdash_version: str = Field(min_length=1)
+
+    @field_validator("project_slug", "workflow_type", "model_family", "feature_slug", "ccdash_version", mode="before")
+    @classmethod
+    def strip_strings(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("project_slug", "model_family", "ccdash_version")
+    @classmethod
+    def require_non_empty_strings(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("value must not be empty")
+        return stripped
+
+    @field_validator("token_cache_read", "token_cache_write", "tool_call_success_count", mode="after")
+    @classmethod
+    def omit_zero_optional_counts(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            return None
+        return value
+
+    @field_validator("workflow_type", "feature_slug", mode="after")
+    @classmethod
+    def omit_empty_optionals(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            return None
+        return value
+
+    @field_validator("timestamp")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp must include timezone information")
+        return value.astimezone(timezone.utc)
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def event_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"schema_version": "1", "events": [self.event_dict()]},
+            separators=(",", ":"),
+        )
 
 
 SessionUsageTokenFamily = Literal[

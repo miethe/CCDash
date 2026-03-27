@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 
+from pydantic import BaseModel, Field, model_validator
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -58,6 +60,59 @@ INTEGRATIONS_SETTINGS_FILE = Path(
 REPO_WORKSPACE_CACHE_DIR = Path(
     os.getenv("CCDASH_REPO_WORKSPACE_CACHE_DIR", str(PROJECT_ROOT / ".ccdash-repo-cache"))
 ).expanduser()
+
+# Telemetry exporter
+CCDASH_TELEMETRY_EXPORT_ENABLED = _env_bool("CCDASH_TELEMETRY_EXPORT_ENABLED", False)
+CCDASH_SAM_ENDPOINT = os.getenv("CCDASH_SAM_ENDPOINT", "").strip()
+CCDASH_SAM_API_KEY = os.getenv("CCDASH_SAM_API_KEY", "").strip()
+CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = _env_int("CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS", 900)
+CCDASH_TELEMETRY_EXPORT_BATCH_SIZE = _env_int("CCDASH_TELEMETRY_EXPORT_BATCH_SIZE", 50)
+CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS = _env_int("CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS", 30)
+CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE = _env_int("CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE", 10000)
+CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS = _env_int("CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS", 30)
+CCDASH_TELEMETRY_ALLOW_INSECURE = _env_bool("CCDASH_TELEMETRY_ALLOW_INSECURE", False)
+CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
+
+
+class TelemetryExporterConfig(BaseModel):
+    """Validated telemetry exporter runtime configuration."""
+
+    enabled: bool = False
+    sam_endpoint: str = ""
+    sam_api_key: str = ""
+    interval_seconds: int = Field(default=900, ge=60)
+    batch_size: int = Field(default=50, ge=1, le=500)
+    timeout_seconds: int = Field(default=30, ge=1)
+    max_queue_size: int = Field(default=10000, ge=1)
+    queue_retention_days: int = Field(default=30, ge=1)
+    allow_insecure: bool = False
+    ccdash_version: str = Field(default="0.1.0", min_length=1)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.sam_endpoint and self.sam_api_key)
+
+    @model_validator(mode="after")
+    def validate_enabled_requirements(self) -> "TelemetryExporterConfig":
+        if self.enabled and not self.sam_endpoint:
+            raise ValueError("CCDASH_SAM_ENDPOINT is required when telemetry export is enabled")
+        if self.enabled and not self.sam_api_key:
+            raise ValueError("CCDASH_SAM_API_KEY is required when telemetry export is enabled")
+        return self
+
+
+TELEMETRY_EXPORTER_CONFIG = TelemetryExporterConfig(
+    enabled=CCDASH_TELEMETRY_EXPORT_ENABLED,
+    sam_endpoint=CCDASH_SAM_ENDPOINT,
+    sam_api_key=CCDASH_SAM_API_KEY,
+    interval_seconds=CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS,
+    batch_size=CCDASH_TELEMETRY_EXPORT_BATCH_SIZE,
+    timeout_seconds=CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS,
+    max_queue_size=CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE,
+    queue_retention_days=CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS,
+    allow_insecure=CCDASH_TELEMETRY_ALLOW_INSECURE,
+    ccdash_version=CCDASH_VERSION,
+)
 
 # Startup sync tuning
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
