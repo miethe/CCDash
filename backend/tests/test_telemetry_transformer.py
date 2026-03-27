@@ -140,6 +140,12 @@ class AnonymizationVerifierTests(unittest.TestCase):
         with self.assertRaises(AnonymizationError):
             AnonymizationVerifier.verify(payload)
 
+    def test_rejects_unix_path_prefix_in_string(self) -> None:
+        payload = self._valid_payload()
+        payload["feature_slug"] = "/srv/workspace contains extra text"
+        with self.assertRaises(AnonymizationError):
+            AnonymizationVerifier.verify(payload)
+
     def test_rejects_windows_absolute_paths(self) -> None:
         payload = self._valid_payload()
         payload["workflow_type"] = r"C:\Users\miethe\project"
@@ -155,6 +161,12 @@ class AnonymizationVerifierTests(unittest.TestCase):
     def test_rejects_sensitive_field_names(self) -> None:
         payload = self._valid_payload()
         payload["api_token"] = "secret"
+        with self.assertRaises(AnonymizationError):
+            AnonymizationVerifier.verify(payload)
+
+    def test_rejects_key_field_names(self) -> None:
+        payload = self._valid_payload()
+        payload["api_key"] = "masked"
         with self.assertRaises(AnonymizationError):
             AnonymizationVerifier.verify(payload)
 
@@ -191,6 +203,18 @@ class AnonymizationVerifierTests(unittest.TestCase):
     def test_rejects_nested_paths_in_lists(self) -> None:
         payload = self._valid_payload()
         payload["nested"] = {"items": ["/tmp/private.log"]}
+        with self.assertRaises(AnonymizationError):
+            AnonymizationVerifier.verify(payload)
+
+    def test_rejects_username_fields(self) -> None:
+        payload = self._valid_payload()
+        payload["username"] = "miethe"
+        with self.assertRaises(AnonymizationError):
+            AnonymizationVerifier.verify(payload)
+
+    def test_rejects_owner_fields(self) -> None:
+        payload = self._valid_payload()
+        payload["owner"] = "miethe"
         with self.assertRaises(AnonymizationError):
             AnonymizationVerifier.verify(payload)
 

@@ -12,8 +12,8 @@ from backend.model_identity import model_family_name
 from backend.models import ExecutionOutcomePayload
 
 _EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_UNIX_PATH_PATTERN = re.compile(r"^/(?:[^/\s]+/)*[^/\s]+$")
-_WINDOWS_PATH_PATTERN = re.compile(r"^[A-Za-z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]+$")
+_UNIX_PATH_PATTERN = re.compile(r"^/")
+_WINDOWS_PATH_PATTERN = re.compile(r"^[A-Za-z]:\\")
 _HOSTNAME_PATTERN = re.compile(
     r"^(?:localhost|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|[A-Za-z0-9-]+\.local)(?::\d{1,5})?$",
     re.IGNORECASE,
@@ -23,7 +23,8 @@ _STACK_TRACE_PATTERNS = [
     re.compile(r'File ".*", line \d+', re.IGNORECASE),
     re.compile(r"\bat\s+[A-Za-z0-9_$./<>:-]+\s+\(", re.IGNORECASE),
 ]
-_SENSITIVE_FIELD_TOKENS = {"password", "token", "secret", "credential", "auth"}
+_SENSITIVE_FIELD_TOKENS = {"password", "token", "secret", "key", "credential", "auth"}
+_USERNAME_FIELD_TOKENS = {"user", "username", "owner", "author", "login"}
 _ALLOWED_FIELD_NAMES = {
     "token_input",
     "token_output",
@@ -190,6 +191,8 @@ class AnonymizationVerifier:
                 key_text = _normalize_string(key).lower()
                 if key_text not in _ALLOWED_FIELD_NAMES and any(token in key_text for token in _SENSITIVE_FIELD_TOKENS):
                     raise AnonymizationError(f"sensitive field name blocked at {'.'.join(path + [str(key)])}")
+                if any(token in key_text for token in _USERNAME_FIELD_TOKENS):
+                    raise AnonymizationError(f"username field blocked at {'.'.join(path + [str(key)])}")
                 AnonymizationVerifier._walk(item, path + [str(key)])
             return
         if isinstance(value, list):
