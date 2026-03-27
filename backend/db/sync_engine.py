@@ -33,6 +33,7 @@ from backend.parsers.test_adapters import parse_test_artifact
 from backend.services.test_ingest import ingest_run as ingest_test_run
 from backend.services.test_config import ResolvedTestSource
 from backend.services.pricing_catalog import PricingCatalogService
+from backend.services.telemetry_transformer import TelemetryTransformer
 from backend.services.session_observability import (
     calculate_context_utilization,
     derive_context_observability,
@@ -81,6 +82,7 @@ from backend.db.factory import (
     get_tag_repository,
     get_feature_repository, # Added in factory
     get_pricing_catalog_repository,
+    get_telemetry_queue_repository,
 )
 
 logger = logging.getLogger("ccdash.sync")
@@ -1182,6 +1184,8 @@ class SyncEngine:
         self.tag_repo = get_tag_repository(db)
         self.analytics_repo = get_analytics_repository(db)
         self.session_usage_repo = get_session_usage_repository(db)
+        self.telemetry_queue_repo = get_telemetry_queue_repository(db)
+        self.telemetry_transformer = TelemetryTransformer()
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
         self.pricing_catalog_service = PricingCatalogService(self.pricing_catalog_repo)
         self._ops_lock = asyncio.Lock()
@@ -1312,6 +1316,33 @@ class SyncEngine:
                 event["payload_json"],
             )
         return len(events)
+
+    async def _maybe_enqueue_telemetry_export(self, project_id: str, session_payload: dict[str, Any]) -> None:
+        session_id = _first_non_empty(session_payload, "id")
+        if not session_id:
+            return
+
+        session_status = str(session_payload.get("status") or "").strip().lower()
+        ended_at = _first_non_empty(session_payload, "endedAt", "ended_at")
+        if session_status in {"active", "running"} and not ended_at:
+            return
+
+        try:
+            payload = self.telemetry_transformer.transform_session(
+                session_payload,
+                {"project_slug": project_id},
+            )
+            await self.telemetry_queue_repo.enqueue(
+                session_id,
+                project_id,
+                payload.event_dict(),
+                queue_id=str(payload.event_id),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue session for telemetry export",
+                extra={"project_id": project_id, "session_id": session_id},
+            )
 
     async def _derive_session_observability_fields(
         self,
@@ -3662,6 +3693,7 @@ class SyncEngine:
                         files,
                         source="sync",
                     )
+                    await self._maybe_enqueue_telemetry_export(project_id, session_dict)
                     append_published = await _publish_session_transcript_appends(
                         session_dict,
                         previous_logs=previous_logs,

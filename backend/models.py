@@ -1069,6 +1069,43 @@ class GitHubWriteCapabilityResponse(BaseModel):
     status: GitHubProbeResult = Field(default_factory=GitHubProbeResult)
 
 
+class TelemetryQueueStatsResponse(BaseModel):
+    pending: int = 0
+    synced: int = 0
+    failed: int = 0
+    abandoned: int = 0
+    total: int = 0
+
+
+class TelemetryExportSettings(BaseModel):
+    enabled: bool = False
+    updatedAt: str = ""
+
+
+class TelemetryExportSettingsUpdateRequest(BaseModel):
+    enabled: bool = False
+
+
+class TelemetryExportStatusResponse(BaseModel):
+    enabled: bool = False
+    configured: bool = False
+    samEndpointMasked: str = ""
+    queueStats: TelemetryQueueStatsResponse = Field(default_factory=TelemetryQueueStatsResponse)
+    lastPushTimestamp: str = ""
+    eventsPushed24h: int = 0
+    lastError: str = ""
+    errorSeverity: Literal["info", "warning", "error", ""] = ""
+    envLocked: bool = False
+    persistedEnabled: bool = False
+
+
+class PushNowResponse(BaseModel):
+    success: bool = False
+    batchSize: int = 0
+    durationMs: int = 0
+    error: str = ""
+
+
 class ProjectResolvedPathDTO(BaseModel):
     field: ProjectPathField
     sourceKind: PathSourceKind

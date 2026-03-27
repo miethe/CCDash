@@ -11,6 +11,7 @@ from backend import config
 from backend.application.ports import CorePorts
 from backend.db.file_watcher import file_watcher
 from backend.runtime.profiles import RuntimeProfile
+from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
 from backend.services.test_config import effective_test_flags, resolve_test_sources
 
@@ -21,6 +22,7 @@ logger = logging.getLogger("ccdash.runtime.jobs")
 class RuntimeJobState:
     sync_task: asyncio.Task[None] | None = None
     analytics_snapshot_task: asyncio.Task[None] | None = None
+    telemetry_export_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
 
 
@@ -33,10 +35,12 @@ class RuntimeJobAdapter:
         profile: RuntimeProfile,
         ports: CorePorts,
         sync_engine: Any,
+        telemetry_exporter_job: TelemetryExporterJob | None = None,
     ) -> None:
         self.profile = profile
         self.ports = ports
         self.sync = sync_engine
+        self.telemetry_exporter_job = telemetry_exporter_job
         self.state = RuntimeJobState()
 
     async def start(self) -> RuntimeJobState:
@@ -82,6 +86,9 @@ class RuntimeJobAdapter:
             analytics_task = self._start_analytics_snapshot_task()
             if analytics_task is not None:
                 self.state.analytics_snapshot_task = analytics_task
+            telemetry_task = self._start_telemetry_export_task()
+            if telemetry_task is not None:
+                self.state.telemetry_export_task = telemetry_task
 
         return self.state
 
@@ -102,6 +109,14 @@ class RuntimeJobAdapter:
                 pass
             self.state.analytics_snapshot_task = None
 
+        if self.state.telemetry_export_task is not None:
+            self.state.telemetry_export_task.cancel()
+            try:
+                await self.state.telemetry_export_task
+            except asyncio.CancelledError:
+                pass
+            self.state.telemetry_export_task = None
+
         if self.state.watcher_started:
             await file_watcher.stop()
             self.state.watcher_started = False
@@ -112,6 +127,9 @@ class RuntimeJobAdapter:
             "startupSync": "running" if self.state.sync_task is not None and not self.state.sync_task.done() else "idle",
             "analyticsSnapshots": "running"
             if self.state.analytics_snapshot_task is not None and not self.state.analytics_snapshot_task.done()
+            else "idle",
+            "telemetryExports": "running"
+            if self.state.telemetry_export_task is not None and not self.state.telemetry_export_task.done()
             else "idle",
             "jobsEnabled": self.profile.capabilities.jobs,
         }
@@ -219,4 +237,29 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_analytics_snapshots(),
             name=f"ccdash:{self.profile.name}:analytics-snapshots",
+        )
+
+    def _start_telemetry_export_task(self) -> asyncio.Task[None] | None:
+        if self.profile.name != "worker" or self.telemetry_exporter_job is None:
+            return None
+        interval_seconds = max(60, int(getattr(config, "CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS", 0)))
+
+        async def _run_periodic_telemetry_exports() -> None:
+            while True:
+                try:
+                    await self.telemetry_exporter_job.execute()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Periodic telemetry export failed")
+                await asyncio.sleep(interval_seconds)
+
+        logger.info(
+            "Started periodic telemetry export job (profile=%s interval=%ss)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_telemetry_exports(),
+            name=f"ccdash:{self.profile.name}:telemetry-export",
         )

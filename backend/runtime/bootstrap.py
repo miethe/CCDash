@@ -20,6 +20,7 @@ from backend.routers.live import live_router
 from backend.routers.pricing import pricing_router
 from backend.routers.projects import projects_router
 from backend.routers.session_mappings import session_mappings_router
+from backend.routers.telemetry import telemetry_router
 from backend.routers.test_visualizer import test_visualizer_router
 from backend.runtime.container import RuntimeContainer
 from backend.runtime.dependencies import get_request_context
@@ -93,4 +94,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(live_router)
     app.include_router(integrations_router)
     app.include_router(github_integrations_router)
+    app.include_router(telemetry_router)
     app.include_router(pricing_router)

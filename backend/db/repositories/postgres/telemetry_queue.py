@@ -28,6 +28,21 @@ def _parse_payload(payload_json: Any) -> Any:
     return payload_json
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 class PostgresTelemetryQueueRepository:
     """Postgres-backed outbound telemetry queue storage."""
 
@@ -69,13 +84,20 @@ class PostgresTelemetryQueueRepository:
             """
             SELECT *
             FROM outbound_telemetry_queue
-            WHERE status = 'pending'
-            ORDER BY created_at ASC, id ASC
+            WHERE status IN ('pending', 'failed')
+            ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END, created_at ASC, id ASC
             LIMIT $1
             """,
-            size,
+            max(size * 10, 200),
         )
-        return [self._row_to_dict(row) for row in rows]
+        eligible: list[dict[str, Any]] = []
+        for row in rows:
+            item = self._row_to_dict(row)
+            if item.get("status") == "pending" or self._retry_due(item):
+                eligible.append(item)
+            if len(eligible) >= size:
+                break
+        return eligible
 
     async def mark_synced(self, queue_id: str) -> dict[str, Any] | None:
         await self.db.execute(
@@ -134,20 +156,46 @@ class PostgresTelemetryQueueRepository:
             )
         return await self._get_by_id(queue_id)
 
-    async def mark_abandoned(self, queue_id: str, error: str) -> dict[str, Any] | None:
-        await self.db.execute(
-            """
-            UPDATE outbound_telemetry_queue
-            SET status = 'abandoned',
-                last_attempt_at = $1,
-                attempt_count = attempt_count + 1,
-                last_error = $2
-            WHERE id = $3
-            """,
-            _now_iso(),
-            error,
-            queue_id,
-        )
+    async def mark_abandoned(
+        self,
+        queue_id: str,
+        error: str,
+        attempt_count: int | None = None,
+    ) -> dict[str, Any] | None:
+        now = _now_iso()
+        if attempt_count is None:
+            await self.db.execute(
+                """
+                UPDATE outbound_telemetry_queue
+                SET status = 'abandoned',
+                    last_attempt_at = $1,
+                    attempt_count = attempt_count + 1,
+                    last_error = $2
+                WHERE id = $3
+                """,
+                now,
+                error,
+                queue_id,
+            )
+        else:
+            next_attempt = max(1, int(attempt_count))
+            await self.db.execute(
+                """
+                UPDATE outbound_telemetry_queue
+                SET status = 'abandoned',
+                    last_attempt_at = $1,
+                    attempt_count = CASE
+                        WHEN $2 > attempt_count THEN $2
+                        ELSE attempt_count + 1
+                    END,
+                    last_error = $3
+                WHERE id = $4
+                """,
+                now,
+                next_attempt,
+                error,
+                queue_id,
+            )
         return await self._get_by_id(queue_id)
 
     async def get_queue_stats(self) -> dict[str, Any]:
@@ -163,12 +211,44 @@ class PostgresTelemetryQueueRepository:
         synced = counts.get("synced", 0)
         failed = counts.get("failed", 0)
         abandoned = counts.get("abandoned", 0)
+        last_push_row = await self.db.fetchrow(
+            """
+            SELECT last_attempt_at
+            FROM outbound_telemetry_queue
+            WHERE status = 'synced' AND last_attempt_at IS NOT NULL
+            ORDER BY last_attempt_at DESC
+            LIMIT 1
+            """
+        )
+        pushed_row = await self.db.fetchrow(
+            """
+            SELECT COUNT(*) AS count
+            FROM outbound_telemetry_queue
+            WHERE status = 'synced' AND last_attempt_at IS NOT NULL
+              AND (last_attempt_at::timestamptz) >= ($1::timestamptz)
+            """,
+            (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),
+        )
+        error_row = await self.db.fetchrow(
+            """
+            SELECT status, last_error, COALESCE(last_attempt_at, created_at) AS error_at
+            FROM outbound_telemetry_queue
+            WHERE last_error IS NOT NULL AND BTRIM(last_error) <> ''
+            ORDER BY COALESCE(last_attempt_at, created_at) DESC
+            LIMIT 1
+            """
+        )
         return {
             "pending": pending,
             "synced": synced,
             "failed": failed,
             "abandoned": abandoned,
             "total": pending + synced + failed + abandoned,
+            "last_push_timestamp": str(last_push_row["last_attempt_at"]) if last_push_row else "",
+            "events_pushed_24h": int(pushed_row["count"]) if pushed_row else 0,
+            "last_error_status": str(error_row["status"]) if error_row else "",
+            "last_error": str(error_row["last_error"]) if error_row else "",
+            "last_error_at": str(error_row["error_at"]) if error_row else "",
         }
 
     async def purge_old_synced(self, retention_days: int) -> int:
@@ -202,3 +282,12 @@ class PostgresTelemetryQueueRepository:
         data["payload_json"] = _parse_payload(data.get("payload_json"))
         return data
 
+    def _retry_due(self, row: dict[str, Any]) -> bool:
+        if str(row.get("status") or "") != "failed":
+            return False
+        attempt_count = max(1, int(row.get("attempt_count") or 1))
+        delay_seconds = min(60 * (2 ** max(0, attempt_count - 1)), 14400)
+        last_attempt = _parse_timestamp(row.get("last_attempt_at"))
+        if last_attempt is None:
+            return True
+        return (datetime.now(timezone.utc) - last_attempt).total_seconds() >= delay_seconds
