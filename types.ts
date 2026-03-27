@@ -1582,6 +1582,38 @@ export interface GitHubIntegrationSettingsResponse {
   writeEnabled: boolean;
 }
 
+export interface TelemetryQueueStats {
+  pending: number;
+  synced: number;
+  failed: number;
+  abandoned: number;
+  total: number;
+}
+
+export interface TelemetryExportSettingsUpdateRequest {
+  enabled: boolean;
+}
+
+export interface TelemetryExportStatus {
+  enabled: boolean;
+  configured: boolean;
+  samEndpointMasked: string;
+  queueStats: TelemetryQueueStats;
+  lastPushTimestamp: string;
+  eventsPushed24h: number;
+  lastError: string;
+  errorSeverity: 'info' | 'warning' | 'error' | '';
+  envLocked: boolean;
+  persistedEnabled: boolean;
+}
+
+export interface TelemetryPushNowResponse {
+  success: boolean;
+  batchSize: number;
+  durationMs: number;
+  error: string;
+}
+
 export interface GitHubProbeResult {
   state: 'idle' | 'success' | 'warning' | 'error';
   message: string;

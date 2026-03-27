@@ -7,6 +7,9 @@ import type {
   Project,
   ProjectTask,
   TaskStatus,
+  TelemetryExportSettingsUpdateRequest,
+  TelemetryExportStatus,
+  TelemetryPushNowResponse,
 } from '../types';
 import type { PaginatedResponse, SessionFilters } from '../contexts/dataContextShared';
 
@@ -38,6 +41,9 @@ export interface ApiClient {
   updateFeatureStatus(featureId: string, status: string): Promise<Feature>;
   updatePhaseStatus(featureId: string, phaseId: string, status: string): Promise<Feature>;
   updateTaskStatus(featureId: string, phaseId: string, taskId: string, status: TaskStatus): Promise<Feature>;
+  getTelemetryExportStatus(): Promise<TelemetryExportStatus>;
+  updateTelemetryExportSettings(update: TelemetryExportSettingsUpdateRequest): Promise<TelemetryExportStatus>;
+  triggerTelemetryPushNow(): Promise<TelemetryPushNowResponse>;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -174,6 +180,24 @@ export function createApiClient(): ApiClient {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
+      });
+    },
+
+    async getTelemetryExportStatus() {
+      return requestJson<TelemetryExportStatus>('/telemetry/export/status');
+    },
+
+    async updateTelemetryExportSettings(update) {
+      return requestJson<TelemetryExportStatus>('/telemetry/export/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      });
+    },
+
+    async triggerTelemetryPushNow() {
+      return requestJson<TelemetryPushNowResponse>('/telemetry/export/push-now', {
+        method: 'POST',
       });
     },
   };
