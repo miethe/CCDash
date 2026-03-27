@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 import asyncpg
+
+from backend import config
+
+
+logger = logging.getLogger("ccdash.telemetry.queue")
 
 
 def _now_iso() -> str:
@@ -56,11 +62,28 @@ class PostgresTelemetryQueueRepository:
         payload: dict[str, Any] | str,
         queue_id: str | None = None,
     ) -> dict[str, Any]:
+        existing = await self._get_by_session_id(session_id)
+        if existing is not None:
+            return existing
+
         payload_json = _serialize_payload(payload)
         if not queue_id and isinstance(payload, dict):
             queue_id = str(payload.get("event_id") or "").strip() or None
         queue_id = queue_id or str(uuid4())
         now = _now_iso()
+
+        pending_size = await self._count_pending()
+        max_queue_size = max(1, int(config.TELEMETRY_EXPORTER_CONFIG.max_queue_size))
+        if pending_size >= max_queue_size:
+            logger.warning(
+                "Dropping telemetry enqueue because pending queue is full",
+                extra={
+                    "session_id": session_id,
+                    "pending_queue_size": pending_size,
+                    "max_queue_size": max_queue_size,
+                },
+            )
+            return {}
 
         await self.db.execute(
             """
@@ -276,6 +299,12 @@ class PostgresTelemetryQueueRepository:
             session_id,
         )
         return self._row_to_dict(row) if row else None
+
+    async def _count_pending(self) -> int:
+        row = await self.db.fetchrow(
+            "SELECT COUNT(*) AS count FROM outbound_telemetry_queue WHERE status = 'pending'"
+        )
+        return int(row["count"]) if row else 0
 
     def _row_to_dict(self, row: asyncpg.Record) -> dict[str, Any]:
         data = dict(row)
