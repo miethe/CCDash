@@ -147,6 +147,28 @@ class PricingCatalogRepository(Protocol):
     async def delete_entry(self, project_id: str, platform_type: str, model_id: str = "") -> None: ...
 
 
+@runtime_checkable
+class TelemetryQueueRepository(Protocol):
+    async def enqueue(
+        self,
+        session_id: str,
+        project_slug: str,
+        payload: dict[str, Any] | str,
+        queue_id: str | None = None,
+    ) -> dict[str, Any]: ...
+    async def fetch_pending_batch(self, batch_size: int) -> list[dict[str, Any]]: ...
+    async def mark_synced(self, queue_id: str) -> dict[str, Any] | None: ...
+    async def mark_failed(
+        self,
+        queue_id: str,
+        error: str,
+        attempt_count: int | None = None,
+    ) -> dict[str, Any] | None: ...
+    async def mark_abandoned(self, queue_id: str, error: str) -> dict[str, Any] | None: ...
+    async def get_queue_stats(self) -> dict[str, Any]: ...
+    async def purge_old_synced(self, retention_days: int) -> int: ...
+
+
 # ── Analytics Repository ────────────────────────────────────────────
 
 @runtime_checkable

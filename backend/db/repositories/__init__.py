@@ -17,6 +17,7 @@ from .links import (
 )
 from .analytics import SqliteAnalyticsRepository
 from .execution import SqliteExecutionRepository
+from .telemetry_queue import SqliteTelemetryQueueRepository
 
 __all__ = [
     "SqliteSessionRepository",
@@ -34,4 +35,5 @@ __all__ = [
     "SqliteTagRepository",
     "SqliteAnalyticsRepository",
     "SqliteExecutionRepository",
+    "SqliteTelemetryQueueRepository",
 ]

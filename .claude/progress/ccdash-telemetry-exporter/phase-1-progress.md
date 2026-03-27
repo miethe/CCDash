@@ -6,7 +6,7 @@ prd: ccdash-telemetry-exporter
 feature_slug: ccdash-telemetry-exporter
 phase: 1
 phase_title: Foundation - Queue, Models, and Transformation
-status: pending
+status: in_progress
 created: 2026-03-24
 updated: '2026-03-26'
 prd_ref: docs/project_plans/PRDs/integrations/ccdash-telemetry-exporter.md
@@ -38,7 +38,7 @@ tasks:
   - backend/db/migrations.py
 - id: P1-T3
   title: Implement TelemetryQueueRepository
-  status: pending
+  status: in_progress
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -67,7 +67,7 @@ tasks:
   - backend/models.py
 - id: P1-T6
   title: Implement TelemetryTransformer service
-  status: pending
+  status: in_progress
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -77,7 +77,7 @@ tasks:
   - backend/services/telemetry_transformer.py
 - id: P1-T7
   title: Implement AnonymizationVerifier guard
-  status: pending
+  status: in_progress
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -121,7 +121,7 @@ parallelization:
   - P1-T9
 total_tasks: 9
 completed_tasks: 3
-in_progress_tasks: 0
+in_progress_tasks: 3
 blocked_tasks: 0
 progress: 33
 ---
