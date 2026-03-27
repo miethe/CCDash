@@ -99,6 +99,7 @@ backend/.venv/bin/python -m pytest backend/tests/ -k "test_model_identity" -v
 - **Config via env vars**: All backend config is in `backend/config.py` reading from `CCDASH_*` env vars. Copy `.env.example` for local overrides.
 - **Frontend types**: All shared interfaces are in root `types.ts`. Import from `@/types`.
 - **Router→Service→Repository pattern**: Backend follows layered architecture. Routers call services/repositories, never raw SQL.
+- **Telemetry exporter**: Worker-side export logic lives in `backend/services/integrations/telemetry_exporter.py`, is registered from `backend/runtime/container.py`, and emits observability data through `backend/observability/otel.py`. Operator guidance lives in `docs/guides/telemetry-exporter-guide.md` and `docs/guides/telemetry-exporter-troubleshooting.md`.
 - **Session data**: Agent session logs are JSONL files parsed by `backend/parsers/sessions.py`.
 - **Document linking**: `backend/document_linking.py` handles cross-referencing between sessions, documents, features, and tasks.
 - **Project switching**: Multi-project support via `projects.json` and `backend/project_manager.py`. Each project has its own session/doc/progress paths.
