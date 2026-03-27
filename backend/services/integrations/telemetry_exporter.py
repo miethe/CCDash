@@ -148,6 +148,7 @@ class TelemetryExportCoordinator:
         }
         with observability.start_span("telemetry.export.batch", attributes):
             outcome = await self._push_batch(batch, trigger=trigger, run_id=run_id, started=started)
+        await self._purge_old_synced_rows()
         return outcome
 
     async def _push_batch(
@@ -239,3 +240,15 @@ class TelemetryExportCoordinator:
         if parsed.port:
             return f"{parsed.hostname}:{parsed.port}"
         return parsed.hostname
+
+    async def _purge_old_synced_rows(self) -> None:
+        purged = await self.repository.purge_old_synced(self.runtime_config.queue_retention_days)
+        if purged <= 0:
+            return
+        logger.info(
+            "Telemetry export purge complete",
+            extra={
+                "retention_days": self.runtime_config.queue_retention_days,
+                "purged_rows": purged,
+            },
+        )

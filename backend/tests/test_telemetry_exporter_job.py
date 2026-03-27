@@ -300,6 +300,69 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         gate.set()
         await first
 
+    async def test_execute_purges_old_synced_rows_after_batch_run(self) -> None:
+        old_item = await self._insert_queue_event("session-old")
+        fresh_item = await self._insert_queue_event("session-fresh")
+        self.coordinator._client = _StubClient((True, None))
+
+        outcome = await self.coordinator.execute(trigger="scheduled", raise_on_busy=False)
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.outcome, "success")
+        await self.db.execute(
+            """
+            UPDATE outbound_telemetry_queue
+            SET created_at = ?, last_attempt_at = ?
+            WHERE id = ?
+            """,
+            ("2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00", old_item["id"]),
+        )
+        await self.db.execute(
+            """
+            UPDATE outbound_telemetry_queue
+            SET created_at = ?, last_attempt_at = ?, status = 'synced'
+            WHERE id = ?
+            """,
+            ("2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00", old_item["id"]),
+        )
+        await self.db.execute(
+            """
+            UPDATE outbound_telemetry_queue
+            SET created_at = ?, last_attempt_at = ?, status = 'synced'
+            WHERE id = ?
+            """,
+            ("2026-03-20T00:00:00+00:00", "2026-03-20T00:00:00+00:00", fresh_item["id"]),
+        )
+        await self.db.commit()
+
+        await self._insert_queue_event("session-next")
+        self.coordinator._client = _StubClient((True, None))
+
+        second = await self.coordinator.execute(trigger="scheduled", raise_on_busy=False)
+
+        self.assertTrue(second.success)
+        self.assertIsNone(await self.repo._get_by_id(old_item["id"]))  # noqa: SLF001
+        self.assertIsNotNone(await self.repo._get_by_id(fresh_item["id"]))  # noqa: SLF001
+
+    async def test_execute_does_not_purge_when_run_is_idle(self) -> None:
+        old_item = await self._insert_queue_event("session-old-idle")
+        await self.repo.mark_synced(old_item["id"])
+        await self.db.execute(
+            """
+            UPDATE outbound_telemetry_queue
+            SET created_at = ?, last_attempt_at = ?
+            WHERE id = ?
+            """,
+            ("2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00", old_item["id"]),
+        )
+        await self.db.commit()
+
+        outcome = await self.coordinator.execute(trigger="scheduled", raise_on_busy=False)
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.outcome, "idle")
+        self.assertIsNotNone(await self.repo._get_by_id(old_item["id"]))  # noqa: SLF001
+
 
 class TelemetryExporterJobTests(unittest.IsolatedAsyncioTestCase):
     async def test_job_delegates_to_coordinator_with_scheduled_trigger(self) -> None:
