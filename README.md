@@ -111,6 +111,7 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **Alert Rules Engine**: Persisted threshold-based alerts with activate/deactivate toggle controls
 - Projects Tab: Per-project path editors, typed source selection, and testing configuration
 - Integrations Tab: SkillMeat and GitHub sub-tabs for token validation and workspace controls
+- Telemetry Exporter: Worker-side outbound queue, SAM push controls, queue-depth visibility, and disabled-state monitoring. See the operator guides for [setup and usage](docs/guides/telemetry-exporter-guide.md) and [troubleshooting](docs/guides/telemetry-exporter-troubleshooting.md).
 - AI Pricing Catalog: Global platform pricing with provider sync, exact-model rows, and manual overrides
 
 ### Execution Workbench
@@ -251,6 +252,8 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 - **`backend.main:app`** — Hosted-style API entrypoint with background work disabled; suitable for containerized deployments.
 
 Copy `.env.example` to `.env` for local overrides. All variables are prefixed `CCDASH_*`.
+
+Telemetry exporter configuration lives in the `CCDASH_TELEMETRY_*` and `CCDASH_SAM_*` env vars documented in the operator guides.
 
 For full setup, troubleshooting, and deployment guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).
 
