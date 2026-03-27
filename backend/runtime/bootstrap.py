@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +65,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
     def health(
         _: Request,
         _request_context: RequestContext = Depends(get_request_context),
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         runtime_status = container.runtime_status()
         return {
             "status": "ok",
@@ -73,6 +74,14 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "profile": str(runtime_status.get("profile", runtime_profile.name)),
             "startupSync": str(runtime_status.get("startupSync", "idle")),
             "analyticsSnapshots": str(runtime_status.get("analyticsSnapshots", "idle")),
+            "storageProfile": str(runtime_status.get("storageProfile", "")),
+            "storageBackend": str(runtime_status.get("storageBackend", "")),
+            "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
+            "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
+            "sharedPostgresEnabled": bool(runtime_status.get("sharedPostgresEnabled", False)),
+            "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
+            "storageSchema": str(runtime_status.get("storageSchema", "")),
+            "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
         }
 
     return app

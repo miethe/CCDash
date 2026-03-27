@@ -28,6 +28,7 @@ logger = logging.getLogger("ccdash.runtime")
 class RuntimeContainer:
     def __init__(self, *, profile: RuntimeProfile) -> None:
         self.profile = profile
+        self.storage_profile = config.STORAGE_PROFILE
         self.db: Any | None = None
         self.sync: Any | None = None
         self.ports: CorePorts | None = None
@@ -39,8 +40,13 @@ class RuntimeContainer:
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
 
     async def startup(self, app: FastAPI) -> None:
-        logger.info("CCDash backend starting up (profile=%s)", self.profile.name)
+        logger.info(
+            "CCDash backend starting up (profile=%s, storage_profile=%s)",
+            self.profile.name,
+            self.storage_profile.profile,
+        )
         app.state.runtime_profile = self.profile
+        app.state.storage_profile = self.storage_profile
         app.state.runtime_container = self
 
         initialize_observability(app)
@@ -109,7 +115,11 @@ class RuntimeContainer:
         return self.ports
 
     def _build_core_ports(self) -> CorePorts:
-        return build_core_ports(self.db)
+        return build_core_ports(
+            self.db,
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
@@ -146,6 +156,14 @@ class RuntimeContainer:
             "jobsEnabled": self.profile.capabilities.jobs,
             "authEnabled": self.profile.capabilities.auth,
             "integrationsEnabled": self.profile.capabilities.integrations,
+            "recommendedStorageProfile": self.profile.recommended_storage_profile,
+            "storageProfile": self.storage_profile.profile,
+            "storageBackend": self.storage_profile.db_backend,
+            "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
+            "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
+            "storageIsolationMode": self.storage_profile.isolation_mode,
+            "storageSchema": self.storage_profile.schema_name,
+            "canonicalSessionStore": self.storage_profile.canonical_session_store,
         }
         if self.job_adapter is not None:
             status.update(self.job_adapter.status_snapshot())

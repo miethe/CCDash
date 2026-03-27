@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
+from backend import config
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
@@ -55,11 +58,53 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertFalse(profiles["test"].capabilities.jobs)
         self.assertTrue(profiles["worker"].capabilities.jobs)
         self.assertTrue(profiles["worker"].capabilities.sync)
+        self.assertEqual(profiles["local"].recommended_storage_profile, "local")
+        self.assertEqual(profiles["api"].recommended_storage_profile, "enterprise")
+        self.assertEqual(profiles["worker"].recommended_storage_profile, "enterprise")
 
     def test_worker_bootstrap_returns_worker_runtime_container(self) -> None:
         container = build_worker_runtime()
 
         self.assertEqual(container.profile, get_runtime_profile("worker"))
+
+    def test_storage_profile_contract_requires_postgres_for_enterprise(self) -> None:
+        with self.assertRaises(ValidationError):
+            config.StorageProfileConfig(
+                profile="enterprise",
+                db_backend="sqlite",
+                database_url="",
+                filesystem_source_of_truth=False,
+                shared_postgres_enabled=False,
+                isolation_mode="dedicated",
+                schema_name="ccdash",
+            )
+
+    def test_storage_profile_contract_requires_isolation_for_shared_postgres(self) -> None:
+        with self.assertRaises(ValidationError):
+            config.StorageProfileConfig(
+                profile="enterprise",
+                db_backend="postgres",
+                database_url="postgresql://example/test",
+                filesystem_source_of_truth=False,
+                shared_postgres_enabled=True,
+                isolation_mode="dedicated",
+                schema_name="ccdash",
+            )
+
+    def test_runtime_container_status_exposes_storage_contract(self) -> None:
+        container = build_api_app().state.runtime_container
+
+        status = container.runtime_status()
+
+        self.assertEqual(status["profile"], "api")
+        self.assertEqual(status["recommendedStorageProfile"], "enterprise")
+        self.assertIn("storageProfile", status)
+        self.assertIn("storageBackend", status)
+        self.assertIn("filesystemSourceOfTruth", status)
+        self.assertIn("sharedPostgresEnabled", status)
+        self.assertIn("storageIsolationMode", status)
+        self.assertIn("storageSchema", status)
+        self.assertIn("canonicalSessionStore", status)
 
 
 class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):

@@ -1,6 +1,7 @@
 """CCDash Backend Configuration."""
 import os
 from pathlib import Path
+from typing import Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,6 +21,13 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _env_bool_from(environ: Mapping[str, str], name: str, default: bool = False) -> bool:
+    value = environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 # Project root (one level up from backend/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +82,77 @@ CCDASH_TELEMETRY_ALLOW_INSECURE = _env_bool("CCDASH_TELEMETRY_ALLOW_INSECURE", F
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 
 
+StorageProfileName = Literal["local", "enterprise"]
+StorageIsolationMode = Literal["dedicated", "schema", "tenant"]
+
+
+class StorageProfileConfig(BaseModel):
+    """Operator-facing storage profile contract."""
+
+    profile: StorageProfileName = "local"
+    db_backend: str = "sqlite"
+    database_url: str = ""
+    filesystem_source_of_truth: bool = True
+    shared_postgres_enabled: bool = False
+    isolation_mode: StorageIsolationMode = "dedicated"
+    schema_name: str = "ccdash"
+
+    @property
+    def hosted(self) -> bool:
+        return self.profile == "enterprise"
+
+    @property
+    def compatibility_backend_env(self) -> str:
+        return "CCDASH_DB_BACKEND"
+
+    @property
+    def compatibility_database_url_env(self) -> str:
+        return "CCDASH_DATABASE_URL"
+
+    @property
+    def canonical_session_store(self) -> str:
+        return "postgres" if self.profile == "enterprise" else "filesystem_cache"
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> "StorageProfileConfig":
+        if self.profile == "enterprise" and self.db_backend != "postgres":
+            raise ValueError("enterprise storage profile requires CCDASH_DB_BACKEND=postgres")
+        if self.shared_postgres_enabled and self.profile != "enterprise":
+            raise ValueError("shared Postgres is only supported for the enterprise storage profile")
+        if self.shared_postgres_enabled and self.isolation_mode == "dedicated":
+            raise ValueError("shared Postgres requires schema or tenant isolation")
+        return self
+
+
+def resolve_storage_profile_config(environ: Mapping[str, str] | None = None) -> StorageProfileConfig:
+    env = environ or os.environ
+    db_backend = str(env.get("CCDASH_DB_BACKEND", "sqlite")).strip().lower() or "sqlite"
+    requested_profile = str(env.get("CCDASH_STORAGE_PROFILE", "")).strip().lower()
+    profile: StorageProfileName = "enterprise" if requested_profile == "enterprise" else "local"
+    if not requested_profile:
+        profile = "enterprise" if db_backend == "postgres" else "local"
+
+    shared_postgres_enabled = _env_bool_from(env, "CCDASH_STORAGE_SHARED_POSTGRES", False)
+    requested_isolation = str(env.get("CCDASH_STORAGE_ISOLATION_MODE", "")).strip().lower()
+    if requested_isolation not in {"dedicated", "schema", "tenant"}:
+        requested_isolation = "schema" if shared_postgres_enabled else "dedicated"
+
+    filesystem_source_of_truth = profile == "local"
+    if profile == "enterprise":
+        filesystem_source_of_truth = _env_bool_from(env, "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED", False)
+
+    schema_name = str(env.get("CCDASH_STORAGE_SCHEMA", "ccdash")).strip() or "ccdash"
+    return StorageProfileConfig(
+        profile=profile,
+        db_backend=db_backend,
+        database_url=str(env.get("CCDASH_DATABASE_URL", DATABASE_URL)).strip(),
+        filesystem_source_of_truth=filesystem_source_of_truth,
+        shared_postgres_enabled=shared_postgres_enabled,
+        isolation_mode=requested_isolation,
+        schema_name=schema_name,
+    )
+
+
 class TelemetryExporterConfig(BaseModel):
     """Validated telemetry exporter runtime configuration."""
 
@@ -113,6 +192,7 @@ TELEMETRY_EXPORTER_CONFIG = TelemetryExporterConfig(
     allow_insecure=CCDASH_TELEMETRY_ALLOW_INSECURE,
     ccdash_version=CCDASH_VERSION,
 )
+STORAGE_PROFILE = resolve_storage_profile_config()
 
 # Startup sync tuning
 STARTUP_SYNC_DELAY_SECONDS = _env_int("CCDASH_STARTUP_SYNC_DELAY_SECONDS", 2)
