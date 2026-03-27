@@ -2,7 +2,6 @@ import types
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
 
 from fastapi import BackgroundTasks, HTTPException
 
@@ -92,6 +91,75 @@ class _FakeSyncEngine:
         }
 
 
+@dataclass
+class _FakeResolvedPath:
+    path: Path
+    source_kind: str = "filesystem"
+    diagnostic: str = ""
+
+
+@dataclass
+class _FakeResolvedProjectPaths:
+    root: _FakeResolvedPath
+    sessions: _FakeResolvedPath
+    plan_docs: _FakeResolvedPath
+    progress: _FakeResolvedPath
+
+
+class _FakeWorkspaceRegistry:
+    def __init__(self, project, bundle: _FakeResolvedProjectPaths) -> None:
+        self.project = project
+        self.bundle = bundle
+
+    def get_active_project(self):
+        return self.project
+
+    def resolve_project_paths(self, project):
+        self.project = project
+        return self.bundle
+
+
+class _FakeEntityLinkRepository:
+    async def get_links_for(self, entity_type, entity_id, link_type):
+        return [
+            {
+                "id": 1,
+                "source_type": entity_type,
+                "source_id": entity_id,
+                "target_type": "feature",
+                "target_id": "feature-1",
+                "link_type": link_type or "related",
+                "origin": "manual",
+                "confidence": 1.0,
+                "depth": 0,
+                "sort_order": 0,
+                "created_at": "2026-03-27T00:00:00Z",
+                "metadata_json": "{\"note\":\"ok\"}",
+            }
+        ]
+
+    async def upsert(self, payload):
+        self.last_payload = payload
+        return 7
+
+    async def get_tree(self, entity_type, entity_id):
+        row = {
+            "id": 1,
+            "source_type": entity_type,
+            "source_id": entity_id,
+            "target_type": "feature",
+            "target_id": "feature-1",
+            "link_type": "child",
+            "origin": "manual",
+            "confidence": 1.0,
+            "depth": 0,
+            "sort_order": 0,
+            "created_at": "2026-03-27T00:00:00Z",
+            "metadata_json": "{}",
+        }
+        return {"children": [row], "parents": [], "related": []}
+
+
 class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
     def _request(self, engine: _FakeSyncEngine, live_broker: _FakeLiveBroker | None = None):
         return types.SimpleNamespace(
@@ -100,14 +168,25 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    def _core_ports(self, project=None, bundle: _FakeResolvedProjectPaths | None = None):
+        project = project or types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
+        bundle = bundle or _FakeResolvedProjectPaths(
+            root=_FakeResolvedPath(Path("/tmp/project")),
+            sessions=_FakeResolvedPath(Path("/tmp/sessions")),
+            plan_docs=_FakeResolvedPath(Path("/tmp/project/docs")),
+            progress=_FakeResolvedPath(Path("/tmp/project/progress")),
+        )
+        return types.SimpleNamespace(
+            workspace_registry=_FakeWorkspaceRegistry(project, bundle),
+            storage=types.SimpleNamespace(entity_links=lambda: _FakeEntityLinkRepository()),
+        )
+
     async def test_status_includes_observability(self) -> None:
         engine = _FakeSyncEngine()
         request = self._request(engine)
         project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            payload = await cache_router.get_cache_status(request)
+        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
 
         self.assertEqual(payload["status"], "active")
         self.assertEqual(payload["projectId"], "project-1")
@@ -120,10 +199,8 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         engine = _FakeSyncEngine()
         request = self._request(engine, _FakeLiveBroker())
         project = types.SimpleNamespace(id="project-1", name="Project One", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            payload = await cache_router.get_cache_status(request)
+        payload = await cache_router.get_cache_status(request, self._core_ports(project=project))
 
         self.assertEqual(payload["liveUpdates"]["published_events"], 12)
         self.assertEqual(payload["liveUpdates"]["replay_gaps"], 2)
@@ -133,14 +210,13 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         background = BackgroundTasks()
         project = types.SimpleNamespace(id="project-1", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            payload = await cache_router.trigger_sync(
-                request,
-                background,
-                cache_router.SyncRequest(force=True, background=True, trigger="api"),
-            )
+        payload = await cache_router.trigger_sync(
+            request,
+            background,
+            cache_router.SyncRequest(force=True, background=True, trigger="api"),
+            self._core_ports(project=project),
+        )
 
         self.assertEqual(payload["operationId"], "OP-STARTED")
         self.assertEqual(len(background.tasks), 1)
@@ -151,14 +227,13 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         background = BackgroundTasks()
         project = types.SimpleNamespace(id="project-1", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            payload = await cache_router.trigger_sync(
-                request,
-                background,
-                cache_router.SyncRequest(force=False, background=False, trigger="manual"),
-            )
+        payload = await cache_router.trigger_sync(
+            request,
+            background,
+            cache_router.SyncRequest(force=False, background=False, trigger="manual"),
+            self._core_ports(project=project),
+        )
 
         self.assertEqual(payload["mode"], "foreground")
         self.assertEqual(payload["stats"]["sessions_synced"], 1)
@@ -169,18 +244,17 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         background = BackgroundTasks()
         project = types.SimpleNamespace(id="project-1", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            with self.assertRaises(HTTPException) as ctx:
-                await cache_router.trigger_sync_paths(
-                    request,
-                    background,
-                    cache_router.SyncPathsRequest(
-                        paths=[cache_router.ChangedPathSpec(path="../outside.md", changeType="modified")],
-                        background=False,
-                    ),
-                )
+        with self.assertRaises(HTTPException) as ctx:
+            await cache_router.trigger_sync_paths(
+                request,
+                background,
+                cache_router.SyncPathsRequest(
+                    paths=[cache_router.ChangedPathSpec(path="../outside.md", changeType="modified")],
+                    background=False,
+                ),
+                self._core_ports(project=project),
+            )
 
         self.assertEqual(ctx.exception.status_code, 400)
 
@@ -189,18 +263,17 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         background = BackgroundTasks()
         project = types.SimpleNamespace(id="project-1", path="/tmp/project")
-        paths = (Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=paths):
-            payload = await cache_router.trigger_sync_paths(
-                request,
-                background,
-                cache_router.SyncPathsRequest(
-                    paths=[cache_router.ChangedPathSpec(path="docs/example.md", changeType="modified")],
-                    background=False,
-                    trigger="api",
-                ),
-            )
+        payload = await cache_router.trigger_sync_paths(
+            request,
+            background,
+            cache_router.SyncPathsRequest(
+                paths=[cache_router.ChangedPathSpec(path="docs/example.md", changeType="modified")],
+                background=False,
+                trigger="api",
+            ),
+            self._core_ports(project=project),
+        )
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(len(engine.path_sync_calls), 1)
@@ -213,12 +286,26 @@ class CacheRouterTests(unittest.IsolatedAsyncioTestCase):
         request = self._request(engine)
         project = types.SimpleNamespace(id="project-1", path="/tmp/project")
 
-        with patch.object(cache_router.project_manager, "get_active_project", return_value=project), patch.object(cache_router.project_manager, "get_active_paths", return_value=(Path("/tmp/sessions"), Path("/tmp/project/docs"), Path("/tmp/project/progress"))):
-            payload = await cache_router.get_links_audit(request, feature_id="feature-x", primary_floor=0.6, fanout_floor=8, limit=10)
+        payload = await cache_router.get_links_audit(
+            request,
+            feature_id="feature-x",
+            primary_floor=0.6,
+            fanout_floor=8,
+            limit=10,
+            core_ports=self._core_ports(project=project),
+        )
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["feature_filter"], "feature-x")
         self.assertEqual(payload["suspect_count"], 1)
+
+    async def test_link_routes_use_storage_ports(self) -> None:
+        core_ports = self._core_ports()
+
+        payload = await cache_router.get_entity_links("session", "s-1", None, core_ports)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["items"][0]["targetType"], "feature")
 
 
 if __name__ == "__main__":

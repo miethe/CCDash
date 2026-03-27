@@ -16,6 +16,7 @@ from backend.application.context import Principal, RequestContext, RequestMetada
 from backend.application.ports import CorePorts
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.project_manager import ProjectManager
+from backend.request_scope import get_core_ports
 from backend.runtime.bootstrap_test import build_test_app
 from backend.runtime.container import RuntimeContainer
 from backend.runtime.dependencies import get_request_context
@@ -168,3 +169,10 @@ class RequestContextRouteIntegrationTests(unittest.TestCase):
 
         context = asyncio.run(_resolve())
         self.assertEqual(context.trace.request_id, "req-1")
+
+    def test_projects_route_declares_core_ports_dependency(self) -> None:
+        app = build_test_app()
+        route = next(route for route in app.routes if getattr(route, "path", None) == "/api/projects")
+        dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+
+        self.assertIn(get_core_ports, dependency_calls)

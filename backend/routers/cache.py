@@ -7,13 +7,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from backend.db import connection
+from backend.application.ports import CorePorts
 from backend.db.file_watcher import file_watcher
-from backend.db.factory import get_entity_link_repository
-from backend.project_manager import project_manager
+from backend.models import Project
+from backend.request_scope import get_core_ports
+from backend.services.project_paths.models import ResolvedProjectPaths
 
 logger = logging.getLogger("ccdash.cache")
 
@@ -91,12 +92,11 @@ def _get_sync_engine(request: Request):
     return sync_engine
 
 
-def _get_active_project_context() -> tuple[Any, Path, Path, Path]:
-    project = project_manager.get_active_project()
+def _get_active_project_context(core_ports: CorePorts) -> tuple[Project, ResolvedProjectPaths]:
+    project = core_ports.workspace_registry.get_active_project()
     if not project:
         raise HTTPException(status_code=400, detail="No active project")
-    sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
-    return project, sessions_dir, docs_dir, progress_dir
+    return project, core_ports.workspace_registry.resolve_project_paths(project)
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -128,10 +128,10 @@ async def get_entity_links(
     entity_type: str,
     entity_id: str,
     link_type: str | None = Query(None, description="Optional link-type filter"),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Return all bidirectional links for an entity."""
-    db = await connection.get_connection()
-    repo = get_entity_link_repository(db)
+    repo = core_ports.storage.entity_links()
     rows = await repo.get_links_for(entity_type, entity_id, link_type)
     items = [_map_link_row(row) for row in rows]
     return {
@@ -144,7 +144,10 @@ async def get_entity_links(
 
 
 @links_router.post("")
-async def create_entity_link(payload: EntityLinkCreate):
+async def create_entity_link(
+    payload: EntityLinkCreate,
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Create or upsert a manual entity link."""
     source_type = payload.sourceType.strip()
     source_id = payload.sourceId.strip()
@@ -155,8 +158,7 @@ async def create_entity_link(payload: EntityLinkCreate):
     if not source_type or not source_id or not target_type or not target_id or not link_type:
         raise HTTPException(status_code=400, detail="source/target/linkType cannot be blank")
 
-    db = await connection.get_connection()
-    repo = get_entity_link_repository(db)
+    repo = core_ports.storage.entity_links()
     link_id = await repo.upsert(
         {
             "source_type": source_type,
@@ -175,10 +177,13 @@ async def create_entity_link(payload: EntityLinkCreate):
 
 
 @links_router.get("/{entity_type}/{entity_id}/tree")
-async def get_entity_tree(entity_type: str, entity_id: str):
+async def get_entity_tree(
+    entity_type: str,
+    entity_id: str,
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return parent/child/related link sets for tree rendering."""
-    db = await connection.get_connection()
-    repo = get_entity_link_repository(db)
+    repo = core_ports.storage.entity_links()
     tree = await repo.get_tree(entity_type, entity_id)
     return {
         "entityType": entity_type,
@@ -190,14 +195,15 @@ async def get_entity_tree(entity_type: str, entity_id: str):
 
 
 @cache_router.get("/status")
-async def get_cache_status(request: Request):
+async def get_cache_status(
+    request: Request,
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Return sync engine + watcher status, including live operations."""
     sync_engine = _get_sync_engine(request)
     live_broker = getattr(request.app.state, "live_event_broker", None)
-    project = project_manager.get_active_project()
-    sessions_dir = docs_dir = progress_dir = None
-    if project:
-        sessions_dir, docs_dir, progress_dir = project_manager.get_active_paths()
+    project = core_ports.workspace_registry.get_active_project()
+    bundle = core_ports.workspace_registry.resolve_project_paths(project) if project else None
     observability = await sync_engine.get_observability_snapshot()
     return {
         "status": "active",
@@ -206,9 +212,9 @@ async def get_cache_status(request: Request):
         "projectId": getattr(project, "id", ""),
         "projectName": getattr(project, "name", ""),
         "activePaths": {
-            "sessionsDir": str(sessions_dir) if sessions_dir else "",
-            "docsDir": str(docs_dir) if docs_dir else "",
-            "progressDir": str(progress_dir) if progress_dir else "",
+            "sessionsDir": str(bundle.sessions.path) if bundle else "",
+            "docsDir": str(bundle.plan_docs.path) if bundle else "",
+            "progressDir": str(bundle.progress.path) if bundle else "",
         },
         "operations": observability,
         "liveUpdates": asdict(live_broker.stats()) if live_broker and hasattr(live_broker, "stats") else None,
@@ -234,10 +240,15 @@ async def get_cache_operation(request: Request, operation_id: str):
 
 
 @cache_router.post("/sync")
-async def trigger_sync(request: Request, background_tasks: BackgroundTasks, body: SyncRequest):
+async def trigger_sync(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    body: SyncRequest,
+    core_ports: CorePorts = Depends(get_core_ports),
+):
     """Trigger full project sync with operation tracking."""
     sync_engine = _get_sync_engine(request)
-    project, sessions_dir, docs_dir, progress_dir = _get_active_project_context()
+    project, bundle = _get_active_project_context(core_ports)
 
     if body.background:
         operation_id = await sync_engine.start_operation(
@@ -249,9 +260,9 @@ async def trigger_sync(request: Request, background_tasks: BackgroundTasks, body
         background_tasks.add_task(
             sync_engine.sync_project,
             project,
-            sessions_dir,
-            docs_dir,
-            progress_dir,
+            bundle.sessions.path,
+            bundle.plan_docs.path,
+            bundle.progress.path,
             body.force,
             operation_id,
             body.trigger,
@@ -265,9 +276,9 @@ async def trigger_sync(request: Request, background_tasks: BackgroundTasks, body
 
     stats = await sync_engine.sync_project(
         project,
-        sessions_dir,
-        docs_dir,
-        progress_dir,
+        bundle.sessions.path,
+        bundle.plan_docs.path,
+        bundle.progress.path,
         body.force,
         None,
         body.trigger,
@@ -298,10 +309,11 @@ async def trigger_rebuild_links(
     request: Request,
     background_tasks: BackgroundTasks,
     body: RebuildLinksRequest,
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Trigger entity-link rebuild with operation tracking."""
     sync_engine = _get_sync_engine(request)
-    project, _, docs_dir, progress_dir = _get_active_project_context()
+    project, bundle = _get_active_project_context(core_ports)
 
     if body.background:
         operation_id = await sync_engine.start_operation(
@@ -313,8 +325,8 @@ async def trigger_rebuild_links(
         background_tasks.add_task(
             sync_engine.rebuild_links,
             project.id,
-            docs_dir,
-            progress_dir,
+            bundle.plan_docs.path,
+            bundle.progress.path,
             operation_id=operation_id,
             trigger=body.trigger,
             capture_analytics=body.captureAnalytics,
@@ -328,8 +340,8 @@ async def trigger_rebuild_links(
 
     stats = await sync_engine.rebuild_links(
         project.id,
-        docs_dir,
-        progress_dir,
+        bundle.plan_docs.path,
+        bundle.progress.path,
         operation_id=None,
         trigger=body.trigger,
         capture_analytics=body.captureAnalytics,
@@ -350,17 +362,24 @@ async def trigger_sync_paths(
     request: Request,
     background_tasks: BackgroundTasks,
     body: SyncPathsRequest,
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Sync a targeted set of changed files (supports project-relative paths)."""
     if not body.paths:
         raise HTTPException(status_code=400, detail="No paths provided")
 
     sync_engine = _get_sync_engine(request)
-    project, sessions_dir, docs_dir, progress_dir = _get_active_project_context()
-    project_root = project_manager.get_project_root(project)
+    project, bundle = _get_active_project_context(core_ports)
+    project_root = bundle.root.path
     changed_files: list[tuple[str, Path]] = []
     for item in body.paths:
-        resolved = _resolve_changed_path(item.path, project_root, sessions_dir, docs_dir, progress_dir)
+        resolved = _resolve_changed_path(
+            item.path,
+            project_root,
+            bundle.sessions.path,
+            bundle.plan_docs.path,
+            bundle.progress.path,
+        )
         changed_files.append((item.changeType, resolved))
 
     if body.background:
@@ -374,9 +393,9 @@ async def trigger_sync_paths(
             sync_engine.sync_changed_files,
             project.id,
             changed_files,
-            sessions_dir,
-            docs_dir,
-            progress_dir,
+            bundle.sessions.path,
+            bundle.plan_docs.path,
+            bundle.progress.path,
             operation_id,
             body.trigger,
         )
@@ -390,9 +409,9 @@ async def trigger_sync_paths(
     stats = await sync_engine.sync_changed_files(
         project.id,
         changed_files,
-        sessions_dir,
-        docs_dir,
-        progress_dir,
+        bundle.sessions.path,
+        bundle.plan_docs.path,
+        bundle.progress.path,
         None,
         body.trigger,
     )
@@ -407,10 +426,11 @@ async def get_links_audit(
     primary_floor: float = Query(0.55, ge=0.0, le=1.0),
     fanout_floor: int = Query(10, ge=1, le=1000),
     limit: int = Query(50, ge=1, le=500),
+    core_ports: CorePorts = Depends(get_core_ports),
 ):
     """Run link-audit heuristics against feature->session links for active project."""
     sync_engine = _get_sync_engine(request)
-    project, _, _, _ = _get_active_project_context()
+    project, _ = _get_active_project_context(core_ports)
     payload = await sync_engine.run_link_audit(
         project.id,
         feature_id=feature_id,
