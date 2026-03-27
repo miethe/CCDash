@@ -17,6 +17,7 @@ from backend import config
 from backend.db import connection, migrations, sync_engine
 from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
+from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime_ports import build_core_ports
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
@@ -64,6 +65,7 @@ class RuntimeContainer:
         )
         app.state.telemetry_settings_store = self.telemetry_settings_store
         app.state.telemetry_exporter = self.telemetry_exporter
+        self._record_telemetry_export_disabled_state()
 
         self.job_adapter = RuntimeJobAdapter(
             profile=self.profile,
@@ -155,3 +157,14 @@ class RuntimeContainer:
             return None
         clean = str(value).strip()
         return clean or None
+
+    def _record_telemetry_export_disabled_state(self) -> None:
+        if self.profile.name != "worker" or self.telemetry_settings_store is None:
+            return
+        settings = self.telemetry_settings_store.load()
+        disabled = not bool(
+            config.TELEMETRY_EXPORTER_CONFIG.enabled
+            and config.TELEMETRY_EXPORTER_CONFIG.configured
+            and settings.enabled
+        )
+        observability.set_telemetry_export_disabled(disabled)
