@@ -106,8 +106,8 @@ Implementation files:
 
 The panel surfaces queue depth, last push time, last error, and enabled/disabled state. For operator procedures and troubleshooting, link users to:
 
-- [`docs/guides/telemetry-exporter-guide.md`](docs/guides/telemetry-exporter-guide.md)
-- [`docs/guides/telemetry-exporter-troubleshooting.md`](docs/guides/telemetry-exporter-troubleshooting.md)
+- [`docs/guides/telemetry-exporter-guide.md`](guides/telemetry-exporter-guide.md)
+- [`docs/guides/telemetry-exporter-troubleshooting.md`](guides/telemetry-exporter-troubleshooting.md)
 
 ## Live invalidation path
 

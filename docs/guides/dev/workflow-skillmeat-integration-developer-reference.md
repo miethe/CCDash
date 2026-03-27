@@ -72,7 +72,7 @@ Telemetry exporter is intentionally separate from this SkillMeat integration sur
 - worker-side export logic lives in [backend/services/integrations/telemetry_exporter.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py)
 - worker registration happens in [backend/runtime/container.py](/Users/miethe/dev/homelab/development/CCDash/backend/runtime/container.py)
 - exporter metrics and tracing live in [backend/observability/otel.py](/Users/miethe/dev/homelab/development/CCDash/backend/observability/otel.py)
-- operator guidance lives in [docs/guides/telemetry-exporter-guide.md](docs/guides/telemetry-exporter-guide.md) and [docs/guides/telemetry-exporter-troubleshooting.md](docs/guides/telemetry-exporter-troubleshooting.md)
+- operator guidance lives in [telemetry-exporter-guide.md](../telemetry-exporter-guide.md) and [telemetry-exporter-troubleshooting.md](../telemetry-exporter-troubleshooting.md)
 
 ## Configuration and feature gates
 
