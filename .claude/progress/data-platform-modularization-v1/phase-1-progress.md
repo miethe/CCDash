@@ -11,7 +11,7 @@ title: "Storage Profile Capability Contract"
 status: "in_progress"
 started: "2026-03-28"
 completed: null
-commit_refs: ["e97f277"]
+commit_refs: ["e97f277", "0e112e8"]
 pr_refs: []
 
 overall_progress: 90
@@ -66,7 +66,6 @@ success_criteria:
   - "Canonical versus derived domains are stable enough that downstream schema work does not reopen the model."
 
 files_modified:
-  - "docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md"
   - ".claude/progress/data-platform-modularization-v1/phase-1-progress.md"
   - "backend/config.py"
   - "backend/runtime/bootstrap.py"
