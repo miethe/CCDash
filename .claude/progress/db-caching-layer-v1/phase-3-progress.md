@@ -14,6 +14,7 @@ completed: '2026-03-27'
 commit_refs:
 - 48bc463
 - 74e345d
+- 482f7ba
 pr_refs: []
 overall_progress: 100
 completion_estimate: completed
@@ -118,3 +119,9 @@ Introduce additive canonical session transcript seams and schema groundwork with
 - Projected legacy synced session logs into canonical transcript rows during sync, preserving source provenance, entry UUID lineage, root-session identity, and conversation-family identifiers.
 - Introduced a compatibility transcript read seam so session detail APIs can prefer canonical transcript rows when present while preserving the existing response shape.
 - Covered the groundwork with migration, projection, and API compatibility tests to keep the phase low-risk and additive.
+
+## Residual Validation Notes
+
+- `backend/.venv/bin/python -m pytest backend/tests/test_session_messages_groundwork.py -q` passed after the follow-up assertion cleanup in commit `482f7ba`.
+- `pnpm typecheck` currently fails on unrelated pre-existing issues outside this phase, including `components/SessionInspector.tsx` and multiple tests under `examples/skillmeat/ui/src/__tests__/`.
+- `pnpm lint` is not runnable in the current repo because there is no `lint` script defined in `package.json`.
