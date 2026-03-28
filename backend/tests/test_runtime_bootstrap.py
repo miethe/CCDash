@@ -12,6 +12,8 @@ from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
 from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
+from backend.runtime.storage_contract import resolve_storage_mode
+from backend.runtime_ports import build_core_ports
 from backend.worker import serve_worker
 
 
@@ -45,6 +47,18 @@ def _fake_sync_engine() -> types.SimpleNamespace:
         sync_test_sources=AsyncMock(return_value={"synced": 0}),
         rebuild_links=AsyncMock(return_value={"created": 0}),
         capture_analytics_snapshot=AsyncMock(return_value={"captured": True}),
+    )
+
+
+def _enterprise_storage_profile(*, shared: bool = False) -> config.StorageProfileConfig:
+    return config.StorageProfileConfig(
+        profile="enterprise",
+        db_backend="postgres",
+        database_url="postgresql://example/test",
+        filesystem_source_of_truth=False,
+        shared_postgres_enabled=shared,
+        isolation_mode="schema" if shared else "dedicated",
+        schema_name="ccdash_app" if shared else "ccdash",
     )
 
 
@@ -98,6 +112,7 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertEqual(status["profile"], "api")
         self.assertEqual(status["recommendedStorageProfile"], "enterprise")
+        self.assertIn("storageMode", status)
         self.assertIn("storageProfile", status)
         self.assertIn("storageBackend", status)
         self.assertIn("filesystemSourceOfTruth", status)
@@ -105,6 +120,40 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageIsolationMode", status)
         self.assertIn("storageSchema", status)
         self.assertIn("canonicalSessionStore", status)
+
+    def test_api_runtime_rejects_local_storage_profile(self) -> None:
+        local_profile = config.StorageProfileConfig(
+            profile="local",
+            db_backend="sqlite",
+            database_url="",
+            filesystem_source_of_truth=True,
+            shared_postgres_enabled=False,
+            isolation_mode="dedicated",
+            schema_name="ccdash",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Runtime profile 'api' only supports storage profiles: enterprise"):
+            build_core_ports(object(), runtime_profile=get_runtime_profile("api"), storage_profile=local_profile)
+
+    def test_test_runtime_allows_shared_enterprise_storage_profile(self) -> None:
+        shared_enterprise = config.StorageProfileConfig(
+            profile="enterprise",
+            db_backend="postgres",
+            database_url="postgresql://example/test",
+            filesystem_source_of_truth=False,
+            shared_postgres_enabled=True,
+            isolation_mode="schema",
+            schema_name="ccdash_app",
+        )
+
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("test"),
+            storage_profile=shared_enterprise,
+        )
+
+        self.assertEqual(resolve_storage_mode(shared_enterprise), "shared-enterprise")
+        self.assertIsNotNone(ports.storage)
 
 
 class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -148,6 +197,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_api_profile_skips_incidental_background_startup(self) -> None:
         app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
         project = _active_project()
         bundle = _ResolvedBundle()
         fake_sync = _fake_sync_engine()
@@ -213,6 +263,8 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         bundle = _ResolvedBundle()
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
 
         with (
             patch("backend.runtime.container.initialize_observability"),
@@ -233,7 +285,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
             patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
         ):
-            task = asyncio.create_task(serve_worker(container=build_worker_runtime(), stop_event=stop_event))
+            task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
             await asyncio.sleep(0.05)
             self.assertTrue(fake_sync.sync_project.await_count >= 1)
             watcher_start.assert_not_awaited()

@@ -19,6 +19,7 @@ from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
+from backend.runtime.storage_contract import resolve_storage_mode
 from backend.runtime_ports import build_core_ports
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
@@ -157,6 +158,7 @@ class RuntimeContainer:
             "authEnabled": self.profile.capabilities.auth,
             "integrationsEnabled": self.profile.capabilities.integrations,
             "recommendedStorageProfile": self.profile.recommended_storage_profile,
+            "storageMode": resolve_storage_mode(self.storage_profile),
             "storageProfile": self.storage_profile.profile,
             "storageBackend": self.storage_profile.db_backend,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,

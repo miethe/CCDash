@@ -12,6 +12,7 @@ from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.ports import CorePorts
 from backend.project_manager import ProjectManager, project_manager
 from backend.runtime.profiles import RuntimeProfile
+from backend.runtime.storage_contract import validate_runtime_storage_pairing
 
 
 def build_core_ports(
@@ -29,6 +30,7 @@ def build_core_ports(
 ) -> CorePorts:
     workspace_manager = manager or project_manager
     resolved_storage_profile = storage_profile or config.STORAGE_PROFILE
+    validate_runtime_storage_pairing(runtime_profile, resolved_storage_profile)
     return CorePorts(
         identity_provider=identity_provider or LocalIdentityProvider(),
         authorization_policy=authorization_policy or PermitAllAuthorizationPolicy(),
