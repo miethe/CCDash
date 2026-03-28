@@ -42,6 +42,7 @@ from backend.services.session_usage_attribution import (
     build_session_usage_attributions,
     build_session_usage_events,
 )
+from backend.services.session_transcript_projection import project_session_messages
 from backend.document_linking import (
     alias_tokens_from_path,
     canonical_project_path,
@@ -77,6 +78,7 @@ from backend.db.factory import (
     get_task_repository,
     get_analytics_repository,
     get_session_usage_repository,
+    get_session_message_repository,
     get_entity_link_repository,
     get_sync_state_repository,
     get_tag_repository,
@@ -1184,6 +1186,7 @@ class SyncEngine:
         self.tag_repo = get_tag_repository(db)
         self.analytics_repo = get_analytics_repository(db)
         self.session_usage_repo = get_session_usage_repository(db)
+        self.session_message_repo = get_session_message_repository(db)
         self.telemetry_queue_repo = get_telemetry_queue_repository(db)
         self.telemetry_transformer = TelemetryTransformer()
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
@@ -3651,6 +3654,10 @@ class SyncEngine:
                     if not isinstance(logs, list):
                         logs = []
                     await self.session_repo.upsert_logs(session_id, logs)
+                    await self.session_message_repo.replace_session_messages(
+                        session_id,
+                        project_session_messages(session_dict, logs),
+                    )
 
                     tools = session_dict.get("toolsUsed", [])
                     if not isinstance(tools, list):

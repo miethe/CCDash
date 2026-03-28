@@ -23,6 +23,9 @@ class FactoryStorageUnitOfWork:
     def sessions(self) -> Any:
         return self._repo("sessions", factory.get_session_repository)
 
+    def session_messages(self) -> Any:
+        return self._repo("session_messages", factory.get_session_message_repository)
+
     def documents(self) -> Any:
         return self._repo("documents", factory.get_document_repository)
 

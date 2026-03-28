@@ -15,7 +15,7 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.common import resolve_project
 from backend.application.services.documents import DocumentQueryService
-from backend.application.services.sessions import SessionFacetService
+from backend.application.services.sessions import SessionFacetService, SessionTranscriptService
 from backend import config
 from backend.models import (
     AgentSession, PlanDocument, ProjectTask, Project, ProjectPathReference,
@@ -49,6 +49,7 @@ _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
 logger = logging.getLogger("ccdash.api")
 session_facet_service = SessionFacetService()
+session_transcript_service = SessionTranscriptService()
 document_query_service = DocumentQueryService()
 
 
@@ -731,6 +732,7 @@ async def get_session(
         
     # Fetch details
     logs = await repo.get_logs(session_id)
+    session_logs = await session_transcript_service.list_session_logs(s, core_ports)
     badge_data = derive_session_badges(
         logs,
         primary_model=str(s.get("model") or ""),
@@ -774,22 +776,13 @@ async def get_session(
     
     # Logs
     platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
-    session_logs = []
+    normalized_session_logs = []
     command_events: list[dict] = []
     latest_summary = ""
-    for l in logs:
+    for l in session_logs:
         # Reconstruct tool call info if present
-        tc = None
-        if l["type"] == "tool":
-            tc = {
-                "id": l.get("tool_call_id"),
-                "name": l["tool_name"],
-                "args": l["tool_args"] or "",
-                "output": l["tool_output"],
-                "status": l["tool_status"],
-                "isError": (l["tool_status"] or "") == "error",
-            }
-        metadata = _safe_json(l.get("metadata_json"))
+        metadata = _safe_json(l.get("metadata"))
+        tc = l.get("toolCall")
         if l["type"] == "command":
             command_events.append({
                 "name": str(l.get("content") or "").strip(),
@@ -817,15 +810,15 @@ async def get_session(
             elif isinstance(metadata.get("toolLabel"), str) and metadata["toolLabel"].strip():
                 tc["name"] = metadata["toolLabel"].strip()
             
-        session_logs.append({
-            "id": l.get("source_log_id") or f"log-{l['log_index']}",
+        normalized_session_logs.append({
+            "id": l.get("id") or l.get("source_log_id") or f"log-{l.get('log_index', l.get('message_index', 0))}",
             "timestamp": l["timestamp"],
             "speaker": l["speaker"],
             "type": l["type"],
             "content": l["content"],
-            "agentName": l["agent_name"],
-            "linkedSessionId": l.get("linked_session_id"),
-            "relatedToolCallId": l.get("related_tool_call_id"),
+            "agentName": l.get("agentName"),
+            "linkedSessionId": l.get("linkedSessionId"),
+            "relatedToolCallId": l.get("relatedToolCallId"),
             "metadata": metadata,
             "toolCall": tc,
         })
@@ -976,7 +969,7 @@ async def get_session(
         linkedArtifacts=linked_artifacts,
         toolsUsed=tool_usage,
         impactHistory=[event for event in _safe_json_list(s.get("impact_history_json")) if isinstance(event, dict)],
-        logs=session_logs,
+        logs=normalized_session_logs,
         sessionMetadata=session_metadata,
         thinkingLevel=str(s.get("thinking_level") or ""),
         sessionForensics=_safe_json(s.get("session_forensics_json")),

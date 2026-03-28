@@ -182,6 +182,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_log_unique
     ON session_logs(session_id, source_log_id)
     WHERE source_log_id != '';
 
+-- Canonical transcript seam for future enterprise-grade session intelligence.
+CREATE TABLE IF NOT EXISTS session_messages (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    message_index  INTEGER NOT NULL,
+    source_log_id  TEXT DEFAULT '',
+    message_id     TEXT DEFAULT '',
+    role           TEXT NOT NULL,
+    message_type   TEXT NOT NULL,
+    content        TEXT DEFAULT '',
+    event_timestamp TEXT NOT NULL,
+    agent_name     TEXT DEFAULT '',
+    tool_name      TEXT,
+    tool_call_id   TEXT,
+    related_tool_call_id TEXT,
+    linked_session_id TEXT,
+    entry_uuid     TEXT,
+    parent_entry_uuid TEXT,
+    root_session_id TEXT DEFAULT '',
+    conversation_family_id TEXT DEFAULT '',
+    thread_session_id TEXT DEFAULT '',
+    parent_session_id TEXT DEFAULT '',
+    source_provenance TEXT NOT NULL DEFAULT 'session_log_projection',
+    metadata_json  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_messages_family
+    ON session_messages(conversation_family_id, root_session_id, message_index);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_session_message
+    ON session_messages(session_id, message_index);
+
 -- Tool usage summary per session
 CREATE TABLE IF NOT EXISTS session_tool_usage (
     session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -1080,6 +1111,61 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_log_unique ON session_logs(session_id, source_log_id) WHERE source_log_id != ''",
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_messages (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id     TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            message_index  INTEGER NOT NULL,
+            source_log_id  TEXT DEFAULT '',
+            message_id     TEXT DEFAULT '',
+            role           TEXT NOT NULL,
+            message_type   TEXT NOT NULL,
+            content        TEXT DEFAULT '',
+            event_timestamp TEXT NOT NULL,
+            agent_name     TEXT DEFAULT '',
+            tool_name      TEXT,
+            tool_call_id   TEXT,
+            related_tool_call_id TEXT,
+            linked_session_id TEXT,
+            entry_uuid     TEXT,
+            parent_entry_uuid TEXT,
+            root_session_id TEXT DEFAULT '',
+            conversation_family_id TEXT DEFAULT '',
+            thread_session_id TEXT DEFAULT '',
+            parent_session_id TEXT DEFAULT '',
+            source_provenance TEXT NOT NULL DEFAULT 'session_log_projection',
+            metadata_json  TEXT
+        )
+        """
+    )
+    await _ensure_column(db, "session_messages", "source_log_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "message_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "role", "TEXT NOT NULL DEFAULT ''")
+    await _ensure_column(db, "session_messages", "message_type", "TEXT NOT NULL DEFAULT ''")
+    await _ensure_column(db, "session_messages", "content", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "event_timestamp", "TEXT NOT NULL DEFAULT ''")
+    await _ensure_column(db, "session_messages", "agent_name", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "tool_name", "TEXT")
+    await _ensure_column(db, "session_messages", "tool_call_id", "TEXT")
+    await _ensure_column(db, "session_messages", "related_tool_call_id", "TEXT")
+    await _ensure_column(db, "session_messages", "linked_session_id", "TEXT")
+    await _ensure_column(db, "session_messages", "entry_uuid", "TEXT")
+    await _ensure_column(db, "session_messages", "parent_entry_uuid", "TEXT")
+    await _ensure_column(db, "session_messages", "root_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "conversation_family_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "thread_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "parent_session_id", "TEXT DEFAULT ''")
+    await _ensure_column(db, "session_messages", "source_provenance", "TEXT NOT NULL DEFAULT 'session_log_projection'")
+    await _ensure_column(db, "session_messages", "metadata_json", "TEXT")
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_messages_family ON session_messages(conversation_family_id, root_session_id, message_index)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_session_message ON session_messages(session_id, message_index)",
     )
     await _ensure_column(db, "session_tool_usage", "total_ms", "INTEGER DEFAULT 0")
 
