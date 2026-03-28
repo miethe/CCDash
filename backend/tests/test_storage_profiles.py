@@ -1,5 +1,7 @@
 import unittest
 
+from pydantic import ValidationError
+
 from backend.config import resolve_storage_profile_config
 from backend.runtime.storage_contract import get_storage_capability_contract, resolve_storage_mode
 
@@ -31,6 +33,37 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(profile.db_backend, "postgres")
         self.assertFalse(profile.filesystem_source_of_truth)
         self.assertEqual(profile.database_url, "postgresql://db.example/ccdash")
+
+    def test_explicit_local_profile_rejects_postgres_backend(self) -> None:
+        with self.assertRaises(ValidationError):
+            resolve_storage_profile_config(
+                {
+                    "CCDASH_STORAGE_PROFILE": "local",
+                    "CCDASH_DB_BACKEND": "postgres",
+                    "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                }
+            )
+
+    def test_local_profile_rejects_non_dedicated_isolation(self) -> None:
+        with self.assertRaises(ValidationError):
+            resolve_storage_profile_config(
+                {
+                    "CCDASH_STORAGE_PROFILE": "local",
+                    "CCDASH_DB_BACKEND": "sqlite",
+                    "CCDASH_STORAGE_ISOLATION_MODE": "tenant",
+                }
+            )
+
+    def test_dedicated_enterprise_profile_rejects_schema_isolation(self) -> None:
+        with self.assertRaises(ValidationError):
+            resolve_storage_profile_config(
+                {
+                    "CCDASH_STORAGE_PROFILE": "enterprise",
+                    "CCDASH_DB_BACKEND": "postgres",
+                    "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                    "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+                }
+            )
 
     def test_shared_postgres_contract_uses_explicit_isolation(self) -> None:
         profile = resolve_storage_profile_config(
@@ -67,6 +100,29 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(resolve_storage_mode(profile), "shared-enterprise")
         self.assertEqual(contract.mode, "shared-enterprise")
         self.assertEqual(contract.supported_isolation_modes, ("schema", "tenant"))
+
+    def test_capability_matrix_freezes_expected_canonical_stores(self) -> None:
+        local_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
+        enterprise_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+        shared_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_STORAGE_SHARED_POSTGRES": "true",
+                "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+            }
+        )
+
+        self.assertEqual(get_storage_capability_contract(local_profile).canonical_store, "sqlite_local_metadata")
+        self.assertEqual(get_storage_capability_contract(enterprise_profile).canonical_store, "postgres_dedicated")
+        self.assertEqual(get_storage_capability_contract(shared_profile).canonical_store, "postgres_shared_instance")
 
 
 if __name__ == "__main__":

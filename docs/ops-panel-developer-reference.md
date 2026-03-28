@@ -90,9 +90,12 @@ Router integration:
 - `storageProfile`
 - `storageBackend`
 - `recommendedStorageProfile`
+- `supportedStorageProfiles`
 - `filesystemSourceOfTruth`
 - `sharedPostgresEnabled`
 - `storageIsolationMode`
+- `supportedStorageIsolationModes`
+- `storageCanonicalStore`
 - `storageSchema`
 - `canonicalSessionStore`
 

@@ -113,14 +113,33 @@ class StorageProfileConfig(BaseModel):
     def canonical_session_store(self) -> str:
         return "postgres" if self.profile == "enterprise" else "filesystem_cache"
 
+    @property
+    def storage_mode(self) -> str:
+        if self.profile == "enterprise" and self.shared_postgres_enabled:
+            return "shared-enterprise"
+        return self.profile
+
+    @property
+    def supported_isolation_modes(self) -> tuple[StorageIsolationMode, ...]:
+        if self.storage_mode == "shared-enterprise":
+            return ("schema", "tenant")
+        return ("dedicated",)
+
     @model_validator(mode="after")
     def validate_contract(self) -> "StorageProfileConfig":
+        if self.profile == "local" and self.db_backend != "sqlite":
+            raise ValueError("local storage profile requires CCDASH_DB_BACKEND=sqlite")
         if self.profile == "enterprise" and self.db_backend != "postgres":
             raise ValueError("enterprise storage profile requires CCDASH_DB_BACKEND=postgres")
         if self.shared_postgres_enabled and self.profile != "enterprise":
             raise ValueError("shared Postgres is only supported for the enterprise storage profile")
         if self.shared_postgres_enabled and self.isolation_mode == "dedicated":
             raise ValueError("shared Postgres requires schema or tenant isolation")
+        if self.isolation_mode not in self.supported_isolation_modes:
+            allowed = ", ".join(self.supported_isolation_modes)
+            raise ValueError(
+                f"storage mode '{self.storage_mode}' only supports isolation modes: {allowed}"
+            )
         return self
 
 

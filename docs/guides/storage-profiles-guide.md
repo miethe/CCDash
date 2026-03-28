@@ -1,10 +1,10 @@
 # CCDash Storage Profiles Guide
 
-Updated: 2026-03-27
+Updated: 2026-03-28
 
 ## Purpose
 
-CCDash now treats storage as an explicit operator-facing profile instead of only a low-level database toggle.
+CCDash now treats storage as an explicit operator-facing profile instead of only a low-level database toggle. Phase 1 freezes both the storage capability matrix and the runtime-to-storage pairing matrix so the contract is enforced in code, tests, and operator docs.
 
 | Storage profile | Primary database | Source of truth | Typical deployment |
 | --- | --- | --- | --- |
@@ -38,6 +38,14 @@ CCDash now treats storage as an explicit operator-facing profile instead of only
 - Set `CCDASH_DATABASE_URL`.
 - Treat filesystem access as an ingestion concern, not an API assumption.
 
+## Validation Rules
+
+- `local` requires `CCDASH_DB_BACKEND=sqlite`.
+- `local` supports only `CCDASH_STORAGE_ISOLATION_MODE=dedicated`.
+- Dedicated `enterprise` supports only `CCDASH_STORAGE_ISOLATION_MODE=dedicated`.
+- Shared-enterprise requires `CCDASH_STORAGE_SHARED_POSTGRES=true` and `CCDASH_STORAGE_ISOLATION_MODE=schema` or `tenant`.
+- Invalid storage contracts fail during config resolution.
+
 ## Shared Postgres Contract
 
 Shared Postgres is allowed only for the `enterprise` storage profile.
@@ -52,16 +60,20 @@ Shared Postgres is allowed only for the `enterprise` storage profile.
 
 Runtime profiles and storage profiles are related but distinct:
 
-| Runtime profile | Allowed storage profile(s) | Notes |
-| --- | --- | --- |
-| `local` | `local` only | HTTP + watcher + sync + in-process jobs |
-| `api` | `enterprise` only | Stateless HTTP runtime without incidental watcher work |
-| `worker` | `enterprise` only | Background sync, refresh, and scheduled jobs |
-| `test` | `local`, `enterprise` | Minimal runtime with background work disabled; may validate either storage posture without watcher/job startup |
+| Runtime profile | `local` | Dedicated `enterprise` | Shared-enterprise | Runtime implications |
+| --- | --- | --- | --- | --- |
+| `local` | Supported | Unsupported | Unsupported | Watch + sync + in-process jobs; no hosted auth assumption |
+| `api` | Unsupported | Supported | Supported | Stateless HTTP runtime; no incidental watcher or startup sync; hosted auth expected |
+| `worker` | Unsupported | Supported | Supported | Background sync, refresh, and scheduled jobs; request auth not expected |
+| `test` | Supported | Supported | Supported | Background work disabled by default; may validate either storage posture without watcher/job startup |
 
-Invalid runtime/storage combinations are rejected during runtime composition rather than being treated as advisory guidance.
+### Unsupported Pairings
 
-The `/api/health` payload reports the resolved storage mode, storage profile, backend, shared-Postgres posture, isolation mode, schema, and canonical session-store mode so operators can verify the runtime contract quickly.
+- `api` + `local` is rejected before DB connection or migrations begin.
+- `worker` + `local` is rejected before worker startup reaches DB setup.
+- `local` runtime + any enterprise storage mode is rejected because the local runtime contract is local-first only.
+
+The `/api/health` payload reports the resolved storage mode, storage profile, backend, supported storage profiles, supported isolation modes, canonical store, shared-Postgres posture, isolation mode, schema, and canonical session-store mode so operators can verify the runtime contract quickly.
 
 ## Domain Ownership Matrix
 
