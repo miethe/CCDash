@@ -208,8 +208,6 @@ CREATE TABLE IF NOT EXISTS session_messages (
     metadata_json  TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_messages_session
-    ON session_messages(session_id, message_index);
 CREATE INDEX IF NOT EXISTS idx_session_messages_family
     ON session_messages(conversation_family_id, root_session_id, message_index);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_session_message
@@ -1161,10 +1159,6 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_column(db, "session_messages", "parent_session_id", "TEXT DEFAULT ''")
     await _ensure_column(db, "session_messages", "source_provenance", "TEXT NOT NULL DEFAULT 'session_log_projection'")
     await _ensure_column(db, "session_messages", "metadata_json", "TEXT")
-    await _ensure_index(
-        db,
-        "CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id, message_index)",
-    )
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_session_messages_family ON session_messages(conversation_family_id, root_session_id, message_index)",
