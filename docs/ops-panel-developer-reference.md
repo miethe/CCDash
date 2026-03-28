@@ -86,6 +86,7 @@ Router integration:
 
 `GET /api/health` now includes:
 
+- `storageMode`
 - `storageProfile`
 - `storageBackend`
 - `recommendedStorageProfile`
@@ -93,6 +94,7 @@ Router integration:
 - `sharedPostgresEnabled`
 - `storageIsolationMode`
 - `storageSchema`
+- `canonicalSessionStore`
 
 `GET /api/cache/status` now includes:
 

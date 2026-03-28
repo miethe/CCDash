@@ -107,11 +107,15 @@ class RuntimeProfileTests(unittest.TestCase):
 
     def test_runtime_container_status_exposes_storage_contract(self) -> None:
         container = build_api_app().state.runtime_container
+        container.storage_profile = _enterprise_storage_profile()
 
         status = container.runtime_status()
 
         self.assertEqual(status["profile"], "api")
         self.assertEqual(status["recommendedStorageProfile"], "enterprise")
+        self.assertEqual(status["storageMode"], "enterprise")
+        self.assertEqual(status["storageProfile"], "enterprise")
+        self.assertEqual(status["storageBackend"], "postgres")
         self.assertIn("storageMode", status)
         self.assertIn("storageProfile", status)
         self.assertIn("storageBackend", status)
@@ -120,6 +124,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageIsolationMode", status)
         self.assertIn("storageSchema", status)
         self.assertIn("canonicalSessionStore", status)
+        self.assertEqual(status["canonicalSessionStore"], "postgres")
 
     def test_api_runtime_rejects_local_storage_profile(self) -> None:
         local_profile = config.StorageProfileConfig(
@@ -134,6 +139,20 @@ class RuntimeProfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Runtime profile 'api' only supports storage profiles: enterprise"):
             build_core_ports(object(), runtime_profile=get_runtime_profile("api"), storage_profile=local_profile)
+
+    def test_worker_runtime_rejects_local_storage_profile(self) -> None:
+        local_profile = config.StorageProfileConfig(
+            profile="local",
+            db_backend="sqlite",
+            database_url="",
+            filesystem_source_of_truth=True,
+            shared_postgres_enabled=False,
+            isolation_mode="dedicated",
+            schema_name="ccdash",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Runtime profile 'worker' only supports storage profiles: enterprise"):
+            build_core_ports(object(), runtime_profile=get_runtime_profile("worker"), storage_profile=local_profile)
 
     def test_test_runtime_allows_shared_enterprise_storage_profile(self) -> None:
         shared_enterprise = config.StorageProfileConfig(
