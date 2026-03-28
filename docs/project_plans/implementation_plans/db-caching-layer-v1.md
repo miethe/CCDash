@@ -1,10 +1,10 @@
 ---
 title: "Implementation Plan: DB Caching Layer"
-description: "SQLite-backed cache with incremental sync, file watching, universal entity linking, pagination, and analytics time-series"
+description: "Local-first cache/storage foundation with runtime-aware SQLite and Postgres profiles, incremental sync, and session-storage modernization groundwork"
 audience: [ai-agents, developers, engineering-leads]
 tags: [implementation, planning, database, caching, performance, architecture]
 created: 2025-02-15
-updated: 2025-02-15
+updated: 2026-03-27
 category: "implementation-plan"
 complexity: "High"
 track: "Standard"
@@ -15,45 +15,110 @@ status: "draft"
 
 **Project:** CCDash — Agentic Analytics Dashboard
 **Complexity:** High (H) | **Track:** Standard
-**Timeline:** ~3–4 weeks across 5 incremental phases
+**Timeline:** Follow-on work across 4 incremental phases after the hexagonal foundation refactor
 
 ---
 
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
-2. [Problem Statement](#problem-statement)
-3. [Architectural Design](#architectural-design)
-4. [Schema Design](#schema-design)
-5. [Sync Engine](#sync-engine)
-6. [API Changes](#api-changes)
-7. [Frontend Changes](#frontend-changes)
-8. [Phase Breakdown](#phase-breakdown)
-9. [File Structure](#file-structure)
-10. [Verification Plan](#verification-plan)
+2. [Current Applicability Review](#current-applicability-review)
+3. [Updated Architecture Direction](#updated-architecture-direction)
+4. [Problem Statement](#problem-statement)
+5. [Architectural Design](#architectural-design)
+6. [Schema Design](#schema-design)
+7. [Sync Engine](#sync-engine)
+8. [API Changes](#api-changes)
+9. [Frontend Changes](#frontend-changes)
+10. [Phase Breakdown](#phase-breakdown)
+11. [File Structure](#file-structure)
+12. [Verification Plan](#verification-plan)
 
 ---
 
 ## Executive Summary
 
-Every API request in CCDash currently re-parses files from disk. A real project with **459 JSONL session files (2.8 GB)** causes 60+ second hangs that cascade into frontend failures. This plan introduces a **SQLite-backed caching layer** where:
+This plan is still relevant, but no longer as a greenfield roadmap. The original cache/sync foundation has largely landed in the codebase: CCDash now has runtime profiles, a runtime container, SQLite and Postgres migrations/repositories, a sync engine, a file watcher, cache/status APIs, and a split frontend data shell.
 
-- **Filesystem remains the source of truth** — DB is a read cache
-- **Incremental sync** only re-parses changed files (mtime-based)
-- **File watcher** detects real-time changes to source directories
-- **Write-through** for app-initiated changes (status updates → filesystem → cache)
-- **Universal entity linking** enables any entity to reference any other entity
-- **Pagination** for large datasets (sessions)
-- **Analytics time-series** with multi-entity associations and export support
-- **Repository abstraction** enables optional DB backend swaps (PostgreSQL, BYO-DB)
+The plan should now be treated as a **bridge document** for the remaining data-platform work:
+
+- Keep the **local-first cache model** strong: filesystem-derived artifacts remain practical in local mode, with SQLite as the default portable store.
+- Evolve the existing implementation into **explicit storage profiles** for `local` and `enterprise`, rather than treating Postgres as an optional parity backend.
+- Finish the **hexagonal migration** so routers and services stop selecting storage through connection-type checks and global singletons.
+- Lay the **schema and repository seams** needed for future session canonicalization, including message-level storage and richer transcript intelligence.
+
+The original goals still matter, but several “future” items in this document are already implemented and should no longer be planned as net-new work.
+
+## Current Applicability Review
+
+### Verdict
+
+This plan is **partially applicable**:
+
+1. **Still applicable** for the local SQLite cache, filesystem sync, entity-linking, and derived analytics substrate.
+2. **Outdated** where it assumes the pre-hexagonal architecture is still current.
+3. **Insufficient on its own** for the new local-vs-enterprise deployment/storage model and session-storage modernization roadmap.
+
+### Already Landed In Code
+
+The following are already present and should be treated as baseline, not future scope:
+
+- Runtime profiles and composition for `local`, `api`, `worker`, and `test`
+- `backend/db/` package with SQLite and Postgres migrations/repositories
+- Incremental sync engine and file watcher
+- Cache management and cache observability endpoints
+- Worker bootstrap and background-job separation from hosted API boot
+- Frontend data-shell split (`DataClient`, app session/runtime/entity contexts) plus typed API client
+- Pagination, analytics expansion, and broader DB-backed read paths
+
+### Remaining Gaps
+
+The follow-on work is now concentrated in architectural cleanup and platform definition:
+
+- Many routers still import `backend.db.connection`, `backend.db.factory`, or `backend.project_manager` directly.
+- Storage selection still relies on runtime `isinstance` dispatch inside `backend/db/factory.py` and the compatibility `FactoryStorageUnitOfWork`.
+- Cache state, canonical app data, integration snapshots, telemetry queues, and future auth/audit concerns still live in one broad data layer without explicit domain ownership.
+- The enterprise/shared-Postgres posture is not yet defined clearly enough for CCDash-only Postgres vs a shared SkillMeat-backed instance.
+- Session-storage modernization needs explicit groundwork so Postgres can become canonical for enterprise-grade conversational analytics without breaking local-first workflows.
+
+## Updated Architecture Direction
+
+### Storage Profiles
+
+The cache plan should now align to **deployment/storage profiles**, not just “SQLite now, Postgres later”.
+
+| Profile | Primary Storage | Source of Truth | Notes |
+|---|---|---|---|
+| Local | SQLite + filesystem adapters | Filesystem for parsed artifacts; DB for cache/app metadata | Portable, zero-config, single-user-first |
+| Enterprise | Postgres | Postgres for app/canonical state; filesystem/Git adapters become ingestion sources | Hosted/shared deployment target |
+| Enterprise (shared instance) | Shared Postgres with schema/tenant isolation | Same as enterprise | Must support CCDash-owned schema boundaries when co-located with SkillMeat |
+
+### Updated Design Principles
+
+1. **Local-first remains first-class**. SQLite + filesystem is still the default operational mode.
+2. **Enterprise is no longer optional parity**. Postgres should be treated as a first-class hosted profile, not a backend toggle hanging off repository factories.
+3. **Runtime composition chooses adapters**. Storage selection belongs in runtime/container wiring, not connection-type inspection inside routers or repositories.
+4. **Derived cache vs canonical data must be explicit**. Filesystem-derived entities, integration caches, telemetry queues, auth data, and future canonical session transcripts should not be treated as one undifferentiated persistence layer.
+5. **Session modernization starts here**. This effort should create stable repository seams and provenance models so `session_messages`, embeddings, churn facts, and scope-drift analytics can land cleanly later.
+
+### Relationship To Other Plans
+
+This plan should be read as an implementation bridge under:
+
+- `docs/project_plans/implementation_plans/refactors/ccdash-hexagonal-foundation-v1.md`
+- `docs/project_plans/PRDs/refactors/deployment-runtime-modularization-v1.md`
+- `docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md`
+- `docs/project_plans/PRDs/enhancements/session-intelligence-canonical-storage-v1.md`
+
+Its role is to preserve and harden the existing cache/sync substrate while preparing CCDash for explicit deployment/storage selection and future canonical session storage.
 
 **Key Deliverables:**
-- `backend/db/` package with connection, repositories, sync engine, file watcher
-- All router endpoints reading from DB instead of re-parsing disk
-- Paginated API responses
-- Persistent alert configs, app-specific metadata, and entity links
-- Analytics snapshots with trend queries and Prometheus/Grafana export
-- Zero-config default (SQLite, single file, fully portable)
+
+- Preserve the local SQLite + filesystem cache workflow as the default product posture
+- Introduce explicit `local` vs `enterprise` storage composition rather than only `CCDASH_DB_BACKEND`
+- Finish migrating remaining request paths onto injected ports/storage/workspace boundaries
+- Define data-domain ownership for cache data, canonical app data, integration snapshots, operational/job metadata, and future auth/audit data
+- Establish the repository and schema seams required for future canonical session-message storage in Postgres
 
 ---
 
@@ -89,20 +154,21 @@ graph LR
 
 ### Database Selection
 
-| Criterion | SQLite (default) | PostgreSQL (optional) |
+| Criterion | Local Profile | Enterprise Profile |
 |---|---|---|
-| Zero config | ✅ Single file | ❌ Server required |
-| Portable | ✅ Copy one file | ❌ |
-| Full SQL + JSON | ✅ `json_extract` | ✅ `jsonb` |
-| Full-text search | ✅ FTS5 | ✅ tsvector |
-| Concurrent writes | ⚠️ WAL mode sufficient | ✅ MVCC |
-| Python async | `aiosqlite` | `asyncpg` |
+| Default storage | SQLite | Postgres |
+| Operational model | Portable, single-user, local-first | Hosted/shared, multi-user-ready |
+| Filesystem dependency | Expected | Optional ingestion adapter, not API assumption |
+| Background work | May run in-process | Should route through worker/runtime capabilities |
+| Session source of truth | Filesystem-derived cache is acceptable | Postgres should be able to become canonical over time |
 
-**Default: SQLite in WAL mode** — zero-config, portable, sufficient for single-user dev dashboards.
+**Current default:** SQLite in WAL mode remains the correct zero-config local profile.
+
+**Updated requirement:** Postgres should be treated as the first-class enterprise profile, with explicit schema and ownership boundaries when shared with SkillMeat.
 
 ### Repository Pattern (DB Abstraction)
 
-All DB access goes through abstract `Protocol` interfaces so backends can be swapped without touching business logic:
+All DB access should continue moving through abstract `Protocol` interfaces, but the selection mechanism must shift from repository-factory type inspection to runtime composition:
 
 ```python
 # backend/db/repositories/base.py
@@ -117,8 +183,9 @@ class SessionRepository(Protocol):
 #                    EntityLinkRepository, AnalyticsRepository, TagRepository
 ```
 
-Concrete implementations: `SqliteSessionRepository`, optionally `PostgresSessionRepository`.
-Backend selected via `CCDASH_DB_BACKEND` env var (default: `sqlite`).
+Concrete implementations already exist for both SQLite and Postgres.
+
+**Required update:** replace “backend selected by env var” as the primary design story with “storage profile selected by runtime composition”. `CCDASH_DB_BACKEND` can remain a low-level compatibility input, but should not be the architectural control point for `local` vs `enterprise`.
 
 ---
 
@@ -659,79 +726,84 @@ Render parent/child/sibling structures on entity detail pages using the `/tree` 
 
 ## Phase Breakdown
 
-### Phase 1: Core Cache Layer *(highest priority — fixes performance)*
+### Phase 0: Baseline Already Landed
+
+These items are substantially present in the current app and should be considered the starting point:
+
+| Task ID | Title | Current State |
+|---|---|---|
+| DB-B0-01 | Runtime profile spine | Landed via `backend/runtime/` (`local`, `api`, `worker`, `test`) |
+| DB-B0-02 | DB package + migrations | Landed for SQLite and Postgres |
+| DB-B0-03 | Incremental sync + watcher | Landed via `backend/db/sync_engine.py` and `backend/db/file_watcher.py` |
+| DB-B0-04 | Cache/status APIs | Landed via `backend/routers/cache.py` |
+| DB-B0-05 | Frontend data-shell split | Landed via `DataClient` + app session/runtime/entity contexts |
+
+### Phase 1: Complete Storage Composition Migration
 
 | Task ID | Title | Description |
 |---|---|---|
-| DB-P1-01 | Add `aiosqlite` dependency | Add to `requirements.txt` |
-| DB-P1-02 | Create `backend/db/` package | `connection.py`, `migrations.py` with all CREATE TABLE statements |
-| DB-P1-03 | Implement repository protocols | `repositories/base.py` with all Protocol definitions |
-| DB-P1-04 | SQLite session repository | CRUD + pagination + normalized detail tables |
-| DB-P1-05 | SQLite document repository | CRUD + type filtering |
-| DB-P1-06 | SQLite task repository | CRUD + feature/phase grouping |
-| DB-P1-07 | SQLite feature repository | CRUD + phases sub-table |
-| DB-P1-08 | Entity links repository | CRUD + tree queries + bidirectional lookups |
-| DB-P1-09 | Tags repository | CRUD + cross-entity tagging |
-| DB-P1-10 | Sync engine | Incremental mtime-based scanning for all entity types |
-| DB-P1-11 | Migrate routers | All endpoints read from DB; full scan on startup |
-| DB-P1-12 | Persist alert configs | Move from hardcoded → DB table |
+| DB-P1-01 | Replace compatibility storage wiring | Introduce explicit local/enterprise storage adapters in runtime composition; reduce reliance on `FactoryStorageUnitOfWork` |
+| DB-P1-02 | Finish router migration | Move remaining read/write paths off direct `connection`/`factory`/`project_manager` imports and onto injected ports |
+| DB-P1-03 | Tighten architecture guardrails | Extend tests/lint checks so newly migrated routers cannot regress back to direct DB singleton usage |
+| DB-P1-04 | Normalize workspace resolution | Make workspace/project resolution consistently go through the workspace registry on migrated request paths |
 
-### Phase 2: File Watcher + Write-Through
+### Phase 2: Define Local Vs Enterprise Storage Profiles
 
 | Task ID | Title | Description |
 |---|---|---|
-| DB-P2-01 | File watcher service | `watchfiles`-based background task monitoring project dirs |
-| DB-P2-02 | Write-through | Status updates → filesystem → invalidate → re-sync |
-| DB-P2-03 | Cache management API | `/api/cache/status` and `/api/cache/rescan` endpoints |
+| DB-P2-01 | Data-domain ownership matrix | Classify tables into derived cache, canonical app state, integration snapshot, operational/job, and future auth/audit domains |
+| DB-P2-02 | Enterprise profile contract | Define how CCDash selects dedicated Postgres vs shared Postgres, including schema/tenant boundaries for SkillMeat co-location |
+| DB-P2-03 | Adapter responsibility split | Treat filesystem watch/sync as local/ingestion adapters rather than universal API-runtime assumptions |
+| DB-P2-04 | Deployment selection model | Define how deployment method (`local` vs `enterprise`) selects runtime profile and storage profile coherently |
 
-### Phase 3: Pagination + Frontend
-
-| Task ID | Title | Description |
-|---|---|---|
-| DB-P3-01 | PaginatedResponse model | Generic paginated wrapper + query params on all list endpoints |
-| DB-P3-02 | Frontend loadMore | Scroll-triggered loading in DataContext |
-| DB-P3-03 | Cache-aware polling | Lightweight DB reads replace full re-parse |
-
-### Phase 4: Analytics + Export
+### Phase 3: Session Storage Modernization Groundwork
 
 | Task ID | Title | Description |
 |---|---|---|
-| DB-P4-01 | Metric types registry | Seed table with 10+ metric definitions |
-| DB-P4-02 | Snapshot background task | Periodic capture into `analytics_entries` |
-| DB-P4-03 | Multi-entity linking | `analytics_entity_links` population during sync |
-| DB-P4-04 | Trends API | `/api/analytics/trends` with date-range queries |
-| DB-P4-05 | Prometheus export | `/api/analytics/export/prometheus` for Grafana |
-| DB-P4-06 | Frontend trend charts | Charts on Overview / Analytics pages |
+| DB-P3-01 | Canonical transcript seams | Introduce explicit repository/service seams for message-level session storage beyond the current cache-oriented logs model |
+| DB-P3-02 | Stable provenance model | Ensure source provenance, transcript ordering, root-session lineage, and conversation-family identifiers are consistently stored across profiles |
+| DB-P3-03 | Postgres-ready canonical tables | Prepare additive schema path for `session_messages`, embeddings, churn facts, and scope-drift facts without disrupting local SQLite mode |
+| DB-P3-04 | Compatibility read model | Keep existing session/detail APIs stable while new canonical session storage lands behind adapters |
 
-### Phase 5: Optional Advanced Backends
+### Phase 4: Governance, Verification, and Rollout
 
 | Task ID | Title | Description |
 |---|---|---|
-| DB-P5-01 | PostgreSQL repositories | Optional `asyncpg`-based implementations |
-| DB-P5-02 | Config-driven selection | `CCDASH_DB_BACKEND=sqlite\|postgres` |
-| DB-P5-03 | Redis hot-path cache | Optional layer for frequently-accessed queries |
-| DB-P5-04 | Documentation | Setup guides for advanced users |
+| DB-P4-01 | Storage-profile test matrix | Verify SQLite local, dedicated Postgres enterprise, and shared-instance enterprise compositions |
+| DB-P4-02 | Migration governance | Add schema-capability checks and parity tests for supported backends |
+| DB-P4-03 | Runtime health reporting | Expose storage-profile/runtime capability health clearly for API and worker modes |
+| DB-P4-04 | Documentation refresh | Update setup/deployment/operator docs to describe deployment/storage selection and supported boundaries |
 
 ---
 
 ## File Structure
 
 ```
-backend/db/
-├── __init__.py
-├── connection.py            # DB connection factory (SQLite/Postgres)
-├── migrations.py            # Schema creation + versioning
-├── repositories/
-│   ├── __init__.py
-│   ├── base.py              # Protocol definitions
-│   ├── sessions.py          # SqliteSessionRepository
-│   ├── documents.py         # SqliteDocumentRepository
-│   ├── tasks.py             # SqliteTaskRepository
-│   ├── features.py          # SqliteFeatureRepository
-│   ├── links.py             # Entity links + external links + tags
-│   └── analytics.py         # Analytics entries + metric types
-├── sync_engine.py           # Incremental file → DB sync
-└── file_watcher.py          # watchfiles-based change detection
+backend/
+├── application/
+│   ├── context.py
+│   ├── ports/
+│   └── services/
+├── adapters/
+│   ├── auth/
+│   ├── jobs/
+│   ├── storage/
+│   └── workspaces/
+├── runtime/
+│   ├── bootstrap.py
+│   ├── bootstrap_api.py
+│   ├── bootstrap_local.py
+│   ├── bootstrap_worker.py
+│   ├── container.py
+│   └── profiles.py
+└── db/
+    ├── connection.py
+    ├── migrations.py
+    ├── sqlite_migrations.py
+    ├── postgres_migrations.py
+    ├── repositories/
+    ├── sync_engine.py
+    └── file_watcher.py
 ```
 
 ---
@@ -742,10 +814,12 @@ backend/db/
 
 - **SyncEngine**: Verify incremental sync only re-parses changed files
 - **Repository CRUD**: All entity types against SQLite
-- **Load test**: Ingest 459 session files, verify query time < 50ms
+- **Storage profiles**: Verify local SQLite, dedicated Postgres, and shared-instance Postgres composition
+- **Load test**: Ingest 459 session files, verify query time < 50ms in local profile
 - **Write-through**: Update status → verify filesystem → verify DB
 - **Entity links**: "All sessions for feature X", tree traversal queries
 - **Analytics**: Snapshot capture, trend queries, Prometheus format
+- **Session groundwork**: Verify compatibility APIs remain stable while canonical session-storage seams are introduced
 
 ### Manual Verification
 
@@ -755,3 +829,5 @@ backend/db/
 - Scroll through sessions list → verify pagination loads more
 - View entity detail → verify tree-view shows linked entities
 - Import Prometheus endpoint into Grafana
+- Boot `api` and `worker` profiles independently and verify runtime/storage capability reporting
+- Validate enterprise profile against both CCDash-owned Postgres and a schema-isolated shared instance

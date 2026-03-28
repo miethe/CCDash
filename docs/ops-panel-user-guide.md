@@ -20,6 +20,19 @@ Route:
 - Run a **Link Audit** and review suspect mapping rows.
 - Review app/project metadata (health, watcher status, paths, project list).
 
+## Telemetry Exporter
+
+The panel also exposes the telemetry exporter health surface:
+
+- View exporter enablement, configuration state, masked SAM endpoint, queue counts, last push time, recent throughput, and the latest error summary.
+- Use **Push Now** to trigger a manual export run when the exporter is configured and enabled.
+- Watch pending, failed, and abandoned queue depth to confirm the worker is keeping up.
+
+The exporter status and control flow are documented in:
+
+- [`docs/guides/telemetry-exporter-guide.md`](./guides/telemetry-exporter-guide.md)
+- [`docs/guides/telemetry-exporter-troubleshooting.md`](./guides/telemetry-exporter-troubleshooting.md)
+
 ## Reading operation status
 
 Statuses:

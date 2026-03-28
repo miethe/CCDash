@@ -19,8 +19,10 @@ import {
   SkillMeatDefinitionSyncResponse,
   SkillMeatObservationBackfillResponse,
   SyncOperation,
+  TelemetryExportStatus,
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { createApiClient } from '../services/apiClient';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
 import { refreshSkillMeatCache } from '../services/skillmeat';
 
@@ -174,6 +176,7 @@ function mappingProgressPercent(operation: SyncOperation | null): number {
 
 export const OpsPanel: React.FC = () => {
   const { projects, activeProject, sessions, sessionTotal, documents, tasks, features, refreshAll } = useData();
+  const apiClient = useMemo(() => createApiClient(), []);
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
   const [health, setHealth] = useState<{ status: string; db: string; watcher: string } | null>(null);
@@ -198,6 +201,8 @@ export const OpsPanel: React.FC = () => {
   const [mappingResolverDetail, setMappingResolverDetail] = useState<MappingResolverDetailResponse | null>(null);
   const [skillMeatSyncResult, setSkillMeatSyncResult] = useState<SkillMeatDefinitionSyncResponse | null>(null);
   const [skillMeatBackfillResult, setSkillMeatBackfillResult] = useState<SkillMeatObservationBackfillResponse | null>(null);
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryExportStatus | null>(null);
+  const [telemetryLoadError, setTelemetryLoadError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<OpsToast[]>([]);
   const handledOperationIdsRef = useRef<Set<string>>(new Set());
   const toastTimerIdsRef = useRef<number[]>([]);
@@ -394,6 +399,47 @@ export const OpsPanel: React.FC = () => {
     }
   }, [activeProject?.id, loadOverview, pushToast, refreshAll, skillMeatConfig, status?.projectId]);
 
+  const loadTelemetryStatus = useCallback(async (quiet = false) => {
+    try {
+      const response = await apiClient.getTelemetryExportStatus();
+      setTelemetryStatus(response);
+      setTelemetryLoadError(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to load telemetry exporter status';
+      if (!quiet) setTelemetryLoadError(message);
+    }
+  }, [apiClient]);
+
+  const runTelemetryPushNow = useCallback(async () => {
+    if (!telemetryStatus?.configured) {
+      setTelemetryLoadError('Configure the SAM endpoint and API key before triggering a manual export.');
+      return;
+    }
+    if (!telemetryStatus.enabled) {
+      setTelemetryLoadError('Enable telemetry export in Settings before triggering a manual export.');
+      return;
+    }
+
+    setBusyAction('telemetry-push');
+    setTelemetryLoadError(null);
+    setNotice(null);
+    try {
+      const response = await apiClient.triggerTelemetryPushNow();
+      const message = response.batchSize > 0
+        ? `Telemetry push completed: ${response.batchSize} event${response.batchSize === 1 ? '' : 's'} exported in ${formatDuration(response.durationMs)}.`
+        : 'Telemetry push completed: no pending events were waiting in the queue.';
+      setNotice(message);
+      pushToast(message, response.success ? 'success' : 'info');
+      await Promise.all([loadOverview(), loadTelemetryStatus()]);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to trigger telemetry export';
+      setTelemetryLoadError(message);
+      pushToast(message, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  }, [apiClient, loadOverview, loadTelemetryStatus, pushToast, telemetryStatus]);
+
   const latestCompletedBackfillOperation = useMemo(
     () => operations.find(op => isMappingBackfillOperation(op) && (op.status || '').toLowerCase() === 'completed') || null,
     [operations],
@@ -488,6 +534,11 @@ export const OpsPanel: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== 'integrations') return;
+    void loadTelemetryStatus();
+  }, [activeTab, loadTelemetryStatus]);
+
   const opsLiveEnabled = Boolean(activeProject?.id && isOpsLiveUpdatesEnabled());
   const opsLiveStatus = useLiveInvalidation({
     topics: opsLiveEnabled && activeProject?.id ? [projectOpsTopic(activeProject.id)] : [],
@@ -516,6 +567,16 @@ export const OpsPanel: React.FC = () => {
       if (timer) window.clearInterval(timer);
     };
   }, [opsLiveEnabled, opsLiveStatus, selectedOperationId, status?.operations?.activeOperationCount]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations') return undefined;
+    const timer = window.setInterval(() => {
+      void loadTelemetryStatus(true);
+    }, 10000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [activeTab, loadTelemetryStatus]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1264,6 +1325,110 @@ export const OpsPanel: React.FC = () => {
               </div>
               <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
                 Use this after changing SkillMeat base URL, project mapping, auth mode, or collection scope when you want the new cache immediately.
+              </div>
+            </section>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)] gap-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-indigo-100">
+                    <Activity size={12} />
+                    Telemetry Exporter
+                  </div>
+                  <h3 className="mt-3 text-lg font-semibold text-slate-100">SAM Queue Health + Manual Push</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Monitor outbound telemetry queue depth, export freshness, and recent errors. Use Push Now to force a batch outside the scheduled worker interval.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => { void loadTelemetryStatus(); }}
+                    disabled={busyAction !== null}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 hover:border-slate-600 disabled:opacity-60"
+                  >
+                    <RefreshCw size={14} className={busyAction === 'telemetry-push' ? 'animate-spin' : ''} />
+                    Refresh Status
+                  </button>
+                  <button
+                    onClick={() => { void runTelemetryPushNow(); }}
+                    disabled={busyAction !== null || !telemetryStatus?.enabled}
+                    className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/35 bg-indigo-500/15 px-4 py-2 text-sm font-medium text-indigo-100 hover:bg-indigo-500/20 disabled:opacity-60"
+                  >
+                    <Play size={14} />
+                    {busyAction === 'telemetry-push' ? 'Pushing…' : 'Push Now'}
+                  </button>
+                </div>
+              </div>
+
+              {telemetryLoadError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {telemetryLoadError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Exporter State</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-100">
+                    {telemetryStatus?.enabled ? 'Active' : telemetryStatus?.configured ? 'Paused' : 'Offline'}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400">
+                    {telemetryStatus?.envLocked
+                      ? 'Environment lock is forcing the exporter off.'
+                      : telemetryStatus?.configured
+                        ? 'Persisted setting controls the worker.'
+                        : 'Backend config is incomplete.'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">SAM Endpoint</p>
+                  <p className="mt-2 text-sm font-mono text-slate-100 break-all">
+                    {telemetryStatus?.samEndpointMasked || 'Not configured'}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400">Hostname only. Secrets never leave the backend.</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Last Push</p>
+                  <p className="mt-2 text-sm text-slate-100">
+                    {telemetryStatus?.lastPushTimestamp ? formatDate(telemetryStatus.lastPushTimestamp) : 'Never'}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400">Successful or attempted batch completion time.</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Last 24 Hours</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-100">{telemetryStatus?.eventsPushed24h ?? 0}</p>
+                  <p className="mt-2 text-xs text-slate-400">Events exported to SAM in the trailing window.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                {[
+                  ['Pending', telemetryStatus?.queueStats.pending ?? 0, 'text-slate-100'],
+                  ['Failed', telemetryStatus?.queueStats.failed ?? 0, 'text-amber-300'],
+                  ['Abandoned', telemetryStatus?.queueStats.abandoned ?? 0, 'text-rose-300'],
+                  ['Synced', telemetryStatus?.queueStats.synced ?? 0, 'text-emerald-300'],
+                ].map(([label, value, tone]) => (
+                  <div key={label} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</p>
+                    <p className={`mt-2 text-2xl font-semibold ${tone}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
+              <h3 className="text-lg font-semibold text-slate-100">Exporter Notes</h3>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
+                Push Now uses the same re-entrancy guard as the scheduled worker. If another export is already running, the backend rejects the request instead of overlapping batches.
+              </div>
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                Queue counts refresh every 10 seconds while this tab is open. Use Settings → Integrations → SkillMeat to enable or disable the exporter.
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recent Error</p>
+                <p className="mt-2 text-sm text-slate-100">{telemetryStatus?.lastError || 'No recent exporter errors recorded.'}</p>
               </div>
             </section>
           </div>

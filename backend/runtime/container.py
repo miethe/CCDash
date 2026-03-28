@@ -8,16 +8,19 @@ from uuid import uuid4
 from fastapi import FastAPI
 
 from backend.adapters.live_updates import InMemoryLiveEventBroker
-from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState
+from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
 from backend.application.context import RequestContext, RequestMetadata, TraceContext
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
 from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
 from backend import config
 from backend.db import connection, migrations, sync_engine
+from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
+from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime_ports import build_core_ports
+from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
 logger = logging.getLogger("ccdash.runtime")
 
@@ -25,6 +28,7 @@ logger = logging.getLogger("ccdash.runtime")
 class RuntimeContainer:
     def __init__(self, *, profile: RuntimeProfile) -> None:
         self.profile = profile
+        self.storage_profile = config.STORAGE_PROFILE
         self.db: Any | None = None
         self.sync: Any | None = None
         self.ports: CorePorts | None = None
@@ -32,10 +36,17 @@ class RuntimeContainer:
         self.job_adapter: RuntimeJobAdapter | None = None
         self.live_event_broker: LiveEventBroker | None = None
         self.live_event_publisher: LiveEventPublisher | None = None
+        self.telemetry_exporter: TelemetryExportCoordinator | None = None
+        self.telemetry_settings_store: TelemetrySettingsStore | None = None
 
     async def startup(self, app: FastAPI) -> None:
-        logger.info("CCDash backend starting up (profile=%s)", self.profile.name)
+        logger.info(
+            "CCDash backend starting up (profile=%s, storage_profile=%s)",
+            self.profile.name,
+            self.storage_profile.profile,
+        )
         app.state.runtime_profile = self.profile
+        app.state.storage_profile = self.storage_profile
         app.state.runtime_container = self
 
         initialize_observability(app)
@@ -52,11 +63,25 @@ class RuntimeContainer:
 
         self.sync = sync_engine.SyncEngine(self.db)
         app.state.sync_engine = self.sync
+        self.telemetry_settings_store = TelemetrySettingsStore()
+        self.telemetry_exporter = TelemetryExportCoordinator(
+            repository=get_telemetry_queue_repository(self.db),
+            settings_store=self.telemetry_settings_store,
+            runtime_config=config.TELEMETRY_EXPORTER_CONFIG,
+        )
+        app.state.telemetry_settings_store = self.telemetry_settings_store
+        app.state.telemetry_exporter = self.telemetry_exporter
+        self._record_telemetry_export_disabled_state()
 
         self.job_adapter = RuntimeJobAdapter(
             profile=self.profile,
             ports=self.require_ports(),
             sync_engine=self.sync,
+            telemetry_exporter_job=(
+                TelemetryExporterJob(self.telemetry_exporter)
+                if self.profile.name == "worker" and self.telemetry_exporter is not None
+                else None
+            ),
         )
         self.lifecycle = await self.job_adapter.start()
         app.state.runtime_jobs = self.job_adapter
@@ -65,6 +90,8 @@ class RuntimeContainer:
             app.state.sync_task = self.lifecycle.sync_task
         if self.lifecycle.analytics_snapshot_task is not None:
             app.state.analytics_snapshot_task = self.lifecycle.analytics_snapshot_task
+        if self.lifecycle.telemetry_export_task is not None:
+            app.state.telemetry_export_task = self.lifecycle.telemetry_export_task
 
     async def shutdown(self, app: FastAPI) -> None:
         logger.info("CCDash backend shutting down (profile=%s)", self.profile.name)
@@ -88,7 +115,11 @@ class RuntimeContainer:
         return self.ports
 
     def _build_core_ports(self) -> CorePorts:
-        return build_core_ports(self.db)
+        return build_core_ports(
+            self.db,
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
@@ -125,6 +156,14 @@ class RuntimeContainer:
             "jobsEnabled": self.profile.capabilities.jobs,
             "authEnabled": self.profile.capabilities.auth,
             "integrationsEnabled": self.profile.capabilities.integrations,
+            "recommendedStorageProfile": self.profile.recommended_storage_profile,
+            "storageProfile": self.storage_profile.profile,
+            "storageBackend": self.storage_profile.db_backend,
+            "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
+            "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
+            "storageIsolationMode": self.storage_profile.isolation_mode,
+            "storageSchema": self.storage_profile.schema_name,
+            "canonicalSessionStore": self.storage_profile.canonical_session_store,
         }
         if self.job_adapter is not None:
             status.update(self.job_adapter.status_snapshot())
@@ -136,3 +175,14 @@ class RuntimeContainer:
             return None
         clean = str(value).strip()
         return clean or None
+
+    def _record_telemetry_export_disabled_state(self) -> None:
+        if self.profile.name != "worker" or self.telemetry_settings_store is None:
+            return
+        settings = self.telemetry_settings_store.load()
+        disabled = not bool(
+            config.TELEMETRY_EXPORTER_CONFIG.enabled
+            and config.TELEMETRY_EXPORTER_CONFIG.configured
+            and settings.enabled
+        )
+        observability.set_telemetry_export_disabled(disabled)

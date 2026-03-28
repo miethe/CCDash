@@ -1,6 +1,6 @@
 # Workflow + SkillMeat Integration Developer Reference
 
-Last updated: 2026-03-14
+Last updated: 2026-03-27
 
 This document explains how CCDash currently integrates with SkillMeat for workflow intelligence, recommended stacks, and artifact resolution. It is a current-state implementation reference for developers tuning the integration, not a future-state PRD.
 
@@ -66,6 +66,13 @@ Current implementation files:
 - [backend/services/workflow_registry.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/workflow_registry.py)
 - [components/Workflows/WorkflowRegistryPage.tsx](/Users/miethe/dev/homelab/development/CCDash/components/Workflows/WorkflowRegistryPage.tsx)
 - [services/workflows.ts](/Users/miethe/dev/homelab/development/CCDash/services/workflows.ts)
+
+Telemetry exporter is intentionally separate from this SkillMeat integration surface:
+
+- worker-side export logic lives in [backend/services/integrations/telemetry_exporter.py](/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py)
+- worker registration happens in [backend/runtime/container.py](/Users/miethe/dev/homelab/development/CCDash/backend/runtime/container.py)
+- exporter metrics and tracing live in [backend/observability/otel.py](/Users/miethe/dev/homelab/development/CCDash/backend/observability/otel.py)
+- operator guidance lives in [telemetry-exporter-guide.md](../telemetry-exporter-guide.md) and [telemetry-exporter-troubleshooting.md](../telemetry-exporter-troubleshooting.md)
 
 ## Configuration and feature gates
 

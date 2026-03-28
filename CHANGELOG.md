@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-03-27
+
+### Added
+
+- Telemetry exporter operator docs:
+  - `docs/guides/telemetry-exporter-guide.md`
+  - `docs/guides/telemetry-exporter-troubleshooting.md`
+
+### Changed
+
+- CCDash telemetry exporter hardening now includes:
+  - pending-queue cap enforcement with drop-and-warn behavior
+  - synced-row purging after export runs using the retention window
+  - exporter observability for batch outcomes, latency, queue depth, error classes, and disabled-state tracking
+  - batch span hardening with project, endpoint, and outcome attributes
+  - a standalone load test that validates the `<2%` CPU-share target
+- README now surfaces the telemetry exporter and links operators to the dedicated guides.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+
 ## 2026-03-23
 
 ### Added

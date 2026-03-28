@@ -1,6 +1,6 @@
 # Operations Panel Developer Reference
 
-Last updated: 2026-03-15
+Last updated: 2026-03-27
 
 This reference documents the Ops page implementation and backend endpoints it uses.
 
@@ -32,6 +32,8 @@ Types:
 - `POST /api/cache/rebuild-links`
 - `POST /api/cache/sync-paths`
 - `GET /api/links/audit`
+- `GET /api/telemetry/export/status`
+- `POST /api/telemetry/export/push-now`
 
 Compatibility aliases also available:
 
@@ -82,6 +84,16 @@ Router integration:
 
 ## API payload notes
 
+`GET /api/health` now includes:
+
+- `storageProfile`
+- `storageBackend`
+- `recommendedStorageProfile`
+- `filesystemSourceOfTruth`
+- `sharedPostgresEnabled`
+- `storageIsolationMode`
+- `storageSchema`
+
 `GET /api/cache/status` now includes:
 
 - `projectId`, `projectName`
@@ -90,6 +102,23 @@ Router integration:
 - `activePaths.progressDir`
 - `operations` snapshot object
 - `liveUpdates` broker snapshot (`active_subscribers`, `buffered_topics`, `replay_gaps`, `dropped_events`, etc.)
+
+## Telemetry exporter surface
+
+The Ops panel also reflects the worker-side telemetry exporter state.
+
+Implementation files:
+
+- `/Users/miethe/dev/homelab/development/CCDash/backend/services/integrations/telemetry_exporter.py`
+- `/Users/miethe/dev/homelab/development/CCDash/backend/adapters/jobs/telemetry_exporter.py`
+- `/Users/miethe/dev/homelab/development/CCDash/backend/runtime/container.py`
+- `/Users/miethe/dev/homelab/development/CCDash/backend/observability/otel.py`
+
+The panel surfaces queue depth, last push time, last error, and enabled/disabled state. For operator procedures and troubleshooting, link users to:
+
+- [`docs/guides/telemetry-exporter-guide.md`](guides/telemetry-exporter-guide.md)
+- [`docs/guides/telemetry-exporter-troubleshooting.md`](guides/telemetry-exporter-troubleshooting.md)
+- [`docs/guides/storage-profiles-guide.md`](guides/storage-profiles-guide.md)
 
 ## Live invalidation path
 

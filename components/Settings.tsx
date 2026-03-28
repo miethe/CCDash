@@ -17,10 +17,12 @@ import {
   ProjectTestPlatformConfig,
   SkillMeatConfigValidationResponse,
   SkillMeatProbeResult,
+  TelemetryExportStatus,
   TestSourceStatus,
 } from '../types';
 import { analyticsService } from '../services/analytics';
 import { DEFAULT_SKILLMEAT_FEATURE_FLAGS, defaultSkillMeatConfig, normalizeSkillMeatConfig } from '../services/agenticIntelligence';
+import { createApiClient } from '../services/apiClient';
 import {
   checkGitHubWriteCapability,
   getGitHubSettings,
@@ -1824,6 +1826,7 @@ const ProjectsTab: React.FC = () => {
 
 const IntegrationsTab: React.FC = () => {
   const { projects, activeProject, updateProject } = useData();
+  const apiClient = React.useMemo(() => createApiClient(), []);
   const [subtab, setSubtab] = useState<IntegrationsSubtab>('skillmeat');
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject?.id || '');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -1850,6 +1853,12 @@ const IntegrationsTab: React.FC = () => {
   const [credentialValidation, setCredentialValidation] = useState<GitHubCredentialValidationResponse | null>(null);
   const [writeCapability, setWriteCapability] = useState<GitHubWriteCapabilityResponse | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryExportStatus | null>(null);
+  const [telemetryEnabledDraft, setTelemetryEnabledDraft] = useState(false);
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [telemetrySaving, setTelemetrySaving] = useState(false);
+  const [telemetryMessage, setTelemetryMessage] = useState<string | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedProjectId && activeProject) {
@@ -1887,6 +1896,24 @@ const IntegrationsTab: React.FC = () => {
         setGitHubError(loadError?.message || 'Failed to load GitHub integration settings');
       });
   }, []);
+
+  const loadTelemetryStatus = React.useCallback(async () => {
+    setTelemetryLoading(true);
+    try {
+      const response = await apiClient.getTelemetryExportStatus();
+      setTelemetryStatus(response);
+      setTelemetryEnabledDraft(response.persistedEnabled);
+      setTelemetryError(null);
+    } catch (loadError: any) {
+      setTelemetryError(loadError?.message || 'Failed to load telemetry exporter status');
+    } finally {
+      setTelemetryLoading(false);
+    }
+  }, [apiClient]);
+
+  useEffect(() => {
+    void loadTelemetryStatus();
+  }, [loadTelemetryStatus]);
 
   const updateSkillMeatConfig = (updater: (prev: Project['skillMeat']) => Project['skillMeat']) => {
     setEditData(current => {
@@ -2016,6 +2043,44 @@ const IntegrationsTab: React.FC = () => {
       setGitHubBusy(false);
     }
   };
+
+  const handleSaveTelemetry = async () => {
+    setTelemetrySaving(true);
+    setTelemetryMessage(null);
+    setTelemetryError(null);
+    try {
+      const response = await apiClient.updateTelemetryExportSettings({ enabled: telemetryEnabledDraft });
+      setTelemetryStatus(response);
+      setTelemetryEnabledDraft(response.persistedEnabled);
+      setTelemetryMessage('Telemetry export settings saved.');
+    } catch (saveError: any) {
+      setTelemetryError(saveError?.message || 'Failed to save telemetry exporter settings');
+    } finally {
+      setTelemetrySaving(false);
+    }
+  };
+
+  const telemetryToggleDisabled = telemetryLoading
+    || telemetrySaving
+    || !telemetryStatus?.configured
+    || Boolean(telemetryStatus?.envLocked);
+  const telemetryDirty = Boolean(telemetryStatus) && telemetryEnabledDraft !== telemetryStatus.persistedEnabled;
+  const telemetryBadgeState = telemetryLoading
+    ? 'idle'
+    : telemetryStatus?.enabled
+      ? 'success'
+      : telemetryStatus?.configured
+        ? 'warning'
+        : 'error';
+  const telemetryBadgeLabel = telemetryLoading
+    ? 'Loading'
+    : telemetryStatus?.enabled
+      ? 'Exporter active'
+      : telemetryStatus?.envLocked
+        ? 'Environment lock'
+        : telemetryStatus?.configured
+          ? 'Configured but off'
+          : 'Not configured';
 
   return (
     <div className="space-y-6">
@@ -2225,6 +2290,119 @@ const IntegrationsTab: React.FC = () => {
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="mb-2">
+                    <ConnectionStatusBadge label={telemetryBadgeLabel} state={telemetryBadgeState} />
+                  </div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-1">Enterprise Telemetry Export</h4>
+                  <p className="text-xs text-slate-500">
+                    App-scoped exporter settings for pushing anonymized workflow metrics to SAM. The toggle persists in CCDash settings, but environment configuration can still force the exporter off.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadTelemetryStatus()}
+                  disabled={telemetryLoading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={telemetryLoading ? 'animate-spin' : ''} />
+                  {telemetryLoading ? 'Refreshing...' : 'Refresh Status'}
+                </button>
+              </div>
+
+              {telemetryError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                  {telemetryError}
+                </div>
+              )}
+              {telemetryMessage && !telemetryError && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                  {telemetryMessage}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">SAM Endpoint</span>
+                  <p className="text-sm text-slate-200 break-all">{telemetryStatus?.samEndpointMasked || 'Not configured'}</p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">Last Push</span>
+                  <p className="text-sm text-slate-200">
+                    {telemetryStatus?.lastPushTimestamp ? new Date(telemetryStatus.lastPushTimestamp).toLocaleString() : 'Never'}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                  <span className="block text-xs text-slate-400 mb-1">Queue Snapshot</span>
+                  <p className="text-sm text-slate-200">
+                    {telemetryStatus
+                      ? `${telemetryStatus.queueStats.pending} pending, ${telemetryStatus.queueStats.failed} failed, ${telemetryStatus.queueStats.abandoned} abandoned`
+                      : 'Loading queue state...'}
+                  </p>
+                </div>
+              </div>
+
+              <label className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
+                <div>
+                  <span className="block text-sm text-slate-200">Enable enterprise telemetry export</span>
+                  <span className="block text-xs text-slate-500">
+                    Uses the persisted app setting when SAM endpoint + API key are configured and the environment does not lock the exporter off.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={telemetryEnabledDraft}
+                  onChange={event => {
+                    setTelemetryEnabledDraft(event.target.checked);
+                    setTelemetryMessage(null);
+                    setTelemetryError(null);
+                  }}
+                  disabled={telemetryToggleDisabled}
+                  className="h-4 w-4"
+                  aria-label="Enable enterprise telemetry export"
+                />
+              </label>
+
+              {!telemetryStatus?.configured && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  Configure `CCDASH_SAM_ENDPOINT` and `CCDASH_SAM_API_KEY` in the backend environment before enabling telemetry export from the UI.
+                </div>
+              )}
+              {telemetryStatus?.envLocked && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  Environment lock detected: `CCDASH_TELEMETRY_EXPORT_ENABLED=false` currently forces the exporter off even if the persisted setting is enabled.
+                </div>
+              )}
+              {telemetryStatus?.lastError && (
+                <div className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300">
+                  <span className="font-semibold text-slate-200">Recent exporter error:</span> {telemetryStatus.lastError}
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveTelemetry}
+                  disabled={telemetrySaving || telemetryLoading || !telemetryDirty || telemetryToggleDisabled}
+                  className="flex items-center gap-2 rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-50"
+                >
+                  {telemetrySaving ? (
+                    <>
+                      <RefreshCw size={12} className="animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={12} />
+                      Save Telemetry Settings
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">

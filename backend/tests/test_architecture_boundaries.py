@@ -3,21 +3,61 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATED_ROUTERS = (
-    ROOT / "backend" / "routers" / "execution.py",
-    ROOT / "backend" / "routers" / "integrations.py",
-)
-BANNED_IMPORT_SNIPPETS = (
-    "from backend.db import connection",
-    "from backend.db.factory import",
+MIGRATED_ROUTER_RULES = (
+    (
+        ROOT / "backend" / "routers" / "cache.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "analytics.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "api.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "execution.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "integrations.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+        ),
+    ),
+    (
+        ROOT / "backend" / "routers" / "projects.py",
+        (
+            "from backend.db import connection",
+            "from backend.db.factory import",
+            "from backend.project_manager import",
+        ),
+    ),
 )
 
 
 class RouterArchitectureBoundaryTests(unittest.TestCase):
     def test_migrated_routers_do_not_import_db_singletons(self) -> None:
-        for path in MIGRATED_ROUTERS:
+        for path, banned_snippets in MIGRATED_ROUTER_RULES:
             source = path.read_text(encoding="utf-8")
-            for snippet in BANNED_IMPORT_SNIPPETS:
+            for snippet in banned_snippets:
                 self.assertNotIn(
                     snippet,
                     source,

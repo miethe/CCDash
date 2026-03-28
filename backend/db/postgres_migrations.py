@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -488,6 +488,25 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_feature
     ON telemetry_events(project_id, feature_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_telemetry_task
     ON telemetry_events(project_id, task_id, occurred_at);
+
+-- ── 9b. Outbound Telemetry Export Queue ────────────────────────────
+CREATE TABLE IF NOT EXISTS outbound_telemetry_queue (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_slug    TEXT NOT NULL,
+    payload_json    TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed', 'abandoned')),
+    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    last_attempt_at TEXT,
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    UNIQUE(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_status
+    ON outbound_telemetry_queue(status);
+CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_created_at
+    ON outbound_telemetry_queue(created_at);
 
 -- ── 10. Commit Correlations ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS commit_correlations (

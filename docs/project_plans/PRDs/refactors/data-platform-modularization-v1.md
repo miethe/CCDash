@@ -9,7 +9,7 @@ title: "PRD: Data Platform Modularization V1"
 description: "Evolve CCDash from a runtime-selected SQLite/Postgres cache implementation into a profile-aware data platform with explicit storage roles, stronger schema governance, and multi-user readiness."
 summary: "Define how local SQLite, hosted Postgres, cache data, canonical app data, and auth-era tenancy concerns should fit together."
 created: 2026-03-11
-updated: 2026-03-11
+updated: 2026-03-27
 priority: high
 risk_level: high
 complexity: High
@@ -42,7 +42,7 @@ context_files:
   - backend/db/postgres_migrations.py
   - backend/db/sync_engine.py
   - backend/verify_db_layer.py
-implementation_plan_ref: ""
+implementation_plan_ref: docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 ---
 
 # PRD: Data Platform Modularization V1

@@ -1,4 +1,5 @@
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -7,8 +8,10 @@ from backend.models import Project
 from backend.project_manager import ProjectManager
 from backend.services.integrations.github_settings_store import GitHubSettingsStore
 from backend.models import GitHubIntegrationSettingsUpdateRequest
+from backend.routers import projects as projects_router
 from backend.services.project_paths.providers.github import GitHubProjectPathProvider
 from backend.services.project_paths.resolver import ProjectPathResolver
+from backend.services.project_paths.models import ResolvedProjectPath, ResolvedProjectPaths
 
 
 class _StubWorkspaceManager:
@@ -130,6 +133,63 @@ class ProjectPathResolverTests(unittest.TestCase):
         self.assertEqual(sessions_dir, config.SESSIONS_DIR.resolve(strict=False))
         self.assertEqual(docs_dir, config.DOCUMENTS_DIR.resolve(strict=False))
         self.assertEqual(progress_dir, config.PROGRESS_DIR.resolve(strict=False))
+
+    def test_projects_router_uses_workspace_registry_for_active_paths(self) -> None:
+        project = Project.model_validate(
+            {
+                "id": "project-1",
+                "name": "Project 1",
+                "path": "/tmp/project-1",
+            }
+        )
+        bundle = ResolvedProjectPaths(
+            project_id=project.id,
+            root=ResolvedProjectPath(
+                field="root",
+                source_kind="filesystem",
+                requested=project.pathConfig.root,
+                path=Path("/tmp/project-1"),
+            ),
+            plan_docs=ResolvedProjectPath(
+                field="plan_docs",
+                source_kind="filesystem",
+                requested=project.pathConfig.planDocs,
+                path=Path("/tmp/project-1/docs"),
+            ),
+            sessions=ResolvedProjectPath(
+                field="sessions",
+                source_kind="filesystem",
+                requested=project.pathConfig.sessions,
+                path=Path("/tmp/sessions"),
+            ),
+            progress=ResolvedProjectPath(
+                field="progress",
+                source_kind="filesystem",
+                requested=project.pathConfig.progress,
+                path=Path("/tmp/project-1/.claude/progress"),
+            ),
+        )
+        registry = types.SimpleNamespace(
+            get_active_project=lambda: project,
+            get_project=lambda project_id: project if project_id == project.id else None,
+            resolve_project_paths=lambda current_project: bundle,
+        )
+        core_ports = types.SimpleNamespace(workspace_registry=registry)
+
+        payload = projects_router.get_active_project_paths(core_ports)
+
+        self.assertEqual(payload.projectId, "project-1")
+        self.assertEqual(payload.planDocs.path, "/tmp/project-1/docs")
+
+    def test_projects_router_lists_projects_from_workspace_registry(self) -> None:
+        project = Project.model_validate({"id": "project-1", "name": "Project 1", "path": "/tmp/project-1"})
+        registry = types.SimpleNamespace(list_projects=lambda: [project])
+        core_ports = types.SimpleNamespace(workspace_registry=registry)
+
+        payload = projects_router.list_projects(core_ports)
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0].id, "project-1")
 
 
 if __name__ == "__main__":

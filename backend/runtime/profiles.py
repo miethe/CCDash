@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 RuntimeProfileName = Literal["local", "api", "worker", "test"]
+StorageProfileName = Literal["local", "enterprise"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class RuntimeCapabilities:
 class RuntimeProfile:
     name: RuntimeProfileName
     capabilities: RuntimeCapabilities
+    recommended_storage_profile: StorageProfileName
     description: str
 
 
@@ -33,6 +35,7 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
             auth=False,
             integrations=True,
         ),
+        recommended_storage_profile="local",
         description="Desktop-style local profile with automatic sync, watcher, and in-process jobs.",
     ),
     "api": RuntimeProfile(
@@ -44,6 +47,7 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
             auth=True,
             integrations=True,
         ),
+        recommended_storage_profile="enterprise",
         description="HTTP-serving profile without incidental watcher or startup sync work.",
     ),
     "worker": RuntimeProfile(
@@ -55,6 +59,7 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
             auth=False,
             integrations=True,
         ),
+        recommended_storage_profile="enterprise",
         description="Background worker profile for sync, refresh, and scheduled job execution without HTTP serving.",
     ),
     "test": RuntimeProfile(
@@ -66,6 +71,7 @@ _RUNTIME_PROFILES: dict[RuntimeProfileName, RuntimeProfile] = {
             auth=False,
             integrations=False,
         ),
+        recommended_storage_profile="local",
         description="Stripped test profile with background work disabled by default.",
     ),
 }

@@ -26,6 +26,11 @@ _tool_calls_counter: Any | None = None
 _tool_duration_hist: Any | None = None
 _tokens_counter: Any | None = None
 _cost_counter: Any | None = None
+_telemetry_export_events_counter: Any | None = None
+_telemetry_export_latency_hist: Any | None = None
+_telemetry_export_queue_depth_gauge: Any | None = None
+_telemetry_export_errors_counter: Any | None = None
+_telemetry_export_disabled_gauge: Any | None = None
 
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
@@ -35,6 +40,14 @@ _prom_tool_calls_counter: Any | None = None
 _prom_tool_duration_hist: Any | None = None
 _prom_tokens_counter: Any | None = None
 _prom_cost_counter: Any | None = None
+_prom_telemetry_export_events_counter: Any | None = None
+_prom_telemetry_export_latency_hist: Any | None = None
+_prom_telemetry_export_queue_depth_gauge: Any | None = None
+_prom_telemetry_export_errors_counter: Any | None = None
+_prom_telemetry_export_disabled_gauge: Any | None = None
+
+_telemetry_queue_depth_state: dict[tuple[str, str], int] = {}
+_telemetry_export_disabled_state = 1
 
 
 def _normalize_otlp_endpoint(base_endpoint: str, signal_path: str) -> str:
@@ -61,9 +74,15 @@ def initialize(app: FastAPI | None = None) -> None:
     global _initialized, _enabled, _tracer, _trace_provider, _meter_provider, _fastapi_instrumentor
     global _ingestion_counter, _ingestion_latency_hist, _parser_failure_counter
     global _tool_calls_counter, _tool_duration_hist, _tokens_counter, _cost_counter
+    global _telemetry_export_events_counter, _telemetry_export_latency_hist
+    global _telemetry_export_queue_depth_gauge, _telemetry_export_errors_counter
+    global _telemetry_export_disabled_gauge
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
+    global _prom_telemetry_export_events_counter, _prom_telemetry_export_latency_hist
+    global _prom_telemetry_export_queue_depth_gauge, _prom_telemetry_export_errors_counter
+    global _prom_telemetry_export_disabled_gauge
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -81,6 +100,7 @@ def initialize(app: FastAPI | None = None) -> None:
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.metrics import Observation
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
@@ -149,6 +169,33 @@ def initialize(app: FastAPI | None = None) -> None:
         unit="usd",
         description="Cost totals by model and feature context",
     )
+    _telemetry_export_events_counter = meter.create_counter(
+        "ccdash_telemetry_export_events_total",
+        unit="1",
+        description="Count of telemetry exporter batch outcomes",
+    )
+    _telemetry_export_latency_hist = meter.create_histogram(
+        "ccdash_telemetry_export_latency_ms",
+        unit="ms",
+        description="Latency for telemetry export batches",
+    )
+    _telemetry_export_errors_counter = meter.create_counter(
+        "ccdash_telemetry_export_errors_total",
+        unit="1",
+        description="Telemetry export errors by class",
+    )
+    _telemetry_export_queue_depth_gauge = meter.create_observable_gauge(
+        "ccdash_telemetry_export_queue_depth",
+        callbacks=[_observe_telemetry_queue_depth(Observation)],
+        unit="1",
+        description="Telemetry export queue depth by status and project",
+    )
+    _telemetry_export_disabled_gauge = meter.create_observable_gauge(
+        "ccdash_telemetry_export_disabled",
+        callbacks=[_observe_telemetry_disabled(Observation)],
+        unit="1",
+        description="Whether telemetry export is disabled",
+    )
 
     _trace_provider = trace_provider
     _meter_provider = meter_provider
@@ -161,7 +208,7 @@ def initialize(app: FastAPI | None = None) -> None:
 
     if config.PROM_PORT > 0:
         try:
-            from prometheus_client import Counter, Histogram, start_http_server
+            from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
             start_http_server(config.PROM_PORT)
             _prom_enabled = True
@@ -199,6 +246,30 @@ def initialize(app: FastAPI | None = None) -> None:
                 "ccdash_cost_usd_total",
                 "Cost totals by model and feature context",
                 ["model", "feature", "project"],
+            )
+            _prom_telemetry_export_events_counter = Counter(
+                "ccdash_telemetry_export_events_total",
+                "Count of telemetry exporter batch outcomes",
+                ["status", "project"],
+            )
+            _prom_telemetry_export_latency_hist = Histogram(
+                "ccdash_telemetry_export_latency_ms",
+                "Latency for telemetry export batches",
+                ["project"],
+            )
+            _prom_telemetry_export_queue_depth_gauge = Gauge(
+                "ccdash_telemetry_export_queue_depth",
+                "Telemetry export queue depth by status and project",
+                ["status", "project"],
+            )
+            _prom_telemetry_export_errors_counter = Counter(
+                "ccdash_telemetry_export_errors_total",
+                "Telemetry export errors by class",
+                ["error_type", "project"],
+            )
+            _prom_telemetry_export_disabled_gauge = Gauge(
+                "ccdash_telemetry_export_disabled",
+                "Whether telemetry export is disabled",
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -331,3 +402,84 @@ def record_token_cost(
     if _prom_enabled and _prom_cost_counter is not None and cost_usd > 0:
         prom_base = _prom_labels(project_id=project_id, model=model, feature=feature_id or "none")
         _prom_cost_counter.labels(**prom_base).inc(float(cost_usd))
+
+
+def record_telemetry_export_event(*, project_id: str, status: str, count: int = 1) -> None:
+    safe_count = max(0, int(count))
+    if safe_count == 0:
+        return
+    labels = {
+        "status": (status or "unknown").strip() or "unknown",
+        "project_id": project_id or "unknown",
+    }
+    if _enabled and _telemetry_export_events_counter is not None:
+        _telemetry_export_events_counter.add(safe_count, labels)
+    if _prom_enabled and _prom_telemetry_export_events_counter is not None:
+        prom = _prom_labels(project_id=project_id, status=status)
+        _prom_telemetry_export_events_counter.labels(**prom).inc(safe_count)
+
+
+def record_telemetry_export_latency(*, project_id: str, duration_ms: float) -> None:
+    value = max(0.0, float(duration_ms))
+    labels = {"project_id": project_id or "unknown"}
+    if _enabled and _telemetry_export_latency_hist is not None:
+        _telemetry_export_latency_hist.record(value, labels)
+    if _prom_enabled and _prom_telemetry_export_latency_hist is not None:
+        prom = _prom_labels(project_id=project_id)
+        _prom_telemetry_export_latency_hist.labels(**prom).observe(value)
+
+
+def set_telemetry_export_queue_depth(*, project_id: str, status: str, depth: int) -> None:
+    key = (
+        (project_id or "unknown").strip() or "unknown",
+        (status or "unknown").strip() or "unknown",
+    )
+    _telemetry_queue_depth_state[key] = max(0, int(depth))
+    if _prom_enabled and _prom_telemetry_export_queue_depth_gauge is not None:
+        prom = _prom_labels(project_id=project_id, status=status)
+        _prom_telemetry_export_queue_depth_gauge.labels(**prom).set(max(0, int(depth)))
+
+
+def record_telemetry_export_error(*, project_id: str, error_type: str, count: int = 1) -> None:
+    safe_count = max(0, int(count))
+    if safe_count == 0:
+        return
+    labels = {
+        "error_type": (error_type or "unknown").strip() or "unknown",
+        "project_id": project_id or "unknown",
+    }
+    if _enabled and _telemetry_export_errors_counter is not None:
+        _telemetry_export_errors_counter.add(safe_count, labels)
+    if _prom_enabled and _prom_telemetry_export_errors_counter is not None:
+        prom = _prom_labels(project_id=project_id, error_type=error_type)
+        _prom_telemetry_export_errors_counter.labels(**prom).inc(safe_count)
+
+
+def set_telemetry_export_disabled(disabled: bool) -> None:
+    global _telemetry_export_disabled_state
+    _telemetry_export_disabled_state = 1 if disabled else 0
+    if _prom_enabled and _prom_telemetry_export_disabled_gauge is not None:
+        _prom_telemetry_export_disabled_gauge.set(_telemetry_export_disabled_state)
+
+
+def _observe_telemetry_queue_depth(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [
+            observation_type(
+                value,
+                {
+                    "project_id": project_id,
+                    "status": status,
+                },
+            )
+            for (project_id, status), value in sorted(_telemetry_queue_depth_state.items())
+        ]
+
+    return _callback
+
+
+def _observe_telemetry_disabled(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [observation_type(_telemetry_export_disabled_state)]
+
+    return _callback

@@ -5,7 +5,97 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
+from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.routers import api as api_router
+
+
+class _FakeIdentityProvider:
+    async def get_principal(self, metadata, *, runtime_profile):
+        _ = metadata, runtime_profile
+        return Principal(subject="test:operator", display_name="Test Operator", auth_mode="test")
+
+
+class _FakeAuthorizationPolicy:
+    async def authorize(self, context, *, action, resource=None):
+        _ = context, action, resource
+        return AuthorizationDecision(allowed=True)
+
+
+class _FakeJobScheduler:
+    def schedule(self, job, *, name=None):
+        _ = name
+        return job
+
+
+class _FakeIntegrationClient:
+    async def invoke(self, integration, operation, payload=None):
+        _ = integration, operation, payload
+        return {}
+
+
+class _FakeWorkspaceRegistry:
+    def __init__(self, project) -> None:
+        self.project = project
+
+    def get_project(self, project_id):
+        if self.project and str(getattr(self.project, "id", "")) == project_id:
+            return self.project
+        return None
+
+    def get_active_project(self):
+        return self.project
+
+
+class _FakeStorage:
+    def __init__(self, *, db=None, session_repo=None, link_repo=None, feature_repo=None) -> None:
+        self.db = db if db is not None else object()
+        self._session_repo = session_repo
+        self._link_repo = link_repo
+        self._feature_repo = feature_repo
+
+    def sessions(self):
+        return self._session_repo
+
+    def entity_links(self):
+        return self._link_repo
+
+    def features(self):
+        return self._feature_repo
+
+
+def _request_context(project_id: str = "project-1") -> RequestContext:
+    return RequestContext(
+        principal=Principal(subject="test:operator", display_name="Test Operator", auth_mode="test"),
+        workspace=None,
+        project=ProjectScope(
+            project_id=project_id,
+            project_name="Project 1",
+            root_path=api_router.Path("/tmp/project"),
+            sessions_dir=api_router.Path("/tmp/sessions"),
+            docs_dir=api_router.Path("/tmp/docs"),
+            progress_dir=api_router.Path("/tmp/progress"),
+        ),
+        runtime_profile="test",
+        trace=TraceContext(request_id="req-1"),
+    )
+
+
+def _core_ports(*, project=None, db=None, session_repo=None, link_repo=None, feature_repo=None) -> CorePorts:
+    resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
+    return CorePorts(
+        identity_provider=_FakeIdentityProvider(),
+        authorization_policy=_FakeAuthorizationPolicy(),
+        workspace_registry=_FakeWorkspaceRegistry(resolved_project),
+        storage=_FakeStorage(
+            db=db,
+            session_repo=session_repo,
+            link_repo=link_repo,
+            feature_repo=feature_repo,
+        ),
+        job_scheduler=_FakeJobScheduler(),
+        integration_client=_FakeIntegrationClient(),
+    )
 
 
 class _FakeRepo:
@@ -338,9 +428,14 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_sessions_defaults_to_excluding_subagents(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(project=project, session_repo=repo)
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.list_sessions(include_subagents=False)
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.list_sessions(
+                include_subagents=False,
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
 
         self.assertEqual(response.total, 1)
         self.assertFalse(repo.last_filters["include_subagents"])
@@ -358,13 +453,16 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(project=project, session_repo=repo)
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
             await api_router.list_sessions(
                 include_subagents=True,
                 root_session_id="S-main",
                 thread_kind="fork",
                 conversation_family_id="S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
             )
 
         self.assertTrue(repo.last_filters["include_subagents"])
@@ -375,11 +473,14 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_sessions_accepts_model_identity_filters(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        core_ports = _core_ports(project=project, session_repo=repo)
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
             await api_router.list_sessions(
                 model_provider="Claude",
                 model_family="Opus",
                 model_version="Opus 4.5",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
             )
 
         self.assertEqual(repo.last_filters["model_provider"], "Claude")
@@ -389,10 +490,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_sessions_accepts_platform_filters(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        core_ports = _core_ports(project=project, session_repo=repo)
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
             await api_router.list_sessions(
                 platform_type="Claude Code",
                 platform_version="2.1.52",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
             )
 
         self.assertEqual(repo.last_filters["platform_type"], "Claude Code")
@@ -401,9 +505,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_model_facets_returns_normalized_values(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(project=project, session_repo=repo)
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo):
-            response = await api_router.get_session_model_facets(include_subagents=False)
+        response = await api_router.get_session_model_facets(
+            include_subagents=False,
+            request_context=_request_context(project.id),
+            core_ports=core_ports,
+        )
 
         self.assertEqual(len(response), 2)
         self.assertFalse(repo.last_include_subagents_for_facets)
@@ -414,9 +522,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_platform_facets_returns_values(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(project=project, session_repo=repo)
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo):
-            response = await api_router.get_session_platform_facets(include_subagents=False)
+        response = await api_router.get_session_platform_facets(
+            include_subagents=False,
+            request_context=_request_context(project.id),
+            core_ports=core_ports,
+        )
 
         self.assertEqual(len(response), 2)
         self.assertFalse(repo.last_include_subagents_for_platform_facets)
@@ -519,8 +631,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "get_session_usage_attribution_details", return_value=usage_payload):
-            response = await api_router.get_session("S-main")
+        core_ports = _core_ports(project=project, session_repo=repo)
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "get_session_usage_attribution_details", return_value=usage_payload):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
 
         self.assertEqual(response.id, "S-main")
         self.assertEqual(response.threadKind, "root")
@@ -543,8 +660,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         repo = _FakeFullSessionRepo()
         project = types.SimpleNamespace(id="project-1")
 
-        with patch.object(api_router.project_manager, "get_active_project", return_value=project), patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=repo), patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
-            response = await api_router.get_session("S-main")
+        core_ports = _core_ports(project=project, session_repo=repo)
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
 
         self.assertEqual(response.usageEvents, [])
         self.assertEqual(response.usageAttributions, [])
@@ -562,8 +684,11 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         link_repo = _FakeLinkRepo()
         feature_repo = _FakeFeatureRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo):
-            response = await api_router.get_session_linked_features("S-main")
+        response = await api_router.get_session_linked_features(
+            "S-main",
+            request_context=_request_context(),
+            core_ports=_core_ports(session_repo=session_repo, link_repo=link_repo, feature_repo=feature_repo),
+        )
 
         self.assertEqual(len(response), 1)
         self.assertEqual(response[0].featureId, "feat-alpha")
@@ -575,9 +700,12 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_linked_features_404_when_missing(self) -> None:
         session_repo = _FakeSessionDetailRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo):
-            with self.assertRaises(HTTPException) as ctx:
-                await api_router.get_session_linked_features("S-missing")
+        with self.assertRaises(HTTPException) as ctx:
+            await api_router.get_session_linked_features(
+                "S-missing",
+                request_context=_request_context(),
+                core_ports=_core_ports(session_repo=session_repo),
+            )
 
         self.assertEqual(ctx.exception.status_code, 404)
 
@@ -602,8 +730,11 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         feature_repo = _FakeFeatureRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo):
-            response = await api_router.get_session_linked_features("S-main")
+        response = await api_router.get_session_linked_features(
+            "S-main",
+            request_context=_request_context(),
+            core_ports=_core_ports(session_repo=session_repo, link_repo=link_repo, feature_repo=feature_repo),
+        )
 
         self.assertEqual(len(response), 1)
         self.assertFalse(response[0].isPrimaryLink)
@@ -631,10 +762,12 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         feature_repo = _FakeFeatureRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
             response = await api_router.upsert_session_linked_feature(
                 "S-main",
                 api_router.SessionFeatureLinkMutationRequest(featureId="feat-beta", linkRole="primary"),
+                request_context=_request_context(),
+                core_ports=_core_ports(session_repo=session_repo, link_repo=link_repo, feature_repo=feature_repo),
             )
 
         by_feature_id = {item.featureId: item for item in response}
@@ -647,10 +780,12 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         link_repo = _MutableFakeLinkRepo()
         feature_repo = _FakeFeatureRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
             response = await api_router.upsert_session_linked_feature(
                 "S-main",
                 api_router.SessionFeatureLinkMutationRequest(featureId="feat-beta", linkRole="related"),
+                request_context=_request_context(),
+                core_ports=_core_ports(session_repo=session_repo, link_repo=link_repo, feature_repo=feature_repo),
             )
 
         self.assertEqual(len(response), 1)
@@ -676,8 +811,13 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         )
         feature_repo = _FakeFeatureRepo()
 
-        with patch.object(api_router.connection, "get_connection", return_value=object()), patch.object(api_router, "get_session_repository", return_value=session_repo), patch.object(api_router, "get_entity_link_repository", return_value=link_repo), patch.object(api_router, "get_feature_repository", return_value=feature_repo), patch.object(api_router, "load_session_mappings", return_value=[]):
-            response = await api_router.delete_session_linked_feature("S-main", "feat-alpha")
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.delete_session_linked_feature(
+                "S-main",
+                "feat-alpha",
+                request_context=_request_context(),
+                core_ports=_core_ports(session_repo=session_repo, link_repo=link_repo, feature_repo=feature_repo),
+            )
 
         self.assertEqual(response, [])
 
