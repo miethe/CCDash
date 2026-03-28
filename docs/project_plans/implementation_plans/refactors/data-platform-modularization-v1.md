@@ -4,15 +4,15 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in_progress
 category: refactors
 title: 'Implementation Plan: Data Platform Modularization V1'
 description: Turn CCDash's new storage-profile contract into real local and enterprise
   storage composition, explicit data-domain ownership, and migration governance that
   supports auth-era hosted deployment.
-summary: Replace factory-backed backend selection with explicit storage adapters, classify
-  canonical versus derived data domains, add identity and audit foundations, and harden
-  SQLite/Postgres governance for local-first and enterprise profiles.
+summary: Replace factory-backed backend selection with explicit storage adapters,
+  classify canonical versus derived data domains, add identity and audit foundations,
+  and harden SQLite/Postgres governance for local-first and enterprise profiles.
 author: codex
 audience:
 - ai-agents
@@ -20,7 +20,7 @@ audience:
 - platform-engineering
 - backend-platform
 created: 2026-03-27
-updated: '2026-03-27'
+updated: '2026-03-28'
 tags:
 - implementation
 - data-platform
