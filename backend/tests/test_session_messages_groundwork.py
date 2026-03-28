@@ -298,8 +298,9 @@ class ProjectSessionMessagesProjectionTests(unittest.TestCase):
 
         self.assertEqual(msg["toolName"], "bash")
         self.assertEqual(msg["toolCallId"], "tc-1")
-        self.assertEqual(msg["metadata"]["toolArgs"], '{"cmd": "ls"}')
-        self.assertEqual(msg["metadata"]["toolOutput"], "file.py")
+        meta = cast(dict[str, Any], msg["metadata"])
+        self.assertEqual(meta["toolArgs"], '{"cmd": "ls"}')
+        self.assertEqual(meta["toolOutput"], "file.py")
 
     def test_uses_session_id_as_fallback_for_root_and_family(self) -> None:
         session_row = {"id": "standalone"}
