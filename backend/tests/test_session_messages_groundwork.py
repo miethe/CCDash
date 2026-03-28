@@ -1,11 +1,11 @@
 """Tests for Phase 3 DB caching groundwork: canonical session_messages seam."""
 import unittest
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 
 from backend.db import sqlite_migrations
-from backend.db.repositories.session_messages import SqliteSessionMessageRepository
 from backend.application.services.sessions import SessionTranscriptService
 from backend.services.session_transcript_projection import project_session_messages
 
@@ -152,7 +152,8 @@ class SessionTranscriptServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["speaker"], "assistant")
         self.assertEqual(result[0]["type"], "tool")
         self.assertIsNotNone(result[0]["toolCall"])
-        self.assertEqual(result[0]["toolCall"]["name"], "bash")
+        tool_call = cast(dict[str, Any], result[0]["toolCall"])
+        self.assertEqual(tool_call["name"], "bash")
 
     async def test_empty_session_returns_empty_list(self) -> None:
         ports = self._make_ports(canonical_rows=[], legacy_rows=[])
@@ -186,11 +187,12 @@ class CanonicalPayloadProvenanceTests(unittest.TestCase):
             "metadata_json": None,
         }
         payload = svc._canonical_log_payload(row)
+        meta = cast(dict[str, Any], payload["metadata"])
 
-        self.assertEqual(payload["metadata"]["sourceProvenance"], "live_ingest")
-        self.assertEqual(payload["metadata"]["entryUuid"], "uuid-a")
-        self.assertEqual(payload["metadata"]["parentUuid"], "uuid-parent")
-        self.assertEqual(payload["metadata"]["rawMessageId"], "msg-1")
+        self.assertEqual(meta["sourceProvenance"], "live_ingest")
+        self.assertEqual(meta["entryUuid"], "uuid-a")
+        self.assertEqual(meta["parentUuid"], "uuid-parent")
+        self.assertEqual(meta["rawMessageId"], "msg-1")
 
     def test_canonical_payload_does_not_overwrite_existing_metadata_provenance(self) -> None:
         import json
@@ -214,8 +216,9 @@ class CanonicalPayloadProvenanceTests(unittest.TestCase):
             "metadata_json": json.dumps({"sourceProvenance": "custom_source"}),
         }
         payload = svc._canonical_log_payload(row)
+        meta = cast(dict[str, Any], payload["metadata"])
         # pre-existing value in metadata_json must not be overwritten by source_provenance column
-        self.assertEqual(payload["metadata"]["sourceProvenance"], "custom_source")
+        self.assertEqual(meta["sourceProvenance"], "custom_source")
 
     def test_legacy_payload_omits_tool_call_when_no_tool_fields(self) -> None:
         svc = self._svc()
