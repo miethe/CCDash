@@ -47,15 +47,25 @@ class _FakeWorkspaceRegistry:
         return self.project
 
 
+class _EmptySessionMessageRepo:
+    async def list_by_session(self, session_id):
+        _ = session_id
+        return []
+
+
 class _FakeStorage:
-    def __init__(self, *, db=None, session_repo=None, link_repo=None, feature_repo=None) -> None:
+    def __init__(self, *, db=None, session_repo=None, session_message_repo=None, link_repo=None, feature_repo=None) -> None:
         self.db = db if db is not None else object()
         self._session_repo = session_repo
+        self._session_message_repo = session_message_repo or _EmptySessionMessageRepo()
         self._link_repo = link_repo
         self._feature_repo = feature_repo
 
     def sessions(self):
         return self._session_repo
+
+    def session_messages(self):
+        return self._session_message_repo
 
     def entity_links(self):
         return self._link_repo
@@ -81,7 +91,7 @@ def _request_context(project_id: str = "project-1") -> RequestContext:
     )
 
 
-def _core_ports(*, project=None, db=None, session_repo=None, link_repo=None, feature_repo=None) -> CorePorts:
+def _core_ports(*, project=None, db=None, session_repo=None, session_message_repo=None, link_repo=None, feature_repo=None) -> CorePorts:
     resolved_project = project or types.SimpleNamespace(id="project-1", name="Project 1")
     return CorePorts(
         identity_provider=_FakeIdentityProvider(),
@@ -90,6 +100,7 @@ def _core_ports(*, project=None, db=None, session_repo=None, link_repo=None, fea
         storage=_FakeStorage(
             db=db,
             session_repo=session_repo,
+            session_message_repo=session_message_repo,
             link_repo=link_repo,
             feature_repo=feature_repo,
         ),
@@ -277,6 +288,32 @@ class _FakeFullSessionRepo:
                         "entryCount": 2,
                     }
                 ),
+            }
+        ]
+
+
+class _FakeCanonicalSessionMessageRepo:
+    async def list_by_session(self, session_id):
+        if session_id != "S-main":
+            return []
+        return [
+            {
+                "message_index": 0,
+                "source_log_id": "log-0",
+                "message_id": "message-1",
+                "role": "assistant",
+                "message_type": "message",
+                "content": "hello from canonical",
+                "event_timestamp": "2026-02-16T00:00:00Z",
+                "agent_name": "Planner",
+                "tool_name": None,
+                "tool_call_id": None,
+                "related_tool_call_id": "",
+                "linked_session_id": "",
+                "entry_uuid": "entry-1",
+                "parent_entry_uuid": "",
+                "source_provenance": "canonical_table",
+                "metadata_json": "{\"custom\":true}",
             }
         ]
 
@@ -677,6 +714,28 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.toolResultCacheCreationInputTokens, 55)
         self.assertEqual(response.toolResultCacheReadInputTokens, 89)
         self.assertAlmostEqual(response.cacheShare, 0.8)
+
+    async def test_get_session_preserves_api_shape_when_using_canonical_messages(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(
+            project=project,
+            session_repo=repo,
+            session_message_repo=_FakeCanonicalSessionMessageRepo(),
+        )
+
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
+
+        self.assertEqual(len(response.logs), 1)
+        self.assertEqual(response.logs[0].id, "log-0")
+        self.assertEqual(response.logs[0].content, "hello from canonical")
+        self.assertEqual(response.logs[0].metadata.get("sourceProvenance"), "canonical_table")
+        self.assertEqual(response.logs[0].metadata.get("entryUuid"), "entry-1")
         self.assertAlmostEqual(response.outputShare, 0.5)
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:

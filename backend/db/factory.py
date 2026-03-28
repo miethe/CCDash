@@ -10,6 +10,7 @@ except ImportError:
     asyncpg = None
 
 from backend.db.repositories.sessions import SqliteSessionRepository
+from backend.db.repositories.session_messages import SqliteSessionMessageRepository
 from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.tasks import SqliteTaskRepository
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
@@ -36,6 +37,12 @@ def get_session_repository(db: Any):
         return SqliteSessionRepository(db)
     from backend.db.repositories.postgres.sessions import PostgresSessionRepository
     return PostgresSessionRepository(db)
+
+def get_session_message_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteSessionMessageRepository(db)
+    from backend.db.repositories.postgres.session_messages import PostgresSessionMessageRepository
+    return PostgresSessionMessageRepository(db)
 
 def get_document_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):

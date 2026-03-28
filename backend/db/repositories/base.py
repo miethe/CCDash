@@ -40,6 +40,12 @@ class SessionRepository(Protocol):
     async def list_relationships(self, project_id: str, session_id: str) -> list[dict]: ...
 
 
+@runtime_checkable
+class SessionMessageRepository(Protocol):
+    async def replace_session_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None: ...
+    async def list_by_session(self, session_id: str) -> list[dict[str, Any]]: ...
+
+
 # ── Document Repository ─────────────────────────────────────────────
 
 @runtime_checkable

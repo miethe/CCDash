@@ -67,10 +67,10 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_log_id", log_columns)
 
         async with db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_usage_events'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_messages')"
         ) as cur:
-            row = await cur.fetchone()
-        self.assertIsNotNone(row)
+            tables = {row[0] for row in await cur.fetchall()}
+        self.assertEqual(tables, {"session_usage_events", "session_messages"})
 
         async with db.execute("SELECT MAX(version) FROM schema_version") as cur:
             row = await cur.fetchone()
@@ -132,10 +132,13 @@ class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_log_id", log_columns)
 
         async with db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_usage_attributions', 'pricing_catalog_entries')"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_usage_events', 'session_usage_attributions', 'pricing_catalog_entries', 'session_messages')"
         ) as cur:
             tables = {row[0] for row in await cur.fetchall()}
-        self.assertEqual(tables, {"session_usage_events", "session_usage_attributions", "pricing_catalog_entries"})
+        self.assertEqual(
+            tables,
+            {"session_usage_events", "session_usage_attributions", "pricing_catalog_entries", "session_messages"},
+        )
 
         async with db.execute("SELECT MAX(version) FROM schema_version") as cur:
             row = await cur.fetchone()
