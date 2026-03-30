@@ -11,17 +11,17 @@ title: "Domain Ownership and Schema Layout"
 status: "in_progress"
 started: "2026-03-30"
 completed: null
-commit_refs: []
+commit_refs: ["49acb10", "fe23fc1"]
 pr_refs: []
 
-overall_progress: 15
-completion_estimate: "Phase tracker initialized; schema/repository ownership contract is landing first"
+overall_progress: 90
+completion_estimate: "implementation landed; broader phase-close validation and push bookkeeping still remain"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
-at_risk_tasks: 0
+at_risk_tasks: 1
 
 owners: ["data-layer-expert", "backend-architect"]
 contributors: ["codex"]
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "DPM-201"
     description: "Audit current tables and repositories, then classify them by domain, canonical owner, and profile-specific behavior."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: ["DPM-003"]
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "DPM-202"
     description: "Define how Postgres schemas or table groups separate identity/access, canonical app data, integration snapshots, operational state, and audit records; document the SQLite-local equivalent where physical separation is limited."
-    status: "pending"
+    status: "completed"
     assigned_to: ["data-layer-expert", "backend-architect"]
     dependencies: ["DPM-201"]
     estimated_effort: "4pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "DPM-203"
     description: "Update repository/module ownership so domain responsibilities are explicit and future auth/session work does not land in cache-only abstractions."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: ["DPM-202"]
     estimated_effort: "3pt"
@@ -57,7 +57,8 @@ parallelization:
   critical_path: ["DPM-201", "DPM-202", "DPM-203"]
   estimated_total_time: "10pt / 4-5 days"
 
-blockers: []
+blockers:
+  - "Phase closure is still withheld until broader validation/push requirements are satisfied."
 
 success_criteria:
   - "Every persisted concern has a domain owner and target store."
@@ -66,6 +67,19 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-3-progress.md"
+  - "backend/data_domain_layout.py"
+  - "backend/db/repositories/entity_graph.py"
+  - "backend/db/repositories/runtime_state.py"
+  - "backend/db/repositories/postgres/entity_graph.py"
+  - "backend/db/repositories/postgres/runtime_state.py"
+  - "backend/db/repositories/links.py"
+  - "backend/db/repositories/postgres/links.py"
+  - "backend/db/factory.py"
+  - "backend/adapters/storage/local.py"
+  - "backend/adapters/storage/enterprise.py"
+  - "backend/tests/test_data_domain_layout.py"
+  - "docs/guides/data-domain-ownership-matrix.md"
+  - "docs/guides/data-domain-schema-layout.md"
 ---
 
 # data-platform-modularization-v1 - Phase 3
@@ -92,3 +106,15 @@ Task("data-layer-expert", "Execute DPM-201: audit current tables and repositorie
 Task("data-layer-expert", "Execute DPM-202: codify Postgres schema groups and the SQLite-local equivalent")
 Task("backend-architect", "Execute DPM-203: realign repository ownership so domain boundaries are explicit in modules and docs")
 ```
+
+## Completion Notes
+
+- Added `backend/data_domain_layout.py` as the code-owned Phase 3 contract for schema groups and repository ownership.
+- Added `docs/guides/data-domain-schema-layout.md` so the Postgres schema posture and SQLite-local equivalents are explicit for operators and follow-on implementation work.
+- Split the mixed link/state repository modules into domain-oriented `entity_graph` and `runtime_state` modules for both SQLite and Postgres, while leaving compatibility exports in the old module paths.
+- Kept `session_messages` as the dedicated transcript seam inside the observed-entities boundary so future canonical session work does not regress into broad cache abstractions.
+
+## Validation Notes
+
+- `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py backend/tests/test_runtime_bootstrap.py backend/tests/test_request_context.py -q` -> `44 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_session_messages_groundwork.py -q` -> `12 passed`
