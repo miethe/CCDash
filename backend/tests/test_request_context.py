@@ -10,7 +10,7 @@ from starlette.requests import Request
 from backend.adapters.auth.local import LocalIdentityProvider, PermitAllAuthorizationPolicy
 from backend.adapters.jobs.local import InProcessJobScheduler
 from backend.adapters.integrations.local import NoopIntegrationClient
-from backend.adapters.storage.local import FactoryStorageUnitOfWork
+from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.application.context import Principal, RequestContext, RequestMetadata, TraceContext
 from backend.application.ports import CorePorts
@@ -70,10 +70,10 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workspace.workspace_id, "default-skillmeat")
         self.assertEqual(project.project_id, "default-skillmeat")
 
-    async def test_storage_unit_of_work_uses_existing_repository_factory(self) -> None:
+    async def test_storage_unit_of_work_uses_explicit_local_repository_bindings(self) -> None:
         db = await aiosqlite.connect(":memory:")
         try:
-            storage = FactoryStorageUnitOfWork(db)
+            storage = LocalStorageUnitOfWork(db)
 
             repo = storage.sessions()
 
@@ -107,7 +107,7 @@ class RequestContextTests(unittest.IsolatedAsyncioTestCase):
                     identity_provider=LocalIdentityProvider(),
                     authorization_policy=PermitAllAuthorizationPolicy(),
                     workspace_registry=ProjectManagerWorkspaceRegistry(manager),
-                    storage=FactoryStorageUnitOfWork(db),
+                    storage=LocalStorageUnitOfWork(db),
                     job_scheduler=InProcessJobScheduler(),
                     integration_client=NoopIntegrationClient(),
                 )

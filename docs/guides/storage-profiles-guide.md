@@ -11,7 +11,7 @@ CCDash now treats storage as an explicit operator-facing profile instead of only
 | `local` | SQLite | Filesystem-derived artifacts plus local cache metadata | Desktop and single-user local-first |
 | `enterprise` | Postgres | Postgres for canonical app state, filesystem as ingestion only | Hosted API + worker deployments |
 
-`CCDASH_DB_BACKEND` remains a compatibility setting, but `CCDASH_STORAGE_PROFILE` is the architectural control point.
+`CCDASH_DB_BACKEND` remains a compatibility setting, but `CCDASH_STORAGE_PROFILE` is the architectural control point. Runtime composition now resolves that control point into explicit `LocalStorageUnitOfWork` and `EnterpriseStorageUnitOfWork` adapters instead of routing through a factory-backed compatibility shell.
 
 ## Capability Matrix
 

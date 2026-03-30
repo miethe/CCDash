@@ -1,4 +1,4 @@
-"""Repository factory to abstract DB backend (SQLite vs Postgres)."""
+"""Transitional repository compatibility bridge for direct repository callers."""
 from __future__ import annotations
 
 from typing import Any
