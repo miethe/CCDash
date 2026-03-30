@@ -19,12 +19,15 @@ try:
     from backend.db import postgres_migrations
 except ImportError:
     postgres_migrations = None
+from backend.db.migration_governance import validate_migration_governance_contract
 
 logger = logging.getLogger("ccdash.db")
 
 
 async def run_migrations(db: Any) -> None:
     """Run migrations on the provided database connection."""
+    validate_migration_governance_contract()
+
     if isinstance(db, aiosqlite.Connection):
         logger.info("Running SQLite migrations...")
         await sqlite_migrations.run_migrations(db)

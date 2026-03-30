@@ -19,6 +19,11 @@ from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
+from backend.runtime.storage_contract import (
+    get_runtime_storage_contract,
+    get_storage_capability_contract,
+    validate_runtime_storage_pairing,
+)
 from backend.runtime_ports import build_core_ports
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
@@ -40,6 +45,7 @@ class RuntimeContainer:
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
 
     async def startup(self, app: FastAPI) -> None:
+        validate_runtime_storage_pairing(self.profile, self.storage_profile)
         logger.info(
             "CCDash backend starting up (profile=%s, storage_profile=%s)",
             self.profile.name,
@@ -149,6 +155,9 @@ class RuntimeContainer:
         )
 
     def runtime_status(self) -> dict[str, Any]:
+        validate_runtime_storage_pairing(self.profile, self.storage_profile)
+        runtime_contract = get_runtime_storage_contract(self.profile)
+        storage_contract = get_storage_capability_contract(self.storage_profile)
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -157,13 +166,24 @@ class RuntimeContainer:
             "authEnabled": self.profile.capabilities.auth,
             "integrationsEnabled": self.profile.capabilities.integrations,
             "recommendedStorageProfile": self.profile.recommended_storage_profile,
+            "allowedStorageProfiles": runtime_contract.allowed_storage_profiles,
+            "supportedStorageProfiles": runtime_contract.allowed_storage_profiles,
+            "runtimeSyncBehavior": runtime_contract.sync_behavior,
+            "runtimeJobBehavior": runtime_contract.job_behavior,
+            "runtimeAuthBehavior": runtime_contract.auth_behavior,
+            "runtimeIntegrationBehavior": runtime_contract.integration_behavior,
+            "storageMode": storage_contract.mode,
             "storageProfile": self.storage_profile.profile,
             "storageBackend": self.storage_profile.db_backend,
+            "storageCanonicalStore": storage_contract.canonical_store,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
+            "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
             "storageIsolationMode": self.storage_profile.isolation_mode,
+            "supportedStorageIsolationModes": storage_contract.supported_isolation_modes,
             "storageSchema": self.storage_profile.schema_name,
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
+            "requiredStorageGuarantees": storage_contract.required_guarantees,
         }
         if self.job_adapter is not None:
             status.update(self.job_adapter.status_snapshot())

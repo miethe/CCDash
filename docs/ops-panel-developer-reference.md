@@ -1,6 +1,6 @@
 # Operations Panel Developer Reference
 
-Last updated: 2026-03-27
+Last updated: 2026-03-29
 
 This reference documents the Ops page implementation and backend endpoints it uses.
 
@@ -86,13 +86,26 @@ Router integration:
 
 `GET /api/health` now includes:
 
+- `storageMode`
 - `storageProfile`
 - `storageBackend`
 - `recommendedStorageProfile`
+- `supportedStorageProfiles`
+- `watchEnabled`
+- `syncEnabled`
+- `jobsEnabled`
+- `telemetryExports`
 - `filesystemSourceOfTruth`
 - `sharedPostgresEnabled`
 - `storageIsolationMode`
+- `supportedStorageIsolationModes`
+- `storageCanonicalStore`
 - `storageSchema`
+- `canonicalSessionStore`
+- `requiredStorageGuarantees`
+- `supportedStorageCompositions`
+
+The Ops panel renders these fields in a compact runtime/storage capability section so operators can confirm the deployment posture at a glance. That section is meant to answer three questions quickly: which storage profile is active, whether the runtime should be running background work, and whether the current Postgres posture matches the intended isolation model.
 
 `GET /api/cache/status` now includes:
 

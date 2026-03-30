@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
+from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.routers.analytics import analytics_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -74,14 +75,24 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "profile": str(runtime_status.get("profile", runtime_profile.name)),
             "startupSync": str(runtime_status.get("startupSync", "idle")),
             "analyticsSnapshots": str(runtime_status.get("analyticsSnapshots", "idle")),
+            "storageMode": str(runtime_status.get("storageMode", "")),
             "storageProfile": str(runtime_status.get("storageProfile", "")),
             "storageBackend": str(runtime_status.get("storageBackend", "")),
             "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
+            "supportedStorageProfiles": list(runtime_status.get("supportedStorageProfiles", ())),
             "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
             "sharedPostgresEnabled": bool(runtime_status.get("sharedPostgresEnabled", False)),
             "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
+            "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
+            "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
             "storageSchema": str(runtime_status.get("storageSchema", "")),
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
+            "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
+            "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
+            "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
+            "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
+            "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
+            "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         }
 
     return app

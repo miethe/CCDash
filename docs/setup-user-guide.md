@@ -32,6 +32,13 @@ Copy `.env.example` to `.env` and set values as needed:
 - `VITE_CCDASH_LIVE_FEATURES_ENABLED` (default `false`; feature board/modal live invalidation)
 - `VITE_CCDASH_LIVE_TESTS_ENABLED` (default `false`; test visualizer live invalidation)
 - `VITE_CCDASH_LIVE_OPS_ENABLED` (default `false`; Ops panel live invalidation)
+- `CCDASH_STORAGE_PROFILE` (`local` or `enterprise`; storage profile selector)
+- `CCDASH_DB_BACKEND` (`sqlite` or `postgres`; compatibility input)
+- `CCDASH_DATABASE_URL` (required for Postgres-backed modes)
+- `CCDASH_STORAGE_SHARED_POSTGRES` (`true` when CCDash shares Postgres infrastructure)
+- `CCDASH_STORAGE_ISOLATION_MODE` (`dedicated`, `schema`, or `tenant`)
+- `CCDASH_STORAGE_SCHEMA` (required for schema-based isolation)
+- `CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED` (optional filesystem ingest in enterprise mode)
 - `CCDASH_LINKING_LOGIC_VERSION` (default `1`; bump to force a full link rebuild after linking-logic changes)
 - `CCDASH_STARTUP_SYNC_LIGHT_MODE` (default `true`; startup runs a light sync first)
 - `CCDASH_STARTUP_SYNC_DELAY_SECONDS` (default `2`; delay before startup sync begins)
@@ -56,6 +63,8 @@ The exporter uses these telemetry-specific environment variables:
 - `CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS` (default `30`; synced-row retention window)
 - `CCDASH_TELEMETRY_ALLOW_INSECURE` (default `false`; allow non-HTTPS SAM endpoints for local testing only)
 
+`CCDASH_STORAGE_PROFILE` is the operator-facing switch for local versus enterprise storage. `CCDASH_DB_BACKEND` remains a compatibility setting behind that contract. For the full profile matrix, see [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md).
+
 ## 3) Install Backend Dependencies
 
 ```bash
@@ -79,6 +88,40 @@ What this does:
   - first pass syncs sessions/docs/tasks/features
   - link rebuild and analytics snapshot are deferred
   - deferred heavy rebuild can be tuned via `CCDASH_STARTUP_DEFERRED_*` vars
+
+### Storage Profiles
+
+Local-first default:
+
+```bash
+CCDASH_STORAGE_PROFILE=local
+CCDASH_DB_BACKEND=sqlite
+```
+
+Use this for the default desktop/local workflow. SQLite plus filesystem-derived ingestion stays the primary contract.
+
+Dedicated enterprise Postgres:
+
+```bash
+CCDASH_STORAGE_PROFILE=enterprise
+CCDASH_DB_BACKEND=postgres
+CCDASH_DATABASE_URL=postgresql://...
+```
+
+Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, refresh, and scheduled jobs.
+
+Shared enterprise Postgres:
+
+```bash
+CCDASH_STORAGE_PROFILE=enterprise
+CCDASH_DB_BACKEND=postgres
+CCDASH_DATABASE_URL=postgresql://...
+CCDASH_STORAGE_SHARED_POSTGRES=true
+CCDASH_STORAGE_ISOLATION_MODE=schema
+CCDASH_STORAGE_SCHEMA=ccdash
+```
+
+Use `schema` or `tenant` isolation only when CCDash shares infrastructure with another app. Shared Postgres is a deployment posture, not a license to couple tables across applications.
 
 ## Optional: Run Services Separately
 
@@ -125,6 +168,13 @@ npm run start:frontend
 ```
 
 For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. `backend.main:app` should stay stateless for hosted API deployments; `backend.worker` owns startup sync and scheduled/background job execution.
+
+Enterprise operator split:
+
+- API serves HTTP and reads canonical state.
+- Worker runs sync, refresh, and scheduled jobs.
+- Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
+- Check `GET /api/health` to confirm the resolved storage profile, canonical store, isolation mode, and runtime/job capability fields.
 
 ## Troubleshooting
 
