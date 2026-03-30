@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from backend.services.telemetry_transformer import (
     AnonymizationError,
     AnonymizationVerifier,
@@ -110,6 +112,16 @@ class TelemetryTransformerTests(unittest.TestCase):
     def test_normalizes_timestamp_when_timezone_missing(self) -> None:
         payload = self.transformer.transform_session(self._session_row(ended_at="2026-03-24T14:32:10"))
         self.assertEqual(payload.timestamp.tzinfo, timezone.utc)
+
+    def test_accepts_non_uuid_session_ids_from_ccdash(self) -> None:
+        payload = self.transformer.transform_session(
+            self._session_row(id="S-agent-a38738ac56d02e2a5")
+        )
+        self.assertEqual(payload.session_id, "S-agent-a38738ac56d02e2a5")
+
+    def test_rejects_empty_session_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.transformer.transform_session(self._session_row(id="   "))
 
 
 class AnonymizationVerifierTests(unittest.TestCase):

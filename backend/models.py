@@ -242,7 +242,7 @@ class AgentSession(BaseModel):
 class ExecutionOutcomePayload(BaseModel):
     event_id: UUID
     project_slug: str = Field(min_length=1)
-    session_id: UUID
+    session_id: str = Field(min_length=1)
     workflow_type: Optional[str] = None
     model_family: str = Field(min_length=1)
     token_input: int = Field(ge=0)
@@ -261,15 +261,17 @@ class ExecutionOutcomePayload(BaseModel):
     timestamp: datetime
     ccdash_version: str = Field(min_length=1)
 
-    @field_validator("project_slug", "workflow_type", "model_family", "feature_slug", "ccdash_version", mode="before")
+    @field_validator("project_slug", "session_id", "workflow_type", "model_family", "feature_slug", "ccdash_version", mode="before")
     @classmethod
     def strip_strings(cls, value: Any) -> Any:
+        if isinstance(value, UUID):
+            return str(value)
         if isinstance(value, str):
             stripped = value.strip()
             return stripped or None
         return value
 
-    @field_validator("project_slug", "model_family", "ccdash_version")
+    @field_validator("project_slug", "session_id", "model_family", "ccdash_version")
     @classmethod
     def require_non_empty_strings(cls, value: str) -> str:
         stripped = value.strip()
