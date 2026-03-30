@@ -83,6 +83,17 @@ def _normalize_string(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_context_utilization_peak(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    numeric = _safe_float(str(value).rstrip("%"), default=-1.0)
+    if numeric < 0.0:
+        return None
+    if numeric > 1.0:
+        return round(min(numeric / 100.0, 1.0), 4)
+    return min(numeric, 1.0)
+
+
 def _timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
@@ -284,7 +295,7 @@ class TelemetryTransformer:
             message_count=_message_count(row, metadata),
             outcome_status=_derive_outcome_status(_normalize_string(_first_present(row, "status"))),
             test_pass_rate=_test_pass_rate(row, metadata),
-            context_utilization_peak=context_utilization_peak,
+            context_utilization_peak=_normalize_context_utilization_peak(context_utilization_peak),
             feature_slug=feature_slug,
             timestamp=timestamp,
             ccdash_version=_normalize_string(

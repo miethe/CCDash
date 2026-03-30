@@ -94,6 +94,21 @@ class TelemetryTransformerTests(unittest.TestCase):
         payload = self.transformer.transform_session(self._session_row(context_utilization_pct=0.61))
         self.assertAlmostEqual(payload.context_utilization_peak or 0.0, 0.61)
 
+    def test_normalizes_percent_style_context_utilization_from_row(self) -> None:
+        payload = self.transformer.transform_session(self._session_row(context_utilization_pct=50.0))
+        self.assertAlmostEqual(payload.context_utilization_peak or 0.0, 0.5)
+
+    def test_clamps_over_capacity_percent_style_context_utilization_from_row(self) -> None:
+        payload = self.transformer.transform_session(self._session_row(context_utilization_pct=133.14))
+        self.assertAlmostEqual(payload.context_utilization_peak or 0.0, 1.0)
+
+    def test_preserves_ratio_style_context_utilization_from_metadata(self) -> None:
+        payload = self.transformer.transform_session(
+            self._session_row(context_utilization_pct=50.0),
+            {"context_utilization_peak": 0.42},
+        )
+        self.assertAlmostEqual(payload.context_utilization_peak or 0.0, 0.42)
+
     def test_uses_generated_event_id_when_not_supplied(self) -> None:
         payload = self.transformer.transform_session(self._session_row())
         self.assertTrue(str(payload.event_id))
