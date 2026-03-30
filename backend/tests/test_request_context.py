@@ -82,6 +82,38 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await db.close()
 
+    async def test_factory_adapter_compat_resolves_same_sqlite_repos_as_local_adapter(self) -> None:
+        from backend.adapters.storage.local import FactoryStorageUnitOfWork
+
+        db = await aiosqlite.connect(":memory:")
+        try:
+            storage = FactoryStorageUnitOfWork(db)
+
+            repo = storage.sessions()
+
+            self.assertIsInstance(repo, SqliteSessionRepository)
+            self.assertIs(repo, storage.sessions())
+        finally:
+            await db.close()
+
+    async def test_factory_adapter_compat_resolves_same_sqlite_repos_as_local_adapter(self) -> None:
+        """FactoryStorageUnitOfWork is a compat alias (subclass of LocalStorageUnitOfWork).
+        Existing consumers that import it directly continue to receive SQLite
+        repositories, preserving backward compatibility without requiring code changes.
+        """
+        from backend.adapters.storage.local import FactoryStorageUnitOfWork
+
+        db = await aiosqlite.connect(":memory:")
+        try:
+            storage = FactoryStorageUnitOfWork(db)
+
+            repo = storage.sessions()
+
+            self.assertIsInstance(repo, SqliteSessionRepository)
+            self.assertIs(repo, storage.sessions())  # result is cached
+        finally:
+            await db.close()
+
     async def test_in_process_job_scheduler_runs_coroutine(self) -> None:
         scheduler = InProcessJobScheduler()
         marker: list[str] = []

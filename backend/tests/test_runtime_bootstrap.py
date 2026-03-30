@@ -294,6 +294,89 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertSetEqual(reported, expected)
 
 
+class StorageAdapterCompositionTests(unittest.TestCase):
+    """DPM-101 / DPM-102 — Adapter composition and unit-of-work split.
+
+    Verify that:
+    - ``LocalStorageUnitOfWork`` and ``EnterpriseStorageUnitOfWork`` are the
+      explicit profile-aware adapters used by the composition root.
+    - ``FactoryStorageUnitOfWork`` is a backward-compat alias (subclass of
+      ``LocalStorageUnitOfWork``) and is *not* returned by the composition root.
+    - Both adapters satisfy the ``StorageUnitOfWork`` port protocol so that
+      consumers programmed to the interface work with either adapter.
+    - No connection-type inspection is required in the composition path: the
+      adapter is chosen from the storage profile, not from the connection type.
+    """
+
+    def test_factory_adapter_is_backward_compat_alias_for_local_adapter(self) -> None:
+        """FactoryStorageUnitOfWork inherits LocalStorageUnitOfWork so existing
+        consumers and tests that import it directly continue to work as-is.
+        """
+        from backend.adapters.storage.local import FactoryStorageUnitOfWork
+
+        self.assertTrue(issubclass(FactoryStorageUnitOfWork, LocalStorageUnitOfWork))
+
+    def test_composition_root_returns_exact_local_type_not_factory_alias(self) -> None:
+        """build_core_ports returns a plain LocalStorageUnitOfWork instance — not
+        the FactoryStorageUnitOfWork alias — confirming the factory is no longer
+        the architectural control point for storage selection.
+        """
+        from backend.adapters.storage.local import FactoryStorageUnitOfWork
+
+        ports = build_core_ports(
+            object(),
+            runtime_profile=get_runtime_profile("test"),
+            storage_profile=_local_storage_profile(),
+        )
+
+        self.assertIs(type(ports.storage), LocalStorageUnitOfWork)
+        self.assertIsNot(type(ports.storage), FactoryStorageUnitOfWork)
+
+    def test_enterprise_adapter_is_not_derived_from_factory_compat_bridge(self) -> None:
+        """EnterpriseStorageUnitOfWork is independent of the factory compat bridge.
+        The FactoryStorageUnitOfWork alias exists only for local-mode call sites.
+        """
+        from backend.adapters.storage.local import FactoryStorageUnitOfWork
+
+        self.assertFalse(issubclass(EnterpriseStorageUnitOfWork, FactoryStorageUnitOfWork))
+
+    def test_local_adapter_satisfies_storage_unit_of_work_protocol(self) -> None:
+        """LocalStorageUnitOfWork satisfies the StorageUnitOfWork port protocol so
+        that routers and services using the port interface require no change.
+        """
+        from backend.application.ports import StorageUnitOfWork
+
+        adapter = LocalStorageUnitOfWork(object())
+
+        self.assertIsInstance(adapter, StorageUnitOfWork)
+
+    def test_enterprise_adapter_satisfies_storage_unit_of_work_protocol(self) -> None:
+        """EnterpriseStorageUnitOfWork satisfies the StorageUnitOfWork port protocol."""
+        from backend.application.ports import StorageUnitOfWork
+
+        adapter = EnterpriseStorageUnitOfWork(object())
+
+        self.assertIsInstance(adapter, StorageUnitOfWork)
+
+    def test_local_adapter_db_attribute_is_connection_passed_at_construction(self) -> None:
+        """The composition root passes the resolved DB connection directly to the
+        adapter constructor; the adapter's .db property must return the same object.
+        This verifies the composition path requires no connection-type inspection.
+        """
+        sentinel = object()
+
+        adapter = LocalStorageUnitOfWork(sentinel)
+
+        self.assertIs(adapter.db, sentinel)
+
+    def test_enterprise_adapter_db_attribute_is_connection_passed_at_construction(self) -> None:
+        sentinel = object()
+
+        adapter = EnterpriseStorageUnitOfWork(sentinel)
+
+        self.assertIs(adapter.db, sentinel)
+
+
 class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_profile_rejects_local_storage_before_opening_db(self) -> None:
         local_profile = config.StorageProfileConfig(
