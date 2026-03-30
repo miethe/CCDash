@@ -22,6 +22,20 @@ export interface RuntimeHealthResponse {
   profile?: string;
   startupSync?: string;
   analyticsSnapshots?: string;
+  telemetryExports?: string;
+  jobsEnabled?: boolean;
+  storageMode?: string;
+  storageProfile?: string;
+  storageBackend?: string;
+  recommendedStorageProfile?: string;
+  supportedStorageProfiles?: string[];
+  filesystemSourceOfTruth?: boolean;
+  sharedPostgresEnabled?: boolean;
+  storageIsolationMode?: string;
+  supportedStorageIsolationModes?: string[];
+  storageCanonicalStore?: string;
+  storageSchema?: string;
+  canonicalSessionStore?: string;
 }
 
 export interface ApiClient {

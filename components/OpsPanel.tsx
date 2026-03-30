@@ -23,6 +23,7 @@ import {
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
 import { createApiClient } from '../services/apiClient';
+import { normalizeRuntimeStatus, type RuntimeStatus } from '../services/runtimeProfile';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
 import { refreshSkillMeatCache } from '../services/skillmeat';
 
@@ -59,6 +60,15 @@ function statusBadgeClass(status: string): string {
   if (normalized === 'completed') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
   if (normalized === 'failed') return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
   return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+}
+
+function formatBoolean(value: boolean | null): string {
+  if (value === null) return 'unknown';
+  return value ? 'yes' : 'no';
+}
+
+function formatList(values: string[]): string {
+  return values.length > 0 ? values.join(', ') : 'n/a';
 }
 
 function opKindLabel(kind: string): string {
@@ -179,7 +189,7 @@ export const OpsPanel: React.FC = () => {
   const apiClient = useMemo(() => createApiClient(), []);
 
   const [status, setStatus] = useState<CacheStatusResponse | null>(null);
-  const [health, setHealth] = useState<{ status: string; db: string; watcher: string } | null>(null);
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimeStatus | null>(null);
   const [operations, setOperations] = useState<SyncOperation[]>([]);
   const [selectedOperationId, setSelectedOperationId] = useState('');
   const [selectedOperation, setSelectedOperation] = useState<SyncOperation | null>(null);
@@ -212,11 +222,11 @@ export const OpsPanel: React.FC = () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
       fetchJson<CacheStatusResponse>('/cache/status'),
       fetchJson<{ status: string; count: number; items: SyncOperation[] }>('/cache/operations?limit=30'),
-      fetchJson<{ status: string; db: string; watcher: string }>('/health'),
+      apiClient.getHealth(),
     ]);
     setStatus(statusPayload);
     setOperations(opsPayload.items || []);
-    setHealth(healthPayload);
+    setRuntimeHealth(normalizeRuntimeStatus(healthPayload));
     setLastRefreshAt(new Date().toISOString());
 
     if (!selectedOperationId && opsPayload.items?.length) {
@@ -811,15 +821,18 @@ export const OpsPanel: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Backend Health</p>
-              <p className="text-slate-100 mt-1">{health?.status || 'unknown'}</p>
+              <p className="text-slate-100 mt-1">{runtimeHealth?.health || 'unknown'}</p>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">DB</p>
-              <p className="text-slate-100 mt-1">{health?.db || 'unknown'}</p>
+              <p className="text-slate-100 mt-1">{runtimeHealth?.database || 'unknown'}</p>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-              <p className="text-slate-500 text-xs uppercase tracking-wide">Watcher</p>
-              <p className="text-slate-100 mt-1">{status?.watcher || health?.watcher || 'unknown'}</p>
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Runtime Profile</p>
+              <p className="text-slate-100 mt-1">{runtimeHealth?.profile || 'unknown'}</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                recommended storage {runtimeHealth?.recommendedStorageProfile || 'unknown'}
+              </p>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Live Updates</p>
@@ -833,6 +846,62 @@ export const OpsPanel: React.FC = () => {
                   replay gaps {status.liveUpdates.replay_gaps} • dropped {status.liveUpdates.dropped_events}
                 </p>
               )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Storage Selection</p>
+              <p className="text-slate-100 mt-1">
+                {runtimeHealth
+                  ? `${runtimeHealth.storageMode} / ${runtimeHealth.storageProfile} / ${runtimeHealth.storageBackend}`
+                  : 'unknown'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                supported profiles {runtimeHealth ? formatList(runtimeHealth.supportedStorageProfiles) : 'n/a'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Isolation + Schema</p>
+              <p className="text-slate-100 mt-1">
+                {runtimeHealth?.storageIsolationMode || 'unknown'}
+                {runtimeHealth?.storageSchema ? ` (${runtimeHealth.storageSchema})` : ''}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                supported isolation {runtimeHealth ? formatList(runtimeHealth.supportedStorageIsolationModes) : 'n/a'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Canonical Stores</p>
+              <p className="text-slate-100 mt-1">{runtimeHealth?.storageCanonicalStore || 'unknown'}</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                session store {runtimeHealth?.canonicalSessionStore || 'unknown'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Sync + Watch Health</p>
+              <p className="text-slate-100 mt-1">watcher: {status?.watcher || runtimeHealth?.watcher || 'unknown'}</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                startup sync {runtimeHealth?.startupSync || 'unknown'} • analytics {runtimeHealth?.analyticsSnapshots || 'unknown'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Jobs + Telemetry</p>
+              <p className="text-slate-100 mt-1">
+                jobs enabled: {formatBoolean(runtimeHealth?.jobsEnabled ?? null)}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                telemetry exports {runtimeHealth?.telemetryExports || 'unknown'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wide">Storage Dependencies</p>
+              <p className="text-slate-100 mt-1">
+                filesystem source of truth: {formatBoolean(runtimeHealth?.filesystemSourceOfTruth ?? null)}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                shared postgres {formatBoolean(runtimeHealth?.sharedPostgresEnabled ?? null)}
+              </p>
             </div>
           </div>
         </section>
