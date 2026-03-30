@@ -11,10 +11,10 @@ title: "Domain Ownership and Schema Layout"
 status: "in_progress"
 started: "2026-03-30"
 completed: null
-commit_refs: ["91934ed", "49acb10", "fe23fc1", "d472718"]
+commit_refs: ["49acb10", "91934ed", "fe23fc1", "d472718", "79638df"]
 pr_refs: []
 
-overall_progress: 90
+overall_progress: 95
 completion_estimate: "implementation landed; broader phase-close validation and push bookkeeping still remain"
 
 total_tasks: 3
@@ -53,12 +53,13 @@ tasks:
 
 parallelization:
   batch_1: ["DPM-201"]
-  batch_2: ["DPM-202", "DPM-203"]
+  batch_2: ["DPM-202"]
+  batch_3: ["DPM-203"]
   critical_path: ["DPM-201", "DPM-202", "DPM-203"]
   estimated_total_time: "10pt / 4-5 days"
 
 blockers:
-  - "Phase closure is still withheld until broader validation/push requirements are satisfied."
+  - "Phase closure is still withheld until broader validation and push requirements are satisfied."
 
 success_criteria:
   - "Every persisted concern has a domain owner and target store."
@@ -71,19 +72,25 @@ files_modified:
   - "backend/application/ports/__init__.py"
   - "backend/application/ports/core.py"
   - "backend/adapters/storage/base.py"
-  - "backend/db/repositories/entity_graph.py"
-  - "backend/db/repositories/runtime_state.py"
-  - "backend/db/repositories/postgres/entity_graph.py"
-  - "backend/db/repositories/postgres/runtime_state.py"
-  - "backend/db/repositories/links.py"
-  - "backend/db/repositories/postgres/links.py"
-  - "backend/db/factory.py"
   - "backend/adapters/storage/local.py"
   - "backend/adapters/storage/enterprise.py"
-  - "backend/tests/test_data_domain_layout.py"
-  - "backend/tests/test_storage_adapter_composition.py"
+  - "backend/db/factory.py"
+  - "backend/db/repositories/__init__.py"
+  - "backend/db/repositories/entity_graph.py"
+  - "backend/db/repositories/runtime_state.py"
+  - "backend/db/repositories/links.py"
+  - "backend/db/repositories/postgres/entity_graph.py"
+  - "backend/db/repositories/postgres/runtime_state.py"
+  - "backend/db/repositories/postgres/links.py"
   - "docs/guides/data-domain-ownership-matrix.md"
+  - "backend/tests/test_storage_adapter_composition.py"
+  - "backend/tests/test_data_domain_layout.py"
+  - "backend/tests/test_runtime_bootstrap.py"
+  - "backend/tests/test_request_context.py"
+  - "backend/tests/test_data_domain_ownership.py"
+  - "backend/tests/test_session_messages_groundwork.py"
   - "docs/guides/data-domain-schema-layout.md"
+  - "docs/guides/storage-profiles-guide.md"
 ---
 
 # data-platform-modularization-v1 - Phase 3
@@ -96,7 +103,7 @@ python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f
 
 ## Objective
 
-Make the domain-to-schema and repository ownership model explicit enough that Phase 4 auth/audit storage and future canonical session work do not reopen the storage boundary decisions.
+Classify the current persistence surface by domain, codify the schema-boundary layout for local and enterprise storage, and expose additive domain-grouped storage seams so future auth and canonical session work can build on explicit ownership instead of a broad cache layer.
 
 ## Orchestration Quick Reference
 
@@ -107,20 +114,21 @@ Make the domain-to-schema and repository ownership model explicit enough that Ph
 Task("data-layer-expert", "Execute DPM-201: audit current tables and repositories against the approved domain matrix")
 
 # Batch 2 (after DPM-201)
-Task("data-layer-expert", "Execute DPM-202: codify Postgres schema groups and the SQLite-local equivalent")
-Task("backend-architect", "Execute DPM-203: realign repository ownership so domain boundaries are explicit in modules and docs")
+Task("data-layer-expert", "Execute DPM-202: codify schema boundary layout for Postgres and SQLite-local equivalents")
+
+# Batch 3 (after DPM-202)
+Task("backend-architect", "Execute DPM-203: expose additive domain-grouped storage seams and make repository ownership explicit")
 ```
 
 ## Completion Notes
 
-- Added `backend/data_domain_layout.py` as the code-owned Phase 3 contract for schema groups and repository ownership.
-- Added `docs/guides/data-domain-schema-layout.md` so the Postgres schema posture and SQLite-local equivalents are explicit for operators and follow-on implementation work.
-- Expanded the storage port/accessor contract and adapter-composition coverage so repository ownership remains machine-checked at the composition boundary.
+- Added `backend/data_domain_layout.py` as the code-owned source of truth for schema boundaries and repository ownership.
+- Added `docs/guides/data-domain-schema-layout.md` so the Postgres schema posture and SQLite-local equivalents are explicit for follow-on implementation work.
+- Extended `StorageUnitOfWork` with additive domain-grouped views for workspace metadata, observed product data, ingestion state, integration snapshots, and operational state while preserving the existing entity-level accessors.
 - Split the mixed link/state repository modules into domain-oriented `entity_graph` and `runtime_state` modules for both SQLite and Postgres, while leaving compatibility exports in the old module paths.
-- Kept `session_messages` as the dedicated transcript seam inside the observed-entities boundary so future canonical session work does not regress into broad cache abstractions.
+- Exported the grouped storage protocols from `backend/application/ports/__init__.py` and added focused tests to verify schema-boundary coverage, repository ownership mapping, and the grouped storage seam on both local and enterprise adapters.
 
 ## Validation Notes
 
-- `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py backend/tests/test_runtime_bootstrap.py backend/tests/test_request_context.py -q` -> `44 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py backend/tests/test_runtime_bootstrap.py backend/tests/test_request_context.py backend/tests/test_storage_adapter_composition.py -q` -> `48 passed`
 - `backend/.venv/bin/python -m pytest backend/tests/test_session_messages_groundwork.py -q` -> `12 passed`
-- `backend/.venv/bin/python -m pytest backend/tests/test_storage_adapter_composition.py -q` -> `4 passed`
