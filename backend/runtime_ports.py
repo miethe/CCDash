@@ -1,4 +1,9 @@
-"""Core port composition shared by runtime bootstraps and compatibility paths."""
+"""Core port composition shared by runtime bootstraps and compatibility paths.
+
+Phase 2 (DPM-101/102): Adapter composition is explicit and profile-driven.
+The FactoryStorageUnitOfWork is no longer the architectural control point.
+If used at all, it remains a bounded, internal compatibility bridge.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -7,7 +12,7 @@ from backend import config
 from backend.adapters.auth import LocalIdentityProvider, PermitAllAuthorizationPolicy
 from backend.adapters.integrations import NoopIntegrationClient
 from backend.adapters.jobs import InProcessJobScheduler
-from backend.adapters.storage import FactoryStorageUnitOfWork
+from backend.adapters.storage import LocalStorageUnitOfWork, EnterpriseStorageUnitOfWork
 from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.ports import CorePorts
 from backend.project_manager import ProjectManager, project_manager
@@ -54,12 +59,11 @@ def _build_storage_unit_of_work(
     db: Any,
     runtime_profile: RuntimeProfile | None,
     storage_profile: config.StorageProfileConfig,
-) -> FactoryStorageUnitOfWork:
+):
     _ = runtime_profile
     if storage_profile.profile == "enterprise" and storage_profile.db_backend != "postgres":
         raise RuntimeError("Enterprise storage profile requires the Postgres DB backend.")
-    # Enterprise remains on the factory-backed adapter for now, but the selection point
-    # is explicit so runtime composition can swap adapters without touching routers.
+    # Explicit adapter composition per storage profile
     if storage_profile.profile == "enterprise":
-        return FactoryStorageUnitOfWork(db)
-    return FactoryStorageUnitOfWork(db)
+        return EnterpriseStorageUnitOfWork(db)
+    return LocalStorageUnitOfWork(db)
