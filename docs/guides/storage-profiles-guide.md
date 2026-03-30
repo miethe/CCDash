@@ -1,6 +1,6 @@
 # CCDash Storage Profiles Guide
 
-Updated: 2026-03-28
+Updated: 2026-03-29
 
 ## Purpose
 
@@ -73,7 +73,17 @@ Runtime profiles and storage profiles are related but distinct:
 - `worker` + `local` is rejected before worker startup reaches DB setup.
 - `local` runtime + any enterprise storage mode is rejected because the local runtime contract is local-first only.
 
-The `/api/health` payload reports the resolved storage mode, storage profile, backend, supported storage profiles, supported isolation modes, canonical store, shared-Postgres posture, isolation mode, schema, and canonical session-store mode so operators can verify the runtime contract quickly.
+The `/api/health` payload reports the resolved storage mode, storage profile, backend, supported storage profiles, supported isolation modes, canonical store, shared-Postgres posture, isolation mode, schema, canonical session-store mode, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
+
+## Operator Rollout Checklist
+
+- Confirm `CCDASH_STORAGE_PROFILE` and `CCDASH_DB_BACKEND` match the intended deployment posture.
+- Use `local` + SQLite for the desktop/local-first workflow.
+- Use `enterprise` + Postgres for hosted deployments.
+- Set `CCDASH_STORAGE_SHARED_POSTGRES=true` only when CCDash shares Postgres infrastructure with another app.
+- Set `CCDASH_STORAGE_ISOLATION_MODE=schema` or `tenant` for shared Postgres; do not rely on implicit isolation.
+- Verify `GET /api/health` shows the expected storage mode, canonical store, and runtime capability flags.
+- In the Ops panel, confirm storage mode/profile/backend, isolation mode/schema, canonical store, watcher, sync, jobs, and telemetry export state.
 
 ## Domain Ownership Matrix
 
@@ -93,4 +103,5 @@ Phase 1 freezes the ownership vocabulary for the existing persisted concerns. Th
 
 - Identity, membership, role-binding, and privileged-action audit tables do not exist yet in the current schema. Phase 1 freezes them as enterprise-owned domains so Phase 4 can add them without reopening ownership decisions.
 - Session and document data remains mixed in V1: local mode keeps SQLite plus filesystem-derived workflows, while enterprise mode reserves Postgres as the canonical direction without forcing the full session-intelligence redesign into Phase 1.
+- In enterprise mode, the API should stay stateless and the worker should own startup sync, refresh, and scheduled/background jobs.
 - Shared Postgres is an isolation posture, not permission to reuse SkillMeat tables directly.
