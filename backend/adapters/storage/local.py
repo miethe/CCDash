@@ -1,4 +1,10 @@
-"""Storage unit-of-work backed by the existing repository factory."""
+"""Compatibility bridge: factory-backed StorageUnitOfWork.
+
+This adapter remains only as an internal compatibility path while explicit
+profile-aware adapters are introduced in DPM-101/102. New code should import
+``LocalStorageUnitOfWork`` or ``EnterpriseStorageUnitOfWork`` from
+``backend.adapters.storage``. This class will be removed in a later phase.
+"""
 from __future__ import annotations
 
 from typing import Any, Callable
