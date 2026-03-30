@@ -9,13 +9,9 @@ from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.execution import SqliteExecutionRepository
 from backend.db.repositories.features import SqliteFeatureRepository
 from backend.db.repositories.intelligence import SqliteAgenticIntelligenceRepository
-from backend.db.repositories.links import (
-    SqliteAlertConfigRepository,
-    SqliteEntityLinkRepository,
-    SqliteSyncStateRepository,
-    SqliteTagRepository,
-)
+from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
+from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
 from backend.db.repositories.session_messages import SqliteSessionMessageRepository
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.repositories.tasks import SqliteTaskRepository

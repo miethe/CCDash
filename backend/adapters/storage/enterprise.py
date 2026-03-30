@@ -9,13 +9,12 @@ from backend.db.repositories.postgres.documents import PostgresDocumentRepositor
 from backend.db.repositories.postgres.execution import PostgresExecutionRepository
 from backend.db.repositories.postgres.features import PostgresFeatureRepository
 from backend.db.repositories.postgres.intelligence import PostgresAgenticIntelligenceRepository
-from backend.db.repositories.postgres.links import (
-    PostgresAlertConfigRepository,
-    PostgresEntityLinkRepository,
-    PostgresSyncStateRepository,
-    PostgresTagRepository,
-)
+from backend.db.repositories.postgres.entity_graph import PostgresEntityLinkRepository, PostgresTagRepository
 from backend.db.repositories.postgres.pricing import PostgresPricingCatalogRepository
+from backend.db.repositories.postgres.runtime_state import (
+    PostgresAlertConfigRepository,
+    PostgresSyncStateRepository,
+)
 from backend.db.repositories.postgres.session_messages import PostgresSessionMessageRepository
 from backend.db.repositories.postgres.sessions import PostgresSessionRepository
 from backend.db.repositories.postgres.tasks import PostgresTaskRepository
