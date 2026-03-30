@@ -2,6 +2,7 @@
 
 This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns.
 `backend/data_domains.py` is the code-owned source of truth, and this document mirrors it for humans.
+Phase 3 schema grouping and repository ownership now live in `backend/data_domain_layout.py` and are summarized in `docs/guides/data-domain-schema-layout.md`.
 
 ## Domain Summary
 
