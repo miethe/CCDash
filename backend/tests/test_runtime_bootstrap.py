@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
+from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.runtime.bootstrap_api import build_api_app
@@ -213,7 +214,31 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(resolve_storage_mode(shared_enterprise), "shared-enterprise")
-        self.assertIsNotNone(ports.storage)
+        self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
+
+    def test_build_core_ports_uses_local_storage_adapter(self) -> None:
+        marker = object()
+
+        ports = build_core_ports(
+            marker,
+            runtime_profile=get_runtime_profile("local"),
+            storage_profile=_local_storage_profile(),
+        )
+
+        self.assertIsInstance(ports.storage, LocalStorageUnitOfWork)
+        self.assertIs(ports.storage.db, marker)
+
+    def test_build_core_ports_uses_enterprise_storage_adapter(self) -> None:
+        marker = object()
+
+        ports = build_core_ports(
+            marker,
+            runtime_profile=get_runtime_profile("api"),
+            storage_profile=_enterprise_storage_profile(),
+        )
+
+        self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
+        self.assertIs(ports.storage.db, marker)
 
     def test_health_endpoint_reports_local_sqlite_composition(self) -> None:
         app = build_local_app()
