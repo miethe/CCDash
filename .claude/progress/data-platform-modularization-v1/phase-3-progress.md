@@ -11,7 +11,7 @@ title: "Domain Ownership and Schema Layout"
 status: "in_progress"
 started: "2026-03-30"
 completed: null
-commit_refs: ["49acb10", "fe23fc1"]
+commit_refs: ["91934ed", "49acb10", "fe23fc1", "d472718"]
 pr_refs: []
 
 overall_progress: 90
@@ -68,6 +68,9 @@ success_criteria:
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-3-progress.md"
   - "backend/data_domain_layout.py"
+  - "backend/application/ports/__init__.py"
+  - "backend/application/ports/core.py"
+  - "backend/adapters/storage/base.py"
   - "backend/db/repositories/entity_graph.py"
   - "backend/db/repositories/runtime_state.py"
   - "backend/db/repositories/postgres/entity_graph.py"
@@ -78,6 +81,7 @@ files_modified:
   - "backend/adapters/storage/local.py"
   - "backend/adapters/storage/enterprise.py"
   - "backend/tests/test_data_domain_layout.py"
+  - "backend/tests/test_storage_adapter_composition.py"
   - "docs/guides/data-domain-ownership-matrix.md"
   - "docs/guides/data-domain-schema-layout.md"
 ---
@@ -111,6 +115,7 @@ Task("backend-architect", "Execute DPM-203: realign repository ownership so doma
 
 - Added `backend/data_domain_layout.py` as the code-owned Phase 3 contract for schema groups and repository ownership.
 - Added `docs/guides/data-domain-schema-layout.md` so the Postgres schema posture and SQLite-local equivalents are explicit for operators and follow-on implementation work.
+- Expanded the storage port/accessor contract and adapter-composition coverage so repository ownership remains machine-checked at the composition boundary.
 - Split the mixed link/state repository modules into domain-oriented `entity_graph` and `runtime_state` modules for both SQLite and Postgres, while leaving compatibility exports in the old module paths.
 - Kept `session_messages` as the dedicated transcript seam inside the observed-entities boundary so future canonical session work does not regress into broad cache abstractions.
 
@@ -118,3 +123,4 @@ Task("backend-architect", "Execute DPM-203: realign repository ownership so doma
 
 - `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py backend/tests/test_runtime_bootstrap.py backend/tests/test_request_context.py -q` -> `44 passed`
 - `backend/.venv/bin/python -m pytest backend/tests/test_session_messages_groundwork.py -q` -> `12 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_storage_adapter_composition.py -q` -> `4 passed`
