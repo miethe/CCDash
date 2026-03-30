@@ -79,3 +79,12 @@ class FactoryStorageUnitOfWork:
 
     def agentic_intelligence(self) -> Any:
         return self._repo("agentic_intelligence", factory.get_agentic_intelligence_repository)
+
+class LocalStorageUnitOfWork(FactoryStorageUnitOfWork):
+    """Explicit local storage adapter.
+
+    For now this reuses the factory-backed implementation. Having a distinct
+    class makes runtime composition explicit without changing the port shape.
+    """
+
+    pass

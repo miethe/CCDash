@@ -15,6 +15,7 @@ from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
 from backend.runtime.storage_contract import get_runtime_storage_contract, resolve_storage_mode
 from backend.runtime_ports import build_core_ports
+from backend.adapters.storage import LocalStorageUnitOfWork, EnterpriseStorageUnitOfWork
 from backend.worker import serve_worker
 
 
@@ -213,7 +214,7 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(resolve_storage_mode(shared_enterprise), "shared-enterprise")
-        self.assertIsNotNone(ports.storage)
+        self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
 
     def test_health_endpoint_reports_local_sqlite_composition(self) -> None:
         app = build_local_app()
@@ -347,7 +348,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
-                self.assertEqual(app.state.runtime_profile, get_runtime_profile("local"))
+                self.assertIsInstance(app.state.core_ports.storage, LocalStorageUnitOfWork)
                 self.assertIs(app.state.sync_engine, fake_sync)
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)

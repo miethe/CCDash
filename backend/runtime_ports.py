@@ -7,7 +7,7 @@ from backend import config
 from backend.adapters.auth import LocalIdentityProvider, PermitAllAuthorizationPolicy
 from backend.adapters.integrations import NoopIntegrationClient
 from backend.adapters.jobs import InProcessJobScheduler
-from backend.adapters.storage import FactoryStorageUnitOfWork
+from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.ports import CorePorts
 from backend.project_manager import ProjectManager, project_manager
@@ -54,12 +54,12 @@ def _build_storage_unit_of_work(
     db: Any,
     runtime_profile: RuntimeProfile | None,
     storage_profile: config.StorageProfileConfig,
-) -> FactoryStorageUnitOfWork:
+) -> LocalStorageUnitOfWork:
     _ = runtime_profile
     if storage_profile.profile == "enterprise" and storage_profile.db_backend != "postgres":
         raise RuntimeError("Enterprise storage profile requires the Postgres DB backend.")
     # Enterprise remains on the factory-backed adapter for now, but the selection point
     # is explicit so runtime composition can swap adapters without touching routers.
     if storage_profile.profile == "enterprise":
-        return FactoryStorageUnitOfWork(db)
-    return FactoryStorageUnitOfWork(db)
+        return EnterpriseStorageUnitOfWork(db)
+    return LocalStorageUnitOfWork(db)
