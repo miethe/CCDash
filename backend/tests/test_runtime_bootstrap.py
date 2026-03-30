@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from pydantic import ValidationError
 
 from backend import config
+from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
@@ -72,6 +73,11 @@ def _local_storage_profile() -> config.StorageProfileConfig:
         isolation_mode="dedicated",
         schema_name="ccdash",
     )
+
+
+def _health_payload(app: object) -> dict[str, object]:
+    health_route = next(route for route in app.routes if getattr(route, "path", None) == "/api/health")
+    return health_route.endpoint(types.SimpleNamespace(), None)
 
 
 class RuntimeProfileTests(unittest.TestCase):
@@ -208,6 +214,59 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertEqual(resolve_storage_mode(shared_enterprise), "shared-enterprise")
         self.assertIsNotNone(ports.storage)
+
+    def test_health_endpoint_reports_local_sqlite_composition(self) -> None:
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+
+        payload = _health_payload(app)
+
+        self.assertEqual(payload["profile"], "local")
+        self.assertEqual(payload["storageMode"], "local")
+        self.assertEqual(payload["storageProfile"], "local")
+        self.assertEqual(payload["storageBackend"], "sqlite")
+        self.assertEqual(payload["storageCanonicalStore"], "sqlite_local_metadata")
+        self.assertFalse(payload["sharedPostgresEnabled"])
+        self.assertIn("local-sqlite", payload["supportedStorageCompositions"])
+        self.assertIsInstance(payload["requiredStorageGuarantees"], list)
+
+    def test_health_endpoint_reports_enterprise_postgres_composition(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+
+        payload = _health_payload(app)
+
+        self.assertEqual(payload["profile"], "api")
+        self.assertEqual(payload["storageMode"], "enterprise")
+        self.assertEqual(payload["storageProfile"], "enterprise")
+        self.assertEqual(payload["storageBackend"], "postgres")
+        self.assertEqual(payload["storageCanonicalStore"], "postgres_dedicated")
+        self.assertEqual(payload["storageIsolationMode"], "dedicated")
+        self.assertFalse(payload["sharedPostgresEnabled"])
+        self.assertIn("enterprise-postgres", payload["supportedStorageCompositions"])
+        self.assertEqual(payload["supportedStorageProfiles"], ["enterprise"])
+
+    def test_health_endpoint_reports_shared_enterprise_postgres_composition(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile(shared=True)
+
+        payload = _health_payload(app)
+
+        self.assertEqual(payload["storageMode"], "shared-enterprise")
+        self.assertEqual(payload["storageProfile"], "enterprise")
+        self.assertEqual(payload["storageBackend"], "postgres")
+        self.assertEqual(payload["storageCanonicalStore"], "postgres_shared_instance")
+        self.assertTrue(payload["sharedPostgresEnabled"])
+        self.assertEqual(payload["storageIsolationMode"], "schema")
+        self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
+        self.assertIn("shared-enterprise-postgres", payload["supportedStorageCompositions"])
+
+    def test_health_endpoint_storage_composition_matrix_matches_governance(self) -> None:
+        app = build_test_app()
+        payload = _health_payload(app)
+        reported = set(payload["supportedStorageCompositions"])
+        expected = {entry.composition for entry in SUPPORTED_STORAGE_COMPOSITIONS}
+        self.assertSetEqual(reported, expected)
 
 
 class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):

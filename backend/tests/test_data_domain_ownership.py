@@ -7,6 +7,10 @@ from backend.data_domains import (
     PLANNED_AUTH_AUDIT_CONCERNS,
     PERSISTED_CONCERN_OWNERSHIP,
 )
+from backend.db.migration_governance import (
+    get_table_backend_difference_matrix,
+    validate_migration_governance_contract,
+)
 
 
 _CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)")
@@ -21,11 +25,15 @@ def _migration_tables(relative_path: str) -> set[str]:
 class DataDomainOwnershipTests(unittest.TestCase):
     maxDiff = None
 
-    def test_sqlite_and_postgres_migration_tables_stay_aligned(self) -> None:
+    def test_migration_governance_contract_stays_valid(self) -> None:
+        validate_migration_governance_contract()
+
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
         postgres_tables = _migration_tables("backend/db/postgres_migrations.py")
+        difference_matrix = get_table_backend_difference_matrix()
 
         self.assertSetEqual(sqlite_tables, postgres_tables)
+        self.assertSetEqual(set(difference_matrix), sqlite_tables)
 
     def test_current_migration_tables_are_all_classified(self) -> None:
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")

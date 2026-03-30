@@ -1,11 +1,21 @@
 import unittest
+from unittest.mock import patch
 
 import aiosqlite
 
-from backend.db import sqlite_migrations
+from backend.db import migrations as migration_dispatcher, sqlite_migrations
 
 
 class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dispatcher_runs_governance_validation_before_sqlite_migrations(self) -> None:
+        db = await aiosqlite.connect(":memory:")
+        self.addAsyncCleanup(db.close)
+
+        with patch("backend.db.migrations.validate_migration_governance_contract") as validate_contract:
+            await migration_dispatcher.run_migrations(db)
+
+        validate_contract.assert_called_once()
+
     async def test_run_migrations_upgrades_legacy_session_logs_before_bootstrap_indexes(self) -> None:
         db = await aiosqlite.connect(":memory:")
         self.addAsyncCleanup(db.close)

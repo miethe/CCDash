@@ -3,6 +3,7 @@ import unittest
 from pydantic import ValidationError
 
 from backend.config import resolve_storage_profile_config
+from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS, validate_migration_governance_contract
 from backend.runtime.storage_contract import get_storage_capability_contract, resolve_storage_mode
 
 
@@ -123,6 +124,27 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(get_storage_capability_contract(local_profile).canonical_store, "sqlite_local_metadata")
         self.assertEqual(get_storage_capability_contract(enterprise_profile).canonical_store, "postgres_dedicated")
         self.assertEqual(get_storage_capability_contract(shared_profile).canonical_store, "postgres_shared_instance")
+
+    def test_storage_composition_matrix_covers_phase4_profiles(self) -> None:
+        validate_migration_governance_contract()
+        compositions = {entry.composition: entry for entry in SUPPORTED_STORAGE_COMPOSITIONS}
+
+        self.assertSetEqual(
+            set(compositions),
+            {"local-sqlite", "enterprise-postgres", "shared-enterprise-postgres"},
+        )
+
+        self.assertEqual(compositions["local-sqlite"].storage_mode, "local")
+        self.assertEqual(compositions["local-sqlite"].backend, "sqlite")
+        self.assertEqual(compositions["local-sqlite"].isolation_modes, ("dedicated",))
+
+        self.assertEqual(compositions["enterprise-postgres"].storage_mode, "enterprise")
+        self.assertEqual(compositions["enterprise-postgres"].backend, "postgres")
+        self.assertEqual(compositions["enterprise-postgres"].isolation_modes, ("dedicated",))
+
+        self.assertEqual(compositions["shared-enterprise-postgres"].storage_mode, "shared-enterprise")
+        self.assertEqual(compositions["shared-enterprise-postgres"].backend, "postgres")
+        self.assertEqual(compositions["shared-enterprise-postgres"].isolation_modes, ("schema", "tenant"))
 
 
 if __name__ == "__main__":

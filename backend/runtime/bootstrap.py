@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.application.context import RequestContext
 from backend import config
 from backend.db import connection
+from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.routers.analytics import analytics_router
 from backend.routers.api import documents_router, sessions_router, tasks_router
 from backend.routers.cache import cache_router, links_router
@@ -86,6 +87,12 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
             "storageSchema": str(runtime_status.get("storageSchema", "")),
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
+            "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
+            "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
+            "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
+            "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
+            "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
+            "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         }
 
     return app
