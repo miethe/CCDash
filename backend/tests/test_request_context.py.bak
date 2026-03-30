@@ -73,7 +73,7 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_storage_unit_of_work_uses_existing_repository_factory(self) -> None:
         db = await aiosqlite.connect(":memory:")
         try:
-            storage = LocalStorageUnitOfWork(db)
+            storage = FactoryStorageUnitOfWork(db)
 
             repo = storage.sessions()
 
@@ -107,7 +107,7 @@ class RequestContextTests(unittest.IsolatedAsyncioTestCase):
                     identity_provider=LocalIdentityProvider(),
                     authorization_policy=PermitAllAuthorizationPolicy(),
                     workspace_registry=ProjectManagerWorkspaceRegistry(manager),
-                    storage=LocalStorageUnitOfWork(db),
+                    storage=FactoryStorageUnitOfWork(db),
                     job_scheduler=InProcessJobScheduler(),
                     integration_client=NoopIntegrationClient(),
                 )

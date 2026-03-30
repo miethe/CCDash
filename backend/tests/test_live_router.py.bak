@@ -53,7 +53,7 @@ class LiveRouterTests(unittest.IsolatedAsyncioTestCase):
             identity_provider=LocalIdentityProvider(),
             authorization_policy=PermitAllAuthorizationPolicy(),
             workspace_registry=ProjectManagerWorkspaceRegistry(manager),
-            storage=LocalStorageUnitOfWork(self.db),
+            storage=FactoryStorageUnitOfWork(self.db),
             job_scheduler=InProcessJobScheduler(),
             integration_client=NoopIntegrationClient(),
         )

@@ -189,7 +189,7 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         return types.SimpleNamespace(
             workspace_registry=registry,
-            storage=LocalStorageUnitOfWork(self.db),
+            storage=FactoryStorageUnitOfWork(self.db),
         )
 
     async def test_update_document_writes_local_plan_doc(self) -> None:
