@@ -88,6 +88,7 @@ The `/api/health` payload reports the resolved storage mode, storage profile, ba
 ## Domain Ownership Matrix
 
 Phase 1 freezes the ownership vocabulary for the existing persisted concerns. This is a classification contract, not a claim that every future enterprise domain already has tables.
+The post-completion Phase 3 delta now also marks each persisted concern as `scope-owned`, `directly-ownable`, or `inherits-parent-ownership`.
 
 | Domain | Current artifacts in code | Local owner | Enterprise owner | Durability |
 | --- | --- | --- | --- | --- |
@@ -105,6 +106,13 @@ Phase 1 freezes the ownership vocabulary for the existing persisted concerns. Th
 - Session and document data remains mixed in V1: local mode keeps SQLite plus filesystem-derived workflows, while enterprise mode reserves Postgres as the canonical direction without forcing the full session-intelligence redesign into Phase 1.
 - In enterprise mode, the API should stay stateless and the worker should own startup sync, refresh, and scheduled/background jobs.
 - Shared Postgres is an isolation posture, not permission to reuse SkillMeat tables directly.
+
+### Enterprise Ownership Guardrails
+
+- Reserve `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only on directly ownable canonical roots.
+- The current directly ownable enterprise roots are `alert_configs`, `sessions`, `documents`, `tasks`, and `features`.
+- Child rows such as transcript messages, document refs, feature phases, correlations, and operational/snapshot derivatives inherit ownership from the governing canonical entity or scope instead of storing direct ownership primitives.
+- Use [docs/guides/data-domain-ownership-matrix.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-ownership-matrix.md) for concern-level posture and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) for boundary/repository placement.
 
 ## Ownership Readiness
 
