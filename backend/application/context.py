@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +59,27 @@ class RequestMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class StorageScope:
+    enterprise_id: str | None = None
+    tenant_id: str | None = None
+    isolation_mode: Literal["dedicated", "schema", "tenant"] = "dedicated"
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeBinding:
+    scope_type: Literal["enterprise", "team", "workspace", "project", "owned_entity"]
+    scope_id: str
+    parent_scope_type: str | None = None
+    parent_scope_id: str | None = None
+    ownership_mode: Literal["scope-rooted", "directly-owned", "inherits-parent-scope"] = "scope-rooted"
+
+
+@dataclass(frozen=True, slots=True)
 class RequestContext:
     principal: Principal
     workspace: WorkspaceScope | None
     project: ProjectScope | None
     runtime_profile: str
     trace: TraceContext
+    storage_scope: StorageScope | None = None
+    scope_bindings: tuple[ScopeBinding, ...] = field(default_factory=tuple)

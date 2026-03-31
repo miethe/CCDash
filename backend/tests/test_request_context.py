@@ -158,6 +158,9 @@ class RequestContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.trace.request_id, "req-123")
         self.assertIsNotNone(context.project)
         self.assertEqual(context.project.project_id, "default-skillmeat")
+        self.assertIsNotNone(context.storage_scope)
+        self.assertEqual(context.storage_scope.isolation_mode, "dedicated")
+        self.assertEqual([binding.scope_type for binding in context.scope_bindings], ["workspace", "project"])
 
 
 class RequestContextRouteIntegrationTests(unittest.TestCase):

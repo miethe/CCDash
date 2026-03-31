@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from backend.adapters.live_updates import InMemoryLiveEventBroker
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
-from backend.application.context import RequestContext, RequestMetadata, TraceContext
+from backend.application.context import RequestContext, RequestMetadata, ScopeBinding, StorageScope, TraceContext
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
 from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
@@ -138,6 +138,23 @@ class RuntimeContainer:
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id
+        scope_bindings: list[ScopeBinding] = []
+        if workspace_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="workspace",
+                    scope_id=workspace_scope.workspace_id,
+                )
+            )
+        if project_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="project",
+                    scope_id=project_scope.project_id,
+                    parent_scope_type="workspace" if workspace_scope is not None else None,
+                    parent_scope_id=workspace_scope.workspace_id if workspace_scope is not None else None,
+                )
+            )
         return RequestContext(
             principal=principal,
             workspace=workspace_scope,
@@ -152,6 +169,12 @@ class RuntimeContainer:
                 path=metadata.path,
                 method=metadata.method,
             ),
+            storage_scope=StorageScope(
+                enterprise_id=self.storage_profile.schema_name if self.storage_profile.profile == "enterprise" else None,
+                tenant_id=self.storage_profile.schema_name if self.storage_profile.isolation_mode == "tenant" else None,
+                isolation_mode=self.storage_profile.isolation_mode,
+            ),
+            scope_bindings=tuple(scope_bindings),
         )
 
     def runtime_status(self) -> dict[str, Any]:
