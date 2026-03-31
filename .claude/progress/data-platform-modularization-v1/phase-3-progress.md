@@ -28,7 +28,7 @@ contributors: ["codex"]
 
 tasks:
   - id: "DPM-201"
-    description: "Audit current tables and repositories, then classify them by domain, canonical owner, and profile-specific behavior."
+    description: "Audit current tables and repositories, then classify them by domain, canonical owner, object-ownership posture, and profile-specific behavior."
     status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: ["DPM-003"]
@@ -36,7 +36,7 @@ tasks:
     priority: "high"
 
   - id: "DPM-202"
-    description: "Define how Postgres schemas or table groups separate identity/access, canonical app data, integration snapshots, operational state, and audit records; document the SQLite-local equivalent where physical separation is limited."
+    description: "Define how Postgres schemas or table groups separate identity/access, canonical app data, integration snapshots, operational state, and audit records; specify where direct ownership primitives live for enterprise canonical entities; document the SQLite-local equivalent where physical separation is limited."
     status: "completed"
     assigned_to: ["data-layer-expert", "backend-architect"]
     dependencies: ["DPM-201"]
@@ -44,7 +44,7 @@ tasks:
     priority: "high"
 
   - id: "DPM-203"
-    description: "Update repository/module ownership so domain responsibilities are explicit and future auth/session work does not land in cache-only abstractions."
+    description: "Update repository/module ownership so domain responsibilities and ownership semantics are explicit and future auth/session work does not land in cache-only abstractions."
     status: "completed"
     assigned_to: ["backend-architect"]
     dependencies: ["DPM-202"]
@@ -65,6 +65,7 @@ success_criteria:
   - "Every persisted concern has a domain owner and target store."
   - "Postgres isolation strategy is explicit for dedicated and shared-instance deployments."
   - "Repository ownership no longer assumes one undifferentiated persistence layer."
+  - "Directly ownable enterprise canonical entities are identified before Phase 4 schema work begins."
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-3-progress.md"
@@ -104,7 +105,7 @@ python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f
 
 ## Objective
 
-Classify the current persistence surface by domain, codify the schema-boundary layout for local and enterprise storage, and expose additive domain-grouped storage seams so future auth and canonical session work can build on explicit ownership instead of a broad cache layer.
+Classify the current persistence surface by domain and ownership posture, codify the schema-boundary layout for local and enterprise storage, and reserve direct ownership primitives only on the canonical entities that may later support explicit user, team, or enterprise ownership.
 
 ## Orchestration Quick Reference
 
