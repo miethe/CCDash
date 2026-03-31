@@ -8,20 +8,23 @@ prd_ref: /docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 phase: 4
 title: "Identity, Membership, and Audit Foundation"
-status: "in_progress"
+status: "completed"
 started: "2026-03-31"
-completed: null
-commit_refs: []
+completed: "2026-03-31"
+commit_refs:
+  - "90185dc"
+  - "e3688f6"
+  - "0cc3b1a"
 pr_refs: []
 
-overall_progress: 10
-completion_estimate: "contracts and tracking initialized; implementation in progress"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
-at_risk_tasks: 1
+at_risk_tasks: 0
 
 owners: ["data-layer-expert", "python-backend-engineer", "backend-architect"]
 contributors: ["codex"]
@@ -29,7 +32,7 @@ contributors: ["codex"]
 tasks:
   - id: "DPM-301"
     description: "Add canonical enterprise schema support for principals, memberships, role bindings, scope identifiers, and shared ownership-subject primitives that align to the shared-auth PRD."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: ["DPM-202"]
     estimated_effort: "4pt"
@@ -37,7 +40,7 @@ tasks:
 
   - id: "DPM-302"
     description: "Add storage for privileged-action audit records, including actor, scope, action, decision/result, and timestamp semantics."
-    status: "pending"
+    status: "completed"
     assigned_to: ["data-layer-expert", "python-backend-engineer"]
     dependencies: ["DPM-301"]
     estimated_effort: "4pt"
@@ -45,7 +48,7 @@ tasks:
 
   - id: "DPM-303"
     description: "Define how enterprise, team, workspace, project, and directly owned entity scopes map into the new storage model and request context, including inheritance rules between scope membership and object ownership."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["DPM-301"]
     estimated_effort: "4pt"
@@ -66,6 +69,26 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-4-progress.md"
+  - "backend/application/context.py"
+  - "backend/enterprise_scope_contract.py"
+  - "backend/runtime/container.py"
+  - "backend/application/ports/core.py"
+  - "backend/application/ports/__init__.py"
+  - "backend/adapters/storage/base.py"
+  - "backend/adapters/storage/local.py"
+  - "backend/adapters/storage/enterprise.py"
+  - "backend/data_domain_layout.py"
+  - "backend/db/migration_governance.py"
+  - "backend/db/postgres_migrations.py"
+  - "backend/db/repositories/identity_access.py"
+  - "backend/db/repositories/postgres/identity_access.py"
+  - "backend/tests/test_request_context.py"
+  - "backend/tests/test_runtime_bootstrap.py"
+  - "backend/tests/test_enterprise_scope_contract.py"
+  - "backend/tests/test_migration_governance.py"
+  - "backend/tests/test_data_domain_ownership.py"
+  - "backend/tests/test_data_domain_layout.py"
+  - "backend/tests/test_sqlite_migrations.py"
 ---
 
 # data-platform-modularization-v1 - Phase 4
@@ -93,8 +116,8 @@ Task("data-layer-expert", "Execute DPM-302: add privileged-action audit storage"
 Task("backend-architect", "Execute DPM-303: define tenancy, scope, and ownership contracts for request context")
 ```
 
-## In-Progress Notes
+## Completion Notes
 
-- Phase 4 is initialized, but the schema, storage, and request-context changes have not been landed yet.
-- Direct ownership primitives remain reserved only for directly ownable canonical roots.
-- Identity and audit storage remain enterprise-only concerns until the implementation work adds the concrete tables and seams.
+- Added enterprise-only Postgres schema foundations for `principals`, `scope_identifiers`, `memberships`, `role_bindings`, `privileged_action_audit_records`, and `access_decision_logs`.
+- Extended the runtime request and storage contracts so enterprise scope, storage scope, and identity/audit domain seams are explicit without introducing hosted auth enforcement into local mode.
+- Updated migration-governance tests so enterprise-only Postgres identity/audit tables are intentional and machine-checked instead of being treated as backend drift.
