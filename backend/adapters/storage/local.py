@@ -9,6 +9,14 @@ from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.execution import SqliteExecutionRepository
 from backend.db.repositories.features import SqliteFeatureRepository
 from backend.db.repositories.intelligence import SqliteAgenticIntelligenceRepository
+from backend.db.repositories.identity_access import (
+    LocalAccessDecisionLogRepository,
+    LocalMembershipRepository,
+    LocalPrincipalRepository,
+    LocalPrivilegedActionAuditRepository,
+    LocalRoleBindingRepository,
+    LocalScopeIdentifierRepository,
+)
 from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
@@ -49,6 +57,12 @@ class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "test_integrity": SqliteTestIntegrityRepository,
                 "execution": SqliteExecutionRepository,
                 "agentic_intelligence": SqliteAgenticIntelligenceRepository,
+                "principals": LocalPrincipalRepository,
+                "scope_identifiers": LocalScopeIdentifierRepository,
+                "memberships": LocalMembershipRepository,
+                "role_bindings": LocalRoleBindingRepository,
+                "privileged_action_audit_records": LocalPrivilegedActionAuditRepository,
+                "access_decision_logs": LocalAccessDecisionLogRepository,
             },
         )
 

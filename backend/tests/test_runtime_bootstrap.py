@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
+from backend.db.repositories.identity_access import LocalPrincipalRepository
+from backend.db.repositories.postgres.identity_access import PostgresPrincipalRepository
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
@@ -227,6 +229,8 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertIsInstance(ports.storage, LocalStorageUnitOfWork)
         self.assertIs(ports.storage.db, marker)
+        self.assertIsInstance(ports.storage.identity_access().principals(), LocalPrincipalRepository)
+        self.assertFalse(ports.storage.principals().describe_capability().supported)
 
     def test_build_core_ports_uses_enterprise_storage_adapter(self) -> None:
         marker = object()
@@ -238,6 +242,9 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
+        self.assertIsInstance(ports.storage.identity_access().principals(), PostgresPrincipalRepository)
+        self.assertTrue(ports.storage.principals().describe_capability().supported)
+        self.assertTrue(ports.storage.audit_security().privileged_action_audit_records().describe_capability().authoritative)
         self.assertIs(ports.storage.db, marker)
 
     def test_health_endpoint_reports_local_sqlite_composition(self) -> None:

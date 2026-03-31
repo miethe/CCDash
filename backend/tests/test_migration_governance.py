@@ -1,9 +1,11 @@
 import unittest
 
+from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
 from backend.db.migration_governance import (
     BACKEND_SCHEMA_CAPABILITIES,
     SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES,
     SUPPORTED_STORAGE_COMPOSITIONS,
+    get_enterprise_only_postgres_tables,
     get_postgres_migration_tables,
     get_sqlite_migration_tables,
     get_table_backend_difference_matrix,
@@ -15,10 +17,30 @@ class MigrationGovernanceTests(unittest.TestCase):
     def test_validate_migration_governance_contract(self) -> None:
         validate_migration_governance_contract()
 
-    def test_migration_tables_match_across_supported_backends(self) -> None:
-        self.assertSetEqual(get_sqlite_migration_tables(), get_postgres_migration_tables())
+    def test_shared_migration_tables_match_across_backends(self) -> None:
+        """Shared tables (excluding enterprise-only) must be identical in SQLite and Postgres."""
+        enterprise_only = get_enterprise_only_postgres_tables()
+        shared_postgres = get_postgres_migration_tables() - enterprise_only
+        self.assertSetEqual(get_sqlite_migration_tables(), shared_postgres)
 
-    def test_table_difference_matrix_classifies_all_tables(self) -> None:
+    def test_enterprise_only_tables_exist_only_in_postgres(self) -> None:
+        enterprise_only = get_enterprise_only_postgres_tables()
+        sqlite_tables = get_sqlite_migration_tables()
+        self.assertTrue(enterprise_only, "Enterprise-only table set should not be empty")
+        self.assertSetEqual(enterprise_only & sqlite_tables, set())
+
+    def test_enterprise_only_tables_match_planned_concerns(self) -> None:
+        enterprise_only = get_enterprise_only_postgres_tables()
+        self.assertSetEqual(enterprise_only, set(PLANNED_AUTH_AUDIT_CONCERNS))
+
+    def test_postgres_tables_are_superset_of_sqlite(self) -> None:
+        sqlite_tables = get_sqlite_migration_tables()
+        postgres_tables = get_postgres_migration_tables()
+        self.assertTrue(sqlite_tables.issubset(postgres_tables))
+        self.assertGreater(len(postgres_tables), len(sqlite_tables))
+
+    def test_table_difference_matrix_classifies_shared_tables(self) -> None:
+        """Difference matrix covers shared tables only (not enterprise-only)."""
         matrix = get_table_backend_difference_matrix()
         self.assertSetEqual(set(matrix), set(get_sqlite_migration_tables()))
 

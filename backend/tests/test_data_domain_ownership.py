@@ -8,6 +8,7 @@ from backend.data_domains import (
     PERSISTED_CONCERN_OWNERSHIP,
 )
 from backend.db.migration_governance import (
+    get_enterprise_only_postgres_tables,
     get_table_backend_difference_matrix,
     validate_migration_governance_contract,
 )
@@ -52,10 +53,19 @@ class DataDomainOwnershipTests(unittest.TestCase):
 
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
         postgres_tables = _migration_tables("backend/db/postgres_migrations.py")
+        enterprise_only = get_enterprise_only_postgres_tables()
         difference_matrix = get_table_backend_difference_matrix()
 
-        self.assertSetEqual(sqlite_tables, postgres_tables)
+        # Shared tables match across backends.
+        self.assertSetEqual(sqlite_tables, postgres_tables - enterprise_only)
+        # Difference matrix classifies every shared table.
         self.assertSetEqual(set(difference_matrix), sqlite_tables)
+
+    def test_enterprise_postgres_tables_equal_shared_plus_planned(self) -> None:
+        """Postgres migration tables = shared SQLite tables + planned enterprise concerns."""
+        sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
+        postgres_tables = _migration_tables("backend/db/postgres_migrations.py")
+        self.assertSetEqual(postgres_tables, sqlite_tables | set(PLANNED_AUTH_AUDIT_CONCERNS))
 
     def test_current_migration_tables_are_all_classified(self) -> None:
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
@@ -106,6 +116,22 @@ class DataDomainOwnershipTests(unittest.TestCase):
             self.assertEqual(ownership.enterprise_owner, "enterprise Postgres canonical home")
             self.assertEqual(ownership.ownership_posture, expected_posture)
             self.assertEqual(ownership.direct_owner_subject_types, ())
+
+    def test_enterprise_only_tables_have_no_direct_ownership_columns(self) -> None:
+        """Identity/audit tables must not reserve direct ownership columns (per Phase 4 spec)."""
+        enterprise_only = get_enterprise_only_postgres_tables()
+        for concern in enterprise_only:
+            ownership = PERSISTED_CONCERN_OWNERSHIP[concern]
+            self.assertEqual(
+                ownership.direct_owner_subject_types,
+                (),
+                f"Enterprise-only table '{concern}' must not have direct ownership subjects",
+            )
+            self.assertNotEqual(
+                ownership.ownership_posture,
+                "directly-ownable",
+                f"Enterprise-only table '{concern}' must not be directly-ownable",
+            )
 
 
 if __name__ == "__main__":

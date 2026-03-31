@@ -91,6 +91,7 @@ def _extract_table_blocks(ddl: str) -> dict[str, str]:
 
 
 def _backend_table_blocks(module: object) -> dict[str, str]:
+    """Extract table blocks from shared DDL strings (_TABLES, _TEST_VISUALIZER_TABLES)."""
     blocks: dict[str, str] = {}
     primary = getattr(module, "_TABLES", "")
     if isinstance(primary, str):
@@ -101,6 +102,15 @@ def _backend_table_blocks(module: object) -> dict[str, str]:
     return blocks
 
 
+def _enterprise_only_table_blocks(module: object) -> dict[str, str]:
+    """Extract table blocks from enterprise-only DDL (_ENTERPRISE_IDENTITY_AUDIT_TABLES)."""
+    blocks: dict[str, str] = {}
+    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
+    if isinstance(enterprise, str):
+        blocks.update(_extract_table_blocks(enterprise))
+    return blocks
+
+
 @lru_cache(maxsize=1)
 def get_sqlite_migration_tables() -> frozenset[str]:
     return frozenset(_backend_table_blocks(sqlite_migrations))
@@ -108,7 +118,14 @@ def get_sqlite_migration_tables() -> frozenset[str]:
 
 @lru_cache(maxsize=1)
 def get_postgres_migration_tables() -> frozenset[str]:
-    return frozenset(_backend_table_blocks(postgres_migrations))
+    """Return all Postgres migration tables (shared + enterprise-only)."""
+    return frozenset(_backend_table_blocks(postgres_migrations)) | get_enterprise_only_postgres_tables()
+
+
+@lru_cache(maxsize=1)
+def get_enterprise_only_postgres_tables() -> frozenset[str]:
+    """Return tables that exist only in enterprise Postgres, not in SQLite."""
+    return frozenset(_enterprise_only_table_blocks(postgres_migrations))
 
 
 def _difference_categories(sqlite_block: str, postgres_block: str) -> tuple[str, ...]:
@@ -144,19 +161,36 @@ def get_table_backend_difference_matrix() -> dict[str, tuple[str, ...]]:
 
 
 def validate_migration_governance_contract() -> None:
+    from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
+
     sqlite_tables = get_sqlite_migration_tables()
     postgres_tables = get_postgres_migration_tables()
-    if sqlite_tables != postgres_tables:
-        only_sqlite = sorted(sqlite_tables - postgres_tables)
-        only_postgres = sorted(postgres_tables - sqlite_tables)
+    enterprise_only = get_enterprise_only_postgres_tables()
+    shared_postgres = postgres_tables - enterprise_only
+
+    # Shared tables must be identical across both backends.
+    if sqlite_tables != shared_postgres:
+        only_sqlite = sorted(sqlite_tables - shared_postgres)
+        only_shared_postgres = sorted(shared_postgres - sqlite_tables)
         raise RuntimeError(
-            "SQLite and Postgres migration table sets diverged. "
-            f"sqlite_only={only_sqlite} postgres_only={only_postgres}"
+            "SQLite and shared Postgres migration table sets diverged. "
+            f"sqlite_only={only_sqlite} shared_postgres_only={only_shared_postgres}"
         )
 
+    # Enterprise-only Postgres tables must match the planned identity/audit concerns.
+    expected_enterprise = frozenset(PLANNED_AUTH_AUDIT_CONCERNS)
+    if enterprise_only != expected_enterprise:
+        missing = sorted(expected_enterprise - enterprise_only)
+        extra = sorted(enterprise_only - expected_enterprise)
+        raise RuntimeError(
+            "Enterprise-only Postgres tables must match planned identity/audit concerns. "
+            f"missing={missing} extra={extra}"
+        )
+
+    # Backend difference matrix classifies only the shared tables.
     matrix = get_table_backend_difference_matrix()
     if set(matrix) != sqlite_tables:
-        raise RuntimeError("Migration governance matrix must classify every migration-managed table.")
+        raise RuntimeError("Migration governance matrix must classify every shared migration-managed table.")
 
     for table, categories in matrix.items():
         unsupported = sorted(set(categories) - _SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES_SET)
