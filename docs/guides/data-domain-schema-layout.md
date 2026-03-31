@@ -1,0 +1,49 @@
+# Data-Domain Schema Layout
+
+This guide is the Phase 3 companion to the ownership matrix. [backend/data_domain_layout.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domain_layout.py) is the code-owned source of truth for schema groups, ownership-primitive placement, and repository ownership behavior.
+
+## Boundary Ownership Placement
+
+| Boundary | Domain | Postgres schema | SQLite equivalent | Directly ownable roots | Scope-owned concerns | Inherited concerns | Reserved ownership primitives | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `workspace_metadata` | Workspace and project metadata | `app` | Workspace metadata tables | `alert_configs` | `projects.json`, `workspace_registry_state`, `app_metadata` | None | `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, `visibility` on `alert_configs` only | Keeps app metadata separate from runtime state while preserving local-first filesystem ownership. |
+| `observed_entities` | Observed product entities | `app` | Observed entity tables | `sessions`, `documents`, `tasks`, `features` | `tags` | `entity_links`, `external_links`, `entity_tags`, `session_logs`, `session_messages`, `session_tool_usage`, `session_file_updates`, `session_artifacts`, `session_usage_events`, `session_usage_attributions`, `session_relationships`, `document_refs`, `feature_phases`, `commit_correlations` | `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, `visibility` on directly ownable roots only | Root content entities may later support direct user/team/enterprise ownership; child rows inherit from the parent root. |
+| `ingestion_state` | Ingestion and cache state | `ops` | Ingestion adapter state tables | None | `sync_state` | None | None | Sync checkpoints are adapter state and should not be treated as hosted canonical data. |
+| `integration_snapshots` | Integration snapshots | `integration` | Refreshable integration snapshot tables | None | `external_definition_sources`, `pricing_catalog_entries` | `external_definitions` | None | Snapshot roots remain scope-governed; definition rows inherit from the governing snapshot source. |
+| `operational_state` | Operational and job data | `ops` | Runtime and job state tables | None | `schema_version`, `metric_types`, `analytics_entries`, `telemetry_events`, `outbound_telemetry_queue`, `effectiveness_rollups`, `execution_runs`, `test_runs`, `test_definitions`, `test_domains` | `analytics_entity_links`, `session_stack_observations`, `session_stack_components`, `execution_run_events`, `execution_approvals`, `test_results`, `test_feature_mappings`, `test_integrity_signals`, `test_metrics` | None | Runtime health, execution/test tracking, telemetry queues, and intelligence rollups remain scope-aware only. |
+| `identity_access` | Identity and access | `identity` | Not part of the local-first contract | None | Planned `principals`, `scope_identifiers` | Planned `memberships`, `role_bindings` | None in Phase 3 | Identity roots are governed by scope; membership and binding rows inherit from those roots instead of carrying direct ownership primitives. |
+| `audit_security` | Audit and security records | `audit` | Not part of the local-first contract | None | Planned `privileged_action_audit_records`, `access_decision_logs` | None | None in Phase 3 | Audit rows remain scope-governed unless a later plan proves they are independently shareable. |
+
+## Repository Ownership Contracts
+
+| Storage key | Boundary | Ownership behavior | SQLite module | Postgres module | Directly ownable roots | Scope-owned concerns | Inherited concerns | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `alert_configs` | `workspace_metadata` | `owner-aware` | `backend.db.repositories.runtime_state` | `backend.db.repositories.postgres.runtime_state` | `alert_configs` | None | None | This repository must eventually honor direct owner primitives for shareable alert policies. |
+| `sessions` | `observed_entities` | `owner-aware` | `backend.db.repositories.sessions` | `backend.db.repositories.postgres.sessions` | `sessions` | None | `session_logs`, `session_relationships`, `session_tool_usage`, `session_file_updates`, `session_artifacts` | Session roots carry direct ownership primitives; child rows inherit from the parent session. |
+| `session_messages` | `observed_entities` | `scope-aware-only` | `backend.db.repositories.session_messages` | `backend.db.repositories.postgres.session_messages` | None | None | `session_messages` | Message rows inherit from the parent session and should not add direct ownership columns. |
+| `documents` | `observed_entities` | `owner-aware` | `backend.db.repositories.documents` | `backend.db.repositories.postgres.documents` | `documents` | None | `document_refs` | Document roots may become directly ownable; reference rows inherit. |
+| `tasks` | `observed_entities` | `owner-aware` | `backend.db.repositories.tasks` | `backend.db.repositories.postgres.tasks` | `tasks` | None | None | Task roots may become directly ownable in hosted mode. |
+| `features` | `observed_entities` | `owner-aware` | `backend.db.repositories.features` | `backend.db.repositories.postgres.features` | `features` | None | `feature_phases`, `commit_correlations` | Feature roots may become directly ownable; phase/correlation rows inherit. |
+| `entity_links` | `observed_entities` | `scope-aware-only` | `backend.db.repositories.entity_graph` | `backend.db.repositories.postgres.entity_graph` | None | None | `entity_links`, `external_links` | Link rows inherit from the linked canonical entities. |
+| `tags` | `observed_entities` | `scope-aware-only` | `backend.db.repositories.entity_graph` | `backend.db.repositories.postgres.entity_graph` | None | `tags` | `entity_tags` | Tags remain scope-owned taxonomy; join rows inherit from the governed entity/tag pair. |
+| `sync_state` | `ingestion_state` | `scope-aware-only` | `backend.db.repositories.runtime_state` | `backend.db.repositories.postgres.runtime_state` | None | `sync_state` | None | Adapter state only. |
+| `analytics` | `operational_state` | `scope-aware-only` | `backend.db.repositories.analytics` | `backend.db.repositories.postgres.analytics` | None | `analytics_entries`, `metric_types` | `analytics_entity_links` | Operational analytics stay scope-aware only. |
+| `session_usage` | `observed_entities` | `scope-aware-only` | `backend.db.repositories.usage_attribution` | `backend.db.repositories.postgres.usage_attribution` | None | None | `session_usage_events`, `session_usage_attributions` | Usage rows inherit from the session root. |
+| `pricing_catalog` | `integration_snapshots` | `scope-aware-only` | `backend.db.repositories.pricing` | `backend.db.repositories.postgres.pricing` | None | `pricing_catalog_entries`, `external_definition_sources` | `external_definitions` | Snapshot repositories remain scope-governed. |
+| `test_runs` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_runs` | `backend.db.repositories.postgres.test_runs` | None | `test_runs` | None | Operational scope-owned root. |
+| `test_definitions` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_definitions` | `backend.db.repositories.postgres.test_definitions` | None | `test_definitions` | None | Operational scope-owned root. |
+| `test_results` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_results` | `backend.db.repositories.postgres.test_results` | None | None | `test_results` | Inherits from the governing run. |
+| `test_domains` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_domains` | `backend.db.repositories.postgres.test_domains` | None | `test_domains` | None | Operational scope-owned taxonomy. |
+| `test_mappings` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_mappings` | `backend.db.repositories.postgres.test_mappings` | None | None | `test_feature_mappings` | Inherits from the governing test domain and feature scope. |
+| `test_integrity` | `operational_state` | `scope-aware-only` | `backend.db.repositories.test_integrity` | `backend.db.repositories.postgres.test_integrity` | None | None | `test_integrity_signals`, `test_metrics` | Inherits from the governing run or test scope. |
+| `execution` | `operational_state` | `scope-aware-only` | `backend.db.repositories.execution` | `backend.db.repositories.postgres.execution` | None | `execution_runs` | `execution_run_events`, `execution_approvals` | Execution runs are scope-owned roots; child rows inherit. |
+| `agentic_intelligence` | `operational_state` | `scope-aware-only` | `backend.db.repositories.intelligence` | `backend.db.repositories.postgres.intelligence` | None | `effectiveness_rollups`, `telemetry_events`, `outbound_telemetry_queue` | `session_stack_observations`, `session_stack_components` | These tables remain operational until a future plan splits analytics and intelligence further. |
+
+## Boundary Rules
+
+- Reserve `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only on directly ownable canonical roots.
+- Do not spread direct ownership columns across derived cache, snapshot, operational, identity, or audit tables unless a later plan proves those rows are independently shareable.
+- Child rows should inherit ownership from their governing canonical entity instead of duplicating direct ownership primitives.
+- Future enterprise auth work must land in the `identity` schema boundary, not in `ops` or the observed-entity tables.
+- Future privileged-action and access-decision records must land in the `audit` schema boundary.
+- `session_messages` remains the transcript seam for follow-on canonical session storage, but it should stay scope-aware through the parent session rather than becoming directly ownable itself.

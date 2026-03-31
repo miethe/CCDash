@@ -25,6 +25,28 @@ def _migration_tables(relative_path: str) -> set[str]:
 class DataDomainOwnershipTests(unittest.TestCase):
     maxDiff = None
 
+    def test_every_concern_has_supported_ownership_posture(self) -> None:
+        valid_postures = {
+            "scope-owned",
+            "directly-ownable",
+            "inherits-parent-ownership",
+        }
+        directly_ownable = {
+            "alert_configs",
+            "sessions",
+            "documents",
+            "tasks",
+            "features",
+        }
+
+        for concern, ownership in PERSISTED_CONCERN_OWNERSHIP.items():
+            self.assertIn(ownership.ownership_posture, valid_postures)
+            if ownership.ownership_posture == "directly-ownable":
+                self.assertEqual(ownership.direct_owner_subject_types, ("user", "team", "enterprise"))
+                self.assertIn(concern, directly_ownable)
+            else:
+                self.assertEqual(ownership.direct_owner_subject_types, ())
+
     def test_migration_governance_contract_stays_valid(self) -> None:
         validate_migration_governance_contract()
 
@@ -38,6 +60,13 @@ class DataDomainOwnershipTests(unittest.TestCase):
     def test_current_migration_tables_are_all_classified(self) -> None:
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
         classified_tables = set(MIGRATION_MANAGED_CONCERNS)
+        directly_ownable = {
+            "alert_configs",
+            "sessions",
+            "documents",
+            "tasks",
+            "features",
+        }
 
         self.assertSetEqual(classified_tables, sqlite_tables)
 
@@ -49,20 +78,25 @@ class DataDomainOwnershipTests(unittest.TestCase):
             self.assertTrue(ownership.durability)
             self.assertTrue(ownership.local_owner)
             self.assertTrue(ownership.enterprise_owner)
+            self.assertTrue(ownership.ownership_posture)
+            if concern in directly_ownable:
+                self.assertEqual(ownership.ownership_posture, "directly-ownable")
+            else:
+                self.assertNotEqual(ownership.ownership_posture, "directly-ownable")
 
     def test_future_auth_and_audit_placeholders_are_frozen(self) -> None:
         expected_domains = {
-            "principals": "identity_access",
-            "memberships": "identity_access",
-            "role_bindings": "identity_access",
-            "scope_identifiers": "identity_access",
-            "privileged_action_audit_records": "audit_security_records",
-            "access_decision_logs": "audit_security_records",
+            "principals": ("identity_access", "scope-owned"),
+            "memberships": ("identity_access", "inherits-parent-ownership"),
+            "role_bindings": ("identity_access", "inherits-parent-ownership"),
+            "scope_identifiers": ("identity_access", "scope-owned"),
+            "privileged_action_audit_records": ("audit_security_records", "scope-owned"),
+            "access_decision_logs": ("audit_security_records", "scope-owned"),
         }
 
         self.assertSetEqual(set(PLANNED_AUTH_AUDIT_CONCERNS), set(expected_domains))
 
-        for concern, expected_domain in expected_domains.items():
+        for concern, (expected_domain, expected_posture) in expected_domains.items():
             ownership = PERSISTED_CONCERN_OWNERSHIP[concern]
             self.assertEqual(ownership.kind, "placeholder")
             self.assertFalse(ownership.current)
@@ -70,6 +104,8 @@ class DataDomainOwnershipTests(unittest.TestCase):
             self.assertEqual(ownership.durability, "canonical")
             self.assertEqual(ownership.local_owner, "not part of the local-first storage contract")
             self.assertEqual(ownership.enterprise_owner, "enterprise Postgres canonical home")
+            self.assertEqual(ownership.ownership_posture, expected_posture)
+            self.assertEqual(ownership.direct_owner_subject_types, ())
 
 
 if __name__ == "__main__":

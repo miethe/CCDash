@@ -1,4 +1,4 @@
-"""Repository factory to abstract DB backend (SQLite vs Postgres)."""
+"""Transitional repository compatibility bridge for direct repository callers."""
 from __future__ import annotations
 
 from typing import Any
@@ -24,13 +24,9 @@ from backend.db.repositories.test_integrity import SqliteTestIntegrityRepository
 from backend.db.repositories.execution import SqliteExecutionRepository
 from backend.db.repositories.intelligence import SqliteAgenticIntelligenceRepository
 from backend.db.repositories.telemetry_queue import SqliteTelemetryQueueRepository
-from backend.db.repositories.links import (
-    SqliteEntityLinkRepository,
-    SqliteTagRepository,
-    SqliteSyncStateRepository,
-    SqliteAlertConfigRepository,
-)
+from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
+from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
 
 def get_session_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
@@ -71,13 +67,13 @@ def get_session_usage_repository(db: Any):
 def get_entity_link_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
         return SqliteEntityLinkRepository(db)
-    from backend.db.repositories.postgres.links import PostgresEntityLinkRepository
+    from backend.db.repositories.postgres.entity_graph import PostgresEntityLinkRepository
     return PostgresEntityLinkRepository(db)
 
 def get_tag_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
         return SqliteTagRepository(db)
-    from backend.db.repositories.postgres.links import PostgresTagRepository
+    from backend.db.repositories.postgres.entity_graph import PostgresTagRepository
     return PostgresTagRepository(db)
 
 
@@ -91,13 +87,13 @@ def get_feature_repository(db: Any):
 def get_sync_state_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
         return SqliteSyncStateRepository(db)
-    from backend.db.repositories.postgres.links import PostgresSyncStateRepository
+    from backend.db.repositories.postgres.runtime_state import PostgresSyncStateRepository
     return PostgresSyncStateRepository(db)
 
 def get_alert_config_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):
         return SqliteAlertConfigRepository(db)
-    from backend.db.repositories.postgres.links import PostgresAlertConfigRepository
+    from backend.db.repositories.postgres.runtime_state import PostgresAlertConfigRepository
     return PostgresAlertConfigRepository(db)
 
 

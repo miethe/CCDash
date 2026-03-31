@@ -10,11 +10,8 @@ from .test_results import SqliteTestResultRepository
 from .test_domains import SqliteTestDomainRepository
 from .test_mappings import SqliteTestMappingRepository
 from .test_integrity import SqliteTestIntegrityRepository
-from .links import (
-    SqliteEntityLinkRepository,
-    SqliteSyncStateRepository,
-    SqliteTagRepository,
-)
+from .entity_graph import SqliteEntityLinkRepository, SqliteTagRepository
+from .runtime_state import SqliteSyncStateRepository
 from .analytics import SqliteAnalyticsRepository
 from .execution import SqliteExecutionRepository
 from .telemetry_queue import SqliteTelemetryQueueRepository

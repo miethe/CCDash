@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 from fastapi import HTTPException
 
-from backend.adapters.storage.local import FactoryStorageUnitOfWork
+from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.db.sqlite_migrations import run_migrations
 from backend.models import GitHubIntegrationSettings, Project
@@ -189,7 +189,7 @@ class DocumentRouterWriteTests(unittest.IsolatedAsyncioTestCase):
         )
         return types.SimpleNamespace(
             workspace_registry=registry,
-            storage=FactoryStorageUnitOfWork(self.db),
+            storage=LocalStorageUnitOfWork(self.db),
         )
 
     async def test_update_document_writes_local_plan_doc(self) -> None:

@@ -11,8 +11,9 @@ description: Turn CCDash's new storage-profile contract into real local and ente
   storage composition, explicit data-domain ownership, and migration governance that
   supports auth-era hosted deployment.
 summary: Replace factory-backed backend selection with explicit storage adapters,
-  classify canonical versus derived data domains, add identity and audit foundations,
-  and harden SQLite/Postgres governance for local-first and enterprise profiles.
+  classify canonical versus derived data domains, add identity, ownership, and
+  audit foundations, and harden SQLite/Postgres governance for local-first and
+  enterprise profiles.
 author: codex
 audience:
 - ai-agents
@@ -20,7 +21,7 @@ audience:
 - platform-engineering
 - backend-platform
 created: 2026-03-27
-updated: '2026-03-28'
+updated: '2026-03-30'
 tags:
 - implementation
 - data-platform
@@ -90,7 +91,7 @@ In scope:
 
 1. Replace compatibility-style storage selection with explicit local and enterprise storage composition.
 2. Define the ownership model for canonical app data, derived cache data, integration snapshots, operational/job state, and audit/security records.
-3. Add the schema and repository foundation for principals, memberships, role bindings, and privileged-action audit records.
+3. Add the schema and repository foundation for principals, memberships, role bindings, scope identifiers, direct object-ownership primitives, and privileged-action audit records.
 4. Introduce migration governance and verification for supported storage profiles and isolation modes.
 5. Refactor filesystem sync assumptions so enterprise API runtime no longer depends on local-ingestion behavior.
 
@@ -108,6 +109,7 @@ Non-negotiables:
 3. Adapter choice happens at composition time, not through connection-type inspection in request code.
 4. Every persisted concern is classified as canonical, derived cache, integration snapshot, operational/job, or audit/security data.
 5. The result must unblock shared auth/RBAC and canonical session-storage follow-on plans without reopening storage fundamentals.
+6. Enterprise canonical entities that may need direct user, team, or enterprise ownership reserve stable ownership primitives up front so later RBAC work does not require broad schema backfills.
 
 ## Target Platform Shape
 
@@ -130,6 +132,18 @@ Non-negotiables:
 | Integration snapshots | SkillMeat definitions, external refresh metadata | Profile-specific storage adapter | Refreshable |
 | Operational and job data | telemetry queue, background job checkpoints, reconciliation state | Enterprise Postgres preferred; local adapter allowed for local mode | Operational |
 | Audit and security records | privileged actions, access decisions, membership changes | Enterprise Postgres | Canonical |
+
+### Ownership Model Guardrails
+
+1. Distinguish store ownership from object ownership. This plan governs both the canonical store for a domain and the ownership primitives needed by directly ownable enterprise entities.
+2. Not every table should carry direct ownership columns. Derived cache, integration snapshot, operational, and audit tables should inherit ownership from their canonical parent scope unless they are independently shareable.
+3. Direct ownership primitives are required for enterprise canonical entities that may be owned or shared at the `user`, `team`, or `enterprise` level.
+4. The default ownership primitive set for directly ownable enterprise canonical entities is:
+   - `tenant_id` or `enterprise_id`
+   - `owner_subject_type` with at least `user`, `team`, and `enterprise`
+   - `owner_subject_id`
+   - `visibility` or equivalent share posture when the entity may intentionally be shared beyond the direct owner
+5. Scope-only records such as memberships, role bindings, and most audit rows should reference the governing scope and actor without pretending to be directly ownable content objects.
 
 ## Phase Overview
 
@@ -176,7 +190,7 @@ Non-negotiables:
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
 | DPM-001 | Capability Matrix | Define a concrete capability matrix for `local`, `enterprise`, and shared-enterprise modes covering canonical stores, ingestion sources, supported isolation modes, and required guarantees. | Storage profile behavior is documented in code/docs with no remaining ambiguity about canonical ownership or supported combinations. | 3 pts | backend-architect, data-layer-expert | None |
 | DPM-002 | Runtime-to-Storage Mapping | Define which runtime profiles may pair with which storage profiles and what each pairing implies for sync, jobs, auth, and integrations. | `local`, `api`, `worker`, and `test` pairings are explicit and invalid combinations are rejected early. | 2 pts | backend-architect | DPM-001 |
-| DPM-003 | Domain Ownership Matrix | Freeze the domain classification for existing persisted concerns, including current tables and future auth/audit records. | Every known persisted concern is mapped to a domain, durability class, and target profile owner. | 3 pts | data-layer-expert | DPM-001 |
+| DPM-003 | Domain Ownership Matrix | Freeze the domain classification for existing persisted concerns, including current tables and future auth/audit records, and classify each concern as scope-owned, directly ownable, or inherited-from-parent. | Every known persisted concern is mapped to a domain, durability class, target profile owner, and object-ownership posture. | 3 pts | data-layer-expert | DPM-001 |
 
 **Phase 1 Quality Gates**
 
@@ -206,15 +220,31 @@ Non-negotiables:
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| DPM-201 | Table and Repository Classification | Audit current tables and repositories, then classify them by domain, canonical owner, and profile-specific behavior. | Existing SQLite and Postgres structures are mapped into the approved domain matrix with no uncategorized tables. | 3 pts | data-layer-expert | DPM-003 |
-| DPM-202 | Schema Boundary Design | Define how Postgres schemas or table groups separate identity/access, canonical app data, integration snapshots, operational state, and audit records; document the SQLite-local equivalent where physical separation is limited. | Schema grouping and isolation rules are concrete enough to guide migrations and repository ownership. | 4 pts | data-layer-expert, backend-architect | DPM-201 |
-| DPM-203 | Repository Ownership Realignment | Update repository/module ownership so domain responsibilities are explicit and future auth/session work does not land in cache-only abstractions. | Repository boundaries line up with domain ownership rather than one broad cache layer. | 3 pts | backend-architect | DPM-202 |
+| DPM-201 | Table and Repository Classification | Audit current tables and repositories, then classify them by domain, canonical owner, object-ownership posture, and profile-specific behavior. | Existing SQLite and Postgres structures are mapped into the approved domain matrix with no uncategorized tables and no ambiguous ownership posture. | 3 pts | data-layer-expert | DPM-003 |
+| DPM-202 | Schema Boundary Design | Define how Postgres schemas or table groups separate identity/access, canonical app data, integration snapshots, operational state, and audit records; specify where direct ownership primitives live for enterprise canonical entities; document the SQLite-local equivalent where physical separation is limited. | Schema grouping, isolation rules, and direct-ownership primitive placement are concrete enough to guide migrations and repository ownership. | 4 pts | data-layer-expert, backend-architect | DPM-201 |
+| DPM-203 | Repository Ownership Realignment | Update repository/module ownership so domain responsibilities and ownership semantics are explicit and future auth/session work does not land in cache-only abstractions. | Repository boundaries line up with domain ownership, ownership inheritance rules, and direct-ownership expectations rather than one broad cache layer. | 3 pts | backend-architect | DPM-202 |
 
 **Phase 3 Quality Gates**
 
 1. Every persisted concern has a domain owner and target store.
 2. Postgres isolation strategy is explicit for dedicated and shared-instance deployments.
 3. Repository ownership no longer assumes one undifferentiated persistence layer.
+4. Directly ownable enterprise canonical entities are identified before Phase 4 schema work begins.
+
+### Phase 3 Post-Completion Update Notes
+
+Phase 3 is already complete. Treat the following as a spec delta to apply to the completed Phase 3 implementation before or alongside Phase 4, rather than reopening the overall phase sequence:
+
+1. Revisit the delivered table and repository classification artifacts and add an explicit ownership posture for each persisted concern: `scope-owned`, `directly-ownable`, or `inherits-parent-ownership`.
+2. For each enterprise canonical entity already classified in Phase 3, decide whether it may eventually support direct `user`, `team`, or `enterprise` ownership. If yes, reserve ownership primitives now in the schema design even if authorization logic is deferred.
+3. Do not add direct ownership columns to purely derived cache, integration snapshot, operational checkpoint, or audit tables unless the record is independently shareable. Those tables should instead reference the governing canonical entity or scope.
+4. Update schema-boundary documentation so it explicitly identifies where `tenant_id`/`enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` live, and where ownership is inherited instead of stored on the row.
+5. Update repository contracts or ownership notes so future Phase 4 and shared-auth work can tell which repositories must become owner-aware versus scope-aware only.
+6. If the completed Phase 3 output grouped tables by schema but did not reserve object-ownership primitives, treat that as incomplete for Phase 4 readiness and amend the schema spec before migrations are authored.
+
+Pass the following note to the Phase 3 implementation agent:
+
+> Update the completed Phase 3 deliverables so every canonical enterprise entity is marked as `scope-owned`, `directly-ownable`, or `inherits-parent-ownership`. Reserve `tenant_id`/`enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only for directly ownable canonical entities that may later support SkillMeat-style user/team/enterprise ownership. Do not spread ownership columns across derived cache, snapshot, operational, or audit tables unless they are independently shareable. Update repository ownership notes so Phase 4 migrations and follow-on auth work can distinguish owner-aware repositories from scope-only repositories without reopening schema boundaries.
 
 ## Phase 4: Identity, Membership, and Audit Foundation
 
@@ -222,14 +252,14 @@ Non-negotiables:
 
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---------|-----------|-------------|---------------------|----------|-------------|--------------|
-| DPM-301 | Principal and Membership Schema | Add canonical enterprise schema support for principals, memberships, role bindings, and scope identifiers that align to the shared-auth PRD. | Enterprise Postgres has a stable home for identity and membership data with clear keys and ownership. | 4 pts | data-layer-expert | DPM-202 |
+| DPM-301 | Principal, Membership, and Ownership Schema | Add canonical enterprise schema support for principals, memberships, role bindings, scope identifiers, and shared ownership-subject primitives that align to the shared-auth PRD. | Enterprise Postgres has a stable home for identity and membership data plus ownership primitives for directly ownable canonical entities with clear keys and ownership rules. | 4 pts | data-layer-expert | DPM-202 |
 | DPM-302 | Audit Record Foundation | Add storage for privileged-action audit records, including actor, scope, action, decision/result, and timestamp semantics. | Hosted mode can persist privileged-action audit data without mixing it into legacy cache tables. | 4 pts | data-layer-expert, python-backend-engineer | DPM-301 |
-| DPM-303 | Tenancy and Scope Contract | Define how enterprise, team, workspace, and project scopes map into the new storage model and request context. | Scope and tenancy keys are stable enough for downstream auth enforcement and multi-user work. | 4 pts | backend-architect, python-backend-engineer | DPM-301 |
+| DPM-303 | Tenancy, Scope, and Ownership Contract | Define how enterprise, team, workspace, project, and directly owned entity scopes map into the new storage model and request context, including inheritance rules between scope membership and object ownership. | Scope, tenancy, and ownership keys are stable enough for downstream auth enforcement, direct owner checks, and multi-user work. | 4 pts | backend-architect, python-backend-engineer | DPM-301 |
 
 **Phase 4 Quality Gates**
 
 1. Identity and audit data have a canonical hosted home.
-2. Tenancy and scope keys are explicit enough for follow-on RBAC work.
+2. Tenancy, direct ownership, and scope keys are explicit enough for follow-on RBAC work.
 3. Local mode preserves a bounded compatibility story without pretending to be equivalent to enterprise auth storage.
 
 ## Phase 5: Migration Governance and Sync Boundary Refactor
@@ -270,7 +300,8 @@ Non-negotiables:
 2. Add integration coverage for local SQLite, enterprise Postgres dedicated, and enterprise Postgres shared-schema modes.
 3. Extend migration verification so schema drift, unsupported backend gaps, and profile-specific exceptions fail explicitly.
 4. Add request/runtime tests proving enterprise API boot does not require local sync ingestion while local profile retains current behavior.
-5. Add repository and migration coverage for principals, memberships, role bindings, and audit records.
+5. Add repository and migration coverage for principals, memberships, role bindings, ownership primitives for directly ownable canonical entities, and audit records.
+6. Add repository-behavior coverage for owner-scoped reads and writes versus inherited-scope reads so future RBAC enforcement does not require repository-contract churn.
 
 ## Risks and Mitigations
 
@@ -280,6 +311,7 @@ Non-negotiables:
 | Domain ownership remains descriptive but not enforceable in code or migrations | High | Medium | Require table/repository classification and schema-boundary decisions before auth-era schema work begins. |
 | Enterprise requirements erode the local-first workflow | High | Medium | Keep local SQLite and filesystem ingestion as a first-class profile with its own upgrade and verification path. |
 | Identity and audit data leak into legacy cache abstractions | High | Medium | Give identity/access and audit records explicit hosted ownership and schema boundaries in Phase 4. |
+| Object ownership primitives are deferred until after Phase 4 | High | Medium | Reserve direct ownership fields and inheritance rules now for directly ownable canonical entities so later RBAC work stays at the policy layer instead of forcing wide schema rewrites. |
 | Separate SQLite/Postgres migrations continue to drift | High | High | Add migration manifest, backend capability table, and verification matrix as deliverables, not follow-up ideas. |
 
 ## Exit Criteria
@@ -288,7 +320,7 @@ This implementation plan is complete when:
 
 1. Local and enterprise storage profiles are implemented through explicit storage adapters and composition-root selection.
 2. Every persisted CCDash concern is assigned to a stable data domain with an explicit canonical or derived ownership model.
-3. Enterprise Postgres provides a canonical home for principals, memberships, role bindings, and audit records.
+3. Enterprise Postgres provides a canonical home for principals, memberships, role bindings, ownership primitives for directly ownable canonical entities, and audit records.
 4. Migration governance and verification make supported SQLite/Postgres behavior explicit and testable.
 5. Enterprise API and worker runtimes no longer rely on local-filesystem sync assumptions, while local mode preserves current convenience behavior.
 6. Shared auth/RBAC and session-intelligence follow-on plans can build on the platform without reopening storage-model fundamentals.

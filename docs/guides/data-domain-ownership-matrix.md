@@ -1,7 +1,6 @@
 # Data-Domain Ownership Matrix
 
-This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns.
-`backend/data_domains.py` is the code-owned source of truth, and this document mirrors it for humans.
+This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns and includes the Phase 3 post-completion ownership-posture delta. [backend/data_domains.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domains.py) is the code-owned source of truth, and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) captures the matching schema and repository contract.
 
 ## Domain Summary
 
@@ -15,97 +14,64 @@ This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted c
 | Identity and access | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home |
 | Audit and security records | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home |
 
+## Ownership Posture Legend
+
+- `scope-owned`: the row is governed by workspace/project/enterprise scope and should not reserve direct object-ownership primitives.
+- `directly-ownable`: the row is a canonical entity root that may later support direct `user`, `team`, or `enterprise` ownership in hosted mode.
+- `inherits-parent-ownership`: the row inherits ownership from a governing canonical entity or scope root and should not duplicate direct ownership columns.
+
 ## Frozen Concern Matrix
 
 ### Workspace and project metadata
 
-| Concern | Kind | Durability | Local owner | Enterprise owner | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `projects.json` | Artifact | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | Filesystem-backed workspace metadata remains local-first, but the hosted target owner is canonical app metadata. |
-| `workspace_registry_state` | Artifact | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | Filesystem-backed workspace metadata remains local-first, but the hosted target owner is canonical app metadata. |
-| `app_metadata` | Table | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | |
-| `alert_configs` | Table | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `projects.json`, `workspace_registry_state`, `app_metadata` | Artifact / Table | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | `scope-owned` | None | Workspace metadata remains governed by workspace/project scope. |
+| `alert_configs` | Table | Canonical | Local filesystem + SQLite app metadata | Enterprise Postgres canonical app metadata | `directly-ownable` | `user`, `team`, `enterprise` | Alert policies may later support direct sharing; reserve direct ownership primitives only on this root. |
 
 ### Observed product entities
 
-| Concern | Kind | Durability | Local owner | Enterprise owner |
-| --- | --- | --- | --- | --- |
-| `entity_links` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `external_links` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `tags` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `entity_tags` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `sessions` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_logs` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_messages` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_tool_usage` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_file_updates` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_artifacts` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_usage_events` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_usage_attributions` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `session_relationships` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `documents` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `document_refs` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `tasks` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `features` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `feature_phases` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
-| `commit_correlations` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sessions`, `documents`, `tasks`, `features` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage | `directly-ownable` | `user`, `team`, `enterprise` | These are the current enterprise-canonical candidate roots that may later support direct user/team/enterprise ownership. |
+| `tags` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage | `scope-owned` | None | Tags remain workspace/project taxonomy unless a later plan proves they must become independently ownable. |
+| `entity_links`, `external_links`, `entity_tags`, `session_logs`, `session_messages`, `session_tool_usage`, `session_file_updates`, `session_artifacts`, `session_usage_events`, `session_usage_attributions`, `session_relationships`, `document_refs`, `feature_phases`, `commit_correlations` | Table | Mixed | SQLite cache + local metadata | Enterprise Postgres canonical or mixed-mode hosted storage | `inherits-parent-ownership` | None | These rows inherit ownership from the governing canonical entity rather than carrying direct ownership primitives themselves. |
 
 ### Ingestion and cache state
 
-| Concern | Kind | Durability | Local owner | Enterprise owner | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `sync_state` | Table | Derived | Profile-local storage adapter | Profile-local storage adapter | Filesystem sync state is adapter-owned rather than canonical shared data. |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sync_state` | Table | Derived | Profile-local storage adapter | Profile-local storage adapter | `scope-owned` | None | Filesystem sync state is adapter-owned rather than canonical shared data. |
 
 ### Integration snapshots
 
-| Concern | Kind | Durability | Local owner | Enterprise owner |
-| --- | --- | --- | --- | --- |
-| `external_definition_sources` | Table | Refreshable | SQLite refreshable snapshot cache | Enterprise Postgres refreshable snapshot store |
-| `external_definitions` | Table | Refreshable | SQLite refreshable snapshot cache | Enterprise Postgres refreshable snapshot store |
-| `pricing_catalog_entries` | Table | Refreshable | SQLite refreshable snapshot cache | Enterprise Postgres refreshable snapshot store |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `external_definition_sources`, `pricing_catalog_entries` | Table | Refreshable | SQLite refreshable snapshot cache | Enterprise Postgres refreshable snapshot store | `scope-owned` | None | Snapshot roots remain scope-governed and should not reserve direct ownership primitives. |
+| `external_definitions` | Table | Refreshable | SQLite refreshable snapshot cache | Enterprise Postgres refreshable snapshot store | `inherits-parent-ownership` | None | Definition rows inherit ownership from the governing snapshot source. |
 
 ### Operational and job data
 
-| Concern | Kind | Durability | Local owner | Enterprise owner |
-| --- | --- | --- | --- | --- |
-| `schema_version` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `metric_types` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `analytics_entries` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `analytics_entity_links` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `telemetry_events` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `outbound_telemetry_queue` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `session_stack_observations` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `session_stack_components` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `effectiveness_rollups` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `execution_runs` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `execution_run_events` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `execution_approvals` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_runs` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_definitions` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_results` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_domains` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_feature_mappings` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_integrity_signals` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
-| `test_metrics` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `schema_version`, `metric_types`, `analytics_entries`, `telemetry_events`, `outbound_telemetry_queue`, `effectiveness_rollups`, `execution_runs`, `test_runs`, `test_definitions`, `test_domains` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode | `scope-owned` | None | Operational roots stay scope-aware only; they should not gain direct ownership columns. |
+| `analytics_entity_links`, `session_stack_observations`, `session_stack_components`, `execution_run_events`, `execution_approvals`, `test_results`, `test_feature_mappings`, `test_integrity_signals`, `test_metrics` | Table | Operational | Local adapter allowed for local mode | Enterprise Postgres preferred for hosted mode | `inherits-parent-ownership` | None | Child operational rows inherit ownership from the governing run, observation, or scope root. |
 
 ### Identity and access placeholders
 
-| Concern | Kind | Durability | Local owner | Enterprise owner | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `principals` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned auth-era tables reserved for future enterprise identity and scope management work. |
-| `memberships` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned auth-era tables reserved for future enterprise identity and scope management work. |
-| `role_bindings` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned auth-era tables reserved for future enterprise identity and scope management work. |
-| `scope_identifiers` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned auth-era tables reserved for future enterprise identity and scope management work. |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `principals`, `scope_identifiers` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Identity roots are governed by tenant or enterprise scope rather than direct user/team ownership columns. |
+| `memberships`, `role_bindings` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `inherits-parent-ownership` | None | Membership and binding records inherit ownership from the governing principal and scope roots. |
 
 ### Audit and security record placeholders
 
-| Concern | Kind | Durability | Local owner | Enterprise owner | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `privileged_action_audit_records` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned audit/security records reserved for future privileged-action and access-decision tracking. |
-| `access_decision_logs` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | Planned audit/security records reserved for future privileged-action and access-decision tracking. |
+| Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `privileged_action_audit_records`, `access_decision_logs` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Audit records remain scope-governed and must not reserve direct ownership columns unless a later plan proves they are independently shareable. |
 
 ## Enforcement Notes
 
 - The migration-owned set currently contains 44 tables and is expected to stay identical between `backend/db/sqlite_migrations.py` and `backend/db/postgres_migrations.py`.
-- `backend/tests/test_data_domain_ownership.py` enforces that every current migration table is classified and that the auth/audit placeholders stay frozen as enterprise-owned canonical concerns.
+- [backend/tests/test_data_domain_ownership.py](/Users/miethe/dev/homelab/development/CCDash/backend/tests/test_data_domain_ownership.py) enforces that every current migration table is classified, that directly ownable concerns reserve the expected future owner subject types, and that the auth/audit placeholders stay frozen as enterprise-owned canonical concerns.
 - This matrix intentionally includes non-table persisted concerns (`projects.json`, `workspace_registry_state`) so future storage work does not regress filesystem ownership assumptions.

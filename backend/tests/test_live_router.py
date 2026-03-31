@@ -12,7 +12,7 @@ from backend.adapters.auth.local import LocalIdentityProvider, PermitAllAuthoriz
 from backend.adapters.integrations.local import NoopIntegrationClient
 from backend.adapters.jobs.local import InProcessJobScheduler
 from backend.adapters.live_updates import InMemoryLiveEventBroker
-from backend.adapters.storage.local import FactoryStorageUnitOfWork
+from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext, WorkspaceScope
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveTopicCursor
@@ -53,7 +53,7 @@ class LiveRouterTests(unittest.IsolatedAsyncioTestCase):
             identity_provider=LocalIdentityProvider(),
             authorization_policy=PermitAllAuthorizationPolicy(),
             workspace_registry=ProjectManagerWorkspaceRegistry(manager),
-            storage=FactoryStorageUnitOfWork(self.db),
+            storage=LocalStorageUnitOfWork(self.db),
             job_scheduler=InProcessJobScheduler(),
             integration_client=NoopIntegrationClient(),
         )
