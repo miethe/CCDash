@@ -22,6 +22,8 @@ DataDomain = Literal[
 
 DurabilityClass = Literal["canonical", "mixed", "derived", "refreshable", "operational"]
 ConcernKind = Literal["table", "artifact", "placeholder"]
+OwnershipPosture = Literal["scope-owned", "directly-ownable", "inherits-parent-ownership"]
+OwnerSubjectType = Literal["user", "team", "enterprise"]
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ class PersistedConcernOwnership:
     durability: DurabilityClass
     local_owner: str
     enterprise_owner: str
+    ownership_posture: OwnershipPosture
+    direct_owner_subject_types: tuple[OwnerSubjectType, ...] = ()
     notes: str = ""
     current: bool = True
     migration_managed: bool = False
@@ -45,6 +49,8 @@ def _entry(
     durability: DurabilityClass,
     local_owner: str,
     enterprise_owner: str,
+    ownership_posture: OwnershipPosture,
+    direct_owner_subject_types: tuple[OwnerSubjectType, ...] = (),
     notes: str = "",
     current: bool = True,
     migration_managed: bool = False,
@@ -56,6 +62,8 @@ def _entry(
         durability=durability,
         local_owner=local_owner,
         enterprise_owner=enterprise_owner,
+        ownership_posture=ownership_posture,
+        direct_owner_subject_types=direct_owner_subject_types,
         notes=notes,
         current=current,
         migration_managed=migration_managed,
@@ -73,6 +81,8 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability: DurabilityClass,
         local_owner: str,
         enterprise_owner: str,
+        ownership_posture: OwnershipPosture,
+        direct_owner_subject_types: tuple[OwnerSubjectType, ...] = (),
         notes: str = "",
         current: bool = True,
         migration_managed: bool = False,
@@ -85,10 +95,14 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
                 durability=durability,
                 local_owner=local_owner,
                 enterprise_owner=enterprise_owner,
+                ownership_posture=ownership_posture,
+                direct_owner_subject_types=direct_owner_subject_types,
                 notes=notes,
                 current=current,
                 migration_managed=migration_managed,
             )
+
+    directly_ownable_subjects: tuple[OwnerSubjectType, ...] = ("user", "team", "enterprise")
 
     register_many(
         ("projects.json", "workspace_registry_state"),
@@ -97,25 +111,60 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability="canonical",
         local_owner="local filesystem + SQLite app metadata",
         enterprise_owner="enterprise Postgres canonical app metadata",
+        ownership_posture="scope-owned",
         notes="Filesystem-backed workspace metadata remains local-first, but the hosted target owner is canonical app metadata.",
     )
     register_many(
-        ("app_metadata", "alert_configs"),
+        ("app_metadata",),
         kind="table",
         domain="workspace_project_metadata",
         durability="canonical",
         local_owner="local filesystem + SQLite app metadata",
         enterprise_owner="enterprise Postgres canonical app metadata",
+        ownership_posture="scope-owned",
+        migration_managed=True,
+    )
+    register_many(
+        ("alert_configs",),
+        kind="table",
+        domain="workspace_project_metadata",
+        durability="canonical",
+        local_owner="local filesystem + SQLite app metadata",
+        enterprise_owner="enterprise Postgres canonical app metadata",
+        ownership_posture="directly-ownable",
+        direct_owner_subject_types=directly_ownable_subjects,
+        notes="Alert configs may later support direct user, team, or enterprise ownership for shareable notification policies.",
         migration_managed=True,
     )
 
     register_many(
+        ("sessions", "documents", "tasks", "features"),
+        kind="table",
+        domain="observed_product_entities",
+        durability="mixed",
+        local_owner="SQLite cache + local metadata",
+        enterprise_owner="enterprise Postgres canonical or mixed-mode hosted storage",
+        ownership_posture="directly-ownable",
+        direct_owner_subject_types=directly_ownable_subjects,
+        notes="These canonical entity roots may later support direct user, team, or enterprise ownership in hosted mode.",
+        migration_managed=True,
+    )
+    register_many(
+        ("tags",),
+        kind="table",
+        domain="observed_product_entities",
+        durability="mixed",
+        local_owner="SQLite cache + local metadata",
+        enterprise_owner="enterprise Postgres canonical or mixed-mode hosted storage",
+        ownership_posture="scope-owned",
+        notes="Tags remain scope-owned taxonomy rows unless a later plan proves they must become independently ownable.",
+        migration_managed=True,
+    )
+    register_many(
         (
             "entity_links",
             "external_links",
-            "tags",
             "entity_tags",
-            "sessions",
             "session_logs",
             "session_messages",
             "session_tool_usage",
@@ -124,10 +173,7 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
             "session_usage_events",
             "session_usage_attributions",
             "session_relationships",
-            "documents",
             "document_refs",
-            "tasks",
-            "features",
             "feature_phases",
             "commit_correlations",
         ),
@@ -136,6 +182,8 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability="mixed",
         local_owner="SQLite cache + local metadata",
         enterprise_owner="enterprise Postgres canonical or mixed-mode hosted storage",
+        ownership_posture="inherits-parent-ownership",
+        notes="These rows inherit ownership from the governing canonical entity instead of carrying direct ownership primitives.",
         migration_managed=True,
     )
 
@@ -146,21 +194,31 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability="derived",
         local_owner="profile-local storage adapter",
         enterprise_owner="profile-local storage adapter",
+        ownership_posture="scope-owned",
         notes="Filesystem sync state is adapter-owned rather than canonical shared data.",
         migration_managed=True,
     )
 
     register_many(
-        (
-            "external_definition_sources",
-            "external_definitions",
-            "pricing_catalog_entries",
-        ),
+        ("external_definition_sources", "pricing_catalog_entries"),
         kind="table",
         domain="integration_snapshots",
         durability="refreshable",
         local_owner="SQLite refreshable snapshot cache",
         enterprise_owner="enterprise Postgres refreshable snapshot store",
+        ownership_posture="scope-owned",
+        notes="Snapshot roots remain scope-governed; they should not reserve direct ownership primitives.",
+        migration_managed=True,
+    )
+    register_many(
+        ("external_definitions",),
+        kind="table",
+        domain="integration_snapshots",
+        durability="refreshable",
+        local_owner="SQLite refreshable snapshot cache",
+        enterprise_owner="enterprise Postgres refreshable snapshot store",
+        ownership_posture="inherits-parent-ownership",
+        notes="Definitions inherit ownership from their governing snapshot source rather than storing direct ownership fields.",
         migration_managed=True,
     )
 
@@ -169,19 +227,31 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
             "schema_version",
             "metric_types",
             "analytics_entries",
-            "analytics_entity_links",
             "telemetry_events",
             "outbound_telemetry_queue",
-            "session_stack_observations",
-            "session_stack_components",
             "effectiveness_rollups",
             "execution_runs",
-            "execution_run_events",
-            "execution_approvals",
             "test_runs",
             "test_definitions",
-            "test_results",
             "test_domains",
+        ),
+        kind="table",
+        domain="operational_job_data",
+        durability="operational",
+        local_owner="local adapter allowed for local mode",
+        enterprise_owner="enterprise Postgres preferred for hosted mode",
+        ownership_posture="scope-owned",
+        notes="Operational roots stay scope-aware only; they should not gain direct ownership columns.",
+        migration_managed=True,
+    )
+    register_many(
+        (
+            "analytics_entity_links",
+            "session_stack_observations",
+            "session_stack_components",
+            "execution_run_events",
+            "execution_approvals",
+            "test_results",
             "test_feature_mappings",
             "test_integrity_signals",
             "test_metrics",
@@ -191,17 +261,31 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability="operational",
         local_owner="local adapter allowed for local mode",
         enterprise_owner="enterprise Postgres preferred for hosted mode",
+        ownership_posture="inherits-parent-ownership",
+        notes="Child operational rows inherit ownership from the governing run, observation, or scope root.",
         migration_managed=True,
     )
 
     register_many(
-        ("principals", "memberships", "role_bindings", "scope_identifiers"),
+        ("principals", "scope_identifiers"),
         kind="placeholder",
         domain="identity_access",
         durability="canonical",
         local_owner="not part of the local-first storage contract",
         enterprise_owner="enterprise Postgres canonical home",
-        notes="Planned auth-era tables reserved for future enterprise identity and scope management work.",
+        ownership_posture="scope-owned",
+        notes="Identity roots are governed by tenant or enterprise scope rather than direct user/team ownership columns.",
+        current=False,
+    )
+    register_many(
+        ("memberships", "role_bindings"),
+        kind="placeholder",
+        domain="identity_access",
+        durability="canonical",
+        local_owner="not part of the local-first storage contract",
+        enterprise_owner="enterprise Postgres canonical home",
+        ownership_posture="inherits-parent-ownership",
+        notes="Membership and binding records inherit ownership from the governing principal and scope roots.",
         current=False,
     )
     register_many(
@@ -211,7 +295,8 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         durability="canonical",
         local_owner="not part of the local-first storage contract",
         enterprise_owner="enterprise Postgres canonical home",
-        notes="Planned audit/security records reserved for future privileged-action and access-decision tracking.",
+        ownership_posture="scope-owned",
+        notes="Audit records remain scope-governed and must not reserve direct ownership columns unless a later plan proves they are independently shareable.",
         current=False,
     )
 

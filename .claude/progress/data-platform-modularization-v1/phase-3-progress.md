@@ -68,6 +68,7 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-3-progress.md"
+  - "backend/data_domains.py"
   - "backend/data_domain_layout.py"
   - "backend/application/ports/__init__.py"
   - "backend/application/ports/core.py"
@@ -127,8 +128,12 @@ Task("backend-architect", "Execute DPM-203: expose additive domain-grouped stora
 - Extended `StorageUnitOfWork` with additive domain-grouped views for workspace metadata, observed product data, ingestion state, integration snapshots, and operational state while preserving the existing entity-level accessors.
 - Split the mixed link/state repository modules into domain-oriented `entity_graph` and `runtime_state` modules for both SQLite and Postgres, while leaving compatibility exports in the old module paths.
 - Exported the grouped storage protocols from `backend/application/ports/__init__.py` and added focused tests to verify schema-boundary coverage, repository ownership mapping, and the grouped storage seam on both local and enterprise adapters.
+- Applied the Phase 3 post-completion spec delta by adding explicit ownership posture metadata for every persisted concern and by reserving direct ownership primitives only for directly ownable canonical entities.
+- Marked repository contracts as `owner-aware` versus `scope-aware-only` in the Phase 3 layout contract so Phase 4 can add ownership semantics without reopening schema boundaries.
 
 ## Validation Notes
 
 - `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_layout.py backend/tests/test_data_domain_ownership.py backend/tests/test_runtime_bootstrap.py backend/tests/test_request_context.py backend/tests/test_storage_adapter_composition.py -q` -> `48 passed`
 - `backend/.venv/bin/python -m pytest backend/tests/test_session_messages_groundwork.py -q` -> `12 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_data_domain_ownership.py backend/tests/test_data_domain_layout.py -q` -> `7 passed`
+- `python -m compileall backend/data_domains.py backend/data_domain_layout.py` -> `compiled successfully`

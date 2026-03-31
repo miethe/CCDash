@@ -105,3 +105,12 @@ Phase 1 freezes the ownership vocabulary for the existing persisted concerns. Th
 - Session and document data remains mixed in V1: local mode keeps SQLite plus filesystem-derived workflows, while enterprise mode reserves Postgres as the canonical direction without forcing the full session-intelligence redesign into Phase 1.
 - In enterprise mode, the API should stay stateless and the worker should own startup sync, refresh, and scheduled/background jobs.
 - Shared Postgres is an isolation posture, not permission to reuse SkillMeat tables directly.
+
+## Ownership Readiness
+
+Phase 3 now distinguishes between `scope-owned`, `directly-ownable`, and `inherits-parent-ownership` concerns.
+
+- `docs/guides/data-domain-ownership-matrix.md` mirrors the concern-level ownership posture in `backend/data_domains.py`.
+- `docs/guides/data-domain-schema-layout.md` records where ownership primitives are reserved and which repositories must become owner-aware in Phase 4.
+- Reserve `tenant_id`, `enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only on directly ownable canonical entities. In the current Phase 3 contract, that means `alert_configs`, `sessions`, `documents`, `tasks`, and `features`.
+- Derived cache, integration snapshot, operational, and audit rows remain scope-rooted or inherit ownership from a governing canonical entity; they should not gain direct ownership columns just because the deployment is enterprise.

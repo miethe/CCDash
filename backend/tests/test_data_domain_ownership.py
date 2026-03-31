@@ -25,6 +25,28 @@ def _migration_tables(relative_path: str) -> set[str]:
 class DataDomainOwnershipTests(unittest.TestCase):
     maxDiff = None
 
+    def test_every_concern_has_supported_ownership_posture(self) -> None:
+        valid_postures = {
+            "scope-owned",
+            "directly-ownable",
+            "inherits-parent-ownership",
+        }
+        directly_ownable = {
+            "alert_configs",
+            "sessions",
+            "documents",
+            "tasks",
+            "features",
+        }
+
+        for concern, ownership in PERSISTED_CONCERN_OWNERSHIP.items():
+            self.assertIn(ownership.ownership_posture, valid_postures)
+            if ownership.ownership_posture == "directly-ownable":
+                self.assertEqual(ownership.direct_owner_subject_types, ("user", "team", "enterprise"))
+                self.assertIn(concern, directly_ownable)
+            else:
+                self.assertEqual(ownership.direct_owner_subject_types, ())
+
     def test_migration_governance_contract_stays_valid(self) -> None:
         validate_migration_governance_contract()
 
@@ -49,6 +71,7 @@ class DataDomainOwnershipTests(unittest.TestCase):
             self.assertTrue(ownership.durability)
             self.assertTrue(ownership.local_owner)
             self.assertTrue(ownership.enterprise_owner)
+            self.assertTrue(ownership.ownership_posture)
 
     def test_future_auth_and_audit_placeholders_are_frozen(self) -> None:
         expected_domains = {
@@ -70,6 +93,7 @@ class DataDomainOwnershipTests(unittest.TestCase):
             self.assertEqual(ownership.durability, "canonical")
             self.assertEqual(ownership.local_owner, "not part of the local-first storage contract")
             self.assertEqual(ownership.enterprise_owner, "enterprise Postgres canonical home")
+            self.assertIn(ownership.ownership_posture, {"scope-owned", "inherits-parent-ownership"})
 
 
 if __name__ == "__main__":
