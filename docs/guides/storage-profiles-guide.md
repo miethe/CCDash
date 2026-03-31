@@ -4,12 +4,12 @@ Updated: 2026-03-29
 
 ## Purpose
 
-CCDash now treats storage as an explicit operator-facing profile instead of only a low-level database toggle. Phase 1 freezes both the storage capability matrix and the runtime-to-storage pairing matrix so the contract is enforced in code, tests, and operator docs.
+CCDash now treats storage as an explicit operator-facing profile instead of only a low-level database toggle. Phase 1 freezes both the storage capability matrix and the runtime-to-storage pairing matrix, and Phase 4 extends that contract with enterprise-only identity/access and audit/security foundations.
 
 | Storage profile | Primary database | Source of truth | Typical deployment |
 | --- | --- | --- | --- |
 | `local` | SQLite | Filesystem-derived artifacts plus local cache metadata | Desktop and single-user local-first |
-| `enterprise` | Postgres | Postgres for canonical app state, filesystem as ingestion only | Hosted API + worker deployments |
+| `enterprise` | Postgres | Postgres for canonical app state, identity/access, and audit/security state; filesystem remains ingestion only | Hosted API + worker deployments |
 
 `CCDASH_DB_BACKEND` remains a compatibility setting, but `CCDASH_STORAGE_PROFILE` is the architectural control point. Runtime composition now resolves that control point into explicit `LocalStorageUnitOfWork` and `EnterpriseStorageUnitOfWork` adapters instead of routing through a factory-backed compatibility shell.
 
@@ -20,8 +20,8 @@ CCDash now treats storage as an explicit operator-facing profile instead of only
 | Storage mode | Configuration shape | Canonical store | Filesystem role | Supported isolation | Required guarantees |
 | --- | --- | --- | --- | --- | --- |
 | `local` | `CCDASH_STORAGE_PROFILE=local` and `CCDASH_DB_BACKEND=sqlite` | SQLite for local app metadata and derived cache state | Primary ingestion source and acceptable source of truth for derived artifacts | `dedicated` | Local-first remains zero-config, filesystem-derived rebuilds stay first-class, and hosted-only identity/audit concerns stay out of the local contract |
-| `enterprise` | `CCDASH_STORAGE_PROFILE=enterprise`, `CCDASH_DB_BACKEND=postgres`, shared Postgres disabled | Postgres | Optional ingestion adapter only | `dedicated` | Postgres is the canonical hosted store, API runtimes do not depend on local watcher behavior, and enterprise-only data lands in Postgres-owned storage |
-| `shared-enterprise` | `CCDASH_STORAGE_PROFILE=enterprise`, `CCDASH_DB_BACKEND=postgres`, `CCDASH_STORAGE_SHARED_POSTGRES=true` | Postgres with an explicit CCDash boundary | Optional ingestion adapter only | `schema`, `tenant` | Cross-app table coupling is forbidden, CCDash owns an explicit schema or tenancy boundary, and hosted identity/audit data stays inside that CCDash boundary |
+| `enterprise` | `CCDASH_STORAGE_PROFILE=enterprise`, `CCDASH_DB_BACKEND=postgres`, shared Postgres disabled | Postgres | Optional ingestion adapter only | `dedicated` | Postgres is the canonical hosted store, API runtimes do not depend on local watcher behavior, and enterprise-only identity/access plus audit/security data land in Postgres-owned storage |
+| `shared-enterprise` | `CCDASH_STORAGE_PROFILE=enterprise`, `CCDASH_DB_BACKEND=postgres`, `CCDASH_STORAGE_SHARED_POSTGRES=true` | Postgres with an explicit CCDash boundary | Optional ingestion adapter only | `schema`, `tenant` | Cross-app table coupling is forbidden, CCDash owns an explicit schema or tenancy boundary, and hosted identity/access plus audit/security data stay inside that CCDash boundary |
 
 ## Configuration
 
@@ -55,6 +55,7 @@ Shared Postgres is allowed only for the `enterprise` storage profile.
 - `CCDASH_STORAGE_ISOLATION_MODE=tenant` means tenant isolation must be enforced by the hosted deployment contract.
 - `CCDASH_STORAGE_ISOLATION_MODE=dedicated` is valid only when the Postgres instance is CCDash-owned.
 - Cross-application table coupling is not allowed even in shared infrastructure.
+- Enterprise identity/access tables and audit tables live in explicit CCDash-owned Postgres boundaries; they do not have a local-first equivalent.
 
 ## Runtime Mapping
 
@@ -100,18 +101,20 @@ The post-completion Phase 3 delta now also marks each persisted concern as `scop
 | Identity and access | Future `principals`, `memberships`, `role_bindings`, scope identifiers | Not part of the local-first storage contract | Enterprise Postgres canonical home | Canonical |
 | Audit and security records | Future privileged-action audit records and access-decision logs | Not part of the local-first storage contract | Enterprise Postgres canonical home | Canonical |
 
-### Phase 1 Boundary Notes
+### Phase 1 and Phase 4 Boundary Notes
 
 - Identity, membership, role-binding, and privileged-action audit tables do not exist yet in the current schema. Phase 1 freezes them as enterprise-owned domains so Phase 4 can add them without reopening ownership decisions.
 - Session and document data remains mixed in V1: local mode keeps SQLite plus filesystem-derived workflows, while enterprise mode reserves Postgres as the canonical direction without forcing the full session-intelligence redesign into Phase 1.
 - In enterprise mode, the API should stay stateless and the worker should own startup sync, refresh, and scheduled/background jobs.
 - Shared Postgres is an isolation posture, not permission to reuse SkillMeat tables directly.
+- Phase 4 keeps principals, memberships, role bindings, scope identifiers, and privileged-action audit records in enterprise-only Postgres boundaries rather than backfilling local parity tables.
 
 ### Enterprise Ownership Guardrails
 
 - Reserve `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only on directly ownable canonical roots.
 - The current directly ownable enterprise roots are `alert_configs`, `sessions`, `documents`, `tasks`, and `features`.
 - Child rows such as transcript messages, document refs, feature phases, correlations, and operational/snapshot derivatives inherit ownership from the governing canonical entity or scope instead of storing direct ownership primitives.
+- Membership, role-binding, scope-identifier, and audit rows remain scope-governed and do not become directly ownable content objects.
 - Use [docs/guides/data-domain-ownership-matrix.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-ownership-matrix.md) for concern-level posture and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) for boundary/repository placement.
 
 ## Ownership Readiness

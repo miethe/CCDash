@@ -1,6 +1,6 @@
 # Data-Domain Schema Layout
 
-This guide is the Phase 3 companion to the ownership matrix. [backend/data_domain_layout.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domain_layout.py) is the code-owned source of truth for schema groups, ownership-primitive placement, and repository ownership behavior.
+This guide is the Phase 3 companion to the ownership matrix and now carries the Phase 4 identity/access and audit/security boundaries as an in-progress enterprise-only contract. [backend/data_domain_layout.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domain_layout.py) is the code-owned source of truth for schema groups, ownership-primitive placement, and repository ownership behavior.
 
 ## Boundary Ownership Placement
 
@@ -11,8 +11,8 @@ This guide is the Phase 3 companion to the ownership matrix. [backend/data_domai
 | `ingestion_state` | Ingestion and cache state | `ops` | Ingestion adapter state tables | None | `sync_state` | None | None | Sync checkpoints are adapter state and should not be treated as hosted canonical data. |
 | `integration_snapshots` | Integration snapshots | `integration` | Refreshable integration snapshot tables | None | `external_definition_sources`, `pricing_catalog_entries` | `external_definitions` | None | Snapshot roots remain scope-governed; definition rows inherit from the governing snapshot source. |
 | `operational_state` | Operational and job data | `ops` | Runtime and job state tables | None | `schema_version`, `metric_types`, `analytics_entries`, `telemetry_events`, `outbound_telemetry_queue`, `effectiveness_rollups`, `execution_runs`, `test_runs`, `test_definitions`, `test_domains` | `analytics_entity_links`, `session_stack_observations`, `session_stack_components`, `execution_run_events`, `execution_approvals`, `test_results`, `test_feature_mappings`, `test_integrity_signals`, `test_metrics` | None | Runtime health, execution/test tracking, telemetry queues, and intelligence rollups remain scope-aware only. |
-| `identity_access` | Identity and access | `identity` | Not part of the local-first contract | None | Planned `principals`, `scope_identifiers` | Planned `memberships`, `role_bindings` | None in Phase 3 | Identity roots are governed by scope; membership and binding rows inherit from those roots instead of carrying direct ownership primitives. |
-| `audit_security` | Audit and security records | `audit` | Not part of the local-first contract | None | Planned `privileged_action_audit_records`, `access_decision_logs` | None | None in Phase 3 | Audit rows remain scope-governed unless a later plan proves they are independently shareable. |
+| `identity_access` | Identity and access | `identity` | Not part of the local-first contract | None | Planned `principals`, `scope_identifiers` | Planned `memberships`, `role_bindings` | None in Phase 4 | Identity roots are enterprise-only and scope-governed; membership and binding rows inherit from those roots instead of carrying direct ownership primitives. |
+| `audit_security` | Audit and security records | `audit` | Not part of the local-first contract | None | Planned `privileged_action_audit_records`, `access_decision_logs` | None | None in Phase 4 | Audit rows remain enterprise-only and scope-governed unless a later plan proves they are independently shareable. |
 
 ## Repository Ownership Contracts
 
@@ -44,6 +44,6 @@ This guide is the Phase 3 companion to the ownership matrix. [backend/data_domai
 - Reserve `tenant_id` or `enterprise_id`, `owner_subject_type`, `owner_subject_id`, and `visibility` only on directly ownable canonical roots.
 - Do not spread direct ownership columns across derived cache, snapshot, operational, identity, or audit tables unless a later plan proves those rows are independently shareable.
 - Child rows should inherit ownership from their governing canonical entity instead of duplicating direct ownership primitives.
-- Future enterprise auth work must land in the `identity` schema boundary, not in `ops` or the observed-entity tables.
-- Future privileged-action and access-decision records must land in the `audit` schema boundary.
+- Future enterprise auth work must land in the `identity` schema boundary, not in `ops` or the observed-entity tables, and that boundary remains enterprise-only.
+- Future privileged-action and access-decision records must land in the `audit` schema boundary, and that boundary remains enterprise-only.
 - `session_messages` remains the transcript seam for follow-on canonical session storage, but it should stay scope-aware through the parent session rather than becoming directly ownable itself.

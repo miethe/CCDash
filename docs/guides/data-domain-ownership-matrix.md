@@ -1,6 +1,6 @@
 # Data-Domain Ownership Matrix
 
-This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns and includes the Phase 3 post-completion ownership-posture delta. [backend/data_domains.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domains.py) is the code-owned source of truth, and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) captures the matching schema and repository contract.
+This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted concerns, includes the Phase 3 post-completion ownership-posture delta, and reflects the Phase 4 enterprise-only identity/access and audit/security boundary work now in progress. [backend/data_domains.py](/Users/miethe/dev/homelab/development/CCDash/backend/data_domains.py) is the code-owned source of truth, and [docs/guides/data-domain-schema-layout.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-domain-schema-layout.md) captures the matching schema and repository contract.
 
 ## Domain Summary
 
@@ -61,14 +61,14 @@ This guide freezes the Phase 1 DPM-003 ownership contract for CCDash persisted c
 
 | Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `principals`, `scope_identifiers` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Identity roots are governed by tenant or enterprise scope rather than direct user/team ownership columns. |
-| `memberships`, `role_bindings` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `inherits-parent-ownership` | None | Membership and binding records inherit ownership from the governing principal and scope roots. |
+| `principals`, `scope_identifiers` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Identity roots are governed by tenant or enterprise scope rather than direct user/team ownership columns. These rows stay enterprise-only until Phase 4 lands the concrete tables. |
+| `memberships`, `role_bindings` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `inherits-parent-ownership` | None | Membership and binding records inherit ownership from the governing principal and scope roots. They do not gain direct ownership primitives. |
 
 ### Audit and security record placeholders
 
 | Concern(s) | Kind | Durability | Local owner | Enterprise owner | Ownership posture | Future direct owners | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `privileged_action_audit_records`, `access_decision_logs` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Audit records remain scope-governed and must not reserve direct ownership columns unless a later plan proves they are independently shareable. |
+| `privileged_action_audit_records`, `access_decision_logs` | Placeholder | Canonical | Not part of the local-first storage contract | Enterprise Postgres canonical home | `scope-owned` | None | Audit records remain scope-governed and must not reserve direct ownership columns unless a later plan proves they are independently shareable. These are enterprise-only records, not local parity tables. |
 
 ## Enforcement Notes
 

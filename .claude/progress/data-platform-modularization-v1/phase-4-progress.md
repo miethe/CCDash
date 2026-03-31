@@ -68,3 +68,33 @@ files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-4-progress.md"
 ---
 
+# data-platform-modularization-v1 - Phase 4
+
+Use CLI to update progress:
+
+```bash
+python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f .claude/progress/data-platform-modularization-v1/phase-4-progress.md -t DPM-30X -s completed
+```
+
+## Objective
+
+Add canonical enterprise schema support for principals, memberships, role bindings, scope identifiers, and privileged-action audit records while keeping scope, tenancy, and direct-ownership rules explicit for follow-on auth work.
+
+## Orchestration Quick Reference
+
+### Batch Execution Commands
+
+```bash
+# Batch 1
+Task("data-layer-expert", "Execute DPM-301: add the enterprise identity and ownership schema foundation")
+
+# Batch 2 (after DPM-301)
+Task("data-layer-expert", "Execute DPM-302: add privileged-action audit storage")
+Task("backend-architect", "Execute DPM-303: define tenancy, scope, and ownership contracts for request context")
+```
+
+## In-Progress Notes
+
+- Phase 4 is initialized, but the schema, storage, and request-context changes have not been landed yet.
+- Direct ownership primitives remain reserved only for directly ownable canonical roots.
+- Identity and audit storage remain enterprise-only concerns until the implementation work adds the concrete tables and seams.
