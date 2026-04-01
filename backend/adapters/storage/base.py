@@ -89,6 +89,28 @@ class _OperationalStateView(_RepositoryDomainView):
         return self._repo("agentic_intelligence")
 
 
+class _IdentityAccessView(_RepositoryDomainView):
+    def principals(self) -> Any:
+        return self._repo("principals")
+
+    def scope_identifiers(self) -> Any:
+        return self._repo("scope_identifiers")
+
+    def memberships(self) -> Any:
+        return self._repo("memberships")
+
+    def role_bindings(self) -> Any:
+        return self._repo("role_bindings")
+
+
+class _AuditSecurityView(_RepositoryDomainView):
+    def privileged_action_audit_records(self) -> Any:
+        return self._repo("privileged_action_audit_records")
+
+    def access_decision_logs(self) -> Any:
+        return self._repo("access_decision_logs")
+
+
 class RepositoryBackedStorageUnitOfWork:
     def __init__(self, db: Any, *, repo_builders: Mapping[str, RepositoryBuilder]) -> None:
         self._db = db
@@ -124,6 +146,22 @@ class RepositoryBackedStorageUnitOfWork:
                 "agentic_intelligence",
             ),
         )
+        self._identity_access_view = _IdentityAccessView(
+            self,
+            (
+                "principals",
+                "scope_identifiers",
+                "memberships",
+                "role_bindings",
+            ),
+        )
+        self._audit_security_view = _AuditSecurityView(
+            self,
+            (
+                "privileged_action_audit_records",
+                "access_decision_logs",
+            ),
+        )
 
     @property
     def db(self) -> Any:
@@ -143,6 +181,12 @@ class RepositoryBackedStorageUnitOfWork:
 
     def operational_state(self) -> _OperationalStateView:
         return self._operational_state_view
+
+    def identity_access(self) -> _IdentityAccessView:
+        return self._identity_access_view
+
+    def audit_security(self) -> _AuditSecurityView:
+        return self._audit_security_view
 
     def _repo(self, key: str) -> Any:
         if key not in self._cache:
@@ -208,3 +252,21 @@ class RepositoryBackedStorageUnitOfWork:
 
     def agentic_intelligence(self) -> Any:
         return self._repo("agentic_intelligence")
+
+    def principals(self) -> Any:
+        return self._repo("principals")
+
+    def scope_identifiers(self) -> Any:
+        return self._repo("scope_identifiers")
+
+    def memberships(self) -> Any:
+        return self._repo("memberships")
+
+    def role_bindings(self) -> Any:
+        return self._repo("role_bindings")
+
+    def privileged_action_audit_records(self) -> Any:
+        return self._repo("privileged_action_audit_records")
+
+    def access_decision_logs(self) -> Any:
+        return self._repo("access_decision_logs")

@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -979,6 +979,142 @@ CREATE INDEX IF NOT EXISTS idx_test_metrics_metadata_json
     ON test_metrics USING GIN (metadata_json);
 """
 
+_ENTERPRISE_IDENTITY_AUDIT_TABLES = """
+-- ── Enterprise-Only: Identity & Access ────────────────────────────
+-- These tables exist only in enterprise Postgres mode.
+-- SQLite local mode intentionally does not include identity or audit concerns.
+CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS audit;
+
+CREATE TABLE IF NOT EXISTS identity.principals (
+    id              TEXT PRIMARY KEY,
+    principal_type  TEXT NOT NULL,
+    external_id     TEXT DEFAULT '',
+    display_name    TEXT DEFAULT '',
+    email           TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'active',
+    metadata_json   JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_principals_type
+    ON identity.principals(principal_type, status);
+CREATE INDEX IF NOT EXISTS idx_principals_external
+    ON identity.principals(external_id) WHERE external_id != '';
+CREATE INDEX IF NOT EXISTS idx_principals_email
+    ON identity.principals(email) WHERE email != '';
+
+CREATE TABLE IF NOT EXISTS identity.scope_identifiers (
+    id              TEXT PRIMARY KEY,
+    scope_type      TEXT NOT NULL,
+    parent_scope_id TEXT REFERENCES identity.scope_identifiers(id),
+    display_name    TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'active',
+    metadata_json   JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scope_identifiers_type
+    ON identity.scope_identifiers(scope_type, status);
+CREATE INDEX IF NOT EXISTS idx_scope_identifiers_parent
+    ON identity.scope_identifiers(parent_scope_id) WHERE parent_scope_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS identity.memberships (
+    id              TEXT PRIMARY KEY,
+    principal_id    TEXT NOT NULL REFERENCES identity.principals(id) ON DELETE CASCADE,
+    scope_id        TEXT NOT NULL REFERENCES identity.scope_identifiers(id) ON DELETE CASCADE,
+    membership_type TEXT NOT NULL DEFAULT 'member',
+    status          TEXT NOT NULL DEFAULT 'active',
+    granted_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at      TIMESTAMP WITH TIME ZONE,
+    granted_by      TEXT DEFAULT '',
+    metadata_json   JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_memberships_principal
+    ON identity.memberships(principal_id, status);
+CREATE INDEX IF NOT EXISTS idx_memberships_scope
+    ON identity.memberships(scope_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_unique
+    ON identity.memberships(principal_id, scope_id, membership_type);
+
+CREATE TABLE IF NOT EXISTS identity.role_bindings (
+    id              TEXT PRIMARY KEY,
+    principal_id    TEXT NOT NULL REFERENCES identity.principals(id) ON DELETE CASCADE,
+    scope_id        TEXT NOT NULL REFERENCES identity.scope_identifiers(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    granted_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at      TIMESTAMP WITH TIME ZONE,
+    granted_by      TEXT DEFAULT '',
+    metadata_json   JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_bindings_principal
+    ON identity.role_bindings(principal_id, status);
+CREATE INDEX IF NOT EXISTS idx_role_bindings_scope
+    ON identity.role_bindings(scope_id, role, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_role_bindings_unique
+    ON identity.role_bindings(principal_id, scope_id, role);
+
+-- ── Enterprise-Only: Audit & Security ─────────────────────────────
+
+CREATE TABLE IF NOT EXISTS audit.privileged_action_audit_records (
+    id              TEXT PRIMARY KEY,
+    actor_id        TEXT NOT NULL,
+    scope_id        TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL DEFAULT '',
+    resource_id     TEXT DEFAULT '',
+    decision        TEXT NOT NULL DEFAULT 'allowed',
+    decision_reason TEXT DEFAULT '',
+    ip_address      TEXT DEFAULT '',
+    user_agent      TEXT DEFAULT '',
+    metadata_json   JSONB DEFAULT '{}'::jsonb,
+    occurred_at     TIMESTAMP WITH TIME ZONE NOT NULL,
+    recorded_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_records_actor
+    ON audit.privileged_action_audit_records(actor_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_records_scope
+    ON audit.privileged_action_audit_records(scope_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_records_action
+    ON audit.privileged_action_audit_records(action, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_records_resource
+    ON audit.privileged_action_audit_records(resource_type, resource_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS audit.access_decision_logs (
+    id               TEXT PRIMARY KEY,
+    principal_id     TEXT NOT NULL,
+    scope_id         TEXT NOT NULL,
+    resource_type    TEXT NOT NULL,
+    resource_id      TEXT DEFAULT '',
+    requested_action TEXT NOT NULL,
+    decision         TEXT NOT NULL,
+    evaluator        TEXT NOT NULL DEFAULT 'policy_engine',
+    matched_binding_id TEXT DEFAULT '',
+    metadata_json    JSONB DEFAULT '{}'::jsonb,
+    occurred_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+    recorded_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_logs_principal
+    ON audit.access_decision_logs(principal_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_logs_scope
+    ON audit.access_decision_logs(scope_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_logs_resource
+    ON audit.access_decision_logs(resource_type, resource_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_logs_decision
+    ON audit.access_decision_logs(decision, occurred_at DESC);
+"""
+
 _SEED_METRIC_TYPES = """
 INSERT INTO metric_types (id, display_name, unit, value_type, aggregation, description) VALUES
     ('session_cost',        'Session Cost',      '$',       'gauge',   'sum',   'Total cost per session'),
@@ -1029,6 +1165,11 @@ async def _ensure_test_visualizer_tables(db: asyncpg.Connection) -> None:
     await db.execute(_TEST_VISUALIZER_TABLES)
 
 
+async def _ensure_enterprise_identity_audit_tables(db: asyncpg.Connection) -> None:
+    """Create enterprise-only identity and audit tables (idempotent)."""
+    await db.execute(_ENTERPRISE_IDENTITY_AUDIT_TABLES)
+
+
 async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
     # Deduplicate legacy rows before enforcing unique upsert key.
     await db.execute(
@@ -1070,6 +1211,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     else:
         logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
     await _ensure_test_visualizer_tables(db)
+    await _ensure_enterprise_identity_audit_tables(db)
     await _ensure_entity_link_uniqueness(db)
 
     # Explicit table upgrades for existing DBs.

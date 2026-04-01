@@ -9,12 +9,22 @@ from fastapi import FastAPI
 
 from backend.adapters.live_updates import InMemoryLiveEventBroker
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
-from backend.application.context import RequestContext, RequestMetadata, TraceContext
+from backend.application.context import (
+    EnterpriseScope,
+    RequestContext,
+    RequestMetadata,
+    ScopeBinding,
+    StorageScope,
+    TeamScope,
+    TenancyContext,
+    TraceContext,
+)
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
 from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
 from backend import config
 from backend.db import connection, migrations, sync_engine
+from backend.db.migration_governance import resolve_storage_composition_contract, validate_migration_governance_contract
 from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
 from backend.observability import otel as observability
@@ -43,6 +53,7 @@ class RuntimeContainer:
         self.live_event_publisher: LiveEventPublisher | None = None
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
+        self.migration_status = "not_started"
 
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
@@ -59,6 +70,7 @@ class RuntimeContainer:
 
         self.db = await connection.get_connection()
         await migrations.run_migrations(self.db)
+        self.migration_status = "applied"
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
@@ -67,8 +79,9 @@ class RuntimeContainer:
         app.state.live_event_broker = self.live_event_broker
         app.state.live_event_publisher = self.live_event_publisher
 
-        self.sync = sync_engine.SyncEngine(self.db)
-        app.state.sync_engine = self.sync
+        self.sync = self._build_sync_engine()
+        if self.sync is not None:
+            app.state.sync_engine = self.sync
         self.telemetry_settings_store = TelemetrySettingsStore()
         self.telemetry_exporter = TelemetryExportCoordinator(
             repository=get_telemetry_queue_repository(self.db),
@@ -127,6 +140,18 @@ class RuntimeContainer:
             storage_profile=self.storage_profile,
         )
 
+    def _build_sync_engine(self) -> Any | None:
+        if not self._sync_engine_enabled():
+            return None
+        return sync_engine.SyncEngine(self.db)
+
+    def _sync_engine_enabled(self) -> bool:
+        if not self.profile.capabilities.sync:
+            return False
+        if self.storage_profile.profile == "local":
+            return True
+        return bool(self.storage_profile.filesystem_source_of_truth)
+
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
         requested_project_id = str(metadata.headers.get("x-ccdash-project-id") or "").strip() or None
@@ -138,6 +163,101 @@ class RuntimeContainer:
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id
+
+        # --- Enterprise / team scope resolution (DPM-303) ---
+        # In local mode these remain None; enterprise mode resolves from
+        # storage profile and request headers.
+        enterprise_scope: EnterpriseScope | None = None
+        team_scope: TeamScope | None = None
+
+        storage_enterprise_id: str | None = (
+            self.storage_profile.schema_name
+            if self.storage_profile.profile == "enterprise"
+            else None
+        )
+        storage_tenant_id: str | None = (
+            self.storage_profile.schema_name
+            if self.storage_profile.isolation_mode == "tenant"
+            else None
+        )
+
+        # Enterprise scope: present whenever the storage profile is enterprise.
+        header_enterprise_id = self._header(metadata, "x-ccdash-enterprise-id")
+        resolved_enterprise_id = header_enterprise_id or storage_enterprise_id
+        if resolved_enterprise_id is not None:
+            enterprise_scope = EnterpriseScope(
+                enterprise_id=resolved_enterprise_id,
+                display_name=self._header(metadata, "x-ccdash-enterprise-name") or "",
+            )
+
+        # Team scope: only when an explicit team header is provided within an
+        # enterprise boundary. Follow-on auth work will resolve this from
+        # token claims or membership lookups.
+        header_team_id = self._header(metadata, "x-ccdash-team-id")
+        if header_team_id is not None and resolved_enterprise_id is not None:
+            team_scope = TeamScope(
+                team_id=header_team_id,
+                enterprise_id=resolved_enterprise_id,
+                display_name=self._header(metadata, "x-ccdash-team-name") or "",
+            )
+
+        # --- Scope bindings chain: enterprise → team → workspace → project ---
+        scope_bindings: list[ScopeBinding] = []
+        if enterprise_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="enterprise",
+                    scope_id=enterprise_scope.enterprise_id,
+                )
+            )
+        if team_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="team",
+                    scope_id=team_scope.team_id,
+                    parent_scope_type="enterprise",
+                    parent_scope_id=enterprise_scope.enterprise_id if enterprise_scope else None,
+                )
+            )
+        if workspace_scope is not None:
+            parent_type: str | None = None
+            parent_id: str | None = None
+            if team_scope is not None:
+                parent_type = "team"
+                parent_id = team_scope.team_id
+            elif enterprise_scope is not None:
+                parent_type = "enterprise"
+                parent_id = enterprise_scope.enterprise_id
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="workspace",
+                    scope_id=workspace_scope.workspace_id,
+                    parent_scope_type=parent_type,
+                    parent_scope_id=parent_id,
+                )
+            )
+        if project_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="project",
+                    scope_id=project_scope.project_id,
+                    parent_scope_type="workspace" if workspace_scope is not None else None,
+                    parent_scope_id=workspace_scope.workspace_id if workspace_scope is not None else None,
+                )
+            )
+
+        # --- Tenancy context rollup (DPM-303) ---
+        # Bundles stable scope keys for follow-on auth/RBAC consumption.
+        tenancy = TenancyContext(
+            enterprise_id=resolved_enterprise_id,
+            team_id=team_scope.team_id if team_scope else None,
+            workspace_id=workspace_scope.workspace_id if workspace_scope else None,
+            project_id=project_scope.project_id if project_scope else None,
+            ownership_posture_default=(
+                "directly-ownable" if resolved_enterprise_id is not None else "scope-owned"
+            ),
+        )
+
         return RequestContext(
             principal=principal,
             workspace=workspace_scope,
@@ -152,12 +272,31 @@ class RuntimeContainer:
                 path=metadata.path,
                 method=metadata.method,
             ),
+            storage_scope=StorageScope(
+                enterprise_id=storage_enterprise_id,
+                tenant_id=storage_tenant_id,
+                isolation_mode=self.storage_profile.isolation_mode,
+            ),
+            scope_bindings=tuple(scope_bindings),
+            enterprise=enterprise_scope,
+            team=team_scope,
+            tenancy=tenancy,
         )
 
     def runtime_status(self) -> dict[str, Any]:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
+        validate_migration_governance_contract()
         runtime_contract = get_runtime_storage_contract(self.profile)
         storage_contract = get_storage_capability_contract(self.storage_profile)
+        storage_composition = resolve_storage_composition_contract(self.storage_profile)
+        storage_probe = self.ports or build_core_ports(
+            object(),
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
+        audit_capability = (
+            storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
+        )
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -175,7 +314,13 @@ class RuntimeContainer:
             "storageMode": storage_contract.mode,
             "storageProfile": self.storage_profile.profile,
             "storageBackend": self.storage_profile.db_backend,
+            "storageComposition": storage_composition.composition,
             "storageCanonicalStore": storage_contract.canonical_store,
+            "auditStore": storage_contract.audit_store,
+            "auditWriteSupported": audit_capability.supported,
+            "auditWriteAuthoritative": audit_capability.authoritative,
+            "auditWriteStatus": "authoritative" if audit_capability.authoritative else "unsupported",
+            "auditWriteNotes": audit_capability.notes,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
             "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
@@ -184,6 +329,9 @@ class RuntimeContainer:
             "storageSchema": self.storage_profile.schema_name,
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
             "requiredStorageGuarantees": storage_contract.required_guarantees,
+            "migrationGovernanceStatus": "verified",
+            "migrationStatus": self.migration_status,
+            "syncProvisioned": self.sync is not None,
         }
         if self.job_adapter is not None:
             status.update(self.job_adapter.status_snapshot())

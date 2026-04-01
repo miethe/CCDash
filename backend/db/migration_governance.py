@@ -8,7 +8,7 @@ from typing import Literal
 
 from backend import config
 from backend.db import postgres_migrations, sqlite_migrations
-from backend.runtime.storage_contract import StorageModeName
+from backend.runtime.storage_contract import StorageModeName, resolve_storage_mode
 
 BackendName = Literal["sqlite", "postgres"]
 StorageCompositionName = Literal["local-sqlite", "enterprise-postgres", "shared-enterprise-postgres"]
@@ -22,7 +22,16 @@ SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES: tuple[str, ...] = (
 )
 _SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES_SET = frozenset(SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES)
 
-_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\);", re.DOTALL)
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE TABLE IF NOT EXISTS\s+"
+    r"(?:(?P<schema>[a-zA-Z_][a-zA-Z0-9_]*)\.)?"
+    r"(?P<table>[a-zA-Z_][a-zA-Z0-9_]*)\s*"
+    r"\((?P<body>.*?)\);",
+    re.DOTALL,
+)
+
+_IDENTITY_ACCESS_CONCERNS = frozenset({"principals", "scope_identifiers", "memberships", "role_bindings"})
+_AUDIT_SECURITY_CONCERNS = frozenset({"privileged_action_audit_records", "access_decision_logs"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,11 +95,49 @@ SUPPORTED_STORAGE_COMPOSITIONS: tuple[StorageCompositionContract, ...] = (
 )
 
 
+def resolve_storage_composition_contract(
+    storage_profile: config.StorageProfileConfig,
+) -> StorageCompositionContract:
+    storage_mode = resolve_storage_mode(storage_profile)
+    for composition in SUPPORTED_STORAGE_COMPOSITIONS:
+        if composition.storage_mode != storage_mode:
+            continue
+        if composition.profile != storage_profile.profile:
+            continue
+        if composition.backend != storage_profile.db_backend:
+            continue
+        if storage_profile.isolation_mode not in composition.isolation_modes:
+            continue
+        return composition
+
+    supported = ", ".join(
+        f"{composition.composition} ({composition.backend}, isolation={','.join(composition.isolation_modes)})"
+        for composition in SUPPORTED_STORAGE_COMPOSITIONS
+    )
+    raise RuntimeError(
+        "Resolved storage profile is not part of the supported storage composition matrix. "
+        f"profile={storage_profile.profile} backend={storage_profile.db_backend} "
+        f"mode={storage_mode} isolation={storage_profile.isolation_mode}. "
+        f"Supported compositions: {supported}"
+    )
+
+
 def _extract_table_blocks(ddl: str) -> dict[str, str]:
-    return {table: block for table, block in _CREATE_TABLE_RE.findall(ddl)}
+    blocks: dict[str, str] = {}
+    for match in _CREATE_TABLE_RE.finditer(ddl):
+        blocks[match.group("table")] = match.group("body")
+    return blocks
+
+
+def _extract_table_schema_map(ddl: str) -> dict[str, str | None]:
+    schema_map: dict[str, str | None] = {}
+    for match in _CREATE_TABLE_RE.finditer(ddl):
+        schema_map[match.group("table")] = match.group("schema")
+    return schema_map
 
 
 def _backend_table_blocks(module: object) -> dict[str, str]:
+    """Extract table blocks from shared DDL strings (_TABLES, _TEST_VISUALIZER_TABLES)."""
     blocks: dict[str, str] = {}
     primary = getattr(module, "_TABLES", "")
     if isinstance(primary, str):
@@ -101,6 +148,23 @@ def _backend_table_blocks(module: object) -> dict[str, str]:
     return blocks
 
 
+def _enterprise_only_table_blocks(module: object) -> dict[str, str]:
+    """Extract table blocks from enterprise-only DDL (_ENTERPRISE_IDENTITY_AUDIT_TABLES)."""
+    blocks: dict[str, str] = {}
+    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
+    if isinstance(enterprise, str):
+        blocks.update(_extract_table_blocks(enterprise))
+    return blocks
+
+
+def _enterprise_only_table_schema_map(module: object) -> dict[str, str | None]:
+    schema_map: dict[str, str | None] = {}
+    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
+    if isinstance(enterprise, str):
+        schema_map.update(_extract_table_schema_map(enterprise))
+    return schema_map
+
+
 @lru_cache(maxsize=1)
 def get_sqlite_migration_tables() -> frozenset[str]:
     return frozenset(_backend_table_blocks(sqlite_migrations))
@@ -108,7 +172,22 @@ def get_sqlite_migration_tables() -> frozenset[str]:
 
 @lru_cache(maxsize=1)
 def get_postgres_migration_tables() -> frozenset[str]:
-    return frozenset(_backend_table_blocks(postgres_migrations))
+    """Return all Postgres migration tables (shared + enterprise-only)."""
+    return frozenset(_backend_table_blocks(postgres_migrations)) | get_enterprise_only_postgres_tables()
+
+
+@lru_cache(maxsize=1)
+def get_enterprise_only_postgres_tables() -> frozenset[str]:
+    """Return tables that exist only in enterprise Postgres, not in SQLite."""
+    return frozenset(_enterprise_only_table_blocks(postgres_migrations))
+
+
+@lru_cache(maxsize=1)
+def get_enterprise_only_postgres_table_schemas() -> dict[str, str]:
+    """Return enterprise-only table -> schema mapping."""
+    schema_map = _enterprise_only_table_schema_map(postgres_migrations)
+    # Enterprise-only concerns must always be schema-qualified.
+    return {table: schema or "" for table, schema in schema_map.items()}
 
 
 def _difference_categories(sqlite_block: str, postgres_block: str) -> tuple[str, ...]:
@@ -144,19 +223,52 @@ def get_table_backend_difference_matrix() -> dict[str, tuple[str, ...]]:
 
 
 def validate_migration_governance_contract() -> None:
+    from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
+
     sqlite_tables = get_sqlite_migration_tables()
     postgres_tables = get_postgres_migration_tables()
-    if sqlite_tables != postgres_tables:
-        only_sqlite = sorted(sqlite_tables - postgres_tables)
-        only_postgres = sorted(postgres_tables - sqlite_tables)
+    enterprise_only = get_enterprise_only_postgres_tables()
+    shared_postgres = postgres_tables - enterprise_only
+
+    # Shared tables must be identical across both backends.
+    if sqlite_tables != shared_postgres:
+        only_sqlite = sorted(sqlite_tables - shared_postgres)
+        only_shared_postgres = sorted(shared_postgres - sqlite_tables)
         raise RuntimeError(
-            "SQLite and Postgres migration table sets diverged. "
-            f"sqlite_only={only_sqlite} postgres_only={only_postgres}"
+            "SQLite and shared Postgres migration table sets diverged. "
+            f"sqlite_only={only_sqlite} shared_postgres_only={only_shared_postgres}"
         )
 
+    # Enterprise-only Postgres tables must match the planned identity/audit concerns.
+    expected_enterprise = frozenset(PLANNED_AUTH_AUDIT_CONCERNS)
+    if enterprise_only != expected_enterprise:
+        missing = sorted(expected_enterprise - enterprise_only)
+        extra = sorted(enterprise_only - expected_enterprise)
+        raise RuntimeError(
+            "Enterprise-only Postgres tables must match planned identity/audit concerns. "
+            f"missing={missing} extra={extra}"
+        )
+
+    schema_map = get_enterprise_only_postgres_table_schemas()
+    if frozenset(schema_map) != expected_enterprise:
+        missing_schema = sorted(expected_enterprise - frozenset(schema_map))
+        extra_schema = sorted(frozenset(schema_map) - expected_enterprise)
+        raise RuntimeError(
+            "Enterprise-only Postgres schema map must match planned identity/audit concerns. "
+            f"missing={missing_schema} extra={extra_schema}"
+        )
+    expected_schema_map = {concern: "identity" for concern in _IDENTITY_ACCESS_CONCERNS}
+    expected_schema_map.update({concern: "audit" for concern in _AUDIT_SECURITY_CONCERNS})
+    if schema_map != expected_schema_map:
+        raise RuntimeError(
+            "Enterprise-only Postgres tables are not in the expected schemas. "
+            f"actual={schema_map} expected={expected_schema_map}"
+        )
+
+    # Backend difference matrix classifies only the shared tables.
     matrix = get_table_backend_difference_matrix()
     if set(matrix) != sqlite_tables:
-        raise RuntimeError("Migration governance matrix must classify every migration-managed table.")
+        raise RuntimeError("Migration governance matrix must classify every shared migration-managed table.")
 
     for table, categories in matrix.items():
         unsupported = sorted(set(categories) - _SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES_SET)

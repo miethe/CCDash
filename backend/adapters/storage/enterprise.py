@@ -8,6 +8,14 @@ from backend.db.repositories.postgres.analytics import PostgresAnalyticsReposito
 from backend.db.repositories.postgres.documents import PostgresDocumentRepository
 from backend.db.repositories.postgres.execution import PostgresExecutionRepository
 from backend.db.repositories.postgres.features import PostgresFeatureRepository
+from backend.db.repositories.postgres.identity_access import (
+    PostgresAccessDecisionLogRepository,
+    PostgresMembershipRepository,
+    PostgresPrincipalRepository,
+    PostgresPrivilegedActionAuditRepository,
+    PostgresRoleBindingRepository,
+    PostgresScopeIdentifierRepository,
+)
 from backend.db.repositories.postgres.intelligence import PostgresAgenticIntelligenceRepository
 from backend.db.repositories.postgres.entity_graph import PostgresEntityLinkRepository, PostgresTagRepository
 from backend.db.repositories.postgres.pricing import PostgresPricingCatalogRepository
@@ -52,5 +60,11 @@ class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "test_integrity": PostgresTestIntegrityRepository,
                 "execution": PostgresExecutionRepository,
                 "agentic_intelligence": PostgresAgenticIntelligenceRepository,
+                "principals": PostgresPrincipalRepository,
+                "scope_identifiers": PostgresScopeIdentifierRepository,
+                "memberships": PostgresMembershipRepository,
+                "role_bindings": PostgresRoleBindingRepository,
+                "privileged_action_audit_records": PostgresPrivilegedActionAuditRepository,
+                "access_decision_logs": PostgresAccessDecisionLogRepository,
             },
         )

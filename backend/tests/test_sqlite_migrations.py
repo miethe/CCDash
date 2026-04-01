@@ -3,10 +3,28 @@ from unittest.mock import patch
 
 import aiosqlite
 
+from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
 from backend.db import migrations as migration_dispatcher, sqlite_migrations
+from backend.db.migration_governance import get_sqlite_migration_tables
 
 
 class SqliteMigrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_sqlite_intentionally_lacks_identity_and_audit_tables(self) -> None:
+        """SQLite is the local-first bounded compatibility story.
+
+        Identity and audit tables are enterprise-only Postgres concerns and must
+        never appear in the SQLite migration set. This test makes that boundary
+        machine-checkable so accidental parity additions are caught immediately.
+        """
+        sqlite_tables = get_sqlite_migration_tables()
+        enterprise_concerns = set(PLANNED_AUTH_AUDIT_CONCERNS)
+        leaked = sqlite_tables & enterprise_concerns
+        self.assertSetEqual(
+            leaked,
+            set(),
+            f"Enterprise-only identity/audit tables leaked into SQLite: {sorted(leaked)}",
+        )
+
     async def test_dispatcher_runs_governance_validation_before_sqlite_migrations(self) -> None:
         db = await aiosqlite.connect(":memory:")
         self.addAsyncCleanup(db.close)

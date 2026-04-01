@@ -100,6 +100,12 @@ CCDASH_DB_BACKEND=sqlite
 
 Use this for the default desktop/local workflow. SQLite plus filesystem-derived ingestion stays the primary contract.
 
+Local upgrade note:
+
+- Existing SQLite installs should stay on `CCDASH_STORAGE_PROFILE=local`; Phase 5/6 does not require enterprise-table backfills in SQLite.
+- Back up the SQLite file if you manage a custom path, then start the updated app and allow migrations to run normally.
+- If you later move to hosted enterprise mode, bootstrap Postgres separately and re-ingest/rebuild instead of trying to promote the SQLite file in place.
+
 Dedicated enterprise Postgres:
 
 ```bash
@@ -174,7 +180,7 @@ Enterprise operator split:
 - API serves HTTP and reads canonical state.
 - Worker runs sync, refresh, and scheduled jobs.
 - Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
-- Check `GET /api/health` to confirm the resolved storage profile, canonical store, isolation mode, and runtime/job capability fields.
+- Check `GET /api/health` to confirm `storageComposition`, `storageCanonicalStore`, `auditStore`, `migrationGovernanceStatus`, `syncProvisioned`, isolation mode/schema, and the runtime/job capability fields.
 
 ## Troubleshooting
 

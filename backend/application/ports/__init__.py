@@ -1,10 +1,12 @@
 """Framework-agnostic application ports."""
 
 from backend.application.ports.core import (
+    AuditSecurityStorage,
     AuthorizationDecision,
     AuthorizationPolicy,
     CorePorts,
     IngestionStateStorage,
+    IdentityAccessStorage,
     IdentityProvider,
     IntegrationSnapshotStorage,
     IntegrationClient,
@@ -17,10 +19,12 @@ from backend.application.ports.core import (
 )
 
 __all__ = [
+    "AuditSecurityStorage",
     "AuthorizationDecision",
     "AuthorizationPolicy",
     "CorePorts",
     "IngestionStateStorage",
+    "IdentityAccessStorage",
     "IdentityProvider",
     "IntegrationSnapshotStorage",
     "IntegrationClient",

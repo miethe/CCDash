@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
+from backend.db.repositories.identity_access import LocalPrincipalRepository
+from backend.db.repositories.postgres.identity_access import PostgresPrincipalRepository
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
@@ -157,7 +159,13 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageMode", status)
         self.assertIn("storageProfile", status)
         self.assertIn("storageBackend", status)
+        self.assertIn("storageComposition", status)
         self.assertIn("storageCanonicalStore", status)
+        self.assertIn("auditStore", status)
+        self.assertIn("auditWriteSupported", status)
+        self.assertIn("auditWriteAuthoritative", status)
+        self.assertIn("auditWriteStatus", status)
+        self.assertIn("auditWriteNotes", status)
         self.assertIn("filesystemSourceOfTruth", status)
         self.assertIn("storageFilesystemRole", status)
         self.assertIn("sharedPostgresEnabled", status)
@@ -166,6 +174,17 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageSchema", status)
         self.assertIn("canonicalSessionStore", status)
         self.assertIn("requiredStorageGuarantees", status)
+        self.assertIn("migrationGovernanceStatus", status)
+        self.assertIn("migrationStatus", status)
+        self.assertIn("syncProvisioned", status)
+        self.assertEqual(status["storageComposition"], "enterprise-postgres")
+        self.assertEqual(status["auditStore"], "postgres_phase_4_foundation")
+        self.assertTrue(status["auditWriteSupported"])
+        self.assertTrue(status["auditWriteAuthoritative"])
+        self.assertEqual(status["auditWriteStatus"], "authoritative")
+        self.assertEqual(status["migrationGovernanceStatus"], "verified")
+        self.assertEqual(status["migrationStatus"], "not_started")
+        self.assertFalse(status["syncProvisioned"])
         self.assertEqual(status["canonicalSessionStore"], "postgres")
 
     def test_api_runtime_rejects_local_storage_profile(self) -> None:
@@ -227,6 +246,8 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertIsInstance(ports.storage, LocalStorageUnitOfWork)
         self.assertIs(ports.storage.db, marker)
+        self.assertIsInstance(ports.storage.identity_access().principals(), LocalPrincipalRepository)
+        self.assertFalse(ports.storage.principals().describe_capability().supported)
 
     def test_build_core_ports_uses_enterprise_storage_adapter(self) -> None:
         marker = object()
@@ -238,6 +259,9 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
+        self.assertIsInstance(ports.storage.identity_access().principals(), PostgresPrincipalRepository)
+        self.assertTrue(ports.storage.principals().describe_capability().supported)
+        self.assertTrue(ports.storage.audit_security().privileged_action_audit_records().describe_capability().authoritative)
         self.assertIs(ports.storage.db, marker)
 
     def test_health_endpoint_reports_local_sqlite_composition(self) -> None:
@@ -250,10 +274,18 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["storageMode"], "local")
         self.assertEqual(payload["storageProfile"], "local")
         self.assertEqual(payload["storageBackend"], "sqlite")
+        self.assertEqual(payload["storageComposition"], "local-sqlite")
         self.assertEqual(payload["storageCanonicalStore"], "sqlite_local_metadata")
+        self.assertEqual(payload["auditStore"], "not_supported_in_v1_local_mode")
+        self.assertFalse(payload["auditWriteSupported"])
+        self.assertFalse(payload["auditWriteAuthoritative"])
+        self.assertEqual(payload["auditWriteStatus"], "unsupported")
         self.assertFalse(payload["sharedPostgresEnabled"])
+        self.assertEqual(payload["migrationGovernanceStatus"], "verified")
+        self.assertEqual(payload["migrationStatus"], "not_started")
         self.assertIn("local-sqlite", payload["supportedStorageCompositions"])
         self.assertIsInstance(payload["requiredStorageGuarantees"], list)
+        self.assertFalse(payload["syncProvisioned"])
 
     def test_health_endpoint_reports_enterprise_postgres_composition(self) -> None:
         app = build_api_app()
@@ -265,11 +297,19 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["storageMode"], "enterprise")
         self.assertEqual(payload["storageProfile"], "enterprise")
         self.assertEqual(payload["storageBackend"], "postgres")
+        self.assertEqual(payload["storageComposition"], "enterprise-postgres")
         self.assertEqual(payload["storageCanonicalStore"], "postgres_dedicated")
+        self.assertEqual(payload["auditStore"], "postgres_phase_4_foundation")
+        self.assertTrue(payload["auditWriteSupported"])
+        self.assertTrue(payload["auditWriteAuthoritative"])
+        self.assertEqual(payload["auditWriteStatus"], "authoritative")
         self.assertEqual(payload["storageIsolationMode"], "dedicated")
         self.assertFalse(payload["sharedPostgresEnabled"])
+        self.assertEqual(payload["migrationGovernanceStatus"], "verified")
+        self.assertEqual(payload["migrationStatus"], "not_started")
         self.assertIn("enterprise-postgres", payload["supportedStorageCompositions"])
         self.assertEqual(payload["supportedStorageProfiles"], ["enterprise"])
+        self.assertFalse(payload["syncProvisioned"])
 
     def test_health_endpoint_reports_shared_enterprise_postgres_composition(self) -> None:
         app = build_api_app()
@@ -280,10 +320,17 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["storageMode"], "shared-enterprise")
         self.assertEqual(payload["storageProfile"], "enterprise")
         self.assertEqual(payload["storageBackend"], "postgres")
+        self.assertEqual(payload["storageComposition"], "shared-enterprise-postgres")
         self.assertEqual(payload["storageCanonicalStore"], "postgres_shared_instance")
+        self.assertEqual(payload["auditStore"], "postgres_schema_or_tenant_boundary_phase_4_foundation")
+        self.assertTrue(payload["auditWriteSupported"])
+        self.assertTrue(payload["auditWriteAuthoritative"])
+        self.assertEqual(payload["auditWriteStatus"], "authoritative")
         self.assertTrue(payload["sharedPostgresEnabled"])
         self.assertEqual(payload["storageIsolationMode"], "schema")
         self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
+        self.assertEqual(payload["migrationGovernanceStatus"], "verified")
+        self.assertEqual(payload["migrationStatus"], "not_started")
         self.assertIn("shared-enterprise-postgres", payload["supportedStorageCompositions"])
 
     def test_health_endpoint_storage_composition_matrix_matches_governance(self) -> None:
@@ -457,6 +504,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertEqual(app.state.runtime_profile, get_runtime_profile("local"))
                 self.assertIs(app.state.sync_engine, fake_sync)
+                self.assertEqual(app.state.runtime_container.runtime_status()["migrationStatus"], "applied")
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)
                 self.assertTrue(hasattr(app.state, "sync_task"))
@@ -491,9 +539,10 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
                 self.assertEqual(app.state.runtime_profile, get_runtime_profile("api"))
-                self.assertIs(app.state.sync_engine, fake_sync)
+                self.assertEqual(app.state.runtime_container.runtime_status()["migrationStatus"], "applied")
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)
+                self.assertFalse(hasattr(app.state, "sync_engine"))
                 self.assertFalse(hasattr(app.state, "sync_task"))
                 watcher_start.assert_not_awaited()
                 fake_sync.sync_project.assert_not_awaited()
@@ -523,6 +572,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.state.runtime_profile, get_runtime_profile("test"))
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)
+                self.assertFalse(hasattr(app.state, "sync_engine"))
                 self.assertFalse(hasattr(app.state, "sync_task"))
                 self.assertFalse(hasattr(app.state, "analytics_snapshot_task"))
                 watcher_start.assert_not_awaited()
@@ -536,7 +586,14 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
         container = build_worker_runtime()
-        container.storage_profile = _enterprise_storage_profile()
+        container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://example/test",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
 
         with (
             patch("backend.runtime.container.initialize_observability"),
