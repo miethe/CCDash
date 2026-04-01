@@ -10,11 +10,14 @@ phase: 4
 title: "Identity, Membership, and Audit Foundation"
 status: "completed"
 started: "2026-03-31"
-completed: "2026-03-31"
+completed: "2026-04-01"
 commit_refs:
   - "90185dc"
   - "e3688f6"
   - "0cc3b1a"
+  - "6d55729"
+  - "2ccc514"
+  - "ce0e39d"
 pr_refs: []
 
 overall_progress: 100
