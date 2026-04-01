@@ -76,8 +76,9 @@ class RuntimeContainer:
         app.state.live_event_broker = self.live_event_broker
         app.state.live_event_publisher = self.live_event_publisher
 
-        self.sync = sync_engine.SyncEngine(self.db)
-        app.state.sync_engine = self.sync
+        self.sync = self._build_sync_engine()
+        if self.sync is not None:
+            app.state.sync_engine = self.sync
         self.telemetry_settings_store = TelemetrySettingsStore()
         self.telemetry_exporter = TelemetryExportCoordinator(
             repository=get_telemetry_queue_repository(self.db),
@@ -135,6 +136,18 @@ class RuntimeContainer:
             runtime_profile=self.profile,
             storage_profile=self.storage_profile,
         )
+
+    def _build_sync_engine(self) -> Any | None:
+        if not self._sync_engine_enabled():
+            return None
+        return sync_engine.SyncEngine(self.db)
+
+    def _sync_engine_enabled(self) -> bool:
+        if not self.profile.capabilities.sync:
+            return False
+        if self.storage_profile.profile == "local":
+            return True
+        return bool(self.storage_profile.filesystem_source_of_truth)
 
     async def build_request_context(self, metadata: RequestMetadata) -> RequestContext:
         ports = self.require_ports()
@@ -297,6 +310,7 @@ class RuntimeContainer:
             "storageSchema": self.storage_profile.schema_name,
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
             "requiredStorageGuarantees": storage_contract.required_guarantees,
+            "syncProvisioned": self.sync is not None,
         }
         if self.job_adapter is not None:
             status.update(self.job_adapter.status_snapshot())

@@ -34,7 +34,7 @@ class RuntimeJobAdapter:
         *,
         profile: RuntimeProfile,
         ports: CorePorts,
-        sync_engine: Any,
+        sync_engine: Any | None,
         telemetry_exporter_job: TelemetryExporterJob | None = None,
     ) -> None:
         self.profile = profile
@@ -56,7 +56,7 @@ class RuntimeJobAdapter:
         flags = effective_test_flags(active_project)
         test_results_dir: Path | None = test_sources[0].resolved_dir if test_sources else None
 
-        if active_project and self.profile.capabilities.sync:
+        if active_project and self.profile.capabilities.sync and self.sync is not None:
             self.state.sync_task = self.ports.job_scheduler.schedule(
                 self._run_startup_sync_pipeline(
                     active_project=active_project,
@@ -70,7 +70,7 @@ class RuntimeJobAdapter:
                 name=f"ccdash:{self.profile.name}:startup-sync",
             )
 
-        if active_project and self.profile.capabilities.watch:
+        if active_project and self.profile.capabilities.watch and self.sync is not None:
             await file_watcher.start(
                 self.sync,
                 active_project.id,
@@ -205,6 +205,8 @@ class RuntimeJobAdapter:
             )
 
     def _start_analytics_snapshot_task(self) -> asyncio.Task[None] | None:
+        if self.sync is None:
+            return None
         analytics_interval = max(0, int(getattr(config, "ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0)))
         if analytics_interval <= 0:
             return None

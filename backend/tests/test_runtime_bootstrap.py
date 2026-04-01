@@ -168,6 +168,8 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageSchema", status)
         self.assertIn("canonicalSessionStore", status)
         self.assertIn("requiredStorageGuarantees", status)
+        self.assertIn("syncProvisioned", status)
+        self.assertFalse(status["syncProvisioned"])
         self.assertEqual(status["canonicalSessionStore"], "postgres")
 
     def test_api_runtime_rejects_local_storage_profile(self) -> None:
@@ -261,6 +263,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertFalse(payload["sharedPostgresEnabled"])
         self.assertIn("local-sqlite", payload["supportedStorageCompositions"])
         self.assertIsInstance(payload["requiredStorageGuarantees"], list)
+        self.assertFalse(payload["syncProvisioned"])
 
     def test_health_endpoint_reports_enterprise_postgres_composition(self) -> None:
         app = build_api_app()
@@ -277,6 +280,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertFalse(payload["sharedPostgresEnabled"])
         self.assertIn("enterprise-postgres", payload["supportedStorageCompositions"])
         self.assertEqual(payload["supportedStorageProfiles"], ["enterprise"])
+        self.assertFalse(payload["syncProvisioned"])
 
     def test_health_endpoint_reports_shared_enterprise_postgres_composition(self) -> None:
         app = build_api_app()
@@ -498,9 +502,9 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
                 self.assertEqual(app.state.runtime_profile, get_runtime_profile("api"))
-                self.assertIs(app.state.sync_engine, fake_sync)
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)
+                self.assertFalse(hasattr(app.state, "sync_engine"))
                 self.assertFalse(hasattr(app.state, "sync_task"))
                 watcher_start.assert_not_awaited()
                 fake_sync.sync_project.assert_not_awaited()
@@ -530,6 +534,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.state.runtime_profile, get_runtime_profile("test"))
                 self.assertIsNotNone(app.state.live_event_broker)
                 self.assertIsNotNone(app.state.live_event_publisher)
+                self.assertFalse(hasattr(app.state, "sync_engine"))
                 self.assertFalse(hasattr(app.state, "sync_task"))
                 self.assertFalse(hasattr(app.state, "analytics_snapshot_task"))
                 watcher_start.assert_not_awaited()
@@ -543,7 +548,14 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
         container = build_worker_runtime()
-        container.storage_profile = _enterprise_storage_profile()
+        container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://example/test",
+                "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "true",
+            }
+        )
 
         with (
             patch("backend.runtime.container.initialize_observability"),

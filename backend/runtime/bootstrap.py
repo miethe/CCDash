@@ -89,6 +89,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
             "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
             "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
+            "syncProvisioned": bool(runtime_status.get("syncProvisioned", False)),
             "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
             "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
             "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
