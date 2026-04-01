@@ -74,7 +74,9 @@ Fields to monitor:
 - `sharedPostgresEnabled`
 - `storageCanonicalStore`
 - `auditStore`
+- `auditWriteStatus`
 - `migrationGovernanceStatus`
+- `migrationStatus`
 - `syncEnabled`
 - `syncProvisioned`
 - `requiredStorageGuarantees`
@@ -84,7 +86,9 @@ Interpretation:
 - `syncEnabled` is what the runtime profile can do.
 - `syncProvisioned` is what this process actually composed.
 - `auditStore` is the canonical destination for audit/security records under the active storage contract.
+- `auditWriteStatus` tells you whether the active profile can actually author authoritative audit writes.
 - `migrationGovernanceStatus=verified` means the supported storage composition and migration table rules still hold.
+- `migrationStatus=applied` means this runtime finished its startup migration step successfully.
 
 ## Stable Seams For Follow-On Plans
 

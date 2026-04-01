@@ -1,9 +1,12 @@
 import unittest
+import types
+from unittest.mock import AsyncMock, patch
 
 from backend import config
 from backend.verify_db_layer import (
     build_storage_verification_matrix,
     resolve_storage_composition,
+    verify,
     verify_storage_profile_contract,
 )
 
@@ -93,6 +96,31 @@ class VerifyDbLayerTests(unittest.TestCase):
             set(matrix),
             {"local-sqlite", "enterprise-postgres", "shared-enterprise-postgres"},
         )
+
+class VerifyDbLayerAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_verify_uses_explicit_postgres_profile_connection_details(self) -> None:
+        profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/explicit",
+            }
+        )
+        fake_pool = types.SimpleNamespace(close=AsyncMock())
+        fake_ports = types.SimpleNamespace(storage=types.SimpleNamespace())
+        fake_asyncpg = types.SimpleNamespace(create_pool=AsyncMock(return_value=fake_pool))
+
+        with (
+            patch("backend.verify_db_layer.connection.asyncpg", fake_asyncpg),
+            patch("backend.verify_db_layer.migrations.run_migrations", AsyncMock()),
+            patch("backend.verify_db_layer.build_core_ports", return_value=fake_ports),
+            patch("backend.verify_db_layer.get_runtime_profile", return_value=types.SimpleNamespace(name="test")),
+        ):
+            report = await verify(profile)
+
+        fake_asyncpg.create_pool.assert_awaited_once_with("postgresql://db.example/explicit")
+        fake_pool.close.assert_awaited_once()
+        self.assertEqual(report.backend, "postgres")
 
 
 if __name__ == "__main__":

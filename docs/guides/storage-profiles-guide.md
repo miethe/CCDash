@@ -74,7 +74,7 @@ Runtime profiles and storage profiles are related but distinct:
 - `worker` + `local` is rejected before worker startup reaches DB setup.
 - `local` runtime + any enterprise storage mode is rejected because the local runtime contract is local-first only.
 
-The `/api/health` payload reports the resolved storage mode, storage profile, backend, storage composition, supported storage profiles, supported isolation modes, canonical store, audit store, shared-Postgres posture, isolation mode, schema, canonical session-store mode, migration-governance status, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `syncProvisioned`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
+The `/api/health` payload reports the resolved storage mode, storage profile, backend, storage composition, supported storage profiles, supported isolation modes, canonical store, audit store, audit-write capability, shared-Postgres posture, isolation mode, schema, canonical session-store mode, migration-governance status, startup migration status, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `syncProvisioned`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
 
 ## Local Upgrade Path
 
@@ -100,7 +100,7 @@ Compatibility notes:
 - Set `CCDASH_STORAGE_SHARED_POSTGRES=true` only when CCDash shares Postgres infrastructure with another app.
 - Set `CCDASH_STORAGE_ISOLATION_MODE=schema` or `tenant` for shared Postgres; do not rely on implicit isolation.
 - Verify `GET /api/health` shows the expected storage mode, canonical store, and runtime capability flags.
-- In the Ops panel, confirm storage composition, canonical/audit stores, migration-governance status, isolation mode/schema, sync provisioning, jobs, and telemetry export state.
+- In the Ops panel, confirm storage composition, canonical/audit stores, `auditWriteStatus`, `migrationGovernanceStatus`, `migrationStatus`, isolation mode/schema, sync provisioning, jobs, and telemetry export state.
 
 ## Follow-On Handoff
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Iterable
+from pathlib import Path
+from typing import Any, Iterable
 
 from backend import config
 from backend.db import connection, migrations
@@ -39,6 +40,35 @@ class StorageVerificationReport:
     shared_table_count: int
     enterprise_only_table_count: int
     checks: tuple[str, ...]
+
+
+async def _open_verification_connection(
+    storage_profile: config.StorageProfileConfig,
+) -> Any:
+    if storage_profile.db_backend == "postgres":
+        if connection.asyncpg is None:
+            raise ImportError("asyncpg is required for Postgres backend.")
+        logger.info("Opening Postgres verification connection for %s", storage_profile.database_url)
+        return await connection.asyncpg.create_pool(storage_profile.database_url)
+
+    db_path = Path(connection.DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Opening SQLite verification connection for %s", db_path)
+    db = await connection.aiosqlite.connect(str(db_path))
+    db.row_factory = connection.aiosqlite.Row
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA foreign_keys=ON")
+    await db.execute(f"PRAGMA busy_timeout={connection.SQLITE_BUSY_TIMEOUT_MS}")
+    return db
+
+
+async def _close_verification_connection(db: Any | None) -> None:
+    if db is None:
+        return
+    close = getattr(db, "close", None)
+    if close is None:
+        return
+    await close()
 
 
 def resolve_storage_composition(
@@ -167,7 +197,7 @@ async def verify(
 
     db = None
     try:
-        db = await connection.get_connection()
+        db = await _open_verification_connection(active_profile)
         logger.info("✅ Database connected")
         await migrations.run_migrations(db)
         logger.info("✅ Migrations applied")
@@ -180,8 +210,8 @@ async def verify(
         logger.info("✅ Canonical session store: %s", report.canonical_session_store)
         return report
     finally:
+        await _close_verification_connection(db)
         if db is not None:
-            await connection.close_connection()
             logger.info("Database connection closed")
 
 

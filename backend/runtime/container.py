@@ -53,6 +53,7 @@ class RuntimeContainer:
         self.live_event_publisher: LiveEventPublisher | None = None
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
+        self.migration_status = "not_started"
 
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
@@ -69,6 +70,7 @@ class RuntimeContainer:
 
         self.db = await connection.get_connection()
         await migrations.run_migrations(self.db)
+        self.migration_status = "applied"
         self.ports = self._build_core_ports()
         app.state.core_ports = self.ports
         self.live_event_broker = InMemoryLiveEventBroker(replay_buffer_size=config.CCDASH_LIVE_REPLAY_BUFFER_SIZE)
@@ -287,6 +289,14 @@ class RuntimeContainer:
         runtime_contract = get_runtime_storage_contract(self.profile)
         storage_contract = get_storage_capability_contract(self.storage_profile)
         storage_composition = resolve_storage_composition_contract(self.storage_profile)
+        storage_probe = self.ports or build_core_ports(
+            object(),
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
+        audit_capability = (
+            storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
+        )
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -307,6 +317,10 @@ class RuntimeContainer:
             "storageComposition": storage_composition.composition,
             "storageCanonicalStore": storage_contract.canonical_store,
             "auditStore": storage_contract.audit_store,
+            "auditWriteSupported": audit_capability.supported,
+            "auditWriteAuthoritative": audit_capability.authoritative,
+            "auditWriteStatus": "authoritative" if audit_capability.authoritative else "unsupported",
+            "auditWriteNotes": audit_capability.notes,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
             "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
@@ -316,6 +330,7 @@ class RuntimeContainer:
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
             "requiredStorageGuarantees": storage_contract.required_guarantees,
             "migrationGovernanceStatus": "verified",
+            "migrationStatus": self.migration_status,
             "syncProvisioned": self.sync is not None,
         }
         if self.job_adapter is not None:

@@ -87,6 +87,10 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
             "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
             "auditStore": str(runtime_status.get("auditStore", "")),
+            "auditWriteSupported": bool(runtime_status.get("auditWriteSupported", False)),
+            "auditWriteAuthoritative": bool(runtime_status.get("auditWriteAuthoritative", False)),
+            "auditWriteStatus": str(runtime_status.get("auditWriteStatus", "")),
+            "auditWriteNotes": str(runtime_status.get("auditWriteNotes", "")),
             "storageSchema": str(runtime_status.get("storageSchema", "")),
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
             "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
@@ -96,6 +100,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
             "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
             "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
+            "migrationStatus": str(runtime_status.get("migrationStatus", "")),
             "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         }
 
