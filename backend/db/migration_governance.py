@@ -8,7 +8,7 @@ from typing import Literal
 
 from backend import config
 from backend.db import postgres_migrations, sqlite_migrations
-from backend.runtime.storage_contract import StorageModeName
+from backend.runtime.storage_contract import StorageModeName, resolve_storage_mode
 
 BackendName = Literal["sqlite", "postgres"]
 StorageCompositionName = Literal["local-sqlite", "enterprise-postgres", "shared-enterprise-postgres"]
@@ -93,6 +93,33 @@ SUPPORTED_STORAGE_COMPOSITIONS: tuple[StorageCompositionContract, ...] = (
         isolation_modes=("schema", "tenant"),
     ),
 )
+
+
+def resolve_storage_composition_contract(
+    storage_profile: config.StorageProfileConfig,
+) -> StorageCompositionContract:
+    storage_mode = resolve_storage_mode(storage_profile)
+    for composition in SUPPORTED_STORAGE_COMPOSITIONS:
+        if composition.storage_mode != storage_mode:
+            continue
+        if composition.profile != storage_profile.profile:
+            continue
+        if composition.backend != storage_profile.db_backend:
+            continue
+        if storage_profile.isolation_mode not in composition.isolation_modes:
+            continue
+        return composition
+
+    supported = ", ".join(
+        f"{composition.composition} ({composition.backend}, isolation={','.join(composition.isolation_modes)})"
+        for composition in SUPPORTED_STORAGE_COMPOSITIONS
+    )
+    raise RuntimeError(
+        "Resolved storage profile is not part of the supported storage composition matrix. "
+        f"profile={storage_profile.profile} backend={storage_profile.db_backend} "
+        f"mode={storage_mode} isolation={storage_profile.isolation_mode}. "
+        f"Supported compositions: {supported}"
+    )
 
 
 def _extract_table_blocks(ddl: str) -> dict[str, str]:

@@ -8,10 +8,12 @@ from backend.db.migration_governance import (
     get_enterprise_only_postgres_table_schemas,
     get_enterprise_only_postgres_tables,
     get_postgres_migration_tables,
+    resolve_storage_composition_contract,
     get_sqlite_migration_tables,
     get_table_backend_difference_matrix,
     validate_migration_governance_contract,
 )
+from backend.config import resolve_storage_profile_config
 
 
 class MigrationGovernanceTests(unittest.TestCase):
@@ -85,6 +87,22 @@ class MigrationGovernanceTests(unittest.TestCase):
         self.assertSetEqual(set(BACKEND_SCHEMA_CAPABILITIES), {"sqlite", "postgres"})
         self.assertFalse(BACKEND_SCHEMA_CAPABILITIES["sqlite"].supports_gin_indexes)
         self.assertTrue(BACKEND_SCHEMA_CAPABILITIES["postgres"].supports_gin_indexes)
+
+    def test_storage_composition_resolver_matches_shared_enterprise_posture(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_STORAGE_SHARED_POSTGRES": "true",
+                "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+                "CCDASH_STORAGE_SCHEMA": "ccdash_app",
+            }
+        )
+
+        composition = resolve_storage_composition_contract(profile)
+
+        self.assertEqual(composition.composition, "shared-enterprise-postgres")
 
 
 if __name__ == "__main__":

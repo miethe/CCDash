@@ -78,6 +78,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "storageMode": str(runtime_status.get("storageMode", "")),
             "storageProfile": str(runtime_status.get("storageProfile", "")),
             "storageBackend": str(runtime_status.get("storageBackend", "")),
+            "storageComposition": str(runtime_status.get("storageComposition", "")),
             "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
             "supportedStorageProfiles": list(runtime_status.get("supportedStorageProfiles", ())),
             "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
@@ -85,6 +86,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
             "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
             "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
+            "auditStore": str(runtime_status.get("auditStore", "")),
             "storageSchema": str(runtime_status.get("storageSchema", "")),
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
             "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
@@ -93,6 +95,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
             "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
             "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
+            "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
             "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         }
 

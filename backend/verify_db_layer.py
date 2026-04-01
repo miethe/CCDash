@@ -12,8 +12,8 @@ from backend.db.migration_governance import (
     SUPPORTED_STORAGE_COMPOSITIONS,
     StorageCompositionContract,
     get_enterprise_only_postgres_tables,
-    get_postgres_migration_tables,
     get_sqlite_migration_tables,
+    resolve_storage_composition_contract,
     validate_migration_governance_contract,
 )
 from backend.runtime.profiles import get_runtime_profile
@@ -41,15 +41,6 @@ class StorageVerificationReport:
     checks: tuple[str, ...]
 
 
-def _format_supported_compositions(
-    compositions: Iterable[StorageCompositionContract],
-) -> tuple[str, ...]:
-    return tuple(
-        f"{composition.composition} ({composition.backend}, isolation={','.join(composition.isolation_modes)})"
-        for composition in compositions
-    )
-
-
 def resolve_storage_composition(
     storage_profile: config.StorageProfileConfig,
     *,
@@ -64,18 +55,22 @@ def resolve_storage_composition(
         )
 
     supported = tuple(supported_compositions)
-    for composition in supported:
-        if composition.storage_mode != storage_contract.mode:
-            continue
-        if composition.profile != storage_profile.profile:
-            continue
-        if composition.backend != storage_profile.db_backend:
-            continue
-        if storage_profile.isolation_mode not in composition.isolation_modes:
-            continue
-        return composition
+    if supported is SUPPORTED_STORAGE_COMPOSITIONS:
+        return resolve_storage_composition_contract(storage_profile)
 
-    supported_names = ", ".join(_format_supported_compositions(supported))
+    for composition in supported:
+        if (
+            composition.storage_mode == storage_contract.mode
+            and composition.profile == storage_profile.profile
+            and composition.backend == storage_profile.db_backend
+            and storage_profile.isolation_mode in composition.isolation_modes
+        ):
+            return composition
+
+    supported_names = ", ".join(
+        f"{composition.composition} ({composition.backend}, isolation={','.join(composition.isolation_modes)})"
+        for composition in supported
+    )
     raise RuntimeError(
         "Resolved storage profile is not part of the supported storage composition matrix. "
         f"profile={storage_profile.profile} backend={storage_profile.db_backend} "

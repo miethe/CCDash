@@ -1,6 +1,6 @@
 # CCDash Storage Profiles Guide
 
-Updated: 2026-03-29
+Updated: 2026-04-01
 
 ## Purpose
 
@@ -74,7 +74,23 @@ Runtime profiles and storage profiles are related but distinct:
 - `worker` + `local` is rejected before worker startup reaches DB setup.
 - `local` runtime + any enterprise storage mode is rejected because the local runtime contract is local-first only.
 
-The `/api/health` payload reports the resolved storage mode, storage profile, backend, supported storage profiles, supported isolation modes, canonical store, shared-Postgres posture, isolation mode, schema, canonical session-store mode, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
+The `/api/health` payload reports the resolved storage mode, storage profile, backend, storage composition, supported storage profiles, supported isolation modes, canonical store, audit store, shared-Postgres posture, isolation mode, schema, canonical session-store mode, migration-governance status, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `syncProvisioned`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
+
+## Local Upgrade Path
+
+Existing local SQLite installs should upgrade in place under the `local` storage profile.
+
+1. Keep `CCDASH_STORAGE_PROFILE=local` and `CCDASH_DB_BACKEND=sqlite`.
+2. Back up the SQLite file if you manage a custom path, then start the updated app normally.
+3. Let startup run migrations; local mode does not backfill enterprise-only identity, membership, role-binding, or audit tables into SQLite.
+4. Keep using filesystem-derived sync as before. Phase 5 only changes hosted runtime provisioning; it does not remove local sync/watch behavior.
+5. If you later move to hosted enterprise mode, treat that as a fresh Postgres bootstrap plus re-ingest/rebuild step rather than an in-place SQLite promotion.
+
+Compatibility notes:
+
+- Existing local app metadata and derived cache state remain valid under the local adapter.
+- Direct-ownership primitives reserved for enterprise canonical entities do not require a SQLite backfill.
+- Local repositories for enterprise identity/audit concerns remain bounded compatibility shims, not authoritative local stores.
 
 ## Operator Rollout Checklist
 
@@ -84,7 +100,17 @@ The `/api/health` payload reports the resolved storage mode, storage profile, ba
 - Set `CCDASH_STORAGE_SHARED_POSTGRES=true` only when CCDash shares Postgres infrastructure with another app.
 - Set `CCDASH_STORAGE_ISOLATION_MODE=schema` or `tenant` for shared Postgres; do not rely on implicit isolation.
 - Verify `GET /api/health` shows the expected storage mode, canonical store, and runtime capability flags.
-- In the Ops panel, confirm storage mode/profile/backend, isolation mode/schema, canonical store, watcher, sync, jobs, and telemetry export state.
+- In the Ops panel, confirm storage composition, canonical/audit stores, migration-governance status, isolation mode/schema, sync provisioning, jobs, and telemetry export state.
+
+## Follow-On Handoff
+
+These seams are now considered stable for downstream implementation plans:
+
+- Shared auth/RBAC should build on the enterprise-only `identity` and `audit` schema boundaries from Phase 4, plus the request-context scope bindings and tenancy keys already exposed in the runtime container.
+- Session intelligence should keep `session_messages` and derived transcript facts as inherited-from-parent entities. Do not add direct ownership columns to transcript rows or derived intelligence facts.
+- Local mode remains a cache-oriented SQLite posture; enterprise mode remains the canonical Postgres posture. Follow-on plans should not reopen that split.
+- Hosted API runtimes stay stateless. Worker-owned ingestion is optional and explicit, and health now reports whether sync is merely supported or actually provisioned.
+- Shared Postgres remains valid only behind an explicit schema or tenant boundary. No follow-on plan may couple CCDash tables directly to external app schemas.
 
 ## Domain Ownership Matrix
 

@@ -24,6 +24,7 @@ from backend.application.live_updates.runtime_state import set_live_event_publis
 from backend.application.ports import CorePorts
 from backend import config
 from backend.db import connection, migrations, sync_engine
+from backend.db.migration_governance import resolve_storage_composition_contract, validate_migration_governance_contract
 from backend.db.factory import get_telemetry_queue_repository
 from backend.observability import initialize as initialize_observability, shutdown as shutdown_observability
 from backend.observability import otel as observability
@@ -282,8 +283,10 @@ class RuntimeContainer:
 
     def runtime_status(self) -> dict[str, Any]:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
+        validate_migration_governance_contract()
         runtime_contract = get_runtime_storage_contract(self.profile)
         storage_contract = get_storage_capability_contract(self.storage_profile)
+        storage_composition = resolve_storage_composition_contract(self.storage_profile)
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -301,7 +304,9 @@ class RuntimeContainer:
             "storageMode": storage_contract.mode,
             "storageProfile": self.storage_profile.profile,
             "storageBackend": self.storage_profile.db_backend,
+            "storageComposition": storage_composition.composition,
             "storageCanonicalStore": storage_contract.canonical_store,
+            "auditStore": storage_contract.audit_store,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
             "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
@@ -310,6 +315,7 @@ class RuntimeContainer:
             "storageSchema": self.storage_profile.schema_name,
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
             "requiredStorageGuarantees": storage_contract.required_guarantees,
+            "migrationGovernanceStatus": "verified",
             "syncProvisioned": self.sync is not None,
         }
         if self.job_adapter is not None:

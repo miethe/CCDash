@@ -89,10 +89,12 @@ Router integration:
 - `storageMode`
 - `storageProfile`
 - `storageBackend`
+- `storageComposition`
 - `recommendedStorageProfile`
 - `supportedStorageProfiles`
 - `watchEnabled`
 - `syncEnabled`
+- `syncProvisioned`
 - `jobsEnabled`
 - `telemetryExports`
 - `filesystemSourceOfTruth`
@@ -100,12 +102,14 @@ Router integration:
 - `storageIsolationMode`
 - `supportedStorageIsolationModes`
 - `storageCanonicalStore`
+- `auditStore`
 - `storageSchema`
 - `canonicalSessionStore`
+- `migrationGovernanceStatus`
 - `requiredStorageGuarantees`
 - `supportedStorageCompositions`
 
-The Ops panel renders these fields in a compact runtime/storage capability section so operators can confirm the deployment posture at a glance. That section is meant to answer three questions quickly: which storage profile is active, whether the runtime should be running background work, and whether the current Postgres posture matches the intended isolation model.
+The Ops panel renders these fields in a compact runtime/storage capability section so operators can confirm the deployment posture at a glance. That section is meant to answer four questions quickly: which storage profile and composition are active, whether the runtime should be running background work, whether sync is actually provisioned, and whether the current Postgres posture matches the intended isolation model.
 
 `GET /api/cache/status` now includes:
 
