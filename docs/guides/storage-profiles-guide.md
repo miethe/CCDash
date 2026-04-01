@@ -112,6 +112,8 @@ These seams are now considered stable for downstream implementation plans:
 - Hosted API runtimes stay stateless. Worker-owned ingestion is optional and explicit, and health now reports whether sync is merely supported or actually provisioned.
 - Shared Postgres remains valid only behind an explicit schema or tenant boundary. No follow-on plan may couple CCDash tables directly to external app schemas.
 
+See [docs/guides/data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md) for the Phase 6 rollout summary, operator validation contract, and downstream plan links.
+
 ## Domain Ownership Matrix
 
 Phase 1 freezes the ownership vocabulary for the existing persisted concerns. This is a classification contract, not a claim that every future enterprise domain already has tables.

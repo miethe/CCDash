@@ -8,17 +8,20 @@ prd_ref: /docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 phase: 5
 title: "Migration Governance and Sync Boundary Refactor"
-status: "in_progress"
+status: "completed"
 started: "2026-04-01"
-completed: null
-commit_refs: []
+completed: "2026-04-01"
+commit_refs:
+  - "939c681"
+  - "e7b9282"
+  - "8f26579"
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "phase initialized; implementation batches pending"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +32,7 @@ contributors: ["codex"]
 tasks:
   - id: "DPM-401"
     description: "Add shared migration metadata, capability tables, or verification hooks that make SQLite/Postgres support explicit instead of parity-by-convention."
-    status: "pending"
+    status: "completed"
     assigned_to: ["data-layer-expert"]
     dependencies: ["DPM-203"]
     estimated_effort: "3pt"
@@ -37,7 +40,7 @@ tasks:
 
   - id: "DPM-402"
     description: "Expand backend/verify_db_layer.py and automated tests to validate local SQLite, dedicated enterprise Postgres, and shared-instance enterprise posture."
-    status: "pending"
+    status: "completed"
     assigned_to: ["qa-engineer", "python-backend-engineer"]
     dependencies: ["DPM-401"]
     estimated_effort: "3pt"
@@ -45,7 +48,7 @@ tasks:
 
   - id: "DPM-403"
     description: "Refactor sync and ingestion assumptions so backend/db/sync_engine.py is an adapter capability, not a universal API runtime assumption."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer", "data-layer-expert"]
     dependencies: ["DPM-102"]
     estimated_effort: "4pt"
@@ -66,6 +69,12 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-5-progress.md"
+  - "backend/verify_db_layer.py"
+  - "backend/tests/test_verify_db_layer.py"
+  - "backend/runtime/container.py"
+  - "backend/runtime/bootstrap.py"
+  - "backend/adapters/jobs/runtime.py"
+  - "backend/tests/test_runtime_bootstrap.py"
 ---
 
 # data-platform-modularization-v1 - Phase 5
@@ -95,8 +104,12 @@ Task("python-backend-engineer", "Execute DPM-403: make sync/ingestion an adapter
 
 ## Completion Notes
 
-- Pending execution.
+- Confirmed the migration-governance manifest was already codified in `backend/db/migration_governance.py` and carried that contract forward as the machine-checkable source of truth for supported storage compositions.
+- Rewrote `backend/verify_db_layer.py` around explicit storage compositions so local SQLite, dedicated enterprise Postgres, and shared-enterprise posture validate cleanly without a live Postgres dependency in focused tests.
+- Gated `SyncEngine` provisioning by runtime/storage contract so local mode keeps sync/watch behavior while hosted API runtimes no longer assume a filesystem-ingestion adapter is present.
 
 ## Validation Notes
 
-- Pending execution.
+- `backend/.venv/bin/python -m pytest backend/tests/test_verify_db_layer.py backend/tests/test_migration_governance.py -q` -> `16 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py -q` -> `28 passed`
+- `python -m compileall backend/verify_db_layer.py backend/runtime/container.py backend/adapters/jobs/runtime.py backend/runtime/bootstrap.py` -> `compiled successfully`

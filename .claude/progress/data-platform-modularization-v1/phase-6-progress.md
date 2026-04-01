@@ -8,17 +8,18 @@ prd_ref: /docs/project_plans/PRDs/refactors/data-platform-modularization-v1.md
 plan_ref: /docs/project_plans/implementation_plans/refactors/data-platform-modularization-v1.md
 phase: 6
 title: "Rollout, Validation, and Handoff"
-status: "pending"
-started: null
-completed: null
-commit_refs: []
+status: "completed"
+started: "2026-04-01"
+completed: "2026-04-01"
+commit_refs:
+  - "5f7ed38"
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "phase not started"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +30,7 @@ contributors: ["codex"]
 tasks:
   - id: "DPM-501"
     description: "Define and validate the migration path for existing local SQLite users, including any backfill or compatibility requirements introduced by the new domain ownership model."
-    status: "pending"
+    status: "completed"
     assigned_to: ["qa-engineer", "data-layer-expert"]
     dependencies: ["DPM-402"]
     estimated_effort: "3pt"
@@ -37,7 +38,7 @@ tasks:
 
   - id: "DPM-502"
     description: "Add bootstrap documentation and observability for schema selection, migration status, audit writes, and misconfigured storage-profile combinations."
-    status: "pending"
+    status: "completed"
     assigned_to: ["backend-architect", "documentation-writer"]
     dependencies: ["DPM-402"]
     estimated_effort: "3pt"
@@ -45,7 +46,7 @@ tasks:
 
   - id: "DPM-503"
     description: "Document the stable seams and explicit assumptions for shared-auth/RBAC and session-intelligence canonical storage follow-on work."
-    status: "pending"
+    status: "completed"
     assigned_to: ["documentation-writer", "backend-architect"]
     dependencies: ["DPM-302"]
     estimated_effort: "2pt"
@@ -66,6 +67,16 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/data-platform-modularization-v1/phase-6-progress.md"
+  - "backend/db/migration_governance.py"
+  - "backend/runtime/container.py"
+  - "backend/runtime/bootstrap.py"
+  - "backend/tests/test_migration_governance.py"
+  - "backend/tests/test_runtime_bootstrap.py"
+  - "backend/verify_db_layer.py"
+  - "docs/guides/storage-profiles-guide.md"
+  - "docs/setup-user-guide.md"
+  - "docs/ops-panel-developer-reference.md"
+  - "docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md"
 ---
 
 # data-platform-modularization-v1 - Phase 6
@@ -95,8 +106,11 @@ Task("documentation-writer", "Execute DPM-503: document stable seams and assumpt
 
 ## Completion Notes
 
-- Pending execution.
+- Documented the local SQLite upgrade path explicitly: local installs stay on the `local` profile, run migrations in place, and do not backfill enterprise-only identity or audit tables into SQLite.
+- Extended runtime health so operators can inspect `storageComposition`, `auditStore`, `migrationGovernanceStatus`, and `syncProvisioned` alongside the existing storage-profile fields.
+- Added the follow-on handoff artifacts for both downstream tracks: stable shared-auth/RBAC seams in the storage-profile guide and a dedicated `session-intelligence-canonical-storage-v1` implementation plan for canonical transcript follow-on work.
 
 ## Validation Notes
 
-- Pending execution.
+- `backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py backend/tests/test_migration_governance.py backend/tests/test_verify_db_layer.py -q` -> `45 passed`
+- `python -m compileall backend/db/migration_governance.py backend/runtime/container.py backend/runtime/bootstrap.py backend/verify_db_layer.py` -> `compiled successfully`
