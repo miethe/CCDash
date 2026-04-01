@@ -22,7 +22,16 @@ SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES: tuple[str, ...] = (
 )
 _SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES_SET = frozenset(SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES)
 
-_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\);", re.DOTALL)
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE TABLE IF NOT EXISTS\s+"
+    r"(?:(?P<schema>[a-zA-Z_][a-zA-Z0-9_]*)\.)?"
+    r"(?P<table>[a-zA-Z_][a-zA-Z0-9_]*)\s*"
+    r"\((?P<body>.*?)\);",
+    re.DOTALL,
+)
+
+_IDENTITY_ACCESS_CONCERNS = frozenset({"principals", "scope_identifiers", "memberships", "role_bindings"})
+_AUDIT_SECURITY_CONCERNS = frozenset({"privileged_action_audit_records", "access_decision_logs"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +96,17 @@ SUPPORTED_STORAGE_COMPOSITIONS: tuple[StorageCompositionContract, ...] = (
 
 
 def _extract_table_blocks(ddl: str) -> dict[str, str]:
-    return {table: block for table, block in _CREATE_TABLE_RE.findall(ddl)}
+    blocks: dict[str, str] = {}
+    for match in _CREATE_TABLE_RE.finditer(ddl):
+        blocks[match.group("table")] = match.group("body")
+    return blocks
+
+
+def _extract_table_schema_map(ddl: str) -> dict[str, str | None]:
+    schema_map: dict[str, str | None] = {}
+    for match in _CREATE_TABLE_RE.finditer(ddl):
+        schema_map[match.group("table")] = match.group("schema")
+    return schema_map
 
 
 def _backend_table_blocks(module: object) -> dict[str, str]:
@@ -111,6 +130,14 @@ def _enterprise_only_table_blocks(module: object) -> dict[str, str]:
     return blocks
 
 
+def _enterprise_only_table_schema_map(module: object) -> dict[str, str | None]:
+    schema_map: dict[str, str | None] = {}
+    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
+    if isinstance(enterprise, str):
+        schema_map.update(_extract_table_schema_map(enterprise))
+    return schema_map
+
+
 @lru_cache(maxsize=1)
 def get_sqlite_migration_tables() -> frozenset[str]:
     return frozenset(_backend_table_blocks(sqlite_migrations))
@@ -126,6 +153,14 @@ def get_postgres_migration_tables() -> frozenset[str]:
 def get_enterprise_only_postgres_tables() -> frozenset[str]:
     """Return tables that exist only in enterprise Postgres, not in SQLite."""
     return frozenset(_enterprise_only_table_blocks(postgres_migrations))
+
+
+@lru_cache(maxsize=1)
+def get_enterprise_only_postgres_table_schemas() -> dict[str, str]:
+    """Return enterprise-only table -> schema mapping."""
+    schema_map = _enterprise_only_table_schema_map(postgres_migrations)
+    # Enterprise-only concerns must always be schema-qualified.
+    return {table: schema or "" for table, schema in schema_map.items()}
 
 
 def _difference_categories(sqlite_block: str, postgres_block: str) -> tuple[str, ...]:
@@ -185,6 +220,22 @@ def validate_migration_governance_contract() -> None:
         raise RuntimeError(
             "Enterprise-only Postgres tables must match planned identity/audit concerns. "
             f"missing={missing} extra={extra}"
+        )
+
+    schema_map = get_enterprise_only_postgres_table_schemas()
+    if frozenset(schema_map) != expected_enterprise:
+        missing_schema = sorted(expected_enterprise - frozenset(schema_map))
+        extra_schema = sorted(frozenset(schema_map) - expected_enterprise)
+        raise RuntimeError(
+            "Enterprise-only Postgres schema map must match planned identity/audit concerns. "
+            f"missing={missing_schema} extra={extra_schema}"
+        )
+    expected_schema_map = {concern: "identity" for concern in _IDENTITY_ACCESS_CONCERNS}
+    expected_schema_map.update({concern: "audit" for concern in _AUDIT_SECURITY_CONCERNS})
+    if schema_map != expected_schema_map:
+        raise RuntimeError(
+            "Enterprise-only Postgres tables are not in the expected schemas. "
+            f"actual={schema_map} expected={expected_schema_map}"
         )
 
     # Backend difference matrix classifies only the shared tables.

@@ -14,7 +14,9 @@ from backend.db.migration_governance import (
 )
 
 
-_CREATE_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE TABLE IF NOT EXISTS\s+(?:(?:[a-zA-Z_][a-zA-Z0-9_]*)\.)?([a-zA-Z_][a-zA-Z0-9_]*)"
+)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

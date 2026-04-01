@@ -983,8 +983,10 @@ _ENTERPRISE_IDENTITY_AUDIT_TABLES = """
 -- ── Enterprise-Only: Identity & Access ────────────────────────────
 -- These tables exist only in enterprise Postgres mode.
 -- SQLite local mode intentionally does not include identity or audit concerns.
+CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS audit;
 
-CREATE TABLE IF NOT EXISTS principals (
+CREATE TABLE IF NOT EXISTS identity.principals (
     id              TEXT PRIMARY KEY,
     principal_type  TEXT NOT NULL,
     external_id     TEXT DEFAULT '',
@@ -997,16 +999,16 @@ CREATE TABLE IF NOT EXISTS principals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_principals_type
-    ON principals(principal_type, status);
+    ON identity.principals(principal_type, status);
 CREATE INDEX IF NOT EXISTS idx_principals_external
-    ON principals(external_id) WHERE external_id != '';
+    ON identity.principals(external_id) WHERE external_id != '';
 CREATE INDEX IF NOT EXISTS idx_principals_email
-    ON principals(email) WHERE email != '';
+    ON identity.principals(email) WHERE email != '';
 
-CREATE TABLE IF NOT EXISTS scope_identifiers (
+CREATE TABLE IF NOT EXISTS identity.scope_identifiers (
     id              TEXT PRIMARY KEY,
     scope_type      TEXT NOT NULL,
-    parent_scope_id TEXT REFERENCES scope_identifiers(id),
+    parent_scope_id TEXT REFERENCES identity.scope_identifiers(id),
     display_name    TEXT DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'active',
     metadata_json   JSONB DEFAULT '{}'::jsonb,
@@ -1015,14 +1017,14 @@ CREATE TABLE IF NOT EXISTS scope_identifiers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scope_identifiers_type
-    ON scope_identifiers(scope_type, status);
+    ON identity.scope_identifiers(scope_type, status);
 CREATE INDEX IF NOT EXISTS idx_scope_identifiers_parent
-    ON scope_identifiers(parent_scope_id) WHERE parent_scope_id IS NOT NULL;
+    ON identity.scope_identifiers(parent_scope_id) WHERE parent_scope_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS memberships (
+CREATE TABLE IF NOT EXISTS identity.memberships (
     id              TEXT PRIMARY KEY,
-    principal_id    TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-    scope_id        TEXT NOT NULL REFERENCES scope_identifiers(id) ON DELETE CASCADE,
+    principal_id    TEXT NOT NULL REFERENCES identity.principals(id) ON DELETE CASCADE,
+    scope_id        TEXT NOT NULL REFERENCES identity.scope_identifiers(id) ON DELETE CASCADE,
     membership_type TEXT NOT NULL DEFAULT 'member',
     status          TEXT NOT NULL DEFAULT 'active',
     granted_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -1034,16 +1036,16 @@ CREATE TABLE IF NOT EXISTS memberships (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memberships_principal
-    ON memberships(principal_id, status);
+    ON identity.memberships(principal_id, status);
 CREATE INDEX IF NOT EXISTS idx_memberships_scope
-    ON memberships(scope_id, status);
+    ON identity.memberships(scope_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_unique
-    ON memberships(principal_id, scope_id, membership_type);
+    ON identity.memberships(principal_id, scope_id, membership_type);
 
-CREATE TABLE IF NOT EXISTS role_bindings (
+CREATE TABLE IF NOT EXISTS identity.role_bindings (
     id              TEXT PRIMARY KEY,
-    principal_id    TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-    scope_id        TEXT NOT NULL REFERENCES scope_identifiers(id) ON DELETE CASCADE,
+    principal_id    TEXT NOT NULL REFERENCES identity.principals(id) ON DELETE CASCADE,
+    scope_id        TEXT NOT NULL REFERENCES identity.scope_identifiers(id) ON DELETE CASCADE,
     role            TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active',
     granted_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -1055,15 +1057,15 @@ CREATE TABLE IF NOT EXISTS role_bindings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_role_bindings_principal
-    ON role_bindings(principal_id, status);
+    ON identity.role_bindings(principal_id, status);
 CREATE INDEX IF NOT EXISTS idx_role_bindings_scope
-    ON role_bindings(scope_id, role, status);
+    ON identity.role_bindings(scope_id, role, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_role_bindings_unique
-    ON role_bindings(principal_id, scope_id, role);
+    ON identity.role_bindings(principal_id, scope_id, role);
 
 -- ── Enterprise-Only: Audit & Security ─────────────────────────────
 
-CREATE TABLE IF NOT EXISTS privileged_action_audit_records (
+CREATE TABLE IF NOT EXISTS audit.privileged_action_audit_records (
     id              TEXT PRIMARY KEY,
     actor_id        TEXT NOT NULL,
     scope_id        TEXT NOT NULL,
@@ -1080,15 +1082,15 @@ CREATE TABLE IF NOT EXISTS privileged_action_audit_records (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_records_actor
-    ON privileged_action_audit_records(actor_id, occurred_at DESC);
+    ON audit.privileged_action_audit_records(actor_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_records_scope
-    ON privileged_action_audit_records(scope_id, occurred_at DESC);
+    ON audit.privileged_action_audit_records(scope_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_records_action
-    ON privileged_action_audit_records(action, occurred_at DESC);
+    ON audit.privileged_action_audit_records(action, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_records_resource
-    ON privileged_action_audit_records(resource_type, resource_id, occurred_at DESC);
+    ON audit.privileged_action_audit_records(resource_type, resource_id, occurred_at DESC);
 
-CREATE TABLE IF NOT EXISTS access_decision_logs (
+CREATE TABLE IF NOT EXISTS audit.access_decision_logs (
     id               TEXT PRIMARY KEY,
     principal_id     TEXT NOT NULL,
     scope_id         TEXT NOT NULL,
@@ -1104,13 +1106,13 @@ CREATE TABLE IF NOT EXISTS access_decision_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_access_logs_principal
-    ON access_decision_logs(principal_id, occurred_at DESC);
+    ON audit.access_decision_logs(principal_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_access_logs_scope
-    ON access_decision_logs(scope_id, occurred_at DESC);
+    ON audit.access_decision_logs(scope_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_access_logs_resource
-    ON access_decision_logs(resource_type, resource_id, occurred_at DESC);
+    ON audit.access_decision_logs(resource_type, resource_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_access_logs_decision
-    ON access_decision_logs(decision, occurred_at DESC);
+    ON audit.access_decision_logs(decision, occurred_at DESC);
 """
 
 _SEED_METRIC_TYPES = """

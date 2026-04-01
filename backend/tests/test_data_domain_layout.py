@@ -13,6 +13,7 @@ from backend.data_domains import (
     PLANNED_AUTH_AUDIT_CONCERNS,
     PERSISTED_CONCERN_OWNERSHIP,
 )
+from backend.db.migration_governance import get_enterprise_only_postgres_table_schemas
 
 
 class DataDomainLayoutTests(unittest.TestCase):
@@ -84,6 +85,16 @@ class DataDomainLayoutTests(unittest.TestCase):
                 self.assertFalse(ownership.directly_ownable_concerns)
                 self.assertEqual(ownership.tenancy_scope_column, "")
                 self.assertEqual(ownership.direct_ownership_columns, ())
+
+    def test_enterprise_only_tables_align_with_boundary_schemas(self) -> None:
+        schema_map = get_enterprise_only_postgres_table_schemas()
+        identity_boundary = SCHEMA_BOUNDARIES["identity_access"]
+        audit_boundary = SCHEMA_BOUNDARIES["audit_security"]
+
+        for concern in identity_boundary.planned_tables:
+            self.assertEqual(schema_map[concern], identity_boundary.postgres_schema)
+        for concern in audit_boundary.planned_tables:
+            self.assertEqual(schema_map[concern], audit_boundary.postgres_schema)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from backend.db.migration_governance import (
     BACKEND_SCHEMA_CAPABILITIES,
     SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES,
     SUPPORTED_STORAGE_COMPOSITIONS,
+    get_enterprise_only_postgres_table_schemas,
     get_enterprise_only_postgres_tables,
     get_postgres_migration_tables,
     get_sqlite_migration_tables,
@@ -32,6 +33,18 @@ class MigrationGovernanceTests(unittest.TestCase):
     def test_enterprise_only_tables_match_planned_concerns(self) -> None:
         enterprise_only = get_enterprise_only_postgres_tables()
         self.assertSetEqual(enterprise_only, set(PLANNED_AUTH_AUDIT_CONCERNS))
+
+    def test_enterprise_only_tables_are_in_expected_schemas(self) -> None:
+        schema_map = get_enterprise_only_postgres_table_schemas()
+        expected = {
+            "principals": "identity",
+            "scope_identifiers": "identity",
+            "memberships": "identity",
+            "role_bindings": "identity",
+            "privileged_action_audit_records": "audit",
+            "access_decision_logs": "audit",
+        }
+        self.assertEqual(schema_map, expected)
 
     def test_postgres_tables_are_superset_of_sqlite(self) -> None:
         sqlite_tables = get_sqlite_migration_tables()
