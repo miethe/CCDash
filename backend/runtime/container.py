@@ -9,7 +9,16 @@ from fastapi import FastAPI
 
 from backend.adapters.live_updates import InMemoryLiveEventBroker
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
-from backend.application.context import RequestContext, RequestMetadata, ScopeBinding, StorageScope, TraceContext
+from backend.application.context import (
+    EnterpriseScope,
+    RequestContext,
+    RequestMetadata,
+    ScopeBinding,
+    StorageScope,
+    TeamScope,
+    TenancyContext,
+    TraceContext,
+)
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
 from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
@@ -138,12 +147,77 @@ class RuntimeContainer:
 
         request_id = self._header(metadata, "x-request-id") or self._header(metadata, "x-correlation-id") or str(uuid4())
         correlation_id = self._header(metadata, "x-correlation-id") or request_id
+
+        # --- Enterprise / team scope resolution (DPM-303) ---
+        # In local mode these remain None; enterprise mode resolves from
+        # storage profile and request headers.
+        enterprise_scope: EnterpriseScope | None = None
+        team_scope: TeamScope | None = None
+
+        storage_enterprise_id: str | None = (
+            self.storage_profile.schema_name
+            if self.storage_profile.profile == "enterprise"
+            else None
+        )
+        storage_tenant_id: str | None = (
+            self.storage_profile.schema_name
+            if self.storage_profile.isolation_mode == "tenant"
+            else None
+        )
+
+        # Enterprise scope: present whenever the storage profile is enterprise.
+        header_enterprise_id = self._header(metadata, "x-ccdash-enterprise-id")
+        resolved_enterprise_id = header_enterprise_id or storage_enterprise_id
+        if resolved_enterprise_id is not None:
+            enterprise_scope = EnterpriseScope(
+                enterprise_id=resolved_enterprise_id,
+                display_name=self._header(metadata, "x-ccdash-enterprise-name") or "",
+            )
+
+        # Team scope: only when an explicit team header is provided within an
+        # enterprise boundary. Follow-on auth work will resolve this from
+        # token claims or membership lookups.
+        header_team_id = self._header(metadata, "x-ccdash-team-id")
+        if header_team_id is not None and resolved_enterprise_id is not None:
+            team_scope = TeamScope(
+                team_id=header_team_id,
+                enterprise_id=resolved_enterprise_id,
+                display_name=self._header(metadata, "x-ccdash-team-name") or "",
+            )
+
+        # --- Scope bindings chain: enterprise → team → workspace → project ---
         scope_bindings: list[ScopeBinding] = []
+        if enterprise_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="enterprise",
+                    scope_id=enterprise_scope.enterprise_id,
+                )
+            )
+        if team_scope is not None:
+            scope_bindings.append(
+                ScopeBinding(
+                    scope_type="team",
+                    scope_id=team_scope.team_id,
+                    parent_scope_type="enterprise",
+                    parent_scope_id=enterprise_scope.enterprise_id if enterprise_scope else None,
+                )
+            )
         if workspace_scope is not None:
+            parent_type: str | None = None
+            parent_id: str | None = None
+            if team_scope is not None:
+                parent_type = "team"
+                parent_id = team_scope.team_id
+            elif enterprise_scope is not None:
+                parent_type = "enterprise"
+                parent_id = enterprise_scope.enterprise_id
             scope_bindings.append(
                 ScopeBinding(
                     scope_type="workspace",
                     scope_id=workspace_scope.workspace_id,
+                    parent_scope_type=parent_type,
+                    parent_scope_id=parent_id,
                 )
             )
         if project_scope is not None:
@@ -155,6 +229,19 @@ class RuntimeContainer:
                     parent_scope_id=workspace_scope.workspace_id if workspace_scope is not None else None,
                 )
             )
+
+        # --- Tenancy context rollup (DPM-303) ---
+        # Bundles stable scope keys for follow-on auth/RBAC consumption.
+        tenancy = TenancyContext(
+            enterprise_id=resolved_enterprise_id,
+            team_id=team_scope.team_id if team_scope else None,
+            workspace_id=workspace_scope.workspace_id if workspace_scope else None,
+            project_id=project_scope.project_id if project_scope else None,
+            ownership_posture_default=(
+                "directly-ownable" if resolved_enterprise_id is not None else "scope-owned"
+            ),
+        )
+
         return RequestContext(
             principal=principal,
             workspace=workspace_scope,
@@ -170,11 +257,14 @@ class RuntimeContainer:
                 method=metadata.method,
             ),
             storage_scope=StorageScope(
-                enterprise_id=self.storage_profile.schema_name if self.storage_profile.profile == "enterprise" else None,
-                tenant_id=self.storage_profile.schema_name if self.storage_profile.isolation_mode == "tenant" else None,
+                enterprise_id=storage_enterprise_id,
+                tenant_id=storage_tenant_id,
                 isolation_mode=self.storage_profile.isolation_mode,
             ),
             scope_bindings=tuple(scope_bindings),
+            enterprise=enterprise_scope,
+            team=team_scope,
+            tenancy=tenancy,
         )
 
     def runtime_status(self) -> dict[str, Any]:

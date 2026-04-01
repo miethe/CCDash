@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from backend.application.context import RequestContext, RequestMetadata, TraceContext
+from backend.application.context import RequestContext, RequestMetadata, TenancyContext, TraceContext
 from backend.application.ports import CorePorts
 from backend.models import Project
 from backend.runtime_ports import build_core_ports
@@ -65,6 +65,10 @@ async def build_compat_request_context(
             correlation_id=request_id,
             path="",
             method="INTERNAL",
+        ),
+        tenancy=TenancyContext(
+            workspace_id=workspace_scope.workspace_id if workspace_scope else None,
+            project_id=project_scope.project_id if project_scope else None,
         ),
     )
 

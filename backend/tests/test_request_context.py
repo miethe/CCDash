@@ -12,7 +12,18 @@ from backend.adapters.jobs.local import InProcessJobScheduler
 from backend.adapters.integrations.local import NoopIntegrationClient
 from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.adapters.workspaces.local import ProjectManagerWorkspaceRegistry
-from backend.application.context import Principal, RequestContext, RequestMetadata, TraceContext
+from backend.application.context import (
+    EnterpriseScope,
+    OwnershipResolutionHint,
+    Principal,
+    RequestContext,
+    RequestMetadata,
+    ScopeBinding,
+    StorageScope,
+    TeamScope,
+    TenancyContext,
+    TraceContext,
+)
 from backend.application.ports import CorePorts
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.project_manager import ProjectManager
@@ -211,3 +222,355 @@ class RequestContextRouteIntegrationTests(unittest.TestCase):
         dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
 
         self.assertIn(get_core_ports, dependency_calls)
+
+
+class TenancyContextContractTests(unittest.TestCase):
+    """DPM-303 — Tenancy, scope, and ownership contract through context seams."""
+
+    def test_tenancy_context_defaults_to_local_mode(self) -> None:
+        tenancy = TenancyContext()
+
+        self.assertIsNone(tenancy.enterprise_id)
+        self.assertIsNone(tenancy.team_id)
+        self.assertIsNone(tenancy.workspace_id)
+        self.assertIsNone(tenancy.project_id)
+        self.assertFalse(tenancy.is_enterprise_scoped)
+        self.assertFalse(tenancy.is_team_scoped)
+        self.assertEqual(tenancy.scope_depth, 0)
+        self.assertEqual(tenancy.scope_chain, ())
+        self.assertEqual(tenancy.ownership_posture_default, "scope-owned")
+
+    def test_tenancy_context_enterprise_scoped(self) -> None:
+        tenancy = TenancyContext(
+            enterprise_id="ent-1",
+            workspace_id="ws-1",
+            project_id="proj-1",
+            ownership_posture_default="directly-ownable",
+        )
+
+        self.assertTrue(tenancy.is_enterprise_scoped)
+        self.assertFalse(tenancy.is_team_scoped)
+        self.assertEqual(tenancy.scope_depth, 3)
+        self.assertEqual(
+            tenancy.scope_chain,
+            (("enterprise", "ent-1"), ("workspace", "ws-1"), ("project", "proj-1")),
+        )
+        self.assertEqual(tenancy.ownership_posture_default, "directly-ownable")
+
+    def test_tenancy_context_full_hierarchy(self) -> None:
+        tenancy = TenancyContext(
+            enterprise_id="ent-1",
+            team_id="team-alpha",
+            workspace_id="ws-1",
+            project_id="proj-1",
+        )
+
+        self.assertTrue(tenancy.is_enterprise_scoped)
+        self.assertTrue(tenancy.is_team_scoped)
+        self.assertEqual(tenancy.scope_depth, 4)
+        self.assertEqual(
+            tenancy.scope_chain,
+            (
+                ("enterprise", "ent-1"),
+                ("team", "team-alpha"),
+                ("workspace", "ws-1"),
+                ("project", "proj-1"),
+            ),
+        )
+
+    def test_request_context_is_local_mode(self) -> None:
+        context = RequestContext(
+            principal=Principal(subject="local:local-operator", display_name="Local Operator", auth_mode="local"),
+            workspace=None,
+            project=None,
+            runtime_profile="local",
+            trace=TraceContext(request_id="req-1"),
+        )
+
+        self.assertTrue(context.is_local_mode)
+        self.assertIsNone(context.enterprise)
+        self.assertIsNone(context.team)
+        self.assertIsNone(context.effective_enterprise_id)
+        self.assertIsNone(context.effective_tenant_id)
+
+    def test_request_context_enterprise_mode_from_enterprise_scope(self) -> None:
+        context = RequestContext(
+            principal=Principal(subject="oidc:user-1", display_name="User One", auth_mode="oidc"),
+            workspace=None,
+            project=None,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-1"),
+            enterprise=EnterpriseScope(enterprise_id="ent-abc"),
+            tenancy=TenancyContext(enterprise_id="ent-abc"),
+        )
+
+        self.assertFalse(context.is_local_mode)
+        self.assertEqual(context.effective_enterprise_id, "ent-abc")
+
+    def test_request_context_enterprise_mode_from_storage_scope(self) -> None:
+        context = RequestContext(
+            principal=Principal(subject="oidc:user-1", display_name="User One", auth_mode="oidc"),
+            workspace=None,
+            project=None,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-1"),
+            storage_scope=StorageScope(enterprise_id="ent-storage"),
+        )
+
+        self.assertEqual(context.effective_enterprise_id, "ent-storage")
+
+    def test_request_context_tenant_id_prefers_storage_scope(self) -> None:
+        context = RequestContext(
+            principal=Principal(subject="oidc:user-1", display_name="User One", auth_mode="oidc"),
+            workspace=None,
+            project=None,
+            runtime_profile="api",
+            trace=TraceContext(request_id="req-1"),
+            storage_scope=StorageScope(enterprise_id="ent-1", tenant_id="tenant-x", isolation_mode="tenant"),
+            tenancy=TenancyContext(enterprise_id="ent-1"),
+        )
+
+        self.assertEqual(context.effective_tenant_id, "tenant-x")
+
+
+class OwnershipResolutionHintTests(unittest.TestCase):
+    """DPM-303 — Ownership resolution hints from request context."""
+
+    def _make_context(self, *, auth_mode: str = "local", enterprise_id: str | None = None) -> RequestContext:
+        return RequestContext(
+            principal=Principal(subject="test:user-1", display_name="Test User", auth_mode=auth_mode),
+            workspace=None,
+            project=None,
+            runtime_profile="test",
+            trace=TraceContext(request_id="req-1"),
+            enterprise=EnterpriseScope(enterprise_id=enterprise_id) if enterprise_id else None,
+            tenancy=TenancyContext(enterprise_id=enterprise_id),
+        )
+
+    def test_directly_ownable_defaults_to_principal(self) -> None:
+        context = self._make_context()
+        hint = context.ownership_hint_for_posture("directly-ownable")
+
+        self.assertEqual(hint.posture, "directly-ownable")
+        self.assertEqual(hint.owner_subject_type, "user")
+        self.assertEqual(hint.owner_subject_id, "test:user-1")
+
+    def test_inherits_parent_ownership(self) -> None:
+        context = self._make_context()
+        hint = context.ownership_hint_for_posture("inherits-parent-ownership")
+
+        self.assertEqual(hint.posture, "inherits-parent-ownership")
+        self.assertEqual(hint.inherited_from_scope_type, "parent_entity")
+        self.assertIsNone(hint.owner_subject_type)
+
+    def test_scope_owned_in_local_mode(self) -> None:
+        context = self._make_context()
+        hint = context.ownership_hint_for_posture("scope-owned")
+
+        self.assertEqual(hint.posture, "scope-owned")
+        self.assertEqual(hint.inherited_from_scope_type, "workspace")
+        self.assertIsNone(hint.owner_subject_type)
+
+    def test_scope_owned_in_enterprise_mode(self) -> None:
+        context = self._make_context(enterprise_id="ent-1")
+        hint = context.ownership_hint_for_posture("scope-owned")
+
+        self.assertEqual(hint.posture, "scope-owned")
+        self.assertEqual(hint.inherited_from_scope_type, "enterprise")
+        self.assertEqual(hint.inherited_from_scope_id, "ent-1")
+
+
+class TenancyContextRuntimeContainerTests(unittest.IsolatedAsyncioTestCase):
+    """DPM-303 — Verify container.build_request_context populates tenancy fields."""
+
+    async def test_local_mode_tenancy_has_no_enterprise_or_team(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("local"))
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=LocalIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                context = await container.build_request_context(
+                    RequestMetadata(
+                        headers={"x-request-id": "req-tenancy-local"},
+                        method="GET",
+                        path="/api/projects/active",
+                        client_host="127.0.0.1",
+                    )
+                )
+            finally:
+                await db.close()
+
+        self.assertIsNone(context.enterprise)
+        self.assertIsNone(context.team)
+        self.assertTrue(context.is_local_mode)
+        self.assertIsNone(context.tenancy.enterprise_id)
+        self.assertIsNone(context.tenancy.team_id)
+        self.assertIsNotNone(context.tenancy.workspace_id)
+        self.assertIsNotNone(context.tenancy.project_id)
+        self.assertEqual(context.tenancy.ownership_posture_default, "scope-owned")
+        self.assertEqual(context.tenancy.scope_depth, 2)
+        # Scope bindings should only have workspace and project (no enterprise/team)
+        binding_types = [b.scope_type for b in context.scope_bindings]
+        self.assertEqual(binding_types, ["workspace", "project"])
+
+    async def test_enterprise_mode_tenancy_populates_enterprise_scope(self) -> None:
+        """Simulate an enterprise-mode container by overriding the storage profile."""
+        from backend import config
+
+        enterprise_profile = config.StorageProfileConfig(
+            profile="enterprise",
+            db_backend="postgres",
+            database_url="postgresql://example/test",
+            filesystem_source_of_truth=False,
+            shared_postgres_enabled=False,
+            isolation_mode="dedicated",
+            schema_name="acme_corp",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("test"))
+                container.storage_profile = enterprise_profile
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=LocalIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                context = await container.build_request_context(
+                    RequestMetadata(
+                        headers={"x-request-id": "req-ent-1"},
+                        method="GET",
+                        path="/api/projects/active",
+                        client_host="127.0.0.1",
+                    )
+                )
+            finally:
+                await db.close()
+
+        self.assertIsNotNone(context.enterprise)
+        self.assertEqual(context.enterprise.enterprise_id, "acme_corp")
+        self.assertIsNone(context.team)
+        self.assertEqual(context.tenancy.enterprise_id, "acme_corp")
+        self.assertIsNone(context.tenancy.team_id)
+        self.assertEqual(context.tenancy.ownership_posture_default, "directly-ownable")
+        # Scope bindings should include enterprise
+        binding_types = [b.scope_type for b in context.scope_bindings]
+        self.assertIn("enterprise", binding_types)
+        self.assertEqual(binding_types[0], "enterprise")
+
+    async def test_enterprise_mode_with_team_header_populates_team_scope(self) -> None:
+        from backend import config
+
+        enterprise_profile = config.StorageProfileConfig(
+            profile="enterprise",
+            db_backend="postgres",
+            database_url="postgresql://example/test",
+            filesystem_source_of_truth=False,
+            shared_postgres_enabled=False,
+            isolation_mode="dedicated",
+            schema_name="acme_corp",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("test"))
+                container.storage_profile = enterprise_profile
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=LocalIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                context = await container.build_request_context(
+                    RequestMetadata(
+                        headers={
+                            "x-request-id": "req-team-1",
+                            "x-ccdash-team-id": "team-alpha",
+                            "x-ccdash-team-name": "Alpha Team",
+                        },
+                        method="GET",
+                        path="/api/sessions",
+                        client_host="127.0.0.1",
+                    )
+                )
+            finally:
+                await db.close()
+
+        self.assertIsNotNone(context.enterprise)
+        self.assertIsNotNone(context.team)
+        self.assertEqual(context.team.team_id, "team-alpha")
+        self.assertEqual(context.team.enterprise_id, "acme_corp")
+        self.assertEqual(context.team.display_name, "Alpha Team")
+        self.assertEqual(context.tenancy.team_id, "team-alpha")
+        self.assertTrue(context.tenancy.is_team_scoped)
+        # Scope bindings chain: enterprise → team → workspace → project
+        binding_types = [b.scope_type for b in context.scope_bindings]
+        self.assertEqual(binding_types[0], "enterprise")
+        self.assertEqual(binding_types[1], "team")
+        # Team binding parent is enterprise
+        team_binding = context.scope_bindings[1]
+        self.assertEqual(team_binding.parent_scope_type, "enterprise")
+        self.assertEqual(team_binding.parent_scope_id, "acme_corp")
+
+    async def test_team_header_ignored_without_enterprise_scope(self) -> None:
+        """Team scope requires an enterprise boundary — in local mode team headers are ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("local"))
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=LocalIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                context = await container.build_request_context(
+                    RequestMetadata(
+                        headers={
+                            "x-request-id": "req-local-team",
+                            "x-ccdash-team-id": "team-should-be-ignored",
+                        },
+                        method="GET",
+                        path="/api/projects/active",
+                        client_host="127.0.0.1",
+                    )
+                )
+            finally:
+                await db.close()
+
+        self.assertIsNone(context.enterprise)
+        self.assertIsNone(context.team)
+        self.assertIsNone(context.tenancy.team_id)
+        binding_types = [b.scope_type for b in context.scope_bindings]
+        self.assertNotIn("team", binding_types)
+        self.assertNotIn("enterprise", binding_types)
+
+
+class StorageScopeTests(unittest.TestCase):
+    """DPM-303 — StorageScope import needed for test_request_context_tenant_id_prefers_storage_scope."""
+
+    pass  # StorageScope is tested via the OwnershipResolutionHintTests and TenancyContextRuntimeContainerTests
