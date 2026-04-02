@@ -210,6 +210,7 @@ def _extract_bash_command(metadata: dict, tool_args: str | None) -> str:
     raw = metadata.get("bashCommand")
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
+    tool_args = tool_args or str(metadata.get("toolArgs") or "").strip() or None
     if not tool_args:
         return ""
     try:
@@ -261,8 +262,9 @@ def _subagent_type_from_logs(
     for row in logs:
         row_type = str(row.get("type") or "").strip().lower()
         metadata = _safe_json(row.get("metadata_json") or row.get("metadata"))
+        linked_session_id = str(row.get("linked_session_id") or row.get("linkedSessionId") or "").strip()
         if row_type == "subagent_start":
-            if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+            if linked_target and linked_session_id != linked_target:
                 continue
             for key in ("subagentType", "subagentName", "taskSubagentType"):
                 candidate = _normalize_subagent_type(metadata.get(key))
@@ -270,16 +272,27 @@ def _subagent_type_from_logs(
                     return candidate
         if row_type != "tool":
             continue
-        if linked_target and str(row.get("linked_session_id") or "").strip() != linked_target:
+        if linked_target and linked_session_id != linked_target:
             continue
         tool_name = row.get("tool_name")
+        if not tool_name:
+            tool_call = row.get("toolCall")
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get("name")
         if not _is_subagent_tool_name(tool_name):
             continue
         for key in ("taskSubagentType", "subagentType", "subagentName"):
             candidate = _normalize_subagent_type(metadata.get(key))
             if candidate:
                 return candidate
-        args = _parse_tool_args(row.get("tool_args"))
+        tool_args = row.get("tool_args")
+        if tool_args in (None, ""):
+            tool_args = metadata.get("toolArgs")
+        if tool_args in (None, ""):
+            tool_call = row.get("toolCall")
+            if isinstance(tool_call, dict):
+                tool_args = tool_call.get("args")
+        args = _parse_tool_args(tool_args)
         for key in ("subagent_type", "subagentType", "agent_name", "agentName"):
             candidate = _normalize_subagent_type(args.get(key))
             if candidate:
@@ -554,16 +567,16 @@ async def list_sessions(
         platform_type_value = str(s.get("platform_type") or "").strip() or "Claude Code"
         session_type_value = str(s.get("session_type") or "").strip().lower()
         session_id = str(s.get("id") or "").strip()
-        logs = await repo.get_logs(s["id"])
+        session_logs = await session_transcript_service.list_session_logs(s, core_ports)
         badge_data = derive_session_badges(
-            logs,
+            session_logs,
             primary_model=str(s.get("model") or ""),
             session_agent_id=s.get("agent_id"),
         )
         command_events: list[dict] = []
         latest_summary = ""
-        for log in logs:
-            metadata = _safe_json(log.get("metadata_json"))
+        for log in session_logs:
+            metadata = _safe_json(log.get("metadata_json") or log.get("metadata"))
             if log.get("type") == "command":
                 command_events.append({
                     "name": str(log.get("content") or "").strip(),
@@ -580,13 +593,16 @@ async def list_sessions(
             platform_type=platform_type_value,
         )
         model_identity = derive_model_identity(s.get("model"))
-        subagent_type = _subagent_type_from_logs(logs)
+        subagent_type = _subagent_type_from_logs(session_logs)
         if not subagent_type and session_type_value == "subagent":
             parent_session_id = str(s.get("parent_session_id") or "").strip()
             if parent_session_id:
                 parent_logs = parent_logs_cache.get(parent_session_id)
                 if parent_logs is None:
-                    parent_logs = await repo.get_logs(parent_session_id)
+                    parent_logs = await session_transcript_service.list_session_logs(
+                        {"id": parent_session_id},
+                        core_ports,
+                    )
                     parent_logs_cache[parent_session_id] = parent_logs
                 subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=session_id)
         thread_kind_value = _normalize_thread_kind(s)
@@ -731,10 +747,9 @@ async def get_session(
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
     # Fetch details
-    logs = await repo.get_logs(session_id)
     session_logs = await session_transcript_service.list_session_logs(s, core_ports)
     badge_data = derive_session_badges(
-        logs,
+        session_logs,
         primary_model=str(s.get("model") or ""),
         session_agent_id=s.get("agent_id"),
     )
@@ -794,7 +809,10 @@ async def get_session(
             if summary_text:
                 latest_summary = summary_text
         if tc and str(tc.get("name") or "").strip().lower() in _SHELL_TOOL_NAMES:
-            command_text = _extract_bash_command(metadata, l.get("tool_args"))
+            command_text = _extract_bash_command(
+                metadata,
+                l.get("tool_args") or (tc.get("args") if isinstance(tc, dict) else None),
+            )
             mapping = classify_bash_command(
                 command_text,
                 mappings,
@@ -837,11 +855,14 @@ async def get_session(
         or str(s.get("id") or "")
     )
     context_inheritance_value = _default_context_inheritance(thread_kind_value, s)
-    subagent_type = _subagent_type_from_logs(logs)
+    subagent_type = _subagent_type_from_logs(session_logs)
     if not subagent_type and session_type_value == "subagent":
         parent_session_id = str(s.get("parent_session_id") or "").strip()
         if parent_session_id:
-            parent_logs = await repo.get_logs(parent_session_id)
+            parent_logs = await session_transcript_service.list_session_logs(
+                {"id": parent_session_id},
+                core_ports,
+            )
             subagent_type = _subagent_type_from_logs(parent_logs, target_linked_session_id=str(s.get("id") or ""))
     session_title = _derive_session_title(
         session_metadata,

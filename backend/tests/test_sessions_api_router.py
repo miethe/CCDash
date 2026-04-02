@@ -318,6 +318,71 @@ class _FakeCanonicalSessionMessageRepo:
         ]
 
 
+class _FakeCanonicalCompatibilitySessionMessageRepo:
+    async def list_by_session(self, session_id):
+        if session_id == "S-main":
+            return [
+                {
+                    "message_index": 0,
+                    "source_log_id": "log-command",
+                    "message_id": "message-command",
+                    "role": "user",
+                    "message_type": "command",
+                    "content": "/dev:execute-phase",
+                    "event_timestamp": "2026-02-16T00:00:00Z",
+                    "agent_name": "Planner",
+                    "tool_name": None,
+                    "tool_call_id": None,
+                    "related_tool_call_id": "",
+                    "linked_session_id": "",
+                    "entry_uuid": "entry-command",
+                    "parent_entry_uuid": "",
+                    "source_provenance": "canonical_table",
+                    "metadata_json": "{\"args\":\"1 docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md\"}",
+                },
+                {
+                    "message_index": 1,
+                    "source_log_id": "log-tool",
+                    "message_id": "message-tool",
+                    "role": "assistant",
+                    "message_type": "tool",
+                    "content": "ran bash",
+                    "event_timestamp": "2026-02-16T00:00:01Z",
+                    "agent_name": "Planner",
+                    "tool_name": "bash",
+                    "tool_call_id": "tool-1",
+                    "related_tool_call_id": "",
+                    "linked_session_id": "",
+                    "entry_uuid": "entry-tool",
+                    "parent_entry_uuid": "entry-command",
+                    "source_provenance": "canonical_table",
+                    "metadata_json": "{\"toolArgs\":\"{\\\"cmd\\\":\\\"pytest\\\"}\",\"toolStatus\":\"success\"}",
+                },
+            ]
+        if session_id == "S-parent":
+            return [
+                {
+                    "message_index": 0,
+                    "source_log_id": "log-parent-tool",
+                    "message_id": "message-parent-tool",
+                    "role": "assistant",
+                    "message_type": "tool",
+                    "content": "",
+                    "event_timestamp": "2026-02-16T00:00:00Z",
+                    "agent_name": "Coordinator",
+                    "tool_name": "Task",
+                    "tool_call_id": "task-1",
+                    "related_tool_call_id": "",
+                    "linked_session_id": "S-main",
+                    "entry_uuid": "entry-parent-tool",
+                    "parent_entry_uuid": "",
+                    "source_provenance": "canonical_table",
+                    "metadata_json": "{\"toolArgs\":\"{\\\"subagent_type\\\":\\\"python-backend-engineer\\\"}\",\"toolStatus\":\"success\"}",
+                }
+            ]
+        return []
+
+
 class _FakeLinkRepo:
     async def get_links_for(self, entity_type, entity_id, link_type=None):
         return [
@@ -462,6 +527,26 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(from_own, "python-backend-engineer")
         self.assertEqual(from_parent, "python-backend-engineer")
 
+    def test_subagent_type_from_logs_accepts_normalized_transcript_payloads(self) -> None:
+        normalized_logs = [
+            {
+                "type": "tool",
+                "linkedSessionId": "S-agent-target",
+                "metadata": {},
+                "toolCall": {
+                    "name": "Task",
+                    "args": "{\"subagent_type\":\"python-backend-engineer\"}",
+                },
+            }
+        ]
+
+        resolved = api_router._subagent_type_from_logs(
+            normalized_logs,
+            target_linked_session_id="S-agent-target",
+        )
+
+        self.assertEqual(resolved, "python-backend-engineer")
+
     async def test_list_sessions_defaults_to_excluding_subagents(self) -> None:
         repo = _FakeRepo()
         project = types.SimpleNamespace(id="project-1")
@@ -486,6 +571,33 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.items[0].toolReportedTokens, 13)
         self.assertAlmostEqual(response.items[0].cacheShare, 0.8)
         self.assertAlmostEqual(response.items[0].outputShare, 0.5)
+
+    async def test_list_sessions_uses_canonical_logs_for_title_and_badges(self) -> None:
+        class _FakeCanonicalListRepo(_FakeRepo):
+            async def list_paginated(self, offset, limit, project_id, sort_by, sort_order, filters):
+                rows = await super().list_paginated(offset, limit, project_id, sort_by, sort_order, filters)
+                rows[0]["session_type"] = "subagent"
+                rows[0]["parent_session_id"] = "S-parent"
+                return rows
+
+        repo = _FakeCanonicalListRepo()
+        project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(
+            project=project,
+            session_repo=repo,
+            session_message_repo=_FakeCanonicalCompatibilitySessionMessageRepo(),
+        )
+
+        with patch.object(api_router, "load_session_mappings", return_value=[]):
+            response = await api_router.list_sessions(
+                include_subagents=True,
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
+
+        self.assertEqual(response.items[0].title, "python-backend-engineer")
+        self.assertEqual(response.items[0].agentsUsed, ["Planner"])
+        self.assertEqual(response.items[0].toolSummary, ["bash x1"])
 
     async def test_list_sessions_accepts_thread_filters(self) -> None:
         repo = _FakeRepo()
@@ -738,6 +850,43 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.logs[0].metadata.get("sourceProvenance"), "canonical_table")
         self.assertEqual(response.logs[0].metadata.get("entryUuid"), "entry-1")
         self.assertAlmostEqual(response.outputShare, 0.5)
+
+    async def test_get_session_uses_canonical_logs_for_title_and_badges(self) -> None:
+        class _FakeCanonicalFullSessionRepo(_FakeFullSessionRepo):
+            async def get_by_id(self, session_id):
+                if session_id == "S-main":
+                    row = await super().get_by_id(session_id)
+                    assert row is not None
+                    row["session_type"] = "subagent"
+                    row["parent_session_id"] = "S-parent"
+                    return row
+                if session_id == "S-parent":
+                    return {
+                        "id": "S-parent",
+                        "project_id": "project-1",
+                        "session_type": "session",
+                    }
+                return await super().get_by_id(session_id)
+
+        repo = _FakeCanonicalFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(
+            project=project,
+            session_repo=repo,
+            session_message_repo=_FakeCanonicalCompatibilitySessionMessageRepo(),
+        )
+
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(api_router, "usage_attribution_enabled", return_value=False):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
+
+        self.assertEqual(response.title, "python-backend-engineer")
+        self.assertEqual(response.agentsUsed, ["Planner"])
+        self.assertEqual(response.toolSummary, ["bash x1"])
+        self.assertEqual(len(response.logs), 2)
 
     async def test_get_session_linked_features_returns_scored_links(self) -> None:
         session_repo = _FakeSessionDetailRepo()
