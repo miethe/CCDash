@@ -55,12 +55,30 @@ Normalization happens before persistence when session logs are projected into ca
 4. Canonical `role` is derived from the parser log speaker, not stored ad hoc per platform.
 5. Provenance defaults are inferred from `platformType` only when explicit parser metadata does not already provide a source.
 
+## Embedding Block Strategy
+
+Phase 2 uses a mixed transcript block strategy so semantic search can stay precise without losing local context:
+
+| Block kind | Embedding unit | Purpose |
+| --- | --- | --- |
+| `message` | One substantive canonical `session_messages` row | Preserves exact source evidence for prompts, replies, and tool-bearing turns. |
+| `window` | Five consecutive canonical rows in the same session thread | Captures nearby context for search recall around decisions, corrections, and tool usage. |
+
+Block identity rules:
+
+1. Block hashes are content-addressed from session identity, block kind, ordered row membership, normalized content, provenance, role, message type, and canonical message IDs.
+2. Identical block hashes dedupe to one stored embedding row.
+3. When a canonical row changes, its direct message block is recomputed and any overlapping window block is regenerated with a new hash.
+4. Stale hashes are superseded, not mutated in place, so backfills remain restart-safe.
+5. The embedding table is enterprise-only; local SQLite keeps canonical transcript rows but does not require `pgvector` or materialize embeddings.
+
 ## Testing Expectations
 
-Phase 1 contract coverage must verify:
+Contract coverage must verify:
 
 1. canonical row projection preserves lineage and provenance;
 2. compatibility payloads still expose the current API speaker and metadata shape;
 3. parser-owned Claude and Codex logs stamp deterministic provenance, role, identity, and tool metadata before projection;
 4. platform-specific provenance defaults are deterministic when parser metadata is absent;
-5. canonical reads still fall back to legacy logs when no canonical rows exist.
+5. canonical reads still fall back to legacy logs when no canonical rows exist;
+6. the Phase 2 mixed block strategy stays deterministic, additive, and enterprise-scoped.

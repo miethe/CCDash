@@ -256,14 +256,24 @@ Non-negotiables:
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---|---|---|---|---:|---|---|
 | SICS-101 | Enterprise Canonical Write Path | Update enterprise ingest so Postgres `session_messages` is treated as the authoritative transcript target rather than a mirrored compatibility store. | Enterprise sync and transcript reads no longer depend on legacy `session_logs` as the primary source for supported session types. | 4 pts | data-layer-expert, python-backend-engineer | SICS-003 |
-| SICS-102 | Transcript Block Strategy | Define how transcript content is embedded: per-message, per-window, or mixed block strategy, including dedupe and refresh rules. | The plan identifies a stable embedding unit and reindexing rule that supports search quality and manageable cost. | 3 pts | backend-architect, data-layer-expert | SICS-001 |
+| SICS-102 | Transcript Block Strategy | Define a mixed embedding strategy with per-message canonical blocks plus windowed recall blocks, including dedupe and refresh rules. | The plan identifies stable embedding units, content-addressed dedupe, and a refresh/reindex rule that supports search quality and manageable cost. | 3 pts | backend-architect, data-layer-expert | SICS-001 |
 | SICS-103 | `pgvector` And Embedding Storage | Add enterprise-only migration support for `pgvector`, `session_embeddings`, and related indexes/capability checks while keeping local mode unaffected. | Enterprise Postgres can store and query embeddings; local SQLite remains supported without extension requirements. | 5 pts | data-layer-expert | SICS-101, SICS-102 |
 
 **Phase 2 Quality Gates**
 
 1. Enterprise transcript writes are canonical and backfillable.
-2. Embedding storage is additive, enterprise-scoped, and health-checkable.
+2. Embedding storage is additive, enterprise-scoped, content-addressed, and health-checkable.
 3. Local mode still runs without enterprise-only extension requirements.
+
+### Phase 2 Execution Notes
+
+1. The embedding unit is a mixed block model built from canonical `session_messages` rows:
+   - per-message blocks for every substantive canonical row, including user prompts, assistant replies, and tool-bearing turns;
+   - 5-row sliding window blocks for local transcript context and recall around decisions, corrections, and tool usage.
+2. Block identity is content-addressed. Each stored embedding is keyed by the session, block kind, ordered canonical row membership, normalized content, provenance, role, and message identity so identical inputs collapse to one row.
+3. Dedupe is deterministic. If a block hash already exists for the same session and block kind, the embedding row is skipped; a changed canonical input produces a new hash instead of mutating the previous one.
+4. Refresh and reindex are additive. When a canonical message changes, every direct message block is recomputed and every overlapping window block is regenerated with a new hash; stale hashes can be superseded without rewriting unrelated rows.
+5. The substrate stays enterprise-only. Local SQLite continues to read canonical transcript rows without requiring `pgvector`, and embedding materialization remains disabled outside the enterprise Postgres path.
 
 ## Phase 3: Intelligence Fact Pipelines
 
