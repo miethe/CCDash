@@ -1,6 +1,6 @@
 import unittest
 
-from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
+from backend.data_domains import ENTERPRISE_ONLY_POSTGRES_CONCERNS
 from backend.db.migration_governance import (
     BACKEND_SCHEMA_CAPABILITIES,
     SUPPORTED_BACKEND_DIFFERENCE_CATEGORIES,
@@ -34,11 +34,12 @@ class MigrationGovernanceTests(unittest.TestCase):
 
     def test_enterprise_only_tables_match_planned_concerns(self) -> None:
         enterprise_only = get_enterprise_only_postgres_tables()
-        self.assertSetEqual(enterprise_only, set(PLANNED_AUTH_AUDIT_CONCERNS))
+        self.assertSetEqual(enterprise_only, set(ENTERPRISE_ONLY_POSTGRES_CONCERNS))
 
     def test_enterprise_only_tables_are_in_expected_schemas(self) -> None:
         schema_map = get_enterprise_only_postgres_table_schemas()
         expected = {
+            "session_embeddings": "app",
             "principals": "identity",
             "scope_identifiers": "identity",
             "memberships": "identity",

@@ -297,6 +297,9 @@ class RuntimeContainer:
         audit_capability = (
             storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
         )
+        embedding_capability = (
+            storage_probe.storage.observed_product().session_embeddings().describe_capability()
+        )
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -321,6 +324,12 @@ class RuntimeContainer:
             "auditWriteAuthoritative": audit_capability.authoritative,
             "auditWriteStatus": "authoritative" if audit_capability.authoritative else "unsupported",
             "auditWriteNotes": audit_capability.notes,
+            "sessionEmbeddingWriteSupported": embedding_capability.supported,
+            "sessionEmbeddingWriteAuthoritative": embedding_capability.authoritative,
+            "sessionEmbeddingWriteStatus": (
+                "authoritative" if embedding_capability.authoritative else "unsupported"
+            ),
+            "sessionEmbeddingWriteNotes": embedding_capability.notes,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
             "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,

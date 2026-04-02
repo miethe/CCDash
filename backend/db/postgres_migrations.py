@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -1115,6 +1115,33 @@ CREATE INDEX IF NOT EXISTS idx_access_logs_decision
     ON audit.access_decision_logs(decision, occurred_at DESC);
 """
 
+_ENTERPRISE_SESSION_INTELLIGENCE_TABLES = """
+-- ── Enterprise-Only: Session Intelligence ─────────────────────────
+-- Transcript embedding storage is enterprise-only in Phase 2.
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE SCHEMA IF NOT EXISTS app;
+
+CREATE TABLE IF NOT EXISTS app.session_embeddings (
+    id                   BIGSERIAL PRIMARY KEY,
+    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    block_kind           TEXT NOT NULL,
+    block_index          INTEGER NOT NULL DEFAULT 0,
+    content_hash         TEXT NOT NULL,
+    message_ids_json     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    content              TEXT NOT NULL DEFAULT '',
+    embedding_model      TEXT NOT NULL DEFAULT '',
+    embedding_dimensions INTEGER NOT NULL DEFAULT 0,
+    embedding            vector,
+    metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_embeddings_content_hash
+    ON app.session_embeddings(session_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_session_embeddings_lookup
+    ON app.session_embeddings(session_id, block_kind, block_index);
+"""
+
 _SEED_METRIC_TYPES = """
 INSERT INTO metric_types (id, display_name, unit, value_type, aggregation, description) VALUES
     ('session_cost',        'Session Cost',      '$',       'gauge',   'sum',   'Total cost per session'),
@@ -1170,6 +1197,11 @@ async def _ensure_enterprise_identity_audit_tables(db: asyncpg.Connection) -> No
     await db.execute(_ENTERPRISE_IDENTITY_AUDIT_TABLES)
 
 
+async def _ensure_enterprise_session_intelligence_tables(db: asyncpg.Connection) -> None:
+    """Create enterprise-only session intelligence tables (idempotent)."""
+    await db.execute(_ENTERPRISE_SESSION_INTELLIGENCE_TABLES)
+
+
 async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
     # Deduplicate legacy rows before enforcing unique upsert key.
     await db.execute(
@@ -1212,6 +1244,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
     await _ensure_test_visualizer_tables(db)
     await _ensure_enterprise_identity_audit_tables(db)
+    await _ensure_enterprise_session_intelligence_tables(db)
     await _ensure_entity_link_uniqueness(db)
 
     # Explicit table upgrades for existing DBs.

@@ -11,6 +11,7 @@ except ImportError:
 
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.repositories.session_messages import SqliteSessionMessageRepository
+from backend.db.repositories.session_embeddings import SqliteSessionEmbeddingRepository
 from backend.db.repositories.documents import SqliteDocumentRepository
 from backend.db.repositories.tasks import SqliteTaskRepository
 from backend.db.repositories.analytics import SqliteAnalyticsRepository
@@ -39,6 +40,12 @@ def get_session_message_repository(db: Any):
         return SqliteSessionMessageRepository(db)
     from backend.db.repositories.postgres.session_messages import PostgresSessionMessageRepository
     return PostgresSessionMessageRepository(db)
+
+def get_session_embedding_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        return SqliteSessionEmbeddingRepository(db)
+    from backend.db.repositories.postgres.session_embeddings import PostgresSessionEmbeddingRepository
+    return PostgresSessionEmbeddingRepository(db)
 
 def get_document_repository(db: Any):
     if isinstance(db, aiosqlite.Connection):

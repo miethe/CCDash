@@ -23,6 +23,7 @@ from backend.db.repositories.postgres.runtime_state import (
     PostgresAlertConfigRepository,
     PostgresSyncStateRepository,
 )
+from backend.db.repositories.postgres.session_embeddings import PostgresSessionEmbeddingRepository
 from backend.db.repositories.postgres.session_messages import PostgresSessionMessageRepository
 from backend.db.repositories.postgres.sessions import PostgresSessionRepository
 from backend.db.repositories.postgres.tasks import PostgresTaskRepository
@@ -42,6 +43,7 @@ class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
             repo_builders={
                 "sessions": PostgresSessionRepository,
                 "session_messages": PostgresSessionMessageRepository,
+                "session_embeddings": PostgresSessionEmbeddingRepository,
                 "documents": PostgresDocumentRepository,
                 "tasks": PostgresTaskRepository,
                 "analytics": PostgresAnalyticsRepository,
