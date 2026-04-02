@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.services.session_transcript_contract import (
+    canonical_message_id,
+    canonical_message_type_from_log,
+    canonical_role_from_log,
+    canonical_source_provenance,
+)
+
 
 def project_session_messages(
     session_row: dict[str, Any],
@@ -21,8 +28,7 @@ def project_session_messages(
     projected: list[dict[str, Any]] = []
     for index, log in enumerate(logs):
         metadata = log.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
         tool_call = log.get("toolCall")
         tool_name = None
         tool_call_id = None
@@ -37,19 +43,17 @@ def project_session_messages(
                 metadata.setdefault("toolStatus", tool_call.get("status"))
 
         source_log_id = str(log.get("id") or f"log-{index}")
-        message_id = str(
-            metadata.get("rawMessageId")
-            or metadata.get("entryUuid")
-            or metadata.get("messageId")
-            or source_log_id
-        )
+        source_provenance = canonical_source_provenance(session_row, metadata)
+        metadata.setdefault("sourceProvenance", source_provenance)
+        message_id = canonical_message_id(source_log_id, metadata)
+        message_type = canonical_message_type_from_log(log, metadata)
         projected.append(
             {
                 "messageIndex": index,
                 "sourceLogId": source_log_id,
                 "messageId": message_id,
-                "role": str(log.get("speaker") or ""),
-                "messageType": str(log.get("type") or ""),
+                "role": canonical_role_from_log(log, metadata),
+                "messageType": message_type,
                 "content": str(log.get("content") or ""),
                 "timestamp": str(log.get("timestamp") or ""),
                 "agentName": str(log.get("agentName") or ""),
@@ -63,12 +67,7 @@ def project_session_messages(
                 "conversationFamilyId": conversation_family_id,
                 "threadSessionId": session_id,
                 "parentSessionId": parent_session_id,
-                "sourceProvenance": str(
-                    metadata.get("sourceProvenance")
-                    or metadata.get("entrySource")
-                    or metadata.get("source")
-                    or "session_log_projection"
-                ),
+                "sourceProvenance": source_provenance,
                 "metadata": metadata,
             }
         )

@@ -122,6 +122,36 @@ class SessionTranscriptServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
         # legacy get_logs should NOT have been called
         ports.storage.sessions().get_logs.assert_not_awaited()
 
+    async def test_canonical_assistant_role_maps_back_to_agent_speaker(self) -> None:
+        canonical = [
+            {
+                "session_id": "s-1",
+                "message_index": 0,
+                "source_log_id": "log-abc",
+                "source_provenance": "claude_code_jsonl",
+                "role": "assistant",
+                "message_type": "tool",
+                "content": "called bash",
+                "event_timestamp": "2026-01-01T00:00:00Z",
+                "agent_name": None,
+                "tool_name": "bash",
+                "tool_call_id": "tc-1",
+                "related_tool_call_id": None,
+                "linked_session_id": None,
+                "entry_uuid": None,
+                "parent_entry_uuid": None,
+                "message_id": "msg-1",
+                "metadata_json": None,
+            }
+        ]
+        ports = self._make_ports(canonical_rows=canonical, legacy_rows=[])
+        svc = SessionTranscriptService()
+
+        result = await svc.list_session_logs({"id": "s-1"}, ports)
+
+        self.assertEqual(result[0]["speaker"], "agent")
+        self.assertEqual(cast(dict[str, Any], result[0]["toolCall"])["name"], "bash")
+
     async def test_falls_back_to_legacy_logs_when_no_canonical(self) -> None:
         legacy = [
             {
@@ -268,6 +298,7 @@ class ProjectSessionMessagesProjectionTests(unittest.TestCase):
         msg = projected[0]
         self.assertEqual(msg["rootSessionId"], "root-1")
         self.assertEqual(msg["conversationFamilyId"], "family-1")
+        self.assertEqual(msg["role"], "user")
         self.assertEqual(msg["threadSessionId"], "child-1")
         self.assertEqual(msg["parentSessionId"], "parent-1")
         self.assertEqual(msg["messageIndex"], 0)

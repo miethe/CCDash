@@ -734,6 +734,7 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(response.logs), 1)
         self.assertEqual(response.logs[0].id, "log-0")
         self.assertEqual(response.logs[0].content, "hello from canonical")
+        self.assertEqual(response.logs[0].speaker, "agent")
         self.assertEqual(response.logs[0].metadata.get("sourceProvenance"), "canonical_table")
         self.assertEqual(response.logs[0].metadata.get("entryUuid"), "entry-1")
         self.assertAlmostEqual(response.outputShare, 0.5)

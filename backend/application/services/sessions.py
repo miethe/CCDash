@@ -6,6 +6,10 @@ import json
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.model_identity import derive_model_identity
+from backend.services.session_transcript_contract import (
+    canonical_source_provenance,
+    compatibility_speaker_from_role,
+)
 
 from backend.application.services.common import resolve_project
 
@@ -115,7 +119,7 @@ class SessionTranscriptService:
 
     def _canonical_log_payload(self, row: dict[str, object]) -> dict[str, object]:
         metadata = _safe_json(row.get("metadata_json"))
-        metadata.setdefault("sourceProvenance", str(row.get("source_provenance") or "session_log_projection"))
+        metadata.setdefault("sourceProvenance", canonical_source_provenance(row, metadata))
         if row.get("entry_uuid"):
             metadata.setdefault("entryUuid", row.get("entry_uuid"))
         if row.get("parent_entry_uuid"):
@@ -125,7 +129,7 @@ class SessionTranscriptService:
         return {
             "id": row.get("source_log_id") or f"log-{row.get('message_index', 0)}",
             "timestamp": row.get("event_timestamp", ""),
-            "speaker": row.get("role", ""),
+            "speaker": compatibility_speaker_from_role(row.get("role")),
             "type": row.get("message_type", ""),
             "content": row.get("content", ""),
             "agentName": row.get("agent_name"),
