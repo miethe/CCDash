@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/enhancements/session-intelligence-canonical-st
 plan_ref: /docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md
 phase: 1
 title: "Canonical Transcript Contract Hardening"
-status: "in_progress"
+status: "completed"
 started: "2026-04-02"
-completed: null
-commit_refs: []
+completed: "2026-04-02"
+commit_refs: ["6400b43"]
 pr_refs: []
 
-overall_progress: 10
-completion_estimate: "contract audit complete; compatibility and provenance hardening in progress"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "SICS-001"
     description: "Freeze the canonical transcript identity, lineage, provenance, and fallback contract for session_messages."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["backend-architect", "data-layer-expert"]
     dependencies: []
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "SICS-002"
     description: "Codify the compatibility projection from canonical transcript rows back into the current session detail DTO/log payload shape."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["SICS-001"]
     estimated_effort: "3pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "SICS-003"
     description: "Normalize parser-to-canonical provenance, role/type, tool metadata, and lineage behavior before transcript persistence."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer", "data-layer-expert"]
     dependencies: ["SICS-001"]
     estimated_effort: "4pt"
@@ -67,6 +67,13 @@ success_criteria:
 files_modified:
   - ".claude/progress/session-intelligence-canonical-storage-v1/phase-1-progress.md"
   - "docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md"
+  - "docs/guides/session-transcript-contract-guide.md"
+  - "backend/services/session_transcript_contract.py"
+  - "backend/services/session_transcript_projection.py"
+  - "backend/application/services/sessions.py"
+  - "backend/tests/test_session_transcript_projection.py"
+  - "backend/tests/test_session_messages_groundwork.py"
+  - "backend/tests/test_sessions_api_router.py"
 
 updated: "2026-04-02"
 ---
@@ -95,3 +102,16 @@ Task("backend-architect", "Execute SICS-001: Freeze canonical transcript identit
 Task("python-backend-engineer", "Execute SICS-002: Codify canonical-to-session-detail compatibility projection rules")
 Task("python-backend-engineer", "Execute SICS-003: Normalize parser-to-canonical provenance, role/type, tool metadata, and lineage behavior")
 ```
+
+## Completion Notes
+
+- Added `backend/services/session_transcript_contract.py` to centralize canonical identity, provenance, role, and compatibility rules.
+- Hardened `project_session_messages` so canonical rows normalize provenance and role semantics before persistence and do not mutate parser-owned metadata in place.
+- Updated canonical session transcript reads to keep legacy API speaker semantics while preserving canonical provenance and lineage metadata.
+- Documented the Phase 1 contract in `docs/guides/session-transcript-contract-guide.md`.
+
+## Validation Notes
+
+- `backend/.venv/bin/python -m pytest backend/tests/test_session_transcript_projection.py backend/tests/test_session_messages_groundwork.py backend/tests/test_sessions_api_router.py -q` -> `35 passed`
+- `backend/.venv/bin/python -m py_compile backend/services/session_transcript_contract.py backend/services/session_transcript_projection.py backend/application/services/sessions.py` -> `passed`
+- `backend/.venv/bin/python -m ruff check ...` could not run because `ruff` is not installed in `backend/.venv`.

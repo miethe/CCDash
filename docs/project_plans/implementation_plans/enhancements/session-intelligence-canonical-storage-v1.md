@@ -58,8 +58,10 @@ related_documents:
   - docs/guides/storage-profiles-guide.md
   - docs/guides/data-domain-ownership-matrix.md
   - docs/guides/data-domain-schema-layout.md
+  - docs/guides/session-transcript-contract-guide.md
 context_files:
   - backend/application/services/sessions.py
+  - backend/services/session_transcript_contract.py
   - backend/services/session_transcript_projection.py
   - backend/db/sync_engine.py
   - backend/db/sqlite_migrations.py
@@ -239,6 +241,13 @@ Non-negotiables:
 1. Transcript identity and lineage semantics are explicit and testable.
 2. Canonical transcript rows are sufficient to power current read models.
 3. No router or UI path depends on undocumented legacy log quirks.
+
+### Phase 1 Execution Notes
+
+1. Canonical role, provenance, identity, and compatibility semantics are codified in `backend/services/session_transcript_contract.py`.
+2. Canonical projection now normalizes platform provenance and role semantics before persistence without mutating parser-owned metadata.
+3. Session transcript reads preserve the legacy API speaker contract (`assistant` canonical rows project back to `agent`).
+4. The canonical transcript contract is documented in `docs/guides/session-transcript-contract-guide.md` and backed by focused regression tests.
 
 ## Phase 2: Enterprise Transcript Canonicalization And Embeddings Substrate
 
