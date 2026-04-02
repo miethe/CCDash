@@ -109,7 +109,18 @@ class SessionTranscriptServiceFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "metadata_json": None,
             }
         ]
-        ports = self._make_ports(canonical_rows=canonical, legacy_rows=[])
+        legacy = [
+            {
+                "source_log_id": "legacy-1",
+                "log_index": 0,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "speaker": "assistant",
+                "type": "message",
+                "content": "legacy transcript",
+                "metadata_json": None,
+            }
+        ]
+        ports = self._make_ports(canonical_rows=canonical, legacy_rows=legacy)
         svc = SessionTranscriptService()
 
         result = await svc.list_session_logs({"id": "s-1"}, ports)

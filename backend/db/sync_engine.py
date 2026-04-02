@@ -1203,6 +1203,16 @@ class SyncEngine:
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
 
+    def _enterprise_canonical_transcript_authoritative(self) -> bool:
+        storage_profile = getattr(config, "STORAGE_PROFILE", None)
+        profile_name = str(getattr(storage_profile, "profile", "") or "").strip().lower()
+        return profile_name == "enterprise"
+
+    def _should_write_legacy_session_logs(self, canonical_rows: list[dict[str, Any]]) -> bool:
+        if not self._enterprise_canonical_transcript_authoritative():
+            return True
+        return not canonical_rows
+
     async def _replace_session_telemetry_events(
         self,
         project_id: str,
@@ -3647,16 +3657,23 @@ class SyncEngine:
                     if not session_id:
                         continue
 
-                    previous_logs = await self.session_repo.get_logs(session_id)
                     await self.session_repo.upsert(session_dict, project_id)
 
                     logs = session_dict.get("logs", [])
                     if not isinstance(logs, list):
                         logs = []
-                    await self.session_repo.upsert_logs(session_id, logs)
+                    canonical_rows = project_session_messages(session_dict, logs)
+                    write_legacy_logs = self._should_write_legacy_session_logs(canonical_rows)
+                    if write_legacy_logs:
+                        previous_logs = await self.session_repo.get_logs(session_id)
+                        await self.session_repo.upsert_logs(session_id, logs)
+                    else:
+                        previous_logs = await self.session_message_repo.list_by_session(session_id)
+                        # Enterprise canonical mode keeps legacy logs as fallback-only history.
+                        await self.session_repo.upsert_logs(session_id, [])
                     await self.session_message_repo.replace_session_messages(
                         session_id,
-                        project_session_messages(session_dict, logs),
+                        canonical_rows,
                     )
 
                     tools = session_dict.get("toolsUsed", [])
