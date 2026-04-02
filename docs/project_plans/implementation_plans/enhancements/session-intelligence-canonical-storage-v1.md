@@ -4,11 +4,11 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: enhancements
-title: Implementation Plan: Session Intelligence Canonical Storage V1
-description: Turn the existing session_messages groundwork into an enterprise-ready canonical transcript and intelligence platform for semantic search, DX sentiment, code churn, scope drift, and approval-gated SkillMeat memory drafts.
-summary: Build on the DB caching checklist's Phase 3 seams and the data-platform storage-profile contract to make Postgres the canonical enterprise transcript store while preserving local SQLite cache behavior and stable read models.
+title: "Implementation Plan: Session Intelligence Canonical Storage V1"
+description: "Turn the existing session_messages groundwork into an enterprise-ready canonical transcript and intelligence platform for semantic search, DX sentiment, code churn, scope drift, and approval-gated SkillMeat memory drafts."
+summary: "Build on the DB caching checklist's Phase 3 seams and the data-platform storage-profile contract to make Postgres the canonical enterprise transcript store while preserving local SQLite cache behavior and stable read models."
 author: codex
 audience:
   - ai-agents
@@ -17,7 +17,7 @@ audience:
   - backend-platform
   - data-platform
 created: 2026-04-01
-updated: 2026-04-01
+updated: 2026-04-02
 tags:
   - implementation
   - session-intelligence
