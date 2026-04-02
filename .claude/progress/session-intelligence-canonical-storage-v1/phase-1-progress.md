@@ -11,7 +11,7 @@ title: "Canonical Transcript Contract Hardening"
 status: "completed"
 started: "2026-04-02"
 completed: "2026-04-02"
-commit_refs: ["6400b43", "8158237"]
+commit_refs: ["6400b43", "8158237", "2670f56"]
 pr_refs: []
 
 overall_progress: 100
@@ -72,9 +72,13 @@ files_modified:
   - "backend/services/session_transcript_projection.py"
   - "backend/application/services/sessions.py"
   - "backend/routers/api.py"
+  - "backend/parsers/platforms/codex/parser.py"
+  - "backend/parsers/platforms/claude_code/parser.py"
   - "backend/tests/test_session_transcript_projection.py"
   - "backend/tests/test_session_messages_groundwork.py"
   - "backend/tests/test_sessions_api_router.py"
+  - "backend/tests/test_sessions_codex_parser.py"
+  - "backend/tests/test_sessions_parser.py"
 
 updated: "2026-04-02"
 ---
@@ -109,11 +113,14 @@ Task("python-backend-engineer", "Execute SICS-003: Normalize parser-to-canonical
 - Added `backend/services/session_transcript_contract.py` to centralize canonical identity, provenance, role, and compatibility rules.
 - Hardened `project_session_messages` so canonical rows normalize provenance and role semantics before persistence and do not mutate parser-owned metadata in place.
 - Updated canonical session transcript reads to keep legacy API speaker semantics while preserving canonical provenance and lineage metadata.
+- Normalized Claude Code and Codex parser-owned logs so provenance, compatibility role, message identity, and tool metadata are stamped before canonical projection.
 - Updated session list/detail routers to derive titles, badges, command metadata, and subagent typing from canonical-compatible transcript logs instead of assuming legacy `session_logs`.
 - Documented the Phase 1 contract in `docs/guides/session-transcript-contract-guide.md`.
 
 ## Validation Notes
 
 - `backend/.venv/bin/python -m pytest backend/tests/test_session_transcript_projection.py backend/tests/test_session_messages_groundwork.py backend/tests/test_sessions_api_router.py -q` -> `38 passed`
+- `backend/.venv/bin/python -m pytest backend/tests/test_sessions_codex_parser.py backend/tests/test_sessions_parser.py -q` -> `41 passed`
 - `backend/.venv/bin/python -m py_compile backend/services/session_transcript_contract.py backend/services/session_transcript_projection.py backend/application/services/sessions.py` -> `passed`
+- `backend/.venv/bin/python -m py_compile backend/parsers/platforms/codex/parser.py backend/parsers/platforms/claude_code/parser.py backend/services/session_transcript_contract.py backend/services/session_transcript_projection.py backend/application/services/sessions.py` -> `passed`
 - `backend/.venv/bin/python -m ruff check ...` could not run because `ruff` is not installed in `backend/.venv`.
