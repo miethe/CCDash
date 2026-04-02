@@ -42,6 +42,63 @@ _FILE_UPDATE_MARKERS = ("apply_patch", "tee ", "echo ", "printf ", "cp ", "mv ",
 _FILE_DELETE_MARKERS = ("rm ", "unlink ")
 
 
+def _canonical_message_role(speaker: Any) -> str:
+    normalized = str(speaker or "").strip().lower()
+    if normalized == "agent":
+        return "assistant"
+    if normalized in {"user", "system", "assistant"}:
+        return normalized
+    return ""
+
+
+def _codex_source_provenance(metadata: dict[str, Any]) -> str:
+    payload_type = str(metadata.get("payloadType") or "").strip().lower()
+    if payload_type in {"user_message", "agent_message", "message"}:
+        return f"codex.{payload_type}"
+    if payload_type in {"function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"}:
+        return f"codex.{payload_type}"
+    if payload_type in {"agent_reasoning", "reasoning"}:
+        return f"codex.{payload_type}"
+    entry_type = str(metadata.get("entryType") or "").strip().lower()
+    if entry_type:
+        return f"codex.{entry_type}"
+    return "codex_jsonl"
+
+
+def _codex_message_id(
+    *,
+    timestamp: str,
+    speaker: Any,
+    log_type: Any,
+    content: Any,
+    metadata: dict[str, Any],
+    tool_call: ToolCallInfo | None,
+    related_tool_call_id: Any,
+) -> str:
+    for key in ("rawMessageId", "entryUuid", "messageId"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    if tool_call and str(tool_call.id or "").strip():
+        return str(tool_call.id).strip()
+    related_id = str(related_tool_call_id or "").strip()
+    if related_id:
+        return related_id
+    digest = hashlib.sha1(
+        "|".join(
+            [
+                str(timestamp or "").strip(),
+                str(speaker or "").strip().lower(),
+                str(log_type or "").strip().lower(),
+                str(metadata.get("entryType") or "").strip().lower(),
+                str(metadata.get("payloadType") or "").strip().lower(),
+                str(content or "").strip()[:200],
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    return f"codex-{digest}"
+
+
 def _normalize_session_id(raw_id: str) -> str:
     cleaned = str(raw_id or "").strip()
     if not cleaned:
@@ -437,8 +494,34 @@ def parse_session_file(path: Path) -> AgentSession | None:
     def append_log(**kwargs: Any) -> int:
         nonlocal log_idx
         metadata = kwargs.get("metadata")
-        if metadata is None or not isinstance(metadata, dict):
-            kwargs["metadata"] = {}
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        speaker = kwargs.get("speaker")
+        role = _canonical_message_role(speaker)
+        if role:
+            metadata.setdefault("messageRole", role)
+        metadata.setdefault("sourceProvenance", _codex_source_provenance(metadata))
+        tool_call = kwargs.get("toolCall")
+        if isinstance(tool_call, ToolCallInfo):
+            if tool_call.args not in (None, ""):
+                metadata.setdefault("toolArgs", tool_call.args)
+            if tool_call.output not in (None, ""):
+                metadata.setdefault("toolOutput", tool_call.output)
+            resolved_status = str(tool_call.status or ("error" if tool_call.isError else "success")).strip()
+            if resolved_status:
+                metadata.setdefault("toolStatus", resolved_status)
+        metadata.setdefault(
+            "messageId",
+            _codex_message_id(
+                timestamp=str(kwargs.get("timestamp") or ""),
+                speaker=speaker,
+                log_type=kwargs.get("type"),
+                content=kwargs.get("content"),
+                metadata=metadata,
+                tool_call=tool_call if isinstance(tool_call, ToolCallInfo) else None,
+                related_tool_call_id=kwargs.get("relatedToolCallId"),
+            ),
+        )
+        kwargs["metadata"] = metadata
         log = SessionLog(id=f"log-{log_idx}", **kwargs)
         logs.append(log)
         log_idx += 1
@@ -898,6 +981,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                     related_log.toolCall.output = output_text[:20000]
                     related_log.toolCall.status = "error" if is_error else "success"
                     related_log.toolCall.isError = is_error
+                related_log.metadata["toolOutput"] = output_text[:20000]
+                related_log.metadata["toolStatus"] = "error" if is_error else "success"
                 related_log.relatedToolCallId = call_id or None
                 if is_error and related_log.toolCall:
                     tool_success[related_log.toolCall.name] -= 1
