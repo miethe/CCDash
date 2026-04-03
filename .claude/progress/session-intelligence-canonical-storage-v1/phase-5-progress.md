@@ -11,7 +11,7 @@ title: "UI And Workflow Surfaces"
 status: "completed"
 started: "2026-04-03"
 completed: "2026-04-03"
-commit_refs: ["39b91d7"]
+commit_refs: ["39b91d7", "d702a74"]
 pr_refs: []
 
 overall_progress: 100
@@ -93,6 +93,7 @@ Surface transcript intelligence in session, feature, and workflow UX without deg
 1. Session Inspector now embeds a transcript-intelligence surface with semantic search, sentiment evidence, churn evidence, and scope-drift evidence in the analytics workflow.
 2. Feature execution analytics now show aggregated transcript-intelligence rollups alongside workflow effectiveness, using shared capability-state messaging for local versus enterprise behavior.
 3. Shared intelligence helpers and targeted frontend tests cover availability-state messaging and rollup aggregation semantics.
+4. The reusable `SessionIntelligencePanel` now treats loaded rollup/detail data as available even before an operator runs transcript search, avoiding false degraded-state messaging in enterprise mode.
 
 ## Orchestration Quick Reference
 

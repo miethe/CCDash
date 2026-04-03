@@ -291,9 +291,23 @@ export const SessionIntelligencePanel: React.FC<SessionIntelligencePanelProps> =
   }, [featureId, rootSessionId, sessionId]);
 
   const aggregate = useMemo(() => aggregateSessionIntelligence(rollups), [rollups]);
+  const resolvedCapability = useMemo(() => {
+    if (searchPayload?.capability) return searchPayload.capability;
+    if (!hasData) return null;
+    const storageProfile = String(runtimeStatus?.storageProfile || 'unknown').trim().toLowerCase() || 'unknown';
+    return {
+      supported: true,
+      authoritative: storageProfile === 'enterprise',
+      storageProfile,
+      searchMode: 'lexical',
+      detail: storageProfile === 'enterprise'
+        ? 'Canonical transcript intelligence is available for this workspace.'
+        : 'Transcript intelligence is available in a non-authoritative fallback mode.',
+    };
+  }, [hasData, runtimeStatus?.storageProfile, searchPayload?.capability]);
   const availability = useMemo(
-    () => describeIntelligenceAvailability(runtimeStatus, searchPayload?.capability),
-    [runtimeStatus, searchPayload?.capability],
+    () => describeIntelligenceAvailability(runtimeStatus, resolvedCapability),
+    [runtimeStatus, resolvedCapability],
   );
 
   const handleSearch = async (event: FormEvent<HTMLFormElement>) => {
