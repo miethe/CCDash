@@ -16,10 +16,16 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.analytics import AnalyticsOverviewService
 from backend.application.services.common import resolve_project
+from backend.application.services.session_intelligence import (
+    SessionIntelligenceReadService,
+    TranscriptSearchService,
+)
 from backend.models import (
     AlertConfig,
     AnalyticsMetric,
     FailurePatternResponse,
+    SessionIntelligenceCapability,
+    SessionSemanticSearchMatch,
     SessionCostCalibrationGroup,
     SessionCostCalibrationMismatchBand,
     SessionCostCalibrationProvenanceCount,
@@ -27,6 +33,11 @@ from backend.models import (
     SessionUsageAggregateResponse,
     SessionUsageCalibrationSummary,
     SessionUsageDrilldownResponse,
+    SessionIntelligenceDetailResponse,
+    SessionIntelligenceDrilldownResponse,
+    SessionIntelligenceListResponse,
+    SessionIntelligenceConcern,
+    SessionSemanticSearchResponse,
     Notification,
     WorkflowRegistryDetailResponse,
     WorkflowRegistryListResponse,
@@ -46,6 +57,8 @@ from backend.services.workflow_registry import get_workflow_registry_detail, lis
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 analytics_overview_service = AnalyticsOverviewService()
+transcript_search_service = TranscriptSearchService()
+session_intelligence_read_service = SessionIntelligenceReadService()
 
 
 async def _resolve_app_request(
@@ -2098,6 +2111,96 @@ async def get_usage_attribution_calibration_view(
         end=end,
     )
     return SessionUsageCalibrationSummary(**payload)
+
+
+@analytics_router.get("/session-intelligence/search", response_model=SessionSemanticSearchResponse)
+async def search_session_intelligence(
+    query: str = Query(..., min_length=2, description="Transcript query text"),
+    feature_id: str | None = Query(None, description="Filter to a specific feature/task id"),
+    root_session_id: str | None = Query(None, description="Filter to a root session family"),
+    session_id: str | None = Query(None, description="Filter to a single session"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(25, ge=1, le=100),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    app_request = await _resolve_app_request(request_context, core_ports)
+    return await transcript_search_service.search(
+        app_request.context,
+        app_request.ports,
+        query=query,
+        feature_id=feature_id,
+        root_session_id=root_session_id,
+        session_id=session_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@analytics_router.get("/session-intelligence", response_model=SessionIntelligenceListResponse)
+async def list_session_intelligence(
+    feature_id: str | None = Query(None, description="Filter to a specific feature/task id"),
+    root_session_id: str | None = Query(None, description="Filter to a root session family"),
+    session_id: str | None = Query(None, description="Filter to a single session"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    app_request = await _resolve_app_request(request_context, core_ports)
+    return await session_intelligence_read_service.list_sessions(
+        app_request.context,
+        app_request.ports,
+        feature_id=feature_id,
+        root_session_id=root_session_id,
+        session_id=session_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@analytics_router.get("/session-intelligence/detail", response_model=SessionIntelligenceDetailResponse)
+async def get_session_intelligence_detail(
+    session_id: str = Query(..., description="Session id to inspect"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    app_request = await _resolve_app_request(request_context, core_ports)
+    detail = await session_intelligence_read_service.get_session_detail(
+        app_request.context,
+        app_request.ports,
+        session_id=session_id,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Session intelligence for '{session_id}' not found")
+    return detail
+
+
+@analytics_router.get("/session-intelligence/drilldown", response_model=SessionIntelligenceDrilldownResponse)
+async def get_session_intelligence_drilldown(
+    concern: SessionIntelligenceConcern = Query(..., description="Which intelligence concern to inspect"),
+    feature_id: str | None = Query(None, description="Filter to a specific feature/task id"),
+    root_session_id: str | None = Query(None, description="Filter to a root session family"),
+    session_id: str | None = Query(None, description="Filter to a single session"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    app_request = await _resolve_app_request(request_context, core_ports)
+    detail = await session_intelligence_read_service.drilldown(
+        app_request.context,
+        app_request.ports,
+        concern=concern,
+        feature_id=feature_id,
+        root_session_id=root_session_id,
+        session_id=session_id,
+        offset=offset,
+        limit=limit,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Session intelligence drilldown not found")
+    return detail
 
 
 @analytics_router.get("/artifacts")

@@ -15,6 +15,7 @@ from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.common import resolve_project
 from backend.application.services.documents import DocumentQueryService
+from backend.application.services.session_intelligence import SessionIntelligenceReadService
 from backend.application.services.sessions import SessionFacetService, SessionTranscriptService
 from backend import config
 from backend.models import (
@@ -51,6 +52,7 @@ logger = logging.getLogger("ccdash.api")
 session_facet_service = SessionFacetService()
 session_transcript_service = SessionTranscriptService()
 document_query_service = DocumentQueryService()
+session_intelligence_read_service = SessionIntelligenceReadService()
 
 
 async def _resolve_app_request(
@@ -898,6 +900,11 @@ async def get_session(
             "usageAttributionCalibration": None,
         }
     )
+    intelligence_detail = await session_intelligence_read_service.get_session_detail(
+        request_context,
+        core_ports,
+        session_id=session_id,
+    )
         
     # Tools
     tool_usage = []
@@ -1000,6 +1007,7 @@ async def get_session(
         usageAttributions=usage_attribution_details["usageAttributions"],
         usageAttributionSummary=usage_attribution_details["usageAttributionSummary"],
         usageAttributionCalibration=usage_attribution_details["usageAttributionCalibration"],
+        intelligenceSummary=intelligence_detail.summary if intelligence_detail else None,
         dates=_session_dates_payload(s),
         timeline=[
             event for event in _safe_json_list(s.get("timeline_json"))

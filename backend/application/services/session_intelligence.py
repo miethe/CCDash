@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
@@ -147,11 +147,11 @@ class SessionIntelligenceQueryService:
         ports: CorePorts,
         *,
         session_id: str,
-    ) -> SessionIntelligenceDetailResponse:
+    ) -> SessionIntelligenceDetailResponse | None:
         project = resolve_project(context, ports)
         session_row = await ports.storage.sessions().get_by_id(session_id)
         if project is None or not session_row or str(session_row.get("project_id") or "") != project.id:
-            return SessionIntelligenceDetailResponse(sessionId=session_id)
+            return None
 
         sentiment_rows, churn_rows, scope_rows = await _load_facts(ports, session_id)
         rollup = _rollup_from_facts(session_row, sentiment_rows, churn_rows, scope_rows)
@@ -222,6 +222,102 @@ class SessionIntelligenceQueryService:
             offset=offset,
             limit=limit,
             items=paged_items,
+        )
+
+    async def search_transcript(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        query: str,
+        feature_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        offset: int = 0,
+        limit: int = 25,
+    ) -> SessionSemanticSearchResponse:
+        return await self.search_semantic_transcripts(
+            context,
+            ports,
+            query=query,
+            feature_id=feature_id,
+            root_session_id=root_session_id,
+            session_id=session_id,
+            offset=offset,
+            limit=limit,
+        )
+
+    async def list_rollups(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        feature_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        offset: int = 0,
+        limit: int = 25,
+    ) -> SessionIntelligenceListResponse:
+        if session_id:
+            detail = await self.get_session_intelligence_detail(context, ports, session_id=session_id)
+            items = [detail.summary] if detail and detail.summary else []
+            return SessionIntelligenceListResponse(
+                generatedAt=_now(),
+                total=len(items),
+                offset=offset,
+                limit=limit,
+                items=items,
+            )
+        return await self.list_session_intelligence(
+            context,
+            ports,
+            feature_id=feature_id,
+            root_session_id=root_session_id,
+            offset=offset,
+            limit=limit,
+        )
+
+    async def get_session_detail(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        session_id: str,
+    ) -> SessionIntelligenceDetailResponse | None:
+        return await self.get_session_intelligence_detail(context, ports, session_id=session_id)
+
+    async def list_drilldown(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        concern: SessionIntelligenceConcern,
+        feature_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        offset: int = 0,
+        limit: int = 25,
+    ) -> SessionIntelligenceDrilldownResponse:
+        if session_id:
+            read_service = SessionIntelligenceReadService()
+            detail = await read_service.drilldown(
+                context,
+                ports,
+                concern=concern,
+                session_id=session_id,
+                offset=offset,
+                limit=limit,
+            )
+            if detail is not None:
+                return detail
+        return await self.get_session_intelligence_drilldown(
+            context,
+            ports,
+            concern=concern,
+            feature_id=feature_id,
+            root_session_id=root_session_id,
+            offset=offset,
+            limit=limit,
         )
 
     async def list_rollups(
@@ -373,10 +469,14 @@ async def _load_facts(
     ports: CorePorts,
     session_id: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    session_intelligence_repo_getter = getattr(ports.storage, "session_intelligence", None)
+    if not callable(session_intelligence_repo_getter):
+        return [], [], []
+    repo = session_intelligence_repo_getter()
     return await asyncio.gather(
-        ports.storage.session_intelligence().list_session_sentiment_facts(session_id),
-        ports.storage.session_intelligence().list_session_code_churn_facts(session_id),
-        ports.storage.session_intelligence().list_session_scope_drift_facts(session_id),
+        repo.list_session_sentiment_facts(session_id),
+        repo.list_session_code_churn_facts(session_id),
+        repo.list_session_scope_drift_facts(session_id),
     )
 
 
@@ -616,27 +716,198 @@ def _now() -> str:
 
 
 class TranscriptSearchService:
-    def __init__(self) -> None:
-        self._service = SessionIntelligenceQueryService()
+    async def search(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        query: str,
+        feature_id: str | None = None,
+        conversation_family_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> SessionSemanticSearchResponse:
+        project = resolve_project(context, ports)
+        if project is None or not query.strip():
+            return SessionSemanticSearchResponse(
+                query=query,
+                offset=offset,
+                limit=limit,
+                capability=SessionIntelligenceCapability(
+                    supported=True,
+                    authoritative=False,
+                    storageProfile="unknown",
+                    searchMode="canonical_lexical",
+                    detail="Canonical transcript search is unavailable.",
+                ),
+            )
 
-    async def search(self, context: RequestContext, ports: CorePorts, **kwargs: Any) -> SessionSemanticSearchResponse:
-        return await self._service.search(context, ports, **kwargs)
+        rows = await ports.storage.session_messages().search_messages(
+            project.id,
+            query,
+            feature_id=feature_id,
+            conversation_family_id=conversation_family_id,
+            session_id=session_id,
+            limit=max(limit + offset, limit),
+        )
+        if root_session_id:
+            rows = [row for row in rows if str(row.get("root_session_id") or "") == root_session_id]
+        matches = [_search_match_from_row(row, query) for row in rows]
+        matches.sort(key=lambda item: (-item.score, item.sessionId, item.blockIndex))
+        paged_matches = matches[offset : offset + limit]
+        return SessionSemanticSearchResponse(
+            query=query,
+            total=len(matches),
+            offset=offset,
+            limit=limit,
+            capability=SessionIntelligenceCapability(
+                supported=True,
+                authoritative=False,
+                storageProfile=str(getattr(ports.storage.session_embeddings().describe_capability(), "storage_profile", "")),
+                searchMode="canonical_lexical",
+                detail="Canonical transcript rows are ranked lexically from session_messages.",
+            ),
+            items=paged_matches,
+        )
 
 
 class SessionIntelligenceReadService:
-    def __init__(self) -> None:
-        self._service = SessionIntelligenceQueryService()
-
-    async def list_sessions(self, context: RequestContext, ports: CorePorts, **kwargs: Any) -> SessionIntelligenceListResponse:
-        return await self._service.list_session_intelligence(context, ports, **kwargs)
+    async def list_sessions(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        feature_id: str | None = None,
+        conversation_family_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        include_subagents: bool = True,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> SessionIntelligenceListResponse:
+        if session_id:
+            return await SessionIntelligenceQueryService().list_rollups(
+                context,
+                ports,
+                session_id=session_id,
+                offset=offset,
+                limit=limit,
+            )
+        return await SessionIntelligenceQueryService().list_session_intelligence(
+            context,
+            ports,
+            feature_id=feature_id,
+            conversation_family_id=conversation_family_id,
+            root_session_id=root_session_id,
+            offset=offset,
+            limit=limit,
+            include_subagents=include_subagents,
+        )
 
     async def get_session_detail(
         self,
         context: RequestContext,
         ports: CorePorts,
         session_id: str,
-    ) -> SessionIntelligenceDetailResponse | None:
-        return await self._service.get_session_detail(context, ports, session_id=session_id)
+    ) -> Optional[SessionIntelligenceDetailResponse]:
+        return await SessionIntelligenceQueryService().get_session_intelligence_detail(
+            context,
+            ports,
+            session_id=session_id,
+        )
 
-    async def drilldown(self, context: RequestContext, ports: CorePorts, **kwargs: Any) -> SessionIntelligenceDrilldownResponse:
-        return await self._service.get_session_intelligence_drilldown(context, ports, **kwargs)
+    async def drilldown(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        concern: str,
+        feature_id: str | None = None,
+        root_session_id: str | None = None,
+        session_id: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> Optional[SessionIntelligenceDrilldownResponse]:
+        if not session_id:
+            return await SessionIntelligenceQueryService().list_drilldown(
+                context,
+                ports,
+                concern=concern,
+                feature_id=feature_id,
+                root_session_id=root_session_id,
+                offset=offset,
+                limit=limit,
+            )
+        detail = await self.get_session_detail(context, ports, session_id)
+        if detail is None:
+            return None
+
+        items: list[SessionIntelligenceDrilldownItem] = []
+        if concern == "sentiment":
+            items = [
+                SessionIntelligenceDrilldownItem(
+                    concern="sentiment",
+                    sessionId=fact.sessionId,
+                    featureId=fact.featureId,
+                    rootSessionId=fact.rootSessionId,
+                    label=fact.sentimentLabel,
+                    score=fact.sentimentScore,
+                    confidence=fact.confidence,
+                    messageIndex=fact.messageIndex,
+                    sourceMessageId=fact.sourceMessageId,
+                    sourceLogId=fact.sourceLogId,
+                    evidence=fact.evidence,
+                )
+                for fact in detail.sentimentFacts
+            ]
+        elif concern == "churn":
+            items = [
+                SessionIntelligenceDrilldownItem(
+                    concern="churn",
+                    sessionId=fact.sessionId,
+                    featureId=fact.featureId,
+                    rootSessionId=fact.rootSessionId,
+                    label="low_progress_loop" if fact.lowProgressLoop else "iterative",
+                    score=fact.churnScore,
+                    confidence=fact.confidence,
+                    messageIndex=fact.lastMessageIndex,
+                    sourceLogId=fact.lastSourceLogId,
+                    filePath=fact.filePath,
+                    evidence=fact.evidence,
+                )
+                for fact in detail.churnFacts
+            ]
+        elif concern == "scope_drift":
+            items = [
+                SessionIntelligenceDrilldownItem(
+                    concern="scope_drift",
+                    sessionId=fact.sessionId,
+                    featureId=fact.featureId,
+                    rootSessionId=fact.rootSessionId,
+                    label="out_of_scope" if fact.outOfScopePathCount > 0 else "in_scope",
+                    score=fact.driftRatio,
+                    confidence=fact.confidence,
+                    evidence=fact.evidence,
+                )
+                for fact in detail.scopeDriftFacts
+            ]
+        else:
+            return None
+
+        return SessionIntelligenceDrilldownResponse(
+            concern=concern,
+            generatedAt=_now(),
+            total=len(items),
+            offset=offset,
+            limit=limit,
+            items=items[offset : offset + limit],
+        )
+
+
+__all__ = [
+    "SessionIntelligenceQueryService",
+    "SessionIntelligenceReadService",
+    "TranscriptSearchService",
+]

@@ -218,6 +218,10 @@ class PostgresSessionRepository:
             where_parts.append(f"conversation_family_id = ${idx}")
             params.append(str(filters["conversation_family_id"]))
             idx += 1
+        if filters.get("task_id"):
+            where_parts.append(f"task_id = ${idx}")
+            params.append(str(filters["task_id"]))
+            idx += 1
         if filters.get("root_session_id"):
             where_parts.append(f"root_session_id = ${idx}")
             params.append(filters["root_session_id"])
@@ -333,6 +337,10 @@ class PostgresSessionRepository:
         if filters.get("conversation_family_id"):
             where_parts.append(f"conversation_family_id = ${idx}")
             params.append(str(filters["conversation_family_id"]))
+            idx += 1
+        if filters.get("task_id"):
+            where_parts.append(f"task_id = ${idx}")
+            params.append(str(filters["task_id"]))
             idx += 1
         if filters.get("root_session_id"):
             where_parts.append(f"root_session_id = ${idx}")

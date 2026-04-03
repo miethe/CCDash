@@ -276,6 +276,7 @@ export interface AgentSession {
   usageAttributions?: SessionUsageAttribution[];
   usageAttributionSummary?: SessionUsageAggregateResponse | null;
   usageAttributionCalibration?: SessionUsageCalibrationSummary | null;
+  intelligenceSummary?: SessionIntelligenceSessionRollup | null;
   // Git Integration
   gitCommitHash?: string;
   gitCommitHashes?: string[];
@@ -447,6 +448,164 @@ export interface SessionUsageCalibrationSummary {
   confidenceBands: Array<Record<string, unknown>>;
   methodMix: Array<Record<string, unknown>>;
   generatedAt: string;
+}
+
+export type SessionIntelligenceConcern = 'sentiment' | 'churn' | 'scope_drift';
+
+export interface SessionIntelligenceCapability {
+  supported: boolean;
+  authoritative: boolean;
+  storageProfile: string;
+  searchMode: string;
+  detail: string;
+}
+
+export interface SessionSemanticSearchMatch {
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  threadSessionId: string;
+  blockKind: string;
+  blockIndex: number;
+  eventTimestamp: string;
+  score: number;
+  matchedTerms: string[];
+  messageIds: string[];
+  sourceLogIds: string[];
+  content: string;
+  snippet: string;
+}
+
+export interface SessionSemanticSearchResponse {
+  version: string;
+  query: string;
+  total: number;
+  offset: number;
+  limit: number;
+  capability: SessionIntelligenceCapability;
+  items: SessionSemanticSearchMatch[];
+}
+
+export interface SessionIntelligenceConcernSummary {
+  label: string;
+  score: number;
+  confidence: number;
+  factCount: number;
+  flaggedCount: number;
+}
+
+export interface SessionIntelligenceSessionRollup {
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  startedAt: string;
+  endedAt: string;
+  sentiment: SessionIntelligenceConcernSummary;
+  churn: SessionIntelligenceConcernSummary;
+  scopeDrift: SessionIntelligenceConcernSummary;
+}
+
+export interface SessionIntelligenceListResponse {
+  version: string;
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: SessionIntelligenceSessionRollup[];
+}
+
+export interface SessionSentimentFact {
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  threadSessionId: string;
+  sourceMessageId: string;
+  sourceLogId: string;
+  messageIndex: number;
+  sentimentLabel: string;
+  sentimentScore: number;
+  confidence: number;
+  heuristicVersion: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface SessionCodeChurnFact {
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  threadSessionId: string;
+  filePath: string;
+  firstSourceLogId: string;
+  lastSourceLogId: string;
+  firstMessageIndex: number;
+  lastMessageIndex: number;
+  touchCount: number;
+  distinctEditTurnCount: number;
+  repeatTouchCount: number;
+  rewritePassCount: number;
+  additionsTotal: number;
+  deletionsTotal: number;
+  netDiffTotal: number;
+  churnScore: number;
+  progressScore: number;
+  lowProgressLoop: boolean;
+  confidence: number;
+  heuristicVersion: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface SessionScopeDriftFact {
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  threadSessionId: string;
+  plannedPathCount: number;
+  actualPathCount: number;
+  matchedPathCount: number;
+  outOfScopePathCount: number;
+  driftRatio: number;
+  adherenceScore: number;
+  confidence: number;
+  heuristicVersion: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface SessionIntelligenceDetailResponse {
+  version: string;
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  summary?: SessionIntelligenceSessionRollup | null;
+  sentimentFacts: SessionSentimentFact[];
+  churnFacts: SessionCodeChurnFact[];
+  scopeDriftFacts: SessionScopeDriftFact[];
+}
+
+export interface SessionIntelligenceDrilldownItem {
+  concern: SessionIntelligenceConcern;
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  startedAt: string;
+  endedAt: string;
+  label: string;
+  score: number;
+  confidence: number;
+  messageIndex: number;
+  sourceMessageId: string;
+  sourceLogId: string;
+  filePath: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface SessionIntelligenceDrilldownResponse {
+  version: string;
+  concern: SessionIntelligenceConcern;
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: SessionIntelligenceDrilldownItem[];
 }
 
 export type MotionPresetKey = 'listInsertTop' | 'messageFlyIn' | 'typingPulse';

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import aiosqlite
 
@@ -55,5 +56,53 @@ class SqliteSessionMessageRepository:
         async with self.db.execute(
             "SELECT * FROM session_messages WHERE session_id = ? ORDER BY message_index ASC",
             (session_id,),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+
+    async def search_messages(
+        self,
+        project_id: str,
+        query: str,
+        *,
+        feature_id: str | None = None,
+        conversation_family_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses = ["s.project_id = ?", "TRIM(COALESCE(sm.content, '')) != ''"]
+        params: list[Any] = [project_id]
+
+        search_terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if search_terms:
+            term_clauses = ["LOWER(sm.content) LIKE ?" for _ in search_terms]
+            clauses.append("(" + " OR ".join(term_clauses) + ")")
+            params.extend([f"%{term}%" for term in search_terms])
+
+        if feature_id:
+            clauses.append("s.task_id = ?")
+            params.append(feature_id)
+        if conversation_family_id:
+            clauses.append("(sm.conversation_family_id = ? OR sm.root_session_id = ?)")
+            params.extend([conversation_family_id, conversation_family_id])
+        if session_id:
+            clauses.append("sm.session_id = ?")
+            params.append(session_id)
+
+        params.append(limit)
+        async with self.db.execute(
+            f"""
+            SELECT
+                sm.*,
+                s.project_id,
+                s.task_id AS feature_id,
+                s.status AS session_status,
+                s.started_at AS session_started_at
+            FROM session_messages sm
+            JOIN sessions s ON s.id = sm.session_id
+            WHERE {" AND ".join(clauses)}
+            ORDER BY sm.event_timestamp DESC, sm.message_index DESC
+            LIMIT ?
+            """,
+            tuple(params),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]

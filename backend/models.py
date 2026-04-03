@@ -235,6 +235,7 @@ class AgentSession(BaseModel):
     usageAttributions: list["SessionUsageAttribution"] = Field(default_factory=list)
     usageAttributionSummary: Optional["SessionUsageAggregateResponse"] = None
     usageAttributionCalibration: Optional["SessionUsageCalibrationSummary"] = None
+    intelligenceSummary: Optional["SessionIntelligenceSessionRollup"] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
@@ -470,6 +471,165 @@ class SessionUsageCalibrationSummary(BaseModel):
     confidenceBands: list[dict[str, Any]] = Field(default_factory=list)
     methodMix: list[dict[str, Any]] = Field(default_factory=list)
     generatedAt: str = ""
+
+
+SessionIntelligenceConcern = Literal["sentiment", "churn", "scope_drift"]
+
+
+class SessionIntelligenceCapability(BaseModel):
+    supported: bool = False
+    authoritative: bool = False
+    storageProfile: str = ""
+    searchMode: str = "unsupported"
+    detail: str = ""
+
+
+class SessionSemanticSearchMatch(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    threadSessionId: str = ""
+    blockKind: str = "message"
+    blockIndex: int = 0
+    eventTimestamp: str = ""
+    score: float = 0.0
+    matchedTerms: list[str] = Field(default_factory=list)
+    messageIds: list[str] = Field(default_factory=list)
+    sourceLogIds: list[str] = Field(default_factory=list)
+    content: str = ""
+    snippet: str = ""
+
+
+class SessionSemanticSearchResponse(BaseModel):
+    version: str = "v1"
+    query: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    capability: SessionIntelligenceCapability = Field(default_factory=SessionIntelligenceCapability)
+    items: list[SessionSemanticSearchMatch] = Field(default_factory=list)
+
+
+class SessionIntelligenceConcernSummary(BaseModel):
+    label: str = ""
+    score: float = 0.0
+    confidence: float = 0.0
+    factCount: int = 0
+    flaggedCount: int = 0
+
+
+class SessionIntelligenceSessionRollup(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    startedAt: str = ""
+    endedAt: str = ""
+    sentiment: SessionIntelligenceConcernSummary = Field(default_factory=SessionIntelligenceConcernSummary)
+    churn: SessionIntelligenceConcernSummary = Field(default_factory=SessionIntelligenceConcernSummary)
+    scopeDrift: SessionIntelligenceConcernSummary = Field(default_factory=SessionIntelligenceConcernSummary)
+
+
+class SessionIntelligenceListResponse(BaseModel):
+    version: str = "v1"
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SessionIntelligenceSessionRollup] = Field(default_factory=list)
+
+
+class SessionSentimentFact(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    threadSessionId: str = ""
+    sourceMessageId: str = ""
+    sourceLogId: str = ""
+    messageIndex: int = 0
+    sentimentLabel: str = "neutral"
+    sentimentScore: float = 0.0
+    confidence: float = 0.0
+    heuristicVersion: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionCodeChurnFact(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    threadSessionId: str = ""
+    filePath: str = ""
+    firstSourceLogId: str = ""
+    lastSourceLogId: str = ""
+    firstMessageIndex: int = 0
+    lastMessageIndex: int = 0
+    touchCount: int = 0
+    distinctEditTurnCount: int = 0
+    repeatTouchCount: int = 0
+    rewritePassCount: int = 0
+    additionsTotal: int = 0
+    deletionsTotal: int = 0
+    netDiffTotal: int = 0
+    churnScore: float = 0.0
+    progressScore: float = 0.0
+    lowProgressLoop: bool = False
+    confidence: float = 0.0
+    heuristicVersion: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionScopeDriftFact(BaseModel):
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    threadSessionId: str = ""
+    plannedPathCount: int = 0
+    actualPathCount: int = 0
+    matchedPathCount: int = 0
+    outOfScopePathCount: int = 0
+    driftRatio: float = 0.0
+    adherenceScore: float = 0.0
+    confidence: float = 0.0
+    heuristicVersion: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionIntelligenceDetailResponse(BaseModel):
+    version: str = "v1"
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    summary: Optional[SessionIntelligenceSessionRollup] = None
+    sentimentFacts: list[SessionSentimentFact] = Field(default_factory=list)
+    churnFacts: list[SessionCodeChurnFact] = Field(default_factory=list)
+    scopeDriftFacts: list[SessionScopeDriftFact] = Field(default_factory=list)
+
+
+class SessionIntelligenceDrilldownItem(BaseModel):
+    concern: SessionIntelligenceConcern
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    startedAt: str = ""
+    endedAt: str = ""
+    label: str = ""
+    score: float = 0.0
+    confidence: float = 0.0
+    messageIndex: int = 0
+    sourceMessageId: str = ""
+    sourceLogId: str = ""
+    filePath: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionIntelligenceDrilldownResponse(BaseModel):
+    version: str = "v1"
+    concern: SessionIntelligenceConcern
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SessionIntelligenceDrilldownItem] = Field(default_factory=list)
 
 
 class PricingCatalogEntry(BaseModel):

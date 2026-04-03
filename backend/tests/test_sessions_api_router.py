@@ -827,6 +827,58 @@ class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.toolResultCacheReadInputTokens, 89)
         self.assertAlmostEqual(response.cacheShare, 0.8)
 
+    async def test_get_session_includes_intelligence_summary_when_available(self) -> None:
+        repo = _FakeFullSessionRepo()
+        project = types.SimpleNamespace(id="project-1")
+        core_ports = _core_ports(project=project, session_repo=repo)
+
+        with patch.object(api_router, "load_session_mappings", return_value=[]), patch.object(
+            api_router,
+            "usage_attribution_enabled",
+            return_value=False,
+        ), patch.object(
+            api_router.session_intelligence_read_service,
+            "get_session_detail",
+            return_value=types.SimpleNamespace(
+                summary={
+                    "sessionId": "S-main",
+                    "rootSessionId": "S-main",
+                    "startedAt": "2026-02-16T00:00:00Z",
+                    "endedAt": "2026-02-16T00:00:01Z",
+                    "sentiment": {
+                        "label": "negative",
+                        "score": -0.6,
+                        "confidence": 0.8,
+                        "factCount": 1,
+                        "flaggedCount": 1,
+                    },
+                    "churn": {
+                        "label": "stable",
+                        "score": 0.1,
+                        "confidence": 0.7,
+                        "factCount": 0,
+                        "flaggedCount": 0,
+                    },
+                    "scopeDrift": {
+                        "label": "in_scope",
+                        "score": 0.0,
+                        "confidence": 0.0,
+                        "factCount": 0,
+                        "flaggedCount": 0,
+                    },
+                }
+            ),
+        ):
+            response = await api_router.get_session(
+                "S-main",
+                request_context=_request_context(project.id),
+                core_ports=core_ports,
+            )
+
+        self.assertIsNotNone(response.intelligenceSummary)
+        self.assertEqual(response.intelligenceSummary.sessionId, "S-main")
+        self.assertEqual(response.intelligenceSummary.sentiment.label, "negative")
+
     async def test_get_session_preserves_api_shape_when_using_canonical_messages(self) -> None:
         repo = _FakeFullSessionRepo()
         project = types.SimpleNamespace(id="project-1")
