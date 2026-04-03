@@ -20,12 +20,21 @@ import {
   SkillMeatObservationBackfillResponse,
   SyncOperation,
   TelemetryExportStatus,
+  SessionMemoryDraft,
+  SessionMemoryDraftStatus,
+  SessionMemoryDraftType,
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
 import { createApiClient } from '../services/apiClient';
 import { normalizeRuntimeStatus, type RuntimeStatus } from '../services/runtimeProfile';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
-import { refreshSkillMeatCache } from '../services/skillmeat';
+import {
+  generateSessionMemoryDrafts,
+  listSessionMemoryDrafts,
+  publishSessionMemoryDraft,
+  refreshSkillMeatCache,
+  reviewSessionMemoryDraft,
+} from '../services/skillmeat';
 
 const API_BASE = '/api';
 
@@ -84,6 +93,61 @@ function opKindLabel(kind: string): string {
     default:
       return kind || 'Operation';
   }
+}
+
+function draftStatusLabel(status: SessionMemoryDraftStatus | string): string {
+  switch ((status || '').toLowerCase()) {
+    case 'draft':
+      return 'Draft';
+    case 'approved':
+      return 'Approved';
+    case 'rejected':
+      return 'Rejected';
+    case 'published':
+      return 'Published';
+    default:
+      return status || 'Unknown';
+  }
+}
+
+function draftStatusClass(status: SessionMemoryDraftStatus | string): string {
+  switch ((status || '').toLowerCase()) {
+    case 'approved':
+      return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+    case 'published':
+      return 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30';
+    case 'rejected':
+      return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+    default:
+      return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+  }
+}
+
+function draftTypeLabel(type: SessionMemoryDraftType | string): string {
+  switch ((type || '').toLowerCase()) {
+    case 'decision':
+      return 'Decision';
+    case 'constraint':
+      return 'Constraint';
+    case 'gotcha':
+      return 'Gotcha';
+    case 'style_rule':
+      return 'Style Rule';
+    case 'learning':
+      return 'Learning';
+    default:
+      return type || 'Draft';
+  }
+}
+
+function formatDraftConfidence(confidence: number): string {
+  if (!Number.isFinite(confidence)) return '0%';
+  return `${Math.max(0, Math.min(100, Math.round(confidence * 100)))}%`;
+}
+
+function summarizeDraftEvidence(evidence: Record<string, unknown>): string {
+  const keys = Object.keys(evidence || {});
+  return keys.length ? keys.join(', ') : 'No evidence attached';
 }
 
 type OpsTab = 'general' | 'testing' | 'integrations';
@@ -213,10 +277,22 @@ export const OpsPanel: React.FC = () => {
   const [skillMeatBackfillResult, setSkillMeatBackfillResult] = useState<SkillMeatObservationBackfillResponse | null>(null);
   const [telemetryStatus, setTelemetryStatus] = useState<TelemetryExportStatus | null>(null);
   const [telemetryLoadError, setTelemetryLoadError] = useState<string | null>(null);
+  const [memoryDrafts, setMemoryDrafts] = useState<SessionMemoryDraft[]>([]);
+  const [memoryDraftsGeneratedAt, setMemoryDraftsGeneratedAt] = useState('');
+  const [memoryDraftsTotal, setMemoryDraftsTotal] = useState(0);
+  const [memoryDraftsOffset, setMemoryDraftsOffset] = useState(0);
+  const [memoryDraftsLimit, setMemoryDraftsLimit] = useState(8);
+  const [memoryDraftsSessionId, setMemoryDraftsSessionId] = useState('');
+  const [memoryDraftsLoading, setMemoryDraftsLoading] = useState(false);
+  const [memoryDraftsError, setMemoryDraftsError] = useState<string | null>(null);
+  const [memoryDraftsSelectedId, setMemoryDraftsSelectedId] = useState('');
+  const [memoryDraftReviewNotes, setMemoryDraftReviewNotes] = useState('');
+  const [memoryDraftPublishNotes, setMemoryDraftPublishNotes] = useState('');
   const [toasts, setToasts] = useState<OpsToast[]>([]);
   const handledOperationIdsRef = useRef<Set<string>>(new Set());
   const toastTimerIdsRef = useRef<number[]>([]);
   const skillMeatConfig = useMemo(() => normalizeSkillMeatConfig(activeProject), [activeProject]);
+  const activeProjectId = status?.projectId || activeProject?.id || '';
 
   const loadOverview = async () => {
     const [statusPayload, opsPayload, healthPayload] = await Promise.all([
@@ -370,8 +446,142 @@ export const OpsPanel: React.FC = () => {
     return operationId;
   }, [mappingRunLimit]);
 
+  const loadMemoryDrafts = useCallback(async (options?: { offset?: number; limit?: number; sessionId?: string; quiet?: boolean }) => {
+    if (!activeProjectId) {
+      setMemoryDraftsError('No active project selected for memory draft review.');
+      return;
+    }
+
+    const offset = options?.offset ?? memoryDraftsOffset;
+    const limit = options?.limit ?? memoryDraftsLimit;
+    const sessionId = options?.sessionId ?? '';
+    if (!options?.quiet) {
+      setMemoryDraftsLoading(true);
+      setMemoryDraftsError(null);
+    }
+
+    try {
+      const payload = await listSessionMemoryDrafts(activeProjectId, {
+        offset,
+        limit,
+        sessionId: sessionId.trim() || undefined,
+      });
+      setMemoryDrafts(payload.items || []);
+      setMemoryDraftsGeneratedAt(payload.generatedAt || '');
+      setMemoryDraftsTotal(Number(payload.total || 0));
+      setMemoryDraftsOffset(Number(payload.offset || offset));
+      setMemoryDraftsLimit(Number(payload.limit || limit));
+      setMemoryDraftsSelectedId(prev => {
+        const nextDraft = payload.items?.find(item => String(item.id ?? '') === prev) || payload.items?.[0] || null;
+        return nextDraft?.id != null ? String(nextDraft.id) : '';
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to load memory drafts';
+      setMemoryDraftsError(message);
+      setError(message);
+    } finally {
+      if (!options?.quiet) {
+        setMemoryDraftsLoading(false);
+      }
+    }
+  }, [activeProjectId, memoryDraftsLimit, memoryDraftsOffset]);
+
+  const generateMemoryDrafts = useCallback(async () => {
+    if (!activeProjectId) {
+      setError('No active project selected for memory draft generation.');
+      return;
+    }
+
+    setBusyAction('memory-drafts-generate');
+    setError(null);
+    setMemoryDraftsError(null);
+    try {
+      const payload = await generateSessionMemoryDrafts(activeProjectId, {
+        sessionId: memoryDraftsSessionId.trim(),
+        limit: memoryDraftsLimit,
+        actor: 'ops-panel',
+      });
+      setNotice(
+        `Memory draft generation completed: ${payload.draftsCreated} created, ${payload.draftsUpdated} updated, ${payload.draftsSkipped} skipped.`,
+      );
+      pushToast('Memory draft generation completed.', 'success');
+      await loadMemoryDrafts({ offset: 0, limit: memoryDraftsLimit, sessionId: memoryDraftsSessionId.trim() });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to generate memory drafts';
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activeProjectId, loadMemoryDrafts, memoryDraftsLimit, memoryDraftsSessionId, pushToast]);
+
+  const reviewMemoryDraft = useCallback(async (draft: SessionMemoryDraft, decision: 'approved' | 'rejected') => {
+    if (!activeProjectId) {
+      setError('No active project selected for memory draft review.');
+      return;
+    }
+    const draftId = draft.id ?? null;
+    if (draftId === null) {
+      setError('Selected draft is missing an identifier.');
+      return;
+    }
+
+    setBusyAction(`memory-drafts-${decision}`);
+    setError(null);
+    setMemoryDraftsError(null);
+    try {
+      const updatedDraft = await reviewSessionMemoryDraft(activeProjectId, draftId, {
+        decision,
+        actor: 'ops-panel',
+        notes: memoryDraftReviewNotes.trim(),
+      });
+      setMemoryDrafts(prev => prev.map(item => (item.id === updatedDraft.id ? updatedDraft : item)));
+      setMemoryDraftsSelectedId(updatedDraft.id != null ? String(updatedDraft.id) : '');
+      setNotice(`Memory draft ${decision}.`);
+      pushToast(`Memory draft ${decision}.`, 'success');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : `Failed to mark memory draft as ${decision}`;
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activeProjectId, memoryDraftReviewNotes, pushToast]);
+
+  const publishMemoryDraft = useCallback(async (draft: SessionMemoryDraft) => {
+    if (!activeProjectId) {
+      setError('No active project selected for memory draft publishing.');
+      return;
+    }
+    const draftId = draft.id ?? null;
+    if (draftId === null) {
+      setError('Selected draft is missing an identifier.');
+      return;
+    }
+
+    setBusyAction('memory-drafts-publish');
+    setError(null);
+    setMemoryDraftsError(null);
+    try {
+      const updatedDraft = await publishSessionMemoryDraft(activeProjectId, draftId, {
+        actor: 'ops-panel',
+        notes: memoryDraftPublishNotes.trim(),
+      });
+      setMemoryDrafts(prev => prev.map(item => (item.id === updatedDraft.id ? updatedDraft : item)));
+      setMemoryDraftsSelectedId(updatedDraft.id != null ? String(updatedDraft.id) : '');
+      setNotice('Memory draft publish completed.');
+      pushToast('Memory draft publish completed.', 'success');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to publish memory draft';
+      setError(message);
+      pushToast(message, 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  }, [activeProjectId, memoryDraftPublishNotes, pushToast]);
+
   const runSkillMeatRefresh = useCallback(async () => {
-    const projectId = status?.projectId || activeProject?.id || '';
+    const projectId = activeProjectId;
     if (!projectId) {
       setError('No active project selected for SkillMeat refresh.');
       return;
@@ -400,6 +610,9 @@ export const OpsPanel: React.FC = () => {
       pushToast('SkillMeat refresh pipeline completed.', 'success');
       await refreshAll();
       await loadOverview();
+      if (activeTab === 'integrations') {
+        await loadMemoryDrafts({ offset: 0, limit: memoryDraftsLimit, quiet: true });
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to refresh SkillMeat caches';
       setError(message);
@@ -407,7 +620,7 @@ export const OpsPanel: React.FC = () => {
     } finally {
       setBusyAction(null);
     }
-  }, [activeProject?.id, loadOverview, pushToast, refreshAll, skillMeatConfig, status?.projectId]);
+  }, [activeProjectId, activeTab, loadMemoryDrafts, loadOverview, memoryDraftsLimit, pushToast, refreshAll, skillMeatConfig]);
 
   const loadTelemetryStatus = useCallback(async (quiet = false) => {
     try {
@@ -449,6 +662,25 @@ export const OpsPanel: React.FC = () => {
       setBusyAction(null);
     }
   }, [apiClient, loadOverview, loadTelemetryStatus, pushToast, telemetryStatus]);
+
+  const selectedMemoryDraft = useMemo(() => {
+    if (memoryDrafts.length === 0) return null;
+    return memoryDrafts.find(item => String(item.id ?? '') === memoryDraftsSelectedId) || memoryDrafts[0] || null;
+  }, [memoryDrafts, memoryDraftsSelectedId]);
+
+  const memoryDraftTotals = useMemo(() => {
+    return memoryDrafts.reduce(
+      (acc, draft) => {
+        const status = (draft.status || 'draft').toLowerCase();
+        if (status === 'approved') acc.approved += 1;
+        else if (status === 'published') acc.published += 1;
+        else if (status === 'rejected') acc.rejected += 1;
+        else acc.draft += 1;
+        return acc;
+      },
+      { draft: 0, approved: 0, rejected: 0, published: 0 },
+    );
+  }, [memoryDrafts]);
 
   const latestCompletedBackfillOperation = useMemo(
     () => operations.find(op => isMappingBackfillOperation(op) && (op.status || '').toLowerCase() === 'completed') || null,
@@ -548,6 +780,20 @@ export const OpsPanel: React.FC = () => {
     if (activeTab !== 'integrations') return;
     void loadTelemetryStatus();
   }, [activeTab, loadTelemetryStatus]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations') return;
+    void loadMemoryDrafts({ offset: memoryDraftsOffset, limit: memoryDraftsLimit });
+  }, [activeTab, loadMemoryDrafts, memoryDraftsLimit, memoryDraftsOffset]);
+
+  useEffect(() => {
+    if (memoryDrafts.length === 0) return;
+    if (memoryDraftsSelectedId) return;
+    const firstId = memoryDrafts[0]?.id;
+    if (firstId != null) {
+      setMemoryDraftsSelectedId(String(firstId));
+    }
+  }, [memoryDrafts, memoryDraftsSelectedId]);
 
   const opsLiveEnabled = Boolean(activeProject?.id && isOpsLiveUpdatesEnabled());
   const opsLiveStatus = useLiveInvalidation({
@@ -1338,6 +1584,274 @@ export const OpsPanel: React.FC = () => {
 
       {activeTab === 'integrations' && (
         <section className="space-y-4">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)] gap-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-fuchsia-500/25 bg-fuchsia-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-fuchsia-100">
+                    <TestTube2 size={12} />
+                    Memory Draft Loop
+                  </div>
+                  <h3 className="mt-3 text-lg font-semibold text-slate-100">Session Memory Draft Review</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Review generated SkillMeat memory candidates, approve or reject them with notes, and publish only after explicit approval.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => { void loadMemoryDrafts({ offset: 0, limit: memoryDraftsLimit, sessionId: memoryDraftsSessionId.trim() }); }}
+                    disabled={memoryDraftsLoading}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 hover:border-slate-600 disabled:opacity-60"
+                  >
+                    <RefreshCw size={14} className={memoryDraftsLoading ? 'animate-spin' : ''} />
+                    Refresh Drafts
+                  </button>
+                  <button
+                    onClick={() => { void generateMemoryDrafts(); }}
+                    disabled={busyAction !== null}
+                    className="inline-flex items-center gap-2 rounded-lg border border-fuchsia-500/35 bg-fuchsia-500/15 px-4 py-2 text-sm font-medium text-fuchsia-100 hover:bg-fuchsia-500/20 disabled:opacity-60"
+                  >
+                    <Play size={14} />
+                    {busyAction === 'memory-drafts-generate' ? 'Generating…' : 'Generate Drafts'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400">
+                  Session Filter
+                  <input
+                    value={memoryDraftsSessionId}
+                    onChange={(e) => setMemoryDraftsSessionId(e.target.value)}
+                    className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-200 font-mono"
+                    placeholder="Optional session id"
+                  />
+                </label>
+                <label className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400">
+                  Page Size
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={memoryDraftsLimit}
+                    onChange={(e) => setMemoryDraftsLimit(Math.max(1, Math.min(50, Number(e.target.value || 8))))}
+                    className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+                  />
+                </label>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Total Drafts</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-100">{memoryDraftsTotal}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Queue State</p>
+                  <p className="mt-2 text-sm text-slate-100">
+                    {memoryDraftTotals.draft} draft / {memoryDraftTotals.approved} approved
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {memoryDraftTotals.published} published • {memoryDraftTotals.rejected} rejected
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-400">
+                <span className="uppercase tracking-[0.18em]">Assumption</span>
+                <span className="ml-2 text-slate-300">
+                  this panel expects `/api/integrations/skillmeat/memory-drafts` list, generate, review, and publish routes to exist.
+                </span>
+              </div>
+
+              {memoryDraftsError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {memoryDraftsError}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {memoryDraftsLoading && (
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">
+                    Loading memory drafts...
+                  </div>
+                )}
+                {!memoryDraftsLoading && memoryDrafts.length === 0 && (
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">
+                    No memory drafts loaded yet. Use Generate Drafts to create candidates for the active project.
+                  </div>
+                )}
+                {memoryDrafts.map((draft) => {
+                  const draftId = draft.id != null ? String(draft.id) : '';
+                  const isSelected = draftId === memoryDraftsSelectedId || (!memoryDraftsSelectedId && draft === memoryDrafts[0]);
+                  return (
+                    <button
+                      key={draftId || `${draft.sessionId}-${draft.title}`}
+                      type="button"
+                      onClick={() => setMemoryDraftsSelectedId(draftId)}
+                      className={`w-full rounded-xl border p-4 text-left transition ${
+                        isSelected
+                          ? 'border-fuchsia-500/40 bg-fuchsia-500/10'
+                          : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-950'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-100">{draft.title || 'Untitled draft'}</p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            {draftTypeLabel(draft.memoryType)} • {draft.moduleName || 'No module name'}
+                          </p>
+                        </div>
+                        <span className={`text-[11px] px-2 py-1 rounded border ${draftStatusClass(draft.status)}`}>
+                          {draftStatusLabel(draft.status)}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-300 line-clamp-2">
+                        {draft.content || draft.moduleDescription || 'No content available.'}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
+                        <span className="rounded-full border border-slate-800 px-2 py-1">Confidence {formatDraftConfidence(draft.confidence)}</span>
+                        <span className="rounded-full border border-slate-800 px-2 py-1 font-mono">{draft.sessionId || 'session n/a'}</span>
+                        <span className="rounded-full border border-slate-800 px-2 py-1">{draft.workflowRef || 'workflow n/a'}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-100">Selected Draft</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Approve or reject the selected candidate before publishing to SkillMeat.
+                  </p>
+                </div>
+                {selectedMemoryDraft && (
+                  <span className={`text-[11px] px-2 py-1 rounded border ${draftStatusClass(selectedMemoryDraft.status)}`}>
+                    {draftStatusLabel(selectedMemoryDraft.status)}
+                  </span>
+                )}
+              </div>
+
+              {!selectedMemoryDraft && (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">
+                  Select a draft from the queue to inspect evidence and decide whether it should be published.
+                </div>
+              )}
+
+              {selectedMemoryDraft && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Module</p>
+                      <p className="mt-2 text-slate-100">{selectedMemoryDraft.moduleName || 'Not set'}</p>
+                      <p className="mt-1 text-xs text-slate-400">{selectedMemoryDraft.moduleDescription || 'No description provided.'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Confidence</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-100">{formatDraftConfidence(selectedMemoryDraft.confidence)}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Source {selectedMemoryDraft.sourceMessageId || 'n/a'} • #{selectedMemoryDraft.sourceMessageIndex}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-1">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Identifiers</p>
+                      <p className="font-mono break-all">Draft ID: {selectedMemoryDraft.id ?? 'n/a'}</p>
+                      <p className="font-mono break-all">Project: {selectedMemoryDraft.projectId || 'n/a'}</p>
+                      <p className="font-mono break-all">Feature: {selectedMemoryDraft.featureId || 'n/a'}</p>
+                      <p className="font-mono break-all">Session: {selectedMemoryDraft.sessionId || 'n/a'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-1">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Publish State</p>
+                      <p className="font-mono break-all">Published Module: {selectedMemoryDraft.publishedModuleId || 'n/a'}</p>
+                      <p className="font-mono break-all">Published Memory: {selectedMemoryDraft.publishedMemoryId || 'n/a'}</p>
+                      <p className="font-mono break-all">Reviewed By: {selectedMemoryDraft.reviewedBy || 'n/a'}</p>
+                      <p className="font-mono break-all">Last Error: {selectedMemoryDraft.lastPublishError || 'none'}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Draft Content</p>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-200 whitespace-pre-wrap">
+                      {selectedMemoryDraft.content || 'No draft content captured.'}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Evidence</p>
+                    <pre className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap break-all">
+                      {JSON.stringify(selectedMemoryDraft.evidence || {}, null, 2)}
+                    </pre>
+                    <p className="text-[11px] text-slate-500">{summarizeDraftEvidence(selectedMemoryDraft.evidence || {})}</p>
+                  </div>
+
+                  <label className="block text-xs text-slate-400">
+                    Review Notes
+                    <textarea
+                      value={memoryDraftReviewNotes}
+                      onChange={(e) => setMemoryDraftReviewNotes(e.target.value)}
+                      className="mt-1 min-h-[88px] w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+                      placeholder="Leave a short approval or rejection note."
+                    />
+                  </label>
+
+                  <label className="block text-xs text-slate-400">
+                    Publish Notes
+                    <textarea
+                      value={memoryDraftPublishNotes}
+                      onChange={(e) => setMemoryDraftPublishNotes(e.target.value)}
+                      className="mt-1 min-h-[88px] w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+                      placeholder="Optional note to attach to the publish action."
+                    />
+                  </label>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => { void reviewMemoryDraft(selectedMemoryDraft, 'approved'); }}
+                      disabled={busyAction !== null}
+                      className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-60"
+                    >
+                      <CheckCircle2 size={14} />
+                      {busyAction === 'memory-drafts-approved' ? 'Approving…' : 'Approve'}
+                    </button>
+                    <button
+                      onClick={() => { void reviewMemoryDraft(selectedMemoryDraft, 'rejected'); }}
+                      disabled={busyAction !== null}
+                      className="inline-flex items-center gap-2 rounded-lg border border-rose-500/35 bg-rose-500/15 px-4 py-2 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-60"
+                    >
+                      <AlertTriangle size={14} />
+                      {busyAction === 'memory-drafts-rejected' ? 'Rejecting…' : 'Reject'}
+                    </button>
+                    <button
+                      onClick={() => { void publishMemoryDraft(selectedMemoryDraft); }}
+                      disabled={busyAction !== null || selectedMemoryDraft.status !== 'approved'}
+                      className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-60"
+                    >
+                      <Server size={14} />
+                      {busyAction === 'memory-drafts-publish' ? 'Publishing…' : 'Publish'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-400">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Created</p>
+                      <p className="mt-1 text-slate-200">{formatDate(selectedMemoryDraft.createdAt)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Reviewed</p>
+                      <p className="mt-1 text-slate-200">{formatDate(selectedMemoryDraft.reviewedAt)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Published</p>
+                      <p className="mt-1 text-slate-200">{formatDate(selectedMemoryDraft.publishedAt)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)] gap-4">
             <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
