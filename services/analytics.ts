@@ -3,6 +3,10 @@ import {
     AnalyticsTrendPoint,
     AlertConfig,
     Notification,
+    SessionIntelligenceDetailResponse,
+    SessionIntelligenceDrilldownResponse,
+    SessionIntelligenceListResponse,
+    SessionIntelligenceConcern,
     SessionCostCalibrationSummary,
     AnalyticsOverview,
     AnalyticsBreakdownItem,
@@ -10,6 +14,7 @@ import {
     AnalyticsArtifactsResponse,
     EffectivenessScopeType,
     FailurePatternResponse,
+    SessionSemanticSearchResponse,
     SessionUsageAggregateResponse,
     SessionUsageCalibrationSummary,
     SessionUsageDrilldownResponse,
@@ -274,6 +279,74 @@ export const analyticsService = {
         const qs = search.toString();
         const res = await fetch(`${API_BASE}/failure-patterns${qs ? `?${qs}` : ''}`);
         if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch failure patterns');
+        return res.json();
+    },
+
+    async searchSessionIntelligence(params: {
+        query: string;
+        featureId?: string;
+        rootSessionId?: string;
+        sessionId?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<SessionSemanticSearchResponse> {
+        const search = new URLSearchParams({
+            query: params.query,
+            offset: String(params.offset || 0),
+            limit: String(params.limit || 25),
+        });
+        if (params.featureId) search.append('feature_id', params.featureId);
+        if (params.rootSessionId) search.append('root_session_id', params.rootSessionId);
+        if (params.sessionId) search.append('session_id', params.sessionId);
+        const res = await fetch(`${API_BASE}/session-intelligence/search?${search.toString()}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch transcript intelligence search');
+        return res.json();
+    },
+
+    async getSessionIntelligence(params?: {
+        featureId?: string;
+        rootSessionId?: string;
+        sessionId?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<SessionIntelligenceListResponse> {
+        const search = new URLSearchParams({
+            offset: String(params?.offset || 0),
+            limit: String(params?.limit || 50),
+        });
+        if (params?.featureId) search.append('feature_id', params.featureId);
+        if (params?.rootSessionId) search.append('root_session_id', params.rootSessionId);
+        if (params?.sessionId) search.append('session_id', params.sessionId);
+        const res = await fetch(`${API_BASE}/session-intelligence?${search.toString()}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence rollups');
+        return res.json();
+    },
+
+    async getSessionIntelligenceDetail(sessionId: string): Promise<SessionIntelligenceDetailResponse> {
+        const search = new URLSearchParams({ session_id: sessionId });
+        const res = await fetch(`${API_BASE}/session-intelligence/detail?${search.toString()}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence detail');
+        return res.json();
+    },
+
+    async getSessionIntelligenceDrilldown(params: {
+        concern: SessionIntelligenceConcern;
+        featureId?: string;
+        rootSessionId?: string;
+        sessionId?: string;
+        offset?: number;
+        limit?: number;
+    }): Promise<SessionIntelligenceDrilldownResponse> {
+        const search = new URLSearchParams({
+            concern: params.concern,
+            offset: String(params.offset || 0),
+            limit: String(params.limit || 50),
+        });
+        if (params.featureId) search.append('feature_id', params.featureId);
+        if (params.rootSessionId) search.append('root_session_id', params.rootSessionId);
+        if (params.sessionId) search.append('session_id', params.sessionId);
+        const res = await fetch(`${API_BASE}/session-intelligence/drilldown?${search.toString()}`);
+        if (!res.ok) throw await buildAnalyticsApiError(res, 'Failed to fetch session intelligence drilldown');
         return res.json();
     },
 

@@ -68,6 +68,7 @@ import { RecommendedStackPreviewCard } from './execution/RecommendedStackPreview
 import { ExecutionRunHistory } from './execution/ExecutionRunHistory';
 import { ExecutionRunPanel } from './execution/ExecutionRunPanel';
 import { WorkflowEffectivenessSurface } from './execution/WorkflowEffectivenessSurface';
+import { SessionIntelligencePanel } from './session-intelligence/SessionIntelligencePanel';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
 import {
@@ -572,7 +573,7 @@ const copyText = async (value: string): Promise<void> => {
 export const FeatureExecutionWorkbench: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { activeProject, features, refreshFeatures, documents, getSessionById } = useData();
+  const { activeProject, features, refreshFeatures, documents, getSessionById, runtimeStatus } = useData();
   const stackRecommendationsAvailable = isStackRecommendationsEnabled(activeProject);
   const workflowAnalyticsAvailable = isWorkflowAnalyticsEnabled(activeProject);
   const featureParam = searchParams.get('feature') || '';
@@ -2807,6 +2808,15 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   </div>
 
                   <div>
+                    <SessionIntelligencePanel
+                      title="Feature Intelligence Rollups"
+                      description="Feature-scoped sentiment, churn, and scope-drift indicators aggregated from canonical session intelligence."
+                      featureId={context.feature.id}
+                      runtimeStatus={runtimeStatus}
+                      onOpenSession={openSession}
+                      className="mb-4"
+                    />
+
                     {workflowAnalyticsAvailable ? (
                       <WorkflowEffectivenessSurface
                         embedded

@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/enhancements/session-intelligence-canonical-st
 plan_ref: /docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md
 phase: 5
 title: "UI And Workflow Surfaces"
-status: "in_progress"
+status: "completed"
 started: "2026-04-03"
-completed:
-commit_refs: []
+completed: "2026-04-03"
+commit_refs: ["39b91d7"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "3-4 days"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 3
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "SICS-401"
     description: "Add Session Inspector support for transcript search hits, DX sentiment state, churn flags, and scope-drift evidence."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["frontend-developer"]
     dependencies: ["SICS-302", "SICS-303"]
     estimated_effort: "3pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "SICS-402"
     description: "Extend feature/execution surfaces to show aggregated sentiment, churn, and drift indicators at the feature or workflow level."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["frontend-developer", "ui-engineer-enhanced"]
     dependencies: ["SICS-302"]
     estimated_effort: "3pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "SICS-403"
     description: "Add profile-aware empty/loading/error states that distinguish unsupported local-mode capabilities from enterprise failures."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["ui-engineer-enhanced"]
     dependencies: ["SICS-303"]
     estimated_effort: "2pt"
@@ -66,6 +66,12 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/session-intelligence-canonical-storage-v1/phase-5-progress.md"
+  - "components/SessionInspector.tsx"
+  - "components/FeatureExecutionWorkbench.tsx"
+  - "components/session-intelligence/SessionIntelligencePanel.tsx"
+  - "services/analytics.ts"
+  - "lib/sessionIntelligence.ts"
+  - "lib/__tests__/sessionIntelligence.test.ts"
 
 updated: "2026-04-03"
 ---
@@ -81,6 +87,12 @@ python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f
 ## Objective
 
 Surface transcript intelligence in session, feature, and workflow UX without degrading local-mode usability.
+
+## Completion Notes
+
+1. Session Inspector now embeds a transcript-intelligence surface with semantic search, sentiment evidence, churn evidence, and scope-drift evidence in the analytics workflow.
+2. Feature execution analytics now show aggregated transcript-intelligence rollups alongside workflow effectiveness, using shared capability-state messaging for local versus enterprise behavior.
+3. Shared intelligence helpers and targeted frontend tests cover availability-state messaging and rollup aggregation semantics.
 
 ## Orchestration Quick Reference
 

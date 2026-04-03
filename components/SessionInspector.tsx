@@ -25,6 +25,7 @@ import { contextSummaryLabel, costSummaryLabel, formatContextMeasurementSource, 
 import { buildSessionBlockInsights } from '../lib/sessionBlockInsights';
 import { mergeSessionTranscriptAppend } from '../lib/sessionTranscriptLive';
 import { isSessionBlockInsightsEnabled, isUsageAttributionEnabled } from '../services/agenticIntelligence';
+import { SessionIntelligencePanel } from './session-intelligence/SessionIntelligencePanel';
 import {
     isSessionLiveUpdatesEnabled,
     isSessionTranscriptAppendEnabled,
@@ -4870,7 +4871,18 @@ const AnalyticsView: React.FC<{
     goToTranscript: (agentName?: string) => void;
     usageAttributionEnabled: boolean;
     sessionBlockInsightsEnabled: boolean;
-}> = ({ session, threadSessions, threadSessionDetails, goToTranscript, usageAttributionEnabled, sessionBlockInsightsEnabled }) => {
+    runtimeStatus: ReturnType<typeof useData>['runtimeStatus'];
+    onOpenSession: (sessionId: string) => void;
+}> = ({
+    session,
+    threadSessions,
+    threadSessionDetails,
+    goToTranscript,
+    usageAttributionEnabled,
+    sessionBlockInsightsEnabled,
+    runtimeStatus,
+    onOpenSession,
+}) => {
     const { getColorForModel } = useModelColors();
     const [modalData, setModalData] = useState<{ title: string; data: any } | null>(null);
     const [tokenViewMode, setTokenViewMode] = useState<'summary' | 'timeline'>('summary');
@@ -5033,6 +5045,18 @@ const AnalyticsView: React.FC<{
                 </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div className="md:col-span-2">
+                    <SessionIntelligencePanel
+                        title="Session Intelligence Surface"
+                        description="Inspect transcript hits and derived evidence without leaving the active session workflow."
+                        sessionId={session.id}
+                        rootSessionId={session.rootSessionId || session.id}
+                        featureId={session.intelligenceSummary?.featureId || undefined}
+                        runtimeStatus={runtimeStatus}
+                        onOpenSession={onOpenSession}
+                        onJumpToTranscript={() => goToTranscript()}
+                    />
+                </div>
 
                 {/* 1. AGENTS CHART */}
                 <div className="bg-panel border border-panel-border rounded-xl p-6">
@@ -7358,7 +7382,7 @@ const SessionDetail: React.FC<{
     initialTab: SessionInspectorTab;
     onTabChange: (tab: SessionInspectorTab) => void;
 }> = ({ session, onBack, onOpenSession, initialTab, onTabChange }) => {
-    const { activeProject, getSessionById, features } = useData();
+    const { activeProject, getSessionById, features, runtimeStatus } = useData();
     const navigate = useNavigate();
     const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<SessionInspectorTab>(initialTab);
@@ -8120,6 +8144,8 @@ const SessionDetail: React.FC<{
                         goToTranscript={handleJumpToTranscript}
                         usageAttributionEnabled={isUsageAttributionEnabled(activeProject)}
                         sessionBlockInsightsEnabled={isSessionBlockInsightsEnabled(activeProject)}
+                        runtimeStatus={runtimeStatus}
+                        onOpenSession={onOpenSession}
                     />
                 )}
                 {activeTab === 'agents' && (
@@ -8283,8 +8309,9 @@ export const SessionInspector: React.FC = () => {
                     const logCount = typeof event.payload.logCount === 'number' && Number.isFinite(event.payload.logCount)
                         ? event.payload.logCount
                         : current.logs.length;
-                    const nextStatus = typeof event.payload.status === 'string' && event.payload.status.trim()
-                        ? event.payload.status
+                    const rawStatus = typeof event.payload.status === 'string' ? event.payload.status.trim() : '';
+                    const nextStatus: AgentSession['status'] = rawStatus === 'active' || rawStatus === 'completed'
+                        ? rawStatus
                         : current.status;
                     const nextUpdatedAt = typeof event.payload.updatedAt === 'string' && event.payload.updatedAt.trim()
                         ? event.payload.updatedAt
