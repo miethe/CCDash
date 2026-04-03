@@ -8,17 +8,17 @@ prd_ref: /docs/project_plans/PRDs/enhancements/session-intelligence-canonical-st
 plan_ref: /docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md
 phase: 4
 title: "Query Services And API Surfaces"
-status: "in_progress"
+status: "completed"
 started: "2026-04-03"
-completed: null
-commit_refs: []
+completed: "2026-04-03"
+commit_refs: ["4a543a2", "b88ad78"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "pending"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 3
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ contributors: ["codex"]
 tasks:
   - id: "SICS-301"
     description: "Build a backend service that resolves query embeddings, rank/filters transcript matches, and returns explainable search results scoped by project, feature, and session family."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer", "backend-architect"]
     dependencies: ["SICS-103"]
     estimated_effort: "4pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "SICS-302"
     description: "Add additive API surfaces for DX sentiment, churn, and scope drift, including list, detail, and drilldown payloads."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["SICS-201", "SICS-202", "SICS-203"]
     estimated_effort: "3pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "SICS-303"
     description: "Move eligible transcript and analytics read paths to the new services while preserving current payload compatibility for existing consumers."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer", "frontend-developer"]
     dependencies: ["SICS-301", "SICS-302"]
     estimated_effort: "3pt"
@@ -66,6 +66,20 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/session-intelligence-canonical-storage-v1/phase-4-progress.md"
+  - "backend/application/services/session_intelligence.py"
+  - "backend/db/repositories/base.py"
+  - "backend/db/repositories/session_messages.py"
+  - "backend/db/repositories/postgres/session_messages.py"
+  - "backend/db/repositories/sessions.py"
+  - "backend/db/repositories/postgres/sessions.py"
+  - "backend/models.py"
+  - "backend/routers/analytics.py"
+  - "backend/routers/api.py"
+  - "backend/tests/test_analytics_router.py"
+  - "backend/tests/test_sessions_api_router.py"
+  - "types.ts"
+
+updated: "2026-04-03"
 ---
 
 # session-intelligence-canonical-storage-v1 - Phase 4
@@ -79,6 +93,16 @@ python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f
 ## Objective
 
 Expose semantic search and intelligence summaries through stable backend contracts without breaking the existing session read models.
+
+## Completion Notes
+
+1. Canonical session-intelligence query services, typed read models, and transcript search surfaces shipped behind application-layer services.
+2. Analytics and session-detail routers now consume the canonical services while preserving payload compatibility and graceful fallback when intelligence storage is unavailable.
+3. Focused backend validation passed for analytics, session detail compatibility, and session-intelligence service/query coverage.
+
+## Residual Risk Notes
+
+1. Semantic search currently ranks canonical transcript rows lexically; vector-query resolution remains deferred until an embedding-generation provider is wired into the platform.
 
 ## Orchestration Quick Reference
 
