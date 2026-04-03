@@ -83,6 +83,9 @@ SCHEMA_BOUNDARIES = MappingProxyType(
                 "session_logs",
                 "session_messages",
                 "session_embeddings",
+                "session_sentiment_facts",
+                "session_code_churn_facts",
+                "session_scope_drift_facts",
                 "session_tool_usage",
                 "session_file_updates",
                 "session_artifacts",
@@ -105,6 +108,9 @@ SCHEMA_BOUNDARIES = MappingProxyType(
                 "session_logs",
                 "session_messages",
                 "session_embeddings",
+                "session_sentiment_facts",
+                "session_code_churn_facts",
+                "session_scope_drift_facts",
                 "session_tool_usage",
                 "session_file_updates",
                 "session_artifacts",
@@ -286,6 +292,25 @@ REPOSITORY_OWNERSHIP = MappingProxyType(
                 "Transcript embedding blocks remain enterprise-only in Phase 2 and inherit "
                 "ownership from canonical session/message lineage."
             ),
+        ),
+        "session_intelligence": RepositoryOwnership(
+            key="session_intelligence",
+            domain="observed_product_entities",
+            boundary="observed_entities",
+            sqlite_module="backend.db.repositories.session_intelligence",
+            postgres_module="backend.db.repositories.postgres.session_intelligence",
+            concerns=(
+                "session_sentiment_facts",
+                "session_code_churn_facts",
+                "session_scope_drift_facts",
+            ),
+            ownership_mode="scope-aware-only",
+            inherited_ownership_concerns=(
+                "session_sentiment_facts",
+                "session_code_churn_facts",
+                "session_scope_drift_facts",
+            ),
+            notes="Derived session intelligence facts inherit ownership from the parent session and stay scope-aware only.",
         ),
         "documents": RepositoryOwnership(
             key="documents",

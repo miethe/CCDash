@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -575,6 +575,74 @@ CREATE INDEX IF NOT EXISTS idx_commit_corr_session
     ON commit_correlations(project_id, session_id, window_end);
 CREATE INDEX IF NOT EXISTS idx_commit_corr_feature
     ON commit_correlations(project_id, feature_id, window_end);
+
+CREATE TABLE IF NOT EXISTS session_sentiment_facts (
+    id                 BIGSERIAL PRIMARY KEY,
+    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id         TEXT DEFAULT '',
+    root_session_id    TEXT DEFAULT '',
+    thread_session_id  TEXT DEFAULT '',
+    source_message_id  TEXT DEFAULT '',
+    source_log_id      TEXT DEFAULT '',
+    message_index      INTEGER NOT NULL DEFAULT 0,
+    sentiment_label    TEXT NOT NULL DEFAULT 'neutral',
+    sentiment_score    DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    confidence         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version  TEXT DEFAULT '',
+    evidence_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_sentiment_facts_session
+    ON session_sentiment_facts(session_id, message_index, source_log_id);
+
+CREATE TABLE IF NOT EXISTS session_code_churn_facts (
+    id                       BIGSERIAL PRIMARY KEY,
+    session_id               TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id               TEXT DEFAULT '',
+    root_session_id          TEXT DEFAULT '',
+    thread_session_id        TEXT DEFAULT '',
+    file_path                TEXT NOT NULL,
+    first_source_log_id      TEXT DEFAULT '',
+    last_source_log_id       TEXT DEFAULT '',
+    first_message_index      INTEGER NOT NULL DEFAULT 0,
+    last_message_index       INTEGER NOT NULL DEFAULT 0,
+    touch_count              INTEGER NOT NULL DEFAULT 0,
+    distinct_edit_turn_count INTEGER NOT NULL DEFAULT 0,
+    repeat_touch_count       INTEGER NOT NULL DEFAULT 0,
+    rewrite_pass_count       INTEGER NOT NULL DEFAULT 0,
+    additions_total          INTEGER NOT NULL DEFAULT 0,
+    deletions_total          INTEGER NOT NULL DEFAULT 0,
+    net_diff_total           INTEGER NOT NULL DEFAULT 0,
+    churn_score              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    progress_score           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    low_progress_loop        BOOLEAN NOT NULL DEFAULT FALSE,
+    confidence               DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version        TEXT DEFAULT '',
+    evidence_json            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_code_churn_facts_session
+    ON session_code_churn_facts(session_id, file_path);
+
+CREATE TABLE IF NOT EXISTS session_scope_drift_facts (
+    id                      BIGSERIAL PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id              TEXT DEFAULT '',
+    root_session_id         TEXT DEFAULT '',
+    thread_session_id       TEXT DEFAULT '',
+    planned_path_count      INTEGER NOT NULL DEFAULT 0,
+    actual_path_count       INTEGER NOT NULL DEFAULT 0,
+    matched_path_count      INTEGER NOT NULL DEFAULT 0,
+    out_of_scope_path_count INTEGER NOT NULL DEFAULT 0,
+    drift_ratio             DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    adherence_score         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    confidence              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version       TEXT DEFAULT '',
+    evidence_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_scope_drift_facts_session
+    ON session_scope_drift_facts(session_id, feature_id);
 
 -- ── 11. App Metadata + Alert Configs ───────────────────────────────
 CREATE TABLE IF NOT EXISTS app_metadata (

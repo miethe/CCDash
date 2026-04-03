@@ -21,6 +21,7 @@ from backend.db.repositories.entity_graph import SqliteEntityLinkRepository, Sql
 from backend.db.repositories.pricing import SqlitePricingCatalogRepository
 from backend.db.repositories.runtime_state import SqliteAlertConfigRepository, SqliteSyncStateRepository
 from backend.db.repositories.session_embeddings import SqliteSessionEmbeddingRepository
+from backend.db.repositories.session_intelligence import SqliteSessionIntelligenceRepository
 from backend.db.repositories.session_messages import SqliteSessionMessageRepository
 from backend.db.repositories.sessions import SqliteSessionRepository
 from backend.db.repositories.tasks import SqliteTaskRepository
@@ -41,6 +42,7 @@ class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "sessions": SqliteSessionRepository,
                 "session_messages": SqliteSessionMessageRepository,
                 "session_embeddings": SqliteSessionEmbeddingRepository,
+                "session_intelligence": SqliteSessionIntelligenceRepository,
                 "documents": SqliteDocumentRepository,
                 "tasks": SqliteTaskRepository,
                 "analytics": SqliteAnalyticsRepository,

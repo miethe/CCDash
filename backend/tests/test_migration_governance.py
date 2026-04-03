@@ -36,6 +36,16 @@ class MigrationGovernanceTests(unittest.TestCase):
         enterprise_only = get_enterprise_only_postgres_tables()
         self.assertSetEqual(enterprise_only, set(ENTERPRISE_ONLY_POSTGRES_CONCERNS))
 
+    def test_session_intelligence_facts_are_shared_tables(self) -> None:
+        shared = get_sqlite_migration_tables()
+        for table in (
+            "session_sentiment_facts",
+            "session_code_churn_facts",
+            "session_scope_drift_facts",
+        ):
+            self.assertIn(table, shared)
+            self.assertNotIn(table, get_enterprise_only_postgres_tables())
+
     def test_enterprise_only_tables_are_in_expected_schemas(self) -> None:
         schema_map = get_enterprise_only_postgres_table_schemas()
         expected = {

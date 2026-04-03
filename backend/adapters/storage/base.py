@@ -34,6 +34,9 @@ class _ObservedProductView(_RepositoryDomainView):
     def session_embeddings(self) -> Any:
         return self._repo("session_embeddings")
 
+    def session_intelligence(self) -> Any:
+        return self._repo("session_intelligence")
+
     def documents(self) -> Any:
         return self._repo("documents")
 
@@ -126,6 +129,7 @@ class RepositoryBackedStorageUnitOfWork:
                 "sessions",
                 "session_messages",
                 "session_embeddings",
+                "session_intelligence",
                 "documents",
                 "tasks",
                 "session_usage",
@@ -205,6 +209,9 @@ class RepositoryBackedStorageUnitOfWork:
 
     def session_embeddings(self) -> Any:
         return self._repo("session_embeddings")
+
+    def session_intelligence(self) -> Any:
+        return self._repo("session_intelligence")
 
     def documents(self) -> Any:
         return self._repo("documents")

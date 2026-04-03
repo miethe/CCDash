@@ -155,6 +155,17 @@ class DataDomainOwnershipTests(unittest.TestCase):
         self.assertEqual(ownership.ownership_posture, "inherits-parent-ownership")
         self.assertIn("session_embeddings", ENTERPRISE_ONLY_POSTGRES_CONCERNS)
 
+    def test_session_intelligence_facts_inherit_parent_ownership(self) -> None:
+        for concern in (
+            "session_sentiment_facts",
+            "session_code_churn_facts",
+            "session_scope_drift_facts",
+        ):
+            ownership = PERSISTED_CONCERN_OWNERSHIP[concern]
+            self.assertEqual(ownership.domain, "observed_product_entities")
+            self.assertEqual(ownership.ownership_posture, "inherits-parent-ownership")
+            self.assertNotIn(concern, ENTERPRISE_ONLY_POSTGRES_CONCERNS)
+
 
 if __name__ == "__main__":
     unittest.main()

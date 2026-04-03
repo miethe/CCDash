@@ -42,6 +42,9 @@ from backend.services.session_usage_attribution import (
     build_session_usage_attributions,
     build_session_usage_events,
 )
+from backend.services.session_sentiment_facts import build_session_sentiment_facts
+from backend.services.session_churn_facts import build_session_code_churn_facts
+from backend.services.session_scope_drift import build_session_scope_drift_facts
 from backend.services.session_transcript_projection import project_session_messages
 from backend.document_linking import (
     alias_tokens_from_path,
@@ -79,6 +82,7 @@ from backend.db.factory import (
     get_analytics_repository,
     get_session_usage_repository,
     get_session_message_repository,
+    get_session_intelligence_repository,
     get_entity_link_repository,
     get_sync_state_repository,
     get_tag_repository,
@@ -1187,6 +1191,7 @@ class SyncEngine:
         self.analytics_repo = get_analytics_repository(db)
         self.session_usage_repo = get_session_usage_repository(db)
         self.session_message_repo = get_session_message_repository(db)
+        self.session_intelligence_repo = get_session_intelligence_repository(db)
         self.telemetry_queue_repo = get_telemetry_queue_repository(db)
         self.telemetry_transformer = TelemetryTransformer()
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
@@ -1385,6 +1390,40 @@ class SyncEngine:
         attributions = build_session_usage_attributions(session_payload, logs, artifacts, events)
         await self.session_usage_repo.replace_session_usage(project_id, session_id, events, attributions)
         return {"events": len(events), "attributions": len(attributions)}
+
+    async def _replace_session_intelligence_facts(
+        self,
+        project_id: str,
+        session_payload: dict[str, Any],
+        canonical_rows: list[dict[str, Any]],
+        file_updates: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        session_id = _first_non_empty(session_payload, "id")
+        if not session_id:
+            return {"sentiment": 0, "churn": 0, "scopeDrift": 0}
+
+        sentiment_facts = build_session_sentiment_facts(session_payload, canonical_rows)
+        churn_facts = build_session_code_churn_facts(session_payload, canonical_rows, file_updates)
+
+        feature_id = _first_non_empty(session_payload, "featureId", "feature_id", "taskId", "task_id")
+        linked_docs: list[dict[str, Any]] = []
+        if feature_id:
+            linked_docs = await self.document_repo.list_paginated(
+                project_id,
+                0,
+                200,
+                filters={"feature": feature_id, "include_progress": True},
+            )
+        scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
+
+        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
+        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
+        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+        return {
+            "sentiment": len(sentiment_facts),
+            "churn": len(churn_facts),
+            "scopeDrift": len(scope_drift_facts),
+        }
 
     async def _load_commit_head_state(self, project_id: str) -> dict[str, Any]:
         raw_value: str | None = None
@@ -3716,6 +3755,12 @@ class SyncEngine:
                         logs,
                         files,
                         source="sync",
+                    )
+                    await self._replace_session_intelligence_facts(
+                        project_id,
+                        session_dict,
+                        canonical_rows,
+                        files,
                     )
                     await self._maybe_enqueue_telemetry_export(project_id, session_dict)
                     append_published = await _publish_session_transcript_appends(
