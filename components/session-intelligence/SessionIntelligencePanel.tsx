@@ -291,6 +291,7 @@ export const SessionIntelligencePanel: React.FC<SessionIntelligencePanelProps> =
   }, [featureId, rootSessionId, sessionId]);
 
   const aggregate = useMemo(() => aggregateSessionIntelligence(rollups), [rollups]);
+  const hasData = rollups.length > 0 || Boolean(detail);
   const resolvedCapability = useMemo(() => {
     if (searchPayload?.capability) return searchPayload.capability;
     if (!hasData) return null;
@@ -338,8 +339,6 @@ export const SessionIntelligencePanel: React.FC<SessionIntelligencePanelProps> =
       setSearchLoading(false);
     }
   };
-
-  const hasData = rollups.length > 0 || Boolean(detail);
 
   return (
     <section className={`rounded-[24px] border border-panel-border bg-panel/70 px-5 py-5 ${className}`}>
