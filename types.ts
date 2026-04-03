@@ -1616,6 +1616,59 @@ export interface SkillMeatRefreshResponse {
   backfill: SkillMeatObservationBackfillResponse | null;
 }
 
+export type SessionMemoryDraftStatus = 'draft' | 'approved' | 'rejected' | 'published';
+export type SessionMemoryDraftType = 'decision' | 'constraint' | 'gotcha' | 'style_rule' | 'learning';
+
+export interface SessionMemoryDraft {
+  id?: number | null;
+  projectId: string;
+  sessionId: string;
+  featureId: string;
+  rootSessionId: string;
+  threadSessionId: string;
+  workflowRef: string;
+  title: string;
+  memoryType: SessionMemoryDraftType;
+  status: SessionMemoryDraftStatus;
+  moduleName: string;
+  moduleDescription: string;
+  content: string;
+  confidence: number;
+  sourceMessageId: string;
+  sourceLogId: string;
+  sourceMessageIndex: number;
+  contentHash: string;
+  evidence: Record<string, unknown>;
+  publishAttempts: number;
+  publishedModuleId: string;
+  publishedMemoryId: string;
+  reviewedBy: string;
+  reviewNotes: string;
+  reviewedAt: string;
+  publishedAt: string;
+  lastPublishError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionMemoryDraftListResponse {
+  generatedAt: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: SessionMemoryDraft[];
+}
+
+export interface SessionMemoryDraftGenerateResponse {
+  projectId: string;
+  generatedAt: string;
+  sessionsConsidered: number;
+  draftsCreated: number;
+  draftsUpdated: number;
+  draftsSkipped: number;
+  items: SessionMemoryDraft[];
+}
+
 export interface PricingCatalogEntry {
   projectId: string;
   platformType: string;

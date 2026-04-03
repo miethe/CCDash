@@ -782,6 +782,43 @@ CREATE INDEX IF NOT EXISTS idx_session_stack_components_observation
 CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution
     ON session_stack_components(project_id, status, component_type);
 
+CREATE TABLE IF NOT EXISTS session_memory_drafts (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id           TEXT NOT NULL,
+    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id           TEXT DEFAULT '',
+    root_session_id      TEXT DEFAULT '',
+    thread_session_id    TEXT DEFAULT '',
+    workflow_ref         TEXT DEFAULT '',
+    title                TEXT DEFAULT '',
+    memory_type          TEXT NOT NULL DEFAULT 'learning',
+    status               TEXT NOT NULL DEFAULT 'draft',
+    module_name          TEXT NOT NULL DEFAULT '',
+    module_description   TEXT DEFAULT '',
+    content              TEXT NOT NULL DEFAULT '',
+    confidence           REAL NOT NULL DEFAULT 0.0,
+    source_message_id    TEXT DEFAULT '',
+    source_log_id        TEXT DEFAULT '',
+    source_message_index INTEGER NOT NULL DEFAULT 0,
+    content_hash         TEXT NOT NULL DEFAULT '',
+    evidence_json        TEXT NOT NULL DEFAULT '{}',
+    publish_attempts     INTEGER NOT NULL DEFAULT 0,
+    published_module_id  TEXT DEFAULT '',
+    published_memory_id  TEXT DEFAULT '',
+    reviewed_by          TEXT DEFAULT '',
+    review_notes         TEXT DEFAULT '',
+    reviewed_at          TEXT DEFAULT '',
+    published_at         TEXT DEFAULT '',
+    last_publish_error   TEXT DEFAULT '',
+    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status
+    ON session_memory_drafts(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session
+    ON session_memory_drafts(project_id, session_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS effectiveness_rollups (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id            TEXT NOT NULL,
@@ -1544,6 +1581,51 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await _ensure_index(
         db,
         "CREATE INDEX IF NOT EXISTS idx_session_stack_components_resolution ON session_stack_components(project_id, status, component_type)",
+    )
+    await _ensure_index(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS session_memory_drafts (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id           TEXT NOT NULL,
+            session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            feature_id           TEXT DEFAULT '',
+            root_session_id      TEXT DEFAULT '',
+            thread_session_id    TEXT DEFAULT '',
+            workflow_ref         TEXT DEFAULT '',
+            title                TEXT DEFAULT '',
+            memory_type          TEXT NOT NULL DEFAULT 'learning',
+            status               TEXT NOT NULL DEFAULT 'draft',
+            module_name          TEXT NOT NULL DEFAULT '',
+            module_description   TEXT DEFAULT '',
+            content              TEXT NOT NULL DEFAULT '',
+            confidence           REAL NOT NULL DEFAULT 0.0,
+            source_message_id    TEXT DEFAULT '',
+            source_log_id        TEXT DEFAULT '',
+            source_message_index INTEGER NOT NULL DEFAULT 0,
+            content_hash         TEXT NOT NULL DEFAULT '',
+            evidence_json        TEXT NOT NULL DEFAULT '{}',
+            publish_attempts     INTEGER NOT NULL DEFAULT 0,
+            published_module_id  TEXT DEFAULT '',
+            published_memory_id  TEXT DEFAULT '',
+            reviewed_by          TEXT DEFAULT '',
+            review_notes         TEXT DEFAULT '',
+            reviewed_at          TEXT DEFAULT '',
+            published_at         TEXT DEFAULT '',
+            last_publish_error   TEXT DEFAULT '',
+            created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, content_hash)
+        )
+        """,
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status ON session_memory_drafts(project_id, status, updated_at DESC)",
+    )
+    await _ensure_index(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session ON session_memory_drafts(project_id, session_id, updated_at DESC)",
     )
     await _ensure_index(
         db,

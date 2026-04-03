@@ -1861,10 +1861,161 @@ class SkillMeatObservationBackfillResponse(BaseModel):
     warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
 
 
+SkillMeatMemoryDraftStatus = Literal["draft", "approved", "published", "rejected", "failed"]
+
+
+class SkillMeatMemoryDraft(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sessionId: str
+    featureId: str = ""
+    workflowRef: str = ""
+    title: str = ""
+    draftKind: str = "context_module"
+    status: SkillMeatMemoryDraftStatus = "draft"
+    confidence: float = 0.0
+    contentHash: str = ""
+    summary: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    draftPayload: dict[str, Any] = Field(default_factory=dict)
+    reviewNotes: str = ""
+    reviewedBy: str = ""
+    reviewedAt: str = ""
+    publishedBy: str = ""
+    publishedAt: str = ""
+    publishError: str = ""
+    publishedExternalId: str = ""
+    publishedSourceUrl: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SkillMeatMemoryDraftListResponse(BaseModel):
+    projectId: str
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SkillMeatMemoryDraft] = Field(default_factory=list)
+    generatedAt: str = ""
+
+
+class SkillMeatMemoryDraftExtractionRequest(BaseModel):
+    projectId: str = ""
+    limit: int = Field(default=50, ge=1, le=1000)
+    forceRecompute: bool = False
+
+
+class SkillMeatMemoryDraftExtractionResponse(BaseModel):
+    projectId: str
+    sessionsProcessed: int = 0
+    draftsStored: int = 0
+    skippedSessions: int = 0
+    generatedAt: str = ""
+    warnings: list[SkillMeatSyncWarning] = Field(default_factory=list)
+
+
+class SkillMeatMemoryDraftReviewRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: str = ""
+    actor: str = ""
+
+
+class SkillMeatMemoryDraftPublishRequest(BaseModel):
+    actor: str = ""
+
+
 class SkillMeatRefreshResponse(BaseModel):
     projectId: str
     sync: SkillMeatDefinitionSyncResponse
     backfill: SkillMeatObservationBackfillResponse | None = None
+    memoryDrafts: SkillMeatMemoryDraftExtractionResponse | None = None
+
+
+class SkillMeatContextModuleCreateRequest(BaseModel):
+    projectId: str
+    name: str
+    description: str = ""
+    selectors: dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(default=5, ge=0, le=100)
+
+
+class SkillMeatContextModulePublishResult(BaseModel):
+    id: str = ""
+    projectId: str = ""
+    name: str = ""
+    sourceUrl: str = ""
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+SessionMemoryDraftStatus = Literal["draft", "approved", "rejected", "published"]
+SessionMemoryDraftType = Literal["decision", "constraint", "gotcha", "style_rule", "learning"]
+
+
+class SessionMemoryDraftDTO(BaseModel):
+    id: Optional[int] = None
+    projectId: str
+    sessionId: str
+    featureId: str = ""
+    rootSessionId: str = ""
+    threadSessionId: str = ""
+    workflowRef: str = ""
+    title: str = ""
+    memoryType: SessionMemoryDraftType = "learning"
+    status: SessionMemoryDraftStatus = "draft"
+    moduleName: str = ""
+    moduleDescription: str = ""
+    content: str = ""
+    confidence: float = 0.0
+    sourceMessageId: str = ""
+    sourceLogId: str = ""
+    sourceMessageIndex: int = 0
+    contentHash: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    publishAttempts: int = 0
+    publishedModuleId: str = ""
+    publishedMemoryId: str = ""
+    reviewedBy: str = ""
+    reviewNotes: str = ""
+    reviewedAt: str = ""
+    publishedAt: str = ""
+    lastPublishError: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class SessionMemoryDraftListResponse(BaseModel):
+    generatedAt: str = ""
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[SessionMemoryDraftDTO] = Field(default_factory=list)
+
+
+class SessionMemoryDraftGenerateRequest(BaseModel):
+    sessionId: str = ""
+    limit: int = Field(default=25, ge=1, le=200)
+    actor: str = "system"
+
+
+class SessionMemoryDraftGenerateResponse(BaseModel):
+    projectId: str
+    generatedAt: str = ""
+    sessionsConsidered: int = 0
+    draftsCreated: int = 0
+    draftsUpdated: int = 0
+    draftsSkipped: int = 0
+    items: list[SessionMemoryDraftDTO] = Field(default_factory=list)
+
+
+class SessionMemoryDraftReviewRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    actor: str = "user"
+    notes: str = ""
+
+
+class SessionMemoryDraftPublishRequest(BaseModel):
+    actor: str = "user"
+    notes: str = ""
 
 
 EffectivenessScopeType = Literal["workflow", "effective_workflow", "agent", "skill", "context_module", "bundle", "stack"]

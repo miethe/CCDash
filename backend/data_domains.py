@@ -238,6 +238,17 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         notes="Definitions inherit ownership from their governing snapshot source rather than storing direct ownership fields.",
         migration_managed=True,
     )
+    register_many(
+        ("session_memory_drafts",),
+        kind="table",
+        domain="operational_job_data",
+        durability="refreshable",
+        local_owner="SQLite operational state store",
+        enterprise_owner="enterprise Postgres operational state store",
+        ownership_posture="scope-owned",
+        notes="Session memory draft roots remain project-scoped operational records until explicitly published to SkillMeat.",
+        migration_managed=True,
+    )
 
     register_many(
         (
