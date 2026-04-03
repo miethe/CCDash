@@ -10,7 +10,7 @@ phase: 6
 title: "SkillMeat Memory Draft Loop"
 status: "in_progress"
 started: "2026-04-03"
-completed: ""
+completed: null
 commit_refs: []
 pr_refs: []
 
@@ -23,12 +23,12 @@ in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
 
-owners: ["python-backend-engineer", "frontend-developer"]
+owners: ["backend-architect", "python-backend-engineer", "frontend-developer"]
 contributors: ["codex"]
 
 tasks:
   - id: "SICS-501"
-    description: "Define the CCDash-side memory draft record, extraction evidence, review status, and linkage back to sessions/features/workflows."
+    description: "Define the CCDash-side draft record, extraction evidence, review status, and linkage back to sessions/features/workflows."
     status: "in_progress"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["SICS-201", "SICS-202", "SICS-203"]
@@ -49,7 +49,7 @@ tasks:
     assigned_to: ["frontend-developer", "python-backend-engineer"]
     dependencies: ["SICS-502"]
     estimated_effort: "2pt"
-    priority: "high"
+    priority: "medium"
 
 parallelization:
   batch_1: ["SICS-501"]
@@ -61,9 +61,9 @@ parallelization:
 blockers: []
 
 success_criteria:
-  - "Memory drafts are stored as reviewable CCDash artifacts with source evidence and publish status."
-  - "Draft generation is deterministic and retry-safe for successful sessions."
-  - "Publishing to SkillMeat remains opt-in, auditable, and failure-tolerant."
+  - "Memory drafts are stored as reviewable CCDash artifacts with deterministic evidence."
+  - "Draft generation is deduplicated, rate-limited, and safe to retry."
+  - "Publishing to SkillMeat requires explicit approval and records audit details."
 
 files_modified:
   - ".claude/progress/session-intelligence-canonical-storage-v1/phase-6-progress.md"
@@ -76,18 +76,12 @@ updated: "2026-04-03"
 Use CLI to update progress:
 
 ```bash
-python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f .claude/progress/session-intelligence-canonical-storage-v1/phase-6-progress.md -t SICS-50X -s completed
+python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f .claude/progress/session-intelligence-canonical-storage-v1/phase-6-progress.md -t SICS-50X -s in_progress
 ```
 
 ## Objective
 
-Draft reviewable SkillMeat memory candidates from successful sessions and require explicit approval before publish.
-
-## Execution Notes
-
-1. Reuse existing session-intelligence derivation seams for candidate evidence instead of introducing a second transcript parser path.
-2. Keep draft persistence profile-aware and storage-backed in both SQLite and Postgres so local review remains possible even when publish is unsupported.
-3. Reuse the existing SkillMeat integration and approval-flow conventions for API wiring, auditability, and operator UX.
+Turn successful session-intelligence evidence into reviewable SkillMeat memory drafts, then require explicit operator approval before any publish call leaves CCDash.
 
 ## Orchestration Quick Reference
 
@@ -95,12 +89,12 @@ Draft reviewable SkillMeat memory candidates from successful sessions and requir
 
 ```bash
 # Batch 1
-Task("python-backend-engineer", "Execute SICS-501: add memory-draft persistence model, repository methods, DTOs, and read APIs grounded in current session-intelligence patterns")
+Task("backend-architect", "Execute SICS-501: Define the persisted session memory draft model, evidence contract, and review states")
 
 # Batch 2
-Task("python-backend-engineer", "Execute SICS-502: implement deterministic draft extraction and worker scheduling for successful sessions")
+Task("python-backend-engineer", "Execute SICS-502: Add deterministic draft extraction and retry-safe worker generation")
 
 # Batch 3
-Task("frontend-developer", "Execute SICS-503: add review and approval UI for memory drafts using the backend publish contract")
-Task("python-backend-engineer", "Execute SICS-503: add approval-gated SkillMeat publish endpoints, audit state transitions, and failure handling")
+Task("frontend-developer", "Execute SICS-503: Add operator review and approval UX for SkillMeat memory draft publishing")
+Task("python-backend-engineer", "Execute SICS-503: Wire approval-gated SkillMeat publish APIs with auditability and error handling")
 ```
