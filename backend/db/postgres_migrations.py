@@ -801,6 +801,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope
 CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period
     ON effectiveness_rollups(project_id, period, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS session_memory_drafts (
+    id                   BIGSERIAL PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id           TEXT DEFAULT '',
+    root_session_id      TEXT DEFAULT '',
+    thread_session_id    TEXT DEFAULT '',
+    workflow_ref         TEXT DEFAULT '',
+    title                TEXT DEFAULT '',
+    memory_type          TEXT NOT NULL DEFAULT 'learning',
+    status               TEXT NOT NULL DEFAULT 'draft',
+    module_name          TEXT NOT NULL DEFAULT '',
+    module_description   TEXT DEFAULT '',
+    content              TEXT NOT NULL DEFAULT '',
+    confidence           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    source_message_id    TEXT DEFAULT '',
+    source_log_id        TEXT DEFAULT '',
+    source_message_index INTEGER NOT NULL DEFAULT 0,
+    content_hash         TEXT NOT NULL DEFAULT '',
+    evidence_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    publish_attempts     INTEGER NOT NULL DEFAULT 0,
+    published_module_id  TEXT DEFAULT '',
+    published_memory_id  TEXT DEFAULT '',
+    reviewed_by          TEXT DEFAULT '',
+    review_notes         TEXT DEFAULT '',
+    reviewed_at          TEXT DEFAULT '',
+    published_at         TEXT DEFAULT '',
+    last_publish_error   TEXT DEFAULT '',
+    created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status
+    ON session_memory_drafts(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session
+    ON session_memory_drafts(project_id, session_id, updated_at DESC);
+
 -- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
     id                    TEXT PRIMARY KEY,
@@ -1740,6 +1777,48 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period ON effectiveness_rollups(project_id, period, updated_at DESC)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_memory_drafts (
+            id                   BIGSERIAL PRIMARY KEY,
+            project_id           TEXT NOT NULL,
+            session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            feature_id           TEXT DEFAULT '',
+            root_session_id      TEXT DEFAULT '',
+            thread_session_id    TEXT DEFAULT '',
+            workflow_ref         TEXT DEFAULT '',
+            title                TEXT DEFAULT '',
+            memory_type          TEXT NOT NULL DEFAULT 'learning',
+            status               TEXT NOT NULL DEFAULT 'draft',
+            module_name          TEXT NOT NULL DEFAULT '',
+            module_description   TEXT DEFAULT '',
+            content              TEXT NOT NULL DEFAULT '',
+            confidence           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            source_message_id    TEXT DEFAULT '',
+            source_log_id        TEXT DEFAULT '',
+            source_message_index INTEGER NOT NULL DEFAULT 0,
+            content_hash         TEXT NOT NULL DEFAULT '',
+            evidence_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+            publish_attempts     INTEGER NOT NULL DEFAULT 0,
+            published_module_id  TEXT DEFAULT '',
+            published_memory_id  TEXT DEFAULT '',
+            reviewed_by          TEXT DEFAULT '',
+            review_notes         TEXT DEFAULT '',
+            reviewed_at          TEXT DEFAULT '',
+            published_at         TEXT DEFAULT '',
+            last_publish_error   TEXT DEFAULT '',
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, content_hash)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status ON session_memory_drafts(project_id, status, updated_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session ON session_memory_drafts(project_id, session_id, updated_at DESC)"
     )
 
     # Seed metric types

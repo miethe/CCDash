@@ -1,4 +1,4 @@
-"""Read-only SkillMeat client and payload normalization."""
+"""SkillMeat client and payload normalization."""
 from __future__ import annotations
 
 import asyncio
@@ -135,6 +135,55 @@ class SkillMeatClient:
             self._request_json,
             f"/api/v1/context-modules/{parse.quote(module_id, safe='')}",
             None,
+        )
+        return payload if isinstance(payload, dict) else {}
+
+    async def create_context_module(
+        self,
+        *,
+        project_id: str,
+        name: str,
+        description: str = "",
+        selectors: dict[str, Any] | None = None,
+        priority: int = 5,
+    ) -> dict[str, Any]:
+        payload = await asyncio.to_thread(
+            self._request_json,
+            "/api/v1/context-modules",
+            None,
+            method="POST",
+            body={
+                "project_id": project_id,
+                "name": name,
+                "description": description,
+                "selectors": selectors or {},
+                "priority": max(0, min(int(priority), 100)),
+            },
+        )
+        return payload if isinstance(payload, dict) else {}
+
+    async def add_context_module_memory(
+        self,
+        module_id: str,
+        *,
+        memory_type: str,
+        content: str,
+        title: str = "",
+        confidence: float = 0.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = await asyncio.to_thread(
+            self._request_json,
+            f"/api/v1/context-modules/{parse.quote(module_id, safe='')}/memories",
+            None,
+            method="POST",
+            body={
+                "type": memory_type,
+                "title": title,
+                "content": content,
+                "confidence": max(0.0, min(float(confidence), 1.0)),
+                "metadata": metadata or {},
+            },
         )
         return payload if isinstance(payload, dict) else {}
 

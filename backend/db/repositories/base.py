@@ -287,6 +287,49 @@ class AgenticIntelligenceRepository(Protocol):
         *,
         period: str | None = None,
     ) -> None: ...
+    async def upsert_session_memory_draft(
+        self,
+        draft_data: dict[str, Any],
+        project_id: str | None = None,
+    ) -> dict[str, Any]: ...
+    async def get_session_memory_draft(self, project_id: str, draft_id: int) -> dict[str, Any] | None: ...
+    async def count_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    async def list_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    async def review_session_memory_draft(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        decision: str,
+        actor: str = "",
+        notes: str = "",
+    ) -> dict[str, Any] | None: ...
+    async def record_session_memory_draft_publish_attempt(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        actor: str = "",
+        notes: str = "",
+        module_id: str = "",
+        memory_id: str = "",
+        source_url: str = "",
+        error: str = "",
+    ) -> dict[str, Any] | None: ...
 
 
 # ── Test Visualizer Repositories ───────────────────────────────────

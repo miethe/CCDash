@@ -448,6 +448,227 @@ class SqliteAgenticIntelligenceRepository:
         await self.db.execute(query, params)
         await self.db.commit()
 
+    async def upsert_session_memory_draft(
+        self,
+        draft_data: dict[str, Any],
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        resolved_project_id = str(project_id or draft_data.get("project_id") or draft_data.get("projectId") or "")
+        content_hash = str(draft_data.get("content_hash") or draft_data.get("contentHash") or "").strip()
+        if not resolved_project_id or not content_hash:
+            raise ValueError("project_id and content_hash are required for session memory drafts")
+        await self.db.execute(
+            """
+            INSERT INTO session_memory_drafts (
+                project_id, session_id, feature_id, root_session_id, thread_session_id, workflow_ref,
+                title, memory_type, status, module_name, module_description, content, confidence,
+                source_message_id, source_log_id, source_message_index, content_hash, evidence_json,
+                publish_attempts, published_module_id, published_memory_id, reviewed_by, review_notes,
+                reviewed_at, published_at, last_publish_error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, content_hash) DO UPDATE SET
+                session_id=excluded.session_id,
+                feature_id=excluded.feature_id,
+                root_session_id=excluded.root_session_id,
+                thread_session_id=excluded.thread_session_id,
+                workflow_ref=excluded.workflow_ref,
+                title=excluded.title,
+                memory_type=excluded.memory_type,
+                status=excluded.status,
+                module_name=excluded.module_name,
+                module_description=excluded.module_description,
+                content=excluded.content,
+                confidence=excluded.confidence,
+                source_message_id=excluded.source_message_id,
+                source_log_id=excluded.source_log_id,
+                source_message_index=excluded.source_message_index,
+                evidence_json=excluded.evidence_json,
+                publish_attempts=excluded.publish_attempts,
+                published_module_id=excluded.published_module_id,
+                published_memory_id=excluded.published_memory_id,
+                reviewed_by=excluded.reviewed_by,
+                review_notes=excluded.review_notes,
+                reviewed_at=excluded.reviewed_at,
+                published_at=excluded.published_at,
+                last_publish_error=excluded.last_publish_error,
+                updated_at=excluded.updated_at
+            """,
+            (
+                resolved_project_id,
+                str(draft_data.get("session_id") or draft_data.get("sessionId") or ""),
+                str(draft_data.get("feature_id") or draft_data.get("featureId") or ""),
+                str(draft_data.get("root_session_id") or draft_data.get("rootSessionId") or ""),
+                str(draft_data.get("thread_session_id") or draft_data.get("threadSessionId") or ""),
+                str(draft_data.get("workflow_ref") or draft_data.get("workflowRef") or ""),
+                str(draft_data.get("title") or ""),
+                str(draft_data.get("memory_type") or draft_data.get("memoryType") or "learning"),
+                str(draft_data.get("status") or "draft"),
+                str(draft_data.get("module_name") or draft_data.get("moduleName") or ""),
+                str(draft_data.get("module_description") or draft_data.get("moduleDescription") or ""),
+                str(draft_data.get("content") or ""),
+                float(draft_data.get("confidence") or 0.0),
+                str(draft_data.get("source_message_id") or draft_data.get("sourceMessageId") or ""),
+                str(draft_data.get("source_log_id") or draft_data.get("sourceLogId") or ""),
+                int(draft_data.get("source_message_index") or draft_data.get("sourceMessageIndex") or 0),
+                content_hash,
+                json.dumps(_parse_json_dict(draft_data.get("evidence", draft_data.get("evidence_json", {})))),
+                int(draft_data.get("publish_attempts") or draft_data.get("publishAttempts") or 0),
+                str(draft_data.get("published_module_id") or draft_data.get("publishedModuleId") or ""),
+                str(draft_data.get("published_memory_id") or draft_data.get("publishedMemoryId") or ""),
+                str(draft_data.get("reviewed_by") or draft_data.get("reviewedBy") or ""),
+                str(draft_data.get("review_notes") or draft_data.get("reviewNotes") or ""),
+                str(draft_data.get("reviewed_at") or draft_data.get("reviewedAt") or ""),
+                str(draft_data.get("published_at") or draft_data.get("publishedAt") or ""),
+                str(draft_data.get("last_publish_error") or draft_data.get("lastPublishError") or ""),
+                str(draft_data.get("created_at") or draft_data.get("createdAt") or now),
+                str(draft_data.get("updated_at") or draft_data.get("updatedAt") or now),
+            ),
+        )
+        await self.db.commit()
+        async with self.db.execute(
+            """
+            SELECT *
+            FROM session_memory_drafts
+            WHERE project_id = ? AND content_hash = ?
+            LIMIT 1
+            """,
+            (resolved_project_id, content_hash),
+        ) as cur:
+            row = await cur.fetchone()
+        return self._memory_draft_row_to_dict(row) if row else {}
+
+    async def get_session_memory_draft(self, project_id: str, draft_id: int) -> dict[str, Any] | None:
+        async with self.db.execute(
+            """
+            SELECT *
+            FROM session_memory_drafts
+            WHERE project_id = ? AND id = ?
+            LIMIT 1
+            """,
+            (project_id, draft_id),
+        ) as cur:
+            row = await cur.fetchone()
+        return self._memory_draft_row_to_dict(row) if row else None
+
+    async def count_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where = ["project_id = ?"]
+        params: list[object] = [project_id]
+        if session_id:
+            where.append("session_id = ?")
+            params.append(session_id)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        async with self.db.execute(
+            f"SELECT COUNT(*) AS count FROM session_memory_drafts WHERE {' AND '.join(where)}",
+            tuple(params),
+        ) as cur:
+            row = await cur.fetchone()
+        return int(row["count"] or 0) if row else 0
+
+    async def list_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        where = ["project_id = ?"]
+        params: list[object] = [project_id]
+        if session_id:
+            where.append("session_id = ?")
+            params.append(session_id)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        params.extend([limit, offset])
+        async with self.db.execute(
+            (
+                "SELECT * FROM session_memory_drafts "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
+            ),
+            tuple(params),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [self._memory_draft_row_to_dict(row) for row in rows]
+
+    async def review_session_memory_draft(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        decision: str,
+        actor: str = "",
+        notes: str = "",
+    ) -> dict[str, Any] | None:
+        now = _now_iso()
+        await self.db.execute(
+            """
+            UPDATE session_memory_drafts
+            SET status = ?, reviewed_by = ?, review_notes = ?, reviewed_at = ?, updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (decision, actor, notes, now, now, project_id, draft_id),
+        )
+        await self.db.commit()
+        return await self.get_session_memory_draft(project_id, draft_id)
+
+    async def record_session_memory_draft_publish_attempt(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        actor: str = "",
+        notes: str = "",
+        module_id: str = "",
+        memory_id: str = "",
+        source_url: str = "",
+        error: str = "",
+    ) -> dict[str, Any] | None:
+        existing = await self.get_session_memory_draft(project_id, draft_id)
+        if existing is None:
+            return None
+        now = _now_iso()
+        publish_attempts = int(existing.get("publish_attempts") or 0) + 1
+        next_status = "published" if not error else str(existing.get("status") or "approved")
+        review_notes = str(existing.get("review_notes") or "")
+        combined_notes = review_notes
+        if notes.strip():
+            combined_notes = notes.strip() if not review_notes else f"{review_notes}\n\nPublish: {notes.strip()}"
+        await self.db.execute(
+            """
+            UPDATE session_memory_drafts
+            SET status = ?, publish_attempts = ?, published_module_id = ?, published_memory_id = ?,
+                review_notes = ?, published_at = ?, last_publish_error = ?, updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (
+                next_status,
+                publish_attempts,
+                module_id,
+                memory_id or source_url,
+                combined_notes,
+                now if not error else str(existing.get("published_at") or ""),
+                error,
+                now,
+                project_id,
+                draft_id,
+            ),
+        )
+        await self.db.commit()
+        return await self.get_session_memory_draft(project_id, draft_id)
+
+
     def _source_row_to_dict(self, row: Any) -> dict[str, Any]:
         data = dict(row)
         data["enabled"] = bool(data.get("enabled"))
@@ -475,4 +696,10 @@ class SqliteAgenticIntelligenceRepository:
         data = dict(row)
         data["metrics_json"] = _parse_json_dict(data.get("metrics_json"))
         data["evidence_summary_json"] = _parse_json_dict(data.get("evidence_summary_json"))
+        return data
+
+
+    def _memory_draft_row_to_dict(self, row: Any) -> dict[str, Any]:
+        data = dict(row)
+        data["evidence_json"] = _parse_json_dict(data.get("evidence_json"))
         return data
