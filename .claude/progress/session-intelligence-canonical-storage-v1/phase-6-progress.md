@@ -8,18 +8,22 @@ prd_ref: /docs/project_plans/PRDs/enhancements/session-intelligence-canonical-st
 plan_ref: /docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md
 phase: 6
 title: "SkillMeat Memory Draft Loop"
-status: "in_progress"
+status: "completed"
 started: "2026-04-03"
-completed: null
-commit_refs: []
+completed: "2026-04-04"
+commit_refs:
+  - "524efd4"
+  - "6643071"
+  - "f4c0aa1"
+  - "dc6dc5b"
 pr_refs: []
 
-overall_progress: 0
+overall_progress: 100
 completion_estimate: "3-4 days"
 
 total_tasks: 3
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +33,7 @@ contributors: ["codex"]
 tasks:
   - id: "SICS-501"
     description: "Define the CCDash-side draft record, extraction evidence, review status, and linkage back to sessions/features/workflows."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["backend-architect", "python-backend-engineer"]
     dependencies: ["SICS-201", "SICS-202", "SICS-203"]
     estimated_effort: "3pt"
@@ -37,7 +41,7 @@ tasks:
 
   - id: "SICS-502"
     description: "Build the worker logic that selects successful sessions and drafts candidate SkillMeat context modules or guideline snippets."
-    status: "pending"
+    status: "completed"
     assigned_to: ["python-backend-engineer"]
     dependencies: ["SICS-501"]
     estimated_effort: "3pt"
@@ -45,7 +49,7 @@ tasks:
 
   - id: "SICS-503"
     description: "Add operator review and approval before calling the SkillMeat write API for accepted draft artifacts."
-    status: "pending"
+    status: "completed"
     assigned_to: ["frontend-developer", "python-backend-engineer"]
     dependencies: ["SICS-502"]
     estimated_effort: "2pt"
@@ -67,8 +71,17 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/session-intelligence-canonical-storage-v1/phase-6-progress.md"
+  - "backend/services/integrations/skillmeat_memory_drafts.py"
+  - "backend/application/services/integrations.py"
+  - "backend/routers/integrations.py"
+  - "backend/services/integrations/skillmeat_client.py"
+  - "backend/db/repositories/intelligence.py"
+  - "backend/db/repositories/postgres/intelligence.py"
+  - "backend/db/postgres_migrations.py"
+  - "components/OpsPanel.tsx"
+  - "services/skillmeat.ts"
 
-updated: "2026-04-03"
+updated: "2026-04-04"
 ---
 
 # session-intelligence-canonical-storage-v1 - Phase 6
@@ -82,6 +95,12 @@ python /Users/miethe/.codex/skills/artifact-tracking/scripts/update-status.py -f
 ## Objective
 
 Turn successful session-intelligence evidence into reviewable SkillMeat memory drafts, then require explicit operator approval before any publish call leaves CCDash.
+
+## Completion Notes
+
+1. `session_memory_drafts` now persists reviewable CCDash artifacts with deterministic content hashes, source evidence, review metadata, and publish audit fields.
+2. The SkillMeat integration surface now supports list, generate, review, and publish flows at `/api/integrations/skillmeat/memory-drafts`, backed by the new extraction service and publish client helpers.
+3. OpsPanel now exposes an operator-facing draft review surface, and focused backend/frontend tests passed for the Phase 6 flow.
 
 ## Orchestration Quick Reference
 
