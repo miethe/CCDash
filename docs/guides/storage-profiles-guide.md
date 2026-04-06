@@ -133,6 +133,7 @@ These seams are now considered stable for downstream implementation plans:
 - Shared Postgres remains valid only behind an explicit schema or tenant boundary. No follow-on plan may couple CCDash tables directly to external app schemas.
 
 See [docs/guides/data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md) for the Phase 6 rollout summary, operator validation contract, and downstream plan links.
+See [docs/guides/session-intelligence-rollout-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/session-intelligence-rollout-guide.md) for the Phase 7 checkpointed backfill workflow, runtime validation fields, failure modes, and rollback expectations for canonical transcript intelligence.
 
 ## Domain Ownership Matrix
 
