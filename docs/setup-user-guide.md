@@ -65,6 +65,8 @@ The exporter uses these telemetry-specific environment variables:
 
 `CCDASH_STORAGE_PROFILE` is the operator-facing switch for local versus enterprise storage. `CCDASH_DB_BACKEND` remains a compatibility setting behind that contract. For the full profile matrix, see [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md).
 
+Canonical transcript intelligence is now fully rolled out under that storage contract. Use [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md) for the enterprise backfill workflow, health checks, and SkillMeat draft approval flow.
+
 ## 3) Install Backend Dependencies
 
 ```bash
@@ -105,6 +107,7 @@ Local upgrade note:
 - Existing SQLite installs should stay on `CCDASH_STORAGE_PROFILE=local`; Phase 5/6 does not require enterprise-table backfills in SQLite.
 - Back up the SQLite file if you manage a custom path, then start the updated app and allow migrations to run normally.
 - If you later move to hosted enterprise mode, bootstrap Postgres separately and re-ingest/rebuild instead of trying to promote the SQLite file in place.
+- Expect `GET /api/health` to report a cache-oriented posture such as `sessionIntelligenceProfile=local_cache`, `sessionIntelligenceBackfillStrategy=local_rebuild_from_filesystem`, and `sessionEmbeddingWriteStatus=unsupported`.
 
 Dedicated enterprise Postgres:
 
@@ -115,6 +118,8 @@ CCDASH_DATABASE_URL=postgresql://...
 ```
 
 Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, refresh, and scheduled jobs.
+
+For canonical transcript intelligence, this is the authoritative posture: enterprise Postgres owns transcript intelligence, full analytics, and checkpointed historical backfill.
 
 Shared enterprise Postgres:
 
@@ -128,6 +133,8 @@ CCDASH_STORAGE_SCHEMA=ccdash
 ```
 
 Use `schema` or `tenant` isolation only when CCDash shares infrastructure with another app. Shared Postgres is a deployment posture, not a license to couple tables across applications.
+
+Shared-enterprise still uses the same canonical transcript-intelligence contract as dedicated enterprise, but `/api/health` should also show the explicit schema or tenant isolation boundary.
 
 ## Optional: Run Services Separately
 
@@ -182,6 +189,33 @@ Enterprise operator split:
 - Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
 - Check `GET /api/health` to confirm `storageComposition`, `storageCanonicalStore`, `auditStore`, `migrationGovernanceStatus`, `syncProvisioned`, isolation mode/schema, and the runtime/job capability fields.
 
+### Session-Intelligence Validation
+
+Use `GET /api/health` as the runtime validation matrix for the completed rollout.
+
+Minimum session-intelligence fields to confirm:
+
+- `sessionIntelligenceProfile`
+- `sessionIntelligenceAnalyticsLevel`
+- `sessionIntelligenceBackfillStrategy`
+- `sessionIntelligenceMemoryDraftFlow`
+- `sessionIntelligenceIsolationBoundary`
+- `sessionEmbeddingWriteStatus`
+- `storageProfileValidationMatrix`
+- `canonicalSessionStore`
+
+Expected posture by row:
+
+| Validation row | Expected posture |
+| --- | --- |
+| `local-sqlite` | Cache-oriented SQLite with canonical transcript projection, filesystem rebuilds, reviewable local drafts, and no authoritative embeddings |
+| `enterprise-postgres` | Canonical Postgres transcript intelligence, full analytics, authoritative embeddings, and `checkpointed_enterprise_backfill` |
+| `shared-enterprise-postgres` | Same canonical enterprise posture plus explicit `schema` or `tenant` isolation boundaries |
+
+Memory-draft publishing remains approval-gated in every posture. CCDash can prepare reviewable SkillMeat memory drafts, but operators must still approve publication explicitly.
+
+For the full field list, rollout command, checkpoint semantics, and failure modes, see [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+
 ## Troubleshooting
 
 ### Live updates do not activate
@@ -225,6 +259,7 @@ Then load the UI again and inspect backend stack traces.
 - Confirm `npm run dev` shows backend health before frontend startup.
 - Confirm `CCDASH_API_PROXY_TARGET` points to the running backend.
 - Confirm `GET /api/health` responds with `status: ok`.
+- If session-intelligence rollout validation is the issue, compare `storageProfileValidationMatrix` and the resolved `sessionIntelligence*` fields against [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md) and [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
 
 ### `/tests` disabled, empty, or returning `503`
 

@@ -1,8 +1,10 @@
 # Execution Workbench User Guide
 
-Last updated: 2026-03-23
+Last updated: 2026-04-06
 
 Use the Execution Workbench to launch, monitor, and control local terminal commands from inside CCDash.
+
+Recommendation evidence now follows the completed session-intelligence storage contract: `local` deployments rely on cache-oriented local evidence, while `enterprise` deployments can use canonical Postgres-backed transcript intelligence and checkpoint-backfilled history.
 
 Route:
 
@@ -37,6 +39,12 @@ Route:
    - alternatives if the primary suggestion looks too risky
    - similar-work examples for prior sessions/features that produced the recommendation
 4. If the project disables stack recommendations, the workbench keeps command guidance available and shows a disabled-state notice instead.
+
+## Recommendation evidence posture
+
+- `local` storage profile: recommendations stay grounded in local CCDash evidence and optional SkillMeat cache data; embeddings and enterprise historical backfill are not part of the local contract.
+- `enterprise` storage profile: recommendations can draw on canonical transcript-intelligence rows, full analytics, and the checkpointed enterprise backfill path documented in [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+- SkillMeat memory drafting is separate from launching runs. CCDash may surface reviewable draft candidates from successful sessions, but publication remains approval-gated and is not triggered automatically by the workbench.
 
 ## Dependency-aware overview
 
@@ -96,6 +104,8 @@ The workbench `Analytics` tab now includes:
 - a shortcut into `/workflows` when you need workflow identity, correlation, and drill-down actions rather than leaderboard comparisons
 
 If workflow intelligence is disabled for the current project, the summary cards remain and the intelligence panel is replaced with a notice.
+
+For storage posture and runtime validation expectations behind those analytics, see [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md) and [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
 
 ## Run status meanings
 
