@@ -1,6 +1,7 @@
 """Postgres capability seam for canonical session embeddings storage."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,3 +42,31 @@ class PostgresSessionEmbeddingRepository:
             session_id,
         )
         return [dict(row) for row in rows]
+
+    async def replace_session_embeddings(self, session_id: str, blocks: list[dict[str, Any]]) -> None:
+        async with self.db.transaction():
+            await self.db.execute("DELETE FROM app.session_embeddings WHERE session_id = $1", session_id)
+            if not blocks:
+                return
+            await self.db.executemany(
+                """
+                INSERT INTO app.session_embeddings (
+                    session_id, block_kind, block_index, content_hash, message_ids_json,
+                    content, embedding_model, embedding_dimensions, embedding, metadata_json
+                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, NULL, $9::jsonb)
+                """,
+                [
+                    (
+                        session_id,
+                        str(block.get("block_kind") or ""),
+                        int(block.get("block_index", 0) or 0),
+                        str(block.get("content_hash") or ""),
+                        json.dumps(list(block.get("message_ids") or [])),
+                        str(block.get("content") or ""),
+                        str(block.get("embedding_model") or ""),
+                        int(block.get("embedding_dimensions", 0) or 0),
+                        json.dumps(dict(block.get("metadata_json") or {})),
+                    )
+                    for block in blocks
+                ],
+            )

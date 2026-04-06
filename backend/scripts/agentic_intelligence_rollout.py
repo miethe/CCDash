@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backend.application.services.session_intelligence import (
+    HistoricalSessionIntelligenceBackfillService,
+    SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY,
+)
 from backend.db import connection, migrations
 from backend.db.factory import get_agentic_intelligence_repository
 from backend.project_manager import project_manager
@@ -85,6 +89,10 @@ async def _run(
     all_projects: bool,
     skip_sync: bool,
     skip_backfill: bool,
+    session_intelligence_backfill: bool,
+    session_intelligence_limit: int,
+    session_intelligence_checkpoint_key: str,
+    reset_session_intelligence_checkpoint: bool,
     skip_recompute: bool,
     limit: int,
     force_recompute: bool,
@@ -141,6 +149,33 @@ async def _run(
                     f" skipped={int(backfill_payload.get('skippedSessions') or 0)}"
                 )
 
+            if session_intelligence_backfill:
+                payload = await HistoricalSessionIntelligenceBackfillService().backfill(
+                    db,
+                    project_id=project.id,
+                    limit=session_intelligence_limit,
+                    checkpoint_key=session_intelligence_checkpoint_key,
+                    reset_checkpoint=reset_session_intelligence_checkpoint,
+                )
+                checkpoint = payload.get("checkpoint", {}) if isinstance(payload.get("checkpoint"), dict) else {}
+                print(
+                    "  session_intelligence:"
+                    f" processed={int(payload.get('sessionsProcessed') or 0)}"
+                    f" transcript_sessions={int(payload.get('transcriptSessionsBackfilled') or 0)}"
+                    f" fact_sessions={int(payload.get('derivedFactSessionsBackfilled') or 0)}"
+                    f" embedding_sessions={int(payload.get('embeddingSessionsBackfilled') or 0)}"
+                    f" embedding_blocks={int(payload.get('embeddingBlocksBackfilled') or 0)}"
+                    f" completed={bool(payload.get('completed'))}"
+                )
+                print(
+                    "  session_intelligence_checkpoint:"
+                    f" last_started_at={str(checkpoint.get('lastStartedAt') or '-')}"
+                    f" last_session_id={str(checkpoint.get('lastSessionId') or '-')}"
+                    f" total_processed={int(payload.get('sessionsProcessedTotal') or 0)}"
+                )
+                for line in payload.get("operatorGuidance", []):
+                    print(f"  guidance: {line}")
+
             if not skip_recompute:
                 if workflow_analytics_enabled(project):
                     rollup_payload = await get_workflow_effectiveness(
@@ -176,6 +211,27 @@ def main() -> int:
     parser.add_argument("--all-projects", action="store_true", help="Process all configured projects")
     parser.add_argument("--skip-sync", action="store_true", help="Skip SkillMeat definition sync")
     parser.add_argument("--skip-backfill", action="store_true", help="Skip stack observation backfill")
+    parser.add_argument(
+        "--session-intelligence-backfill",
+        action="store_true",
+        help="Backfill canonical session transcripts, embedding blocks, and derived intelligence facts with checkpoints",
+    )
+    parser.add_argument(
+        "--session-intelligence-limit",
+        type=int,
+        default=200,
+        help="Max enterprise sessions to process in one session-intelligence backfill batch",
+    )
+    parser.add_argument(
+        "--session-intelligence-checkpoint-key",
+        default=SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY,
+        help="Checkpoint key stored in app_metadata for restart-safe session-intelligence backfill",
+    )
+    parser.add_argument(
+        "--reset-session-intelligence-checkpoint",
+        action="store_true",
+        help="Delete the stored session-intelligence checkpoint before processing the next batch",
+    )
     parser.add_argument("--skip-recompute", action="store_true", help="Skip workflow analytics recompute")
     parser.add_argument("--limit", type=int, default=5000, help="Max sessions to process during backfill")
     parser.add_argument("--force-recompute", action="store_true", help="Recompute stack observations even when cached rows exist")
@@ -187,6 +243,10 @@ def main() -> int:
             all_projects=args.all_projects,
             skip_sync=args.skip_sync,
             skip_backfill=args.skip_backfill,
+            session_intelligence_backfill=args.session_intelligence_backfill,
+            session_intelligence_limit=max(1, args.session_intelligence_limit),
+            session_intelligence_checkpoint_key=str(args.session_intelligence_checkpoint_key or SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY),
+            reset_session_intelligence_checkpoint=args.reset_session_intelligence_checkpoint,
             skip_recompute=args.skip_recompute,
             limit=max(1, args.limit),
             force_recompute=args.force_recompute,

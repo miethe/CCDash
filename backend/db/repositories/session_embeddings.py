@@ -27,3 +27,10 @@ class SqliteSessionEmbeddingRepository:
                 "session_messages rows but does not require pgvector or session_embeddings tables."
             ),
         )
+
+    async def replace_session_embeddings(self, session_id: str, blocks: list[dict[str, Any]]) -> None:
+        _ = session_id, blocks
+
+    async def list_by_session(self, session_id: str) -> list[dict[str, Any]]:
+        _ = session_id
+        return []

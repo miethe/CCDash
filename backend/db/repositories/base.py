@@ -64,6 +64,33 @@ class SessionIntelligenceRepository(Protocol):
     async def list_session_code_churn_facts(self, session_id: str) -> list[dict[str, Any]]: ...
     async def replace_session_scope_drift_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
     async def list_session_scope_drift_facts(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def list_backfill_sessions(
+        self,
+        project_id: str,
+        *,
+        after_started_at: str = "",
+        after_session_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]: ...
+    async def load_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> dict[str, Any]: ...
+    async def save_backfill_checkpoint(
+        self,
+        project_id: str,
+        checkpoint: dict[str, Any],
+        *,
+        checkpoint_key: str,
+    ) -> None: ...
+    async def delete_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> None: ...
 
 
 # ── Document Repository ─────────────────────────────────────────────

@@ -172,3 +172,99 @@ class SqliteSessionIntelligenceRepository:
         for row in rows:
             row["evidence_json"] = _loads_dict(row.get("evidence_json"))
         return rows
+
+    async def list_backfill_sessions(
+        self,
+        project_id: str,
+        *,
+        after_started_at: str = "",
+        after_session_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        async with self.db.execute(
+            """
+            SELECT *
+            FROM sessions
+            WHERE project_id = ?
+              AND (
+                    CASE
+                        WHEN ? = '' THEN 1
+                        ELSE (
+                            COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') > ?
+                            OR (
+                                COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') = ?
+                                AND id > ?
+                            )
+                        )
+                    END
+                  )
+            ORDER BY COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') ASC, id ASC
+            LIMIT ?
+            """,
+            (
+                project_id,
+                after_started_at,
+                after_started_at,
+                after_started_at,
+                after_session_id,
+                max(1, int(limit)),
+            ),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+
+    async def load_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> dict[str, Any]:
+        async with self.db.execute(
+            """
+            SELECT value
+            FROM app_metadata
+            WHERE entity_type = ? AND entity_id = ? AND key = ?
+            LIMIT 1
+            """,
+            ("project", project_id, checkpoint_key),
+        ) as cur:
+            row = await cur.fetchone()
+        raw_value = row[0] if row else ""
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    async def save_backfill_checkpoint(
+        self,
+        project_id: str,
+        checkpoint: dict[str, Any],
+        *,
+        checkpoint_key: str,
+    ) -> None:
+        payload = json.dumps(checkpoint or {})
+        await self.db.execute(
+            """
+            INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            ("project", project_id, checkpoint_key, payload),
+        )
+        await self.db.commit()
+
+    async def delete_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> None:
+        await self.db.execute(
+            "DELETE FROM app_metadata WHERE entity_type = ? AND entity_id = ? AND key = ?",
+            ("project", project_id, checkpoint_key),
+        )
+        await self.db.commit()

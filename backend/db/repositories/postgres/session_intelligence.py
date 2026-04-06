@@ -155,3 +155,98 @@ class PostgresSessionIntelligenceRepository:
             session_id,
         )
         return [dict(row) for row in rows]
+
+    async def list_backfill_sessions(
+        self,
+        project_id: str,
+        *,
+        after_started_at: str = "",
+        after_session_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        rows = await self.db.fetch(
+            """
+            SELECT *
+            FROM sessions
+            WHERE project_id = $1
+              AND (
+                    $2 = ''
+                    OR COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') > $2
+                    OR (
+                        COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') = $2
+                        AND id > $3
+                    )
+                  )
+            ORDER BY COALESCE(NULLIF(TRIM(started_at), ''), created_at, '') ASC, id ASC
+            LIMIT $4
+            """,
+            project_id,
+            after_started_at,
+            after_session_id,
+            max(1, int(limit)),
+        )
+        return [dict(row) for row in rows]
+
+    async def load_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> dict[str, Any]:
+        row = await self.db.fetchrow(
+            """
+            SELECT value
+            FROM app_metadata
+            WHERE entity_type = $1 AND entity_id = $2 AND key = $3
+            LIMIT 1
+            """,
+            "project",
+            project_id,
+            checkpoint_key,
+        )
+        raw_value = row["value"] if row else ""
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    async def save_backfill_checkpoint(
+        self,
+        project_id: str,
+        checkpoint: dict[str, Any],
+        *,
+        checkpoint_key: str,
+    ) -> None:
+        payload = json.dumps(checkpoint or {})
+        await self.db.execute(
+            """
+            INSERT INTO app_metadata (entity_type, entity_id, key, value, updated_at)
+            VALUES ($1, $2, $3, $4, NOW()::text)
+            ON CONFLICT(entity_type, entity_id, key) DO UPDATE SET
+                value = EXCLUDED.value,
+                updated_at = EXCLUDED.updated_at
+            """,
+            "project",
+            project_id,
+            checkpoint_key,
+            payload,
+        )
+
+    async def delete_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> None:
+        await self.db.execute(
+            """
+            DELETE FROM app_metadata
+            WHERE entity_type = $1 AND entity_id = $2 AND key = $3
+            """,
+            "project",
+            project_id,
+            checkpoint_key,
+        )

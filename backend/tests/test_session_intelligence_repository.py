@@ -128,6 +128,55 @@ class SessionIntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["feature_id"], "feature-1")
         self.assertEqual(rows[0]["evidence_json"]["outOfScopePaths"], ["docs/extra.md"])
 
+    async def test_backfill_checkpoint_round_trips_and_cursor_query(self) -> None:
+        await self.session_repo.upsert(
+            {
+                "id": "session-2",
+                "status": "completed",
+                "model": "gpt-5",
+                "createdAt": "2026-04-03T00:00:00Z",
+                "startedAt": "2026-04-03T00:00:00Z",
+                "updatedAt": "2026-04-03T00:00:00Z",
+            },
+            "project-1",
+        )
+        await self.session_repo.upsert(
+            {
+                "id": "session-3",
+                "status": "completed",
+                "model": "gpt-5",
+                "createdAt": "2026-04-04T00:00:00Z",
+                "startedAt": "2026-04-04T00:00:00Z",
+                "updatedAt": "2026-04-04T00:00:00Z",
+            },
+            "project-1",
+        )
+
+        await self.repo.save_backfill_checkpoint(
+            "project-1",
+            {"lastStartedAt": "2026-04-03T00:00:00Z", "lastSessionId": "session-2"},
+            checkpoint_key="session-intelligence-test",
+        )
+        checkpoint = await self.repo.load_backfill_checkpoint(
+            "project-1",
+            checkpoint_key="session-intelligence-test",
+        )
+        self.assertEqual(checkpoint["lastSessionId"], "session-2")
+
+        rows = await self.repo.list_backfill_sessions(
+            "project-1",
+            after_started_at="2026-04-03T00:00:00Z",
+            after_session_id="session-2",
+            limit=10,
+        )
+        self.assertEqual([row["id"] for row in rows], ["session-3"])
+
+        await self.repo.delete_backfill_checkpoint("project-1", checkpoint_key="session-intelligence-test")
+        self.assertEqual(
+            await self.repo.load_backfill_checkpoint("project-1", checkpoint_key="session-intelligence-test"),
+            {},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

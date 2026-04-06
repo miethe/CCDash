@@ -7,8 +7,10 @@ from backend.adapters.storage.local import LocalStorageUnitOfWork
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.session_intelligence import (
+    HistoricalSessionIntelligenceBackfillService,
     SessionIntelligenceReadService,
     TranscriptSearchService,
+    build_session_embedding_blocks,
 )
 from backend.db.sqlite_migrations import run_migrations
 
@@ -200,6 +202,52 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         )
+        await self.storage.sessions().upsert(
+            {
+                "id": "S-2",
+                "taskId": "feature-b",
+                "status": "completed",
+                "model": "gpt-5",
+                "startedAt": "2026-04-03T10:00:00Z",
+                "endedAt": "2026-04-03T10:08:00Z",
+                "updatedAt": "2026-04-03T10:08:00Z",
+                "rootSessionId": "S-root-2",
+                "conversationFamilyId": "family-2",
+            },
+            "project-1",
+        )
+        await self.storage.sessions().upsert_logs(
+            "S-2",
+            [
+                {
+                    "id": "log-3",
+                    "timestamp": "2026-04-03T10:00:01Z",
+                    "speaker": "user",
+                    "type": "message",
+                    "content": "The rollout needs a restart-safe backfill checkpoint.",
+                },
+                {
+                    "id": "log-4",
+                    "timestamp": "2026-04-03T10:00:03Z",
+                    "speaker": "assistant",
+                    "type": "message",
+                    "content": "I added the checkpoint and the operator guidance output.",
+                },
+            ],
+        )
+        await self.storage.sessions().upsert_file_updates(
+            "S-2",
+            [
+                {
+                    "filePath": "backend/scripts/agentic_intelligence_rollout.py",
+                    "action": "update",
+                    "timestamp": "2026-04-03T10:00:02Z",
+                    "additions": 8,
+                    "deletions": 2,
+                    "sourceLogId": "log-4",
+                }
+            ],
+        )
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
@@ -252,6 +300,53 @@ class SessionIntelligenceServiceTests(unittest.IsolatedAsyncioTestCase):
         assert drilldown is not None
         self.assertEqual(drilldown.total, 1)
         self.assertEqual(drilldown.items[0].label, "out_of_scope")
+
+    async def test_historical_backfill_is_incremental_and_restart_safe(self) -> None:
+        service = HistoricalSessionIntelligenceBackfillService()
+
+        first = await service.backfill(
+            self.db,
+            project_id="project-1",
+            limit=1,
+            checkpoint_key="test-backfill",
+        )
+        self.assertEqual(first["sessionsProcessed"], 1)
+        self.assertFalse(first["completed"])
+        self.assertEqual(first["checkpoint"]["lastSessionId"], "S-1")
+
+        second = await service.backfill(
+            self.db,
+            project_id="project-1",
+            limit=1,
+            checkpoint_key="test-backfill",
+        )
+        self.assertEqual(second["sessionsProcessed"], 1)
+        self.assertTrue(second["completed"])
+        self.assertEqual(second["checkpoint"]["lastSessionId"], "S-2")
+        self.assertEqual(second["sessionsProcessedTotal"], 2)
+        self.assertGreaterEqual(len(second["operatorGuidance"]), 2)
+
+        s2_messages = await self.storage.session_messages().list_by_session("S-2")
+        s2_sentiment = await self.storage.session_intelligence().list_session_sentiment_facts("S-2")
+        self.assertEqual(len(s2_messages), 2)
+        self.assertEqual(len(s2_sentiment), 1)
+
+    def test_embedding_block_builder_creates_message_and_window_blocks(self) -> None:
+        blocks = build_session_embedding_blocks(
+            [
+                {
+                    "messageIndex": idx,
+                    "messageId": f"msg-{idx}",
+                    "role": "user" if idx % 2 == 0 else "assistant",
+                    "messageType": "message",
+                    "content": f"content-{idx}",
+                    "sourceProvenance": "sync",
+                }
+                for idx in range(5)
+            ]
+        )
+        self.assertEqual(sum(1 for block in blocks if block["block_kind"] == "message"), 5)
+        self.assertEqual(sum(1 for block in blocks if block["block_kind"] == "window"), 1)
 
 
 if __name__ == "__main__":

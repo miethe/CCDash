@@ -2,12 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.common import resolve_project
+from backend.db.factory import (
+    get_document_repository,
+    get_session_embedding_repository,
+    get_session_intelligence_repository,
+    get_session_message_repository,
+    get_session_repository,
+)
 from backend.models import (
     SessionCodeChurnFact,
     SessionIntelligenceCapability,
@@ -23,6 +32,13 @@ from backend.models import (
     SessionSemanticSearchResponse,
     SessionSentimentFact,
 )
+from backend.services.session_churn_facts import build_session_code_churn_facts
+from backend.services.session_scope_drift import build_session_scope_drift_facts
+from backend.services.session_sentiment_facts import build_session_sentiment_facts
+from backend.services.session_transcript_projection import project_session_messages
+
+
+SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY = "session_intelligence_historical_backfill_v1"
 
 
 class SessionIntelligenceQueryService:
@@ -713,6 +729,335 @@ def _evidence(row: dict[str, Any]) -> dict[str, Any]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def build_session_embedding_blocks(canonical_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    substantive_rows = [row for row in canonical_rows if _embedding_row_content(row)]
+    if not substantive_rows:
+        return []
+
+    blocks: list[dict[str, Any]] = []
+    seen_hashes: set[str] = set()
+    for row in substantive_rows:
+        block = _embedding_block("message", int(row.get("messageIndex") or 0), [row])
+        content_hash = str(block.get("content_hash") or "")
+        if not content_hash or content_hash in seen_hashes:
+            continue
+        seen_hashes.add(content_hash)
+        blocks.append(block)
+
+    window_size = min(5, len(substantive_rows))
+    for start in range(0, len(substantive_rows) - window_size + 1):
+        window_rows = substantive_rows[start : start + window_size]
+        block = _embedding_block("window", start, window_rows)
+        content_hash = str(block.get("content_hash") or "")
+        if not content_hash or content_hash in seen_hashes:
+            continue
+        seen_hashes.add(content_hash)
+        blocks.append(block)
+    return blocks
+
+
+def session_intelligence_backfill_operator_guidance(payload: dict[str, Any]) -> list[str]:
+    checkpoint = payload.get("checkpoint") if isinstance(payload.get("checkpoint"), dict) else {}
+    checkpoint_key = str(payload.get("checkpointKey") or SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY)
+    guidance = [
+        f"Re-run with the same checkpoint key `{checkpoint_key}` to continue from the last committed session cursor.",
+        "Use `--reset-session-intelligence-checkpoint` to restart from the oldest eligible session.",
+    ]
+    if bool(payload.get("completed")):
+        guidance[0] = f"Checkpoint `{checkpoint_key}` is complete; reset it only if you want to rebuild history from the beginning."
+    if not bool(payload.get("embeddingWriteSupported")):
+        guidance.append("Embedding rows are skipped on unsupported storage profiles; transcript and fact backfill can still complete.")
+    elif int(payload.get("embeddingBlocksBackfilled") or 0) == 0:
+        guidance.append("Embedding storage is available; this batch did not materialize any substantive transcript blocks.")
+    if checkpoint:
+        last_session_id = str(checkpoint.get("lastSessionId") or "")
+        last_started_at = str(checkpoint.get("lastStartedAt") or "")
+        if last_session_id and last_started_at and not bool(payload.get("completed")):
+            guidance.append(
+                f"Current cursor is `{last_started_at}` / `{last_session_id}`; the next run starts strictly after that pair."
+            )
+    return guidance
+
+
+class HistoricalSessionIntelligenceBackfillService:
+    async def backfill(
+        self,
+        db: Any,
+        *,
+        project_id: str,
+        limit: int = 200,
+        checkpoint_key: str = SESSION_INTELLIGENCE_BACKFILL_CHECKPOINT_KEY,
+        reset_checkpoint: bool = False,
+    ) -> dict[str, Any]:
+        session_repo = get_session_repository(db)
+        session_message_repo = get_session_message_repository(db)
+        session_embedding_repo = get_session_embedding_repository(db)
+        intelligence_repo = get_session_intelligence_repository(db)
+        document_repo = get_document_repository(db)
+
+        if reset_checkpoint:
+            await intelligence_repo.delete_backfill_checkpoint(project_id, checkpoint_key=checkpoint_key)
+
+        checkpoint = await intelligence_repo.load_backfill_checkpoint(project_id, checkpoint_key=checkpoint_key)
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        after_started_at = str(checkpoint.get("lastStartedAt") or "")
+        after_session_id = str(checkpoint.get("lastSessionId") or "")
+
+        session_rows = await intelligence_repo.list_backfill_sessions(
+            project_id,
+            after_started_at=after_started_at,
+            after_session_id=after_session_id,
+            limit=max(1, limit),
+        )
+        embedding_capability = session_embedding_repo.describe_capability()
+        warnings: list[dict[str, Any]] = []
+        progress = {
+            "sessionsProcessed": int(checkpoint.get("sessionsProcessed") or 0),
+            "transcriptSessionsBackfilled": int(checkpoint.get("transcriptSessionsBackfilled") or 0),
+            "derivedFactSessionsBackfilled": int(checkpoint.get("derivedFactSessionsBackfilled") or 0),
+            "embeddingSessionsBackfilled": int(checkpoint.get("embeddingSessionsBackfilled") or 0),
+            "embeddingBlocksBackfilled": int(checkpoint.get("embeddingBlocksBackfilled") or 0),
+        }
+        batch_counts = {
+            "sessionsProcessed": 0,
+            "transcriptSessionsBackfilled": 0,
+            "derivedFactSessionsBackfilled": 0,
+            "embeddingSessionsBackfilled": 0,
+            "embeddingBlocksBackfilled": 0,
+        }
+        last_started_at = after_started_at
+        last_session_id = after_session_id
+
+        for session_row in session_rows:
+            session_id = str(session_row.get("id") or "")
+            if not session_id:
+                continue
+            logs = await session_repo.get_logs(session_id)
+            canonical_rows = project_session_messages(session_row, logs) if logs else []
+            if not canonical_rows:
+                canonical_rows = _normalize_canonical_rows(await session_message_repo.list_by_session(session_id))
+            file_updates = await session_repo.get_file_updates(session_id)
+            linked_docs = await _linked_documents(document_repo, project_id, session_row)
+
+            await session_message_repo.replace_session_messages(session_id, canonical_rows)
+            await _replace_session_intelligence_facts(
+                intelligence_repo,
+                session_id,
+                session_row,
+                canonical_rows,
+                file_updates,
+                linked_docs,
+            )
+
+            embedding_blocks = build_session_embedding_blocks(canonical_rows)
+            if bool(getattr(embedding_capability, "supported", False)):
+                await session_embedding_repo.replace_session_embeddings(session_id, embedding_blocks)
+                batch_counts["embeddingSessionsBackfilled"] += 1
+                batch_counts["embeddingBlocksBackfilled"] += len(embedding_blocks)
+
+            batch_counts["sessionsProcessed"] += 1
+            batch_counts["transcriptSessionsBackfilled"] += 1
+            batch_counts["derivedFactSessionsBackfilled"] += 1
+            progress["sessionsProcessed"] += 1
+            progress["transcriptSessionsBackfilled"] += 1
+            progress["derivedFactSessionsBackfilled"] += 1
+            if bool(getattr(embedding_capability, "supported", False)):
+                progress["embeddingSessionsBackfilled"] += 1
+                progress["embeddingBlocksBackfilled"] += len(embedding_blocks)
+
+            last_started_at = _session_cursor_value(session_row)
+            last_session_id = session_id
+            checkpoint = _build_backfill_checkpoint(
+                checkpoint_key=checkpoint_key,
+                last_started_at=last_started_at,
+                last_session_id=last_session_id,
+                completed=False,
+                progress=progress,
+            )
+            await intelligence_repo.save_backfill_checkpoint(project_id, checkpoint, checkpoint_key=checkpoint_key)
+
+        completed = len(session_rows) < max(1, limit)
+        if session_rows and not completed:
+            remaining = await intelligence_repo.list_backfill_sessions(
+                project_id,
+                after_started_at=last_started_at,
+                after_session_id=last_session_id,
+                limit=1,
+            )
+            completed = not remaining
+        checkpoint = _build_backfill_checkpoint(
+            checkpoint_key=checkpoint_key,
+            last_started_at=last_started_at,
+            last_session_id=last_session_id,
+            completed=completed,
+            progress=progress,
+        )
+        await intelligence_repo.save_backfill_checkpoint(project_id, checkpoint, checkpoint_key=checkpoint_key)
+
+        payload = {
+            "projectId": project_id,
+            "checkpointKey": checkpoint_key,
+            "storageProfile": str(getattr(embedding_capability, "storage_profile", "") or ""),
+            "embeddingWriteSupported": bool(getattr(embedding_capability, "supported", False)),
+            "authoritative": bool(getattr(embedding_capability, "authoritative", False)),
+            "limit": max(1, limit),
+            "sessionsProcessed": batch_counts["sessionsProcessed"],
+            "transcriptSessionsBackfilled": batch_counts["transcriptSessionsBackfilled"],
+            "derivedFactSessionsBackfilled": batch_counts["derivedFactSessionsBackfilled"],
+            "embeddingSessionsBackfilled": batch_counts["embeddingSessionsBackfilled"],
+            "embeddingBlocksBackfilled": batch_counts["embeddingBlocksBackfilled"],
+            "sessionsProcessedTotal": progress["sessionsProcessed"],
+            "transcriptSessionsBackfilledTotal": progress["transcriptSessionsBackfilled"],
+            "derivedFactSessionsBackfilledTotal": progress["derivedFactSessionsBackfilled"],
+            "embeddingSessionsBackfilledTotal": progress["embeddingSessionsBackfilled"],
+            "embeddingBlocksBackfilledTotal": progress["embeddingBlocksBackfilled"],
+            "completed": completed,
+            "checkpoint": checkpoint,
+            "warnings": warnings,
+            "generatedAt": _now(),
+        }
+        payload["operatorGuidance"] = session_intelligence_backfill_operator_guidance(payload)
+        return payload
+
+
+def _embedding_row_content(row: dict[str, Any]) -> str:
+    content = str(row.get("content") or "").strip()
+    if content:
+        return content
+    tool_name = str(row.get("toolName") or "").strip()
+    if tool_name:
+        return f"[tool] {tool_name}"
+    return ""
+
+
+def _embedding_block(block_kind: str, block_index: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    message_ids = [str(row.get("messageId") or f"message-{idx}") for idx, row in enumerate(rows)]
+    content = "\n".join(
+        f"{str(row.get('role') or 'unknown').strip()}: {_embedding_row_content(row)}"
+        for row in rows
+    ).strip()
+    metadata = {
+        "sourceProvenance": [str(row.get("sourceProvenance") or "") for row in rows],
+        "roles": [str(row.get("role") or "") for row in rows],
+        "messageTypes": [str(row.get("messageType") or "") for row in rows],
+        "messageIndexes": [int(row.get("messageIndex") or 0) for row in rows],
+    }
+    content_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "blockKind": block_kind,
+                "blockIndex": block_index,
+                "messageIds": message_ids,
+                "content": content,
+                "metadata": metadata,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "block_kind": block_kind,
+        "block_index": block_index,
+        "message_ids": message_ids,
+        "content": content,
+        "content_hash": content_hash,
+        "embedding_model": "",
+        "embedding_dimensions": 0,
+        "metadata_json": metadata,
+    }
+
+
+async def _linked_documents(document_repo: Any, project_id: str, session_row: dict[str, Any]) -> list[dict[str, Any]]:
+    feature_id = _feature_id(session_row)
+    if not feature_id:
+        return []
+    return await document_repo.list_paginated(
+        project_id,
+        0,
+        200,
+        filters={"feature": feature_id, "include_progress": True},
+    )
+
+
+async def _replace_session_intelligence_facts(
+    intelligence_repo: Any,
+    session_id: str,
+    session_row: dict[str, Any],
+    canonical_rows: list[dict[str, Any]],
+    file_updates: list[dict[str, Any]],
+    linked_docs: list[dict[str, Any]],
+) -> None:
+    sentiment_facts = build_session_sentiment_facts(session_row, canonical_rows)
+    churn_facts = build_session_code_churn_facts(session_row, canonical_rows, file_updates)
+    scope_drift_facts = build_session_scope_drift_facts(session_row, linked_docs, file_updates)
+    await intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
+    await intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
+    await intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+
+
+def _normalize_canonical_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            raw_metadata = row.get("metadata_json")
+            if isinstance(raw_metadata, str) and raw_metadata.strip():
+                try:
+                    parsed = json.loads(raw_metadata)
+                except Exception:
+                    parsed = {}
+                metadata = parsed if isinstance(parsed, dict) else {}
+            else:
+                metadata = {}
+        normalized.append(
+            {
+                "messageIndex": int(row.get("message_index") or row.get("messageIndex") or 0),
+                "sourceLogId": str(row.get("source_log_id") or row.get("sourceLogId") or ""),
+                "messageId": str(row.get("message_id") or row.get("messageId") or ""),
+                "role": str(row.get("role") or ""),
+                "messageType": str(row.get("message_type") or row.get("messageType") or ""),
+                "content": str(row.get("content") or ""),
+                "timestamp": str(row.get("event_timestamp") or row.get("timestamp") or ""),
+                "agentName": str(row.get("agent_name") or row.get("agentName") or ""),
+                "toolName": str(row.get("tool_name") or row.get("toolName") or ""),
+                "rootSessionId": str(row.get("root_session_id") or row.get("rootSessionId") or ""),
+                "conversationFamilyId": str(row.get("conversation_family_id") or row.get("conversationFamilyId") or ""),
+                "threadSessionId": str(row.get("thread_session_id") or row.get("threadSessionId") or ""),
+                "parentSessionId": str(row.get("parent_session_id") or row.get("parentSessionId") or ""),
+                "sourceProvenance": str(row.get("source_provenance") or row.get("sourceProvenance") or ""),
+                "metadata": metadata,
+            }
+        )
+    return normalized
+
+
+def _session_cursor_value(session_row: dict[str, Any]) -> str:
+    return str(session_row.get("started_at") or session_row.get("startedAt") or session_row.get("created_at") or "")
+
+
+def _build_backfill_checkpoint(
+    *,
+    checkpoint_key: str,
+    last_started_at: str,
+    last_session_id: str,
+    completed: bool,
+    progress: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "checkpointKey": checkpoint_key,
+        "version": 1,
+        "lastStartedAt": last_started_at,
+        "lastSessionId": last_session_id,
+        "sessionsProcessed": int(progress.get("sessionsProcessed") or 0),
+        "transcriptSessionsBackfilled": int(progress.get("transcriptSessionsBackfilled") or 0),
+        "derivedFactSessionsBackfilled": int(progress.get("derivedFactSessionsBackfilled") or 0),
+        "embeddingSessionsBackfilled": int(progress.get("embeddingSessionsBackfilled") or 0),
+        "embeddingBlocksBackfilled": int(progress.get("embeddingBlocksBackfilled") or 0),
+        "completed": bool(completed),
+        "updatedAt": _now(),
+    }
 
 
 class TranscriptSearchService:
