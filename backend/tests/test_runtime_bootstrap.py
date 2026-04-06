@@ -16,7 +16,11 @@ from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
 from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
-from backend.runtime.storage_contract import get_runtime_storage_contract, resolve_storage_mode
+from backend.runtime.storage_contract import (
+    build_storage_profile_validation_matrix,
+    get_runtime_storage_contract,
+    resolve_storage_mode,
+)
 from backend.runtime_ports import build_core_ports
 from backend.worker import serve_worker
 
@@ -81,6 +85,17 @@ def _local_storage_profile() -> config.StorageProfileConfig:
 def _health_payload(app: object) -> dict[str, object]:
     health_route = next(route for route in app.routes if getattr(route, "path", None) == "/api/health")
     return health_route.endpoint(types.SimpleNamespace(), None)
+
+
+def _expected_health_validation_matrix() -> list[dict[str, object]]:
+    return [
+        {
+            **entry,
+            "supportedStorageIsolationModes": list(entry["supportedStorageIsolationModes"]),
+            "requiredStorageGuarantees": list(entry["requiredStorageGuarantees"]),
+        }
+        for entry in build_storage_profile_validation_matrix()
+    ]
 
 
 class RuntimeProfileTests(unittest.TestCase):
@@ -170,6 +185,11 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("sessionEmbeddingWriteAuthoritative", status)
         self.assertIn("sessionEmbeddingWriteStatus", status)
         self.assertIn("sessionEmbeddingWriteNotes", status)
+        self.assertIn("sessionIntelligenceProfile", status)
+        self.assertIn("sessionIntelligenceAnalyticsLevel", status)
+        self.assertIn("sessionIntelligenceBackfillStrategy", status)
+        self.assertIn("sessionIntelligenceMemoryDraftFlow", status)
+        self.assertIn("sessionIntelligenceIsolationBoundary", status)
         self.assertIn("filesystemSourceOfTruth", status)
         self.assertIn("storageFilesystemRole", status)
         self.assertIn("sharedPostgresEnabled", status)
@@ -178,6 +198,7 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("storageSchema", status)
         self.assertIn("canonicalSessionStore", status)
         self.assertIn("requiredStorageGuarantees", status)
+        self.assertIn("storageProfileValidationMatrix", status)
         self.assertIn("migrationGovernanceStatus", status)
         self.assertIn("migrationStatus", status)
         self.assertIn("syncProvisioned", status)
@@ -189,6 +210,13 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertTrue(status["sessionEmbeddingWriteSupported"])
         self.assertTrue(status["sessionEmbeddingWriteAuthoritative"])
         self.assertEqual(status["sessionEmbeddingWriteStatus"], "authoritative")
+        self.assertEqual(status["sessionIntelligenceProfile"], "enterprise_canonical")
+        self.assertEqual(status["sessionIntelligenceAnalyticsLevel"], "full")
+        self.assertEqual(status["sessionIntelligenceBackfillStrategy"], "checkpointed_enterprise_backfill")
+        self.assertEqual(status["sessionIntelligenceMemoryDraftFlow"], "approval_gated_enterprise_publish")
+        self.assertEqual(status["sessionIntelligenceIsolationBoundary"], "dedicated_instance")
+        self.assertEqual(status["storageFilesystemRole"], "optional_ingestion_adapter_only")
+        self.assertEqual(status["storageProfileValidationMatrix"], build_storage_profile_validation_matrix())
         self.assertEqual(status["migrationGovernanceStatus"], "verified")
         self.assertEqual(status["migrationStatus"], "not_started")
         self.assertFalse(status["syncProvisioned"])
@@ -290,6 +318,12 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertFalse(payload["sessionEmbeddingWriteSupported"])
         self.assertFalse(payload["sessionEmbeddingWriteAuthoritative"])
         self.assertEqual(payload["sessionEmbeddingWriteStatus"], "unsupported")
+        self.assertEqual(payload["sessionIntelligenceProfile"], "local_cache")
+        self.assertEqual(payload["sessionIntelligenceAnalyticsLevel"], "limited_optional")
+        self.assertEqual(payload["sessionIntelligenceBackfillStrategy"], "local_rebuild_from_filesystem")
+        self.assertEqual(payload["sessionIntelligenceMemoryDraftFlow"], "reviewable_local_drafts")
+        self.assertEqual(payload["sessionIntelligenceIsolationBoundary"], "not_applicable")
+        self.assertEqual(payload["storageFilesystemRole"], "primary_ingestion_and_derived_source")
         self.assertFalse(payload["sharedPostgresEnabled"])
         self.assertEqual(payload["migrationGovernanceStatus"], "verified")
         self.assertEqual(payload["migrationStatus"], "not_started")
@@ -316,6 +350,12 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertTrue(payload["sessionEmbeddingWriteSupported"])
         self.assertTrue(payload["sessionEmbeddingWriteAuthoritative"])
         self.assertEqual(payload["sessionEmbeddingWriteStatus"], "authoritative")
+        self.assertEqual(payload["sessionIntelligenceProfile"], "enterprise_canonical")
+        self.assertEqual(payload["sessionIntelligenceAnalyticsLevel"], "full")
+        self.assertEqual(payload["sessionIntelligenceBackfillStrategy"], "checkpointed_enterprise_backfill")
+        self.assertEqual(payload["sessionIntelligenceMemoryDraftFlow"], "approval_gated_enterprise_publish")
+        self.assertEqual(payload["sessionIntelligenceIsolationBoundary"], "dedicated_instance")
+        self.assertEqual(payload["storageFilesystemRole"], "optional_ingestion_adapter_only")
         self.assertEqual(payload["storageIsolationMode"], "dedicated")
         self.assertFalse(payload["sharedPostgresEnabled"])
         self.assertEqual(payload["migrationGovernanceStatus"], "verified")
@@ -342,6 +382,12 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertTrue(payload["sessionEmbeddingWriteSupported"])
         self.assertTrue(payload["sessionEmbeddingWriteAuthoritative"])
         self.assertEqual(payload["sessionEmbeddingWriteStatus"], "authoritative")
+        self.assertEqual(payload["sessionIntelligenceProfile"], "enterprise_canonical_shared_boundary")
+        self.assertEqual(payload["sessionIntelligenceAnalyticsLevel"], "full")
+        self.assertEqual(payload["sessionIntelligenceBackfillStrategy"], "checkpointed_enterprise_backfill")
+        self.assertEqual(payload["sessionIntelligenceMemoryDraftFlow"], "approval_gated_enterprise_publish")
+        self.assertEqual(payload["sessionIntelligenceIsolationBoundary"], "schema_or_tenant_boundary")
+        self.assertEqual(payload["storageFilesystemRole"], "optional_ingestion_adapter_only")
         self.assertTrue(payload["sharedPostgresEnabled"])
         self.assertEqual(payload["storageIsolationMode"], "schema")
         self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
@@ -355,6 +401,13 @@ class RuntimeProfileTests(unittest.TestCase):
         reported = set(payload["supportedStorageCompositions"])
         expected = {entry.composition for entry in SUPPORTED_STORAGE_COMPOSITIONS}
         self.assertSetEqual(reported, expected)
+
+    def test_health_endpoint_exposes_storage_profile_validation_matrix(self) -> None:
+        app = build_test_app()
+
+        payload = _health_payload(app)
+
+        self.assertEqual(payload["storageProfileValidationMatrix"], _expected_health_validation_matrix())
 
 
 class StorageAdapterCompositionTests(unittest.TestCase):

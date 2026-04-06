@@ -1,6 +1,6 @@
 # Operations Panel Developer Reference
 
-Last updated: 2026-03-29
+Last updated: 2026-04-06
 
 This reference documents the Ops page implementation and backend endpoints it uses.
 
@@ -98,18 +98,27 @@ Router integration:
 - `jobsEnabled`
 - `telemetryExports`
 - `filesystemSourceOfTruth`
+- `storageFilesystemRole`
 - `sharedPostgresEnabled`
 - `storageIsolationMode`
 - `supportedStorageIsolationModes`
 - `storageCanonicalStore`
 - `auditStore`
+- `sessionIntelligenceProfile`
+- `sessionIntelligenceAnalyticsLevel`
+- `sessionIntelligenceBackfillStrategy`
+- `sessionIntelligenceMemoryDraftFlow`
+- `sessionIntelligenceIsolationBoundary`
 - `storageSchema`
 - `canonicalSessionStore`
 - `migrationGovernanceStatus`
 - `requiredStorageGuarantees`
+- `storageProfileValidationMatrix`
 - `supportedStorageCompositions`
 
-The Ops panel renders these fields in a compact runtime/storage capability section so operators can confirm the deployment posture at a glance. That section is meant to answer four questions quickly: which storage profile and composition are active, whether the runtime should be running background work, whether sync is actually provisioned, and whether the current Postgres posture matches the intended isolation model.
+The Ops panel renders these fields in a compact runtime/storage capability section so operators can confirm the deployment posture at a glance. That section is meant to answer five questions quickly: which storage profile and composition are active, whether the runtime should be running background work, whether sync is actually provisioned, whether the current Postgres posture matches the intended isolation model, and which session-intelligence capabilities are supposed to differ across local SQLite, dedicated enterprise Postgres, and shared-instance enterprise Postgres.
+
+`storageProfileValidationMatrix` is the comparison payload for that last question. It exposes one row per supported storage posture with the canonical store, filesystem role, audit-write status, session-embedding write status, supported isolation modes, and session-intelligence rollout fields (`sessionIntelligenceProfile`, `sessionIntelligenceAnalyticsLevel`, `sessionIntelligenceBackfillStrategy`, `sessionIntelligenceMemoryDraftFlow`, `sessionIntelligenceIsolationBoundary`).
 
 `GET /api/cache/status` now includes:
 

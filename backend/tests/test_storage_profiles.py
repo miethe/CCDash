@@ -4,7 +4,11 @@ from pydantic import ValidationError
 
 from backend.config import resolve_storage_profile_config
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS, validate_migration_governance_contract
-from backend.runtime.storage_contract import get_storage_capability_contract, resolve_storage_mode
+from backend.runtime.storage_contract import (
+    build_storage_profile_validation_matrix,
+    get_storage_capability_contract,
+    resolve_storage_mode,
+)
 
 
 class StorageProfileConfigTests(unittest.TestCase):
@@ -124,6 +128,92 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(get_storage_capability_contract(local_profile).canonical_store, "sqlite_local_metadata")
         self.assertEqual(get_storage_capability_contract(enterprise_profile).canonical_store, "postgres_dedicated")
         self.assertEqual(get_storage_capability_contract(shared_profile).canonical_store, "postgres_shared_instance")
+
+    def test_capability_matrix_freezes_session_intelligence_rollout_contract(self) -> None:
+        local_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
+        enterprise_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+        shared_profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_STORAGE_SHARED_POSTGRES": "true",
+                "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+            }
+        )
+
+        local_contract = get_storage_capability_contract(local_profile)
+        enterprise_contract = get_storage_capability_contract(enterprise_profile)
+        shared_contract = get_storage_capability_contract(shared_profile)
+
+        self.assertEqual(local_contract.session_intelligence_profile, "local_cache")
+        self.assertEqual(local_contract.session_intelligence_analytics_level, "limited_optional")
+        self.assertEqual(local_contract.session_intelligence_backfill_strategy, "local_rebuild_from_filesystem")
+        self.assertEqual(local_contract.session_intelligence_memory_draft_flow, "reviewable_local_drafts")
+        self.assertEqual(local_contract.session_intelligence_isolation_boundary, "not_applicable")
+
+        self.assertEqual(enterprise_contract.session_intelligence_profile, "enterprise_canonical")
+        self.assertEqual(enterprise_contract.session_intelligence_analytics_level, "full")
+        self.assertEqual(
+            enterprise_contract.session_intelligence_backfill_strategy,
+            "checkpointed_enterprise_backfill",
+        )
+        self.assertEqual(
+            enterprise_contract.session_intelligence_memory_draft_flow,
+            "approval_gated_enterprise_publish",
+        )
+        self.assertEqual(enterprise_contract.session_intelligence_isolation_boundary, "dedicated_instance")
+
+        self.assertEqual(shared_contract.session_intelligence_profile, "enterprise_canonical_shared_boundary")
+        self.assertEqual(shared_contract.session_intelligence_analytics_level, "full")
+        self.assertEqual(shared_contract.session_intelligence_backfill_strategy, "checkpointed_enterprise_backfill")
+        self.assertEqual(
+            shared_contract.session_intelligence_memory_draft_flow,
+            "approval_gated_enterprise_publish",
+        )
+        self.assertEqual(shared_contract.session_intelligence_isolation_boundary, "schema_or_tenant_boundary")
+
+    def test_storage_profile_validation_matrix_freezes_supported_capability_differences(self) -> None:
+        matrix = {entry["storageMode"]: entry for entry in build_storage_profile_validation_matrix()}
+
+        self.assertSetEqual(set(matrix), {"local", "enterprise", "shared-enterprise"})
+
+        self.assertEqual(matrix["local"]["storageProfile"], "local")
+        self.assertEqual(matrix["local"]["storageBackend"], "sqlite")
+        self.assertEqual(matrix["local"]["storageComposition"], "local-sqlite")
+        self.assertEqual(matrix["local"]["storageFilesystemRole"], "primary_ingestion_and_derived_source")
+        self.assertEqual(matrix["local"]["auditWriteStatus"], "unsupported")
+        self.assertEqual(matrix["local"]["sessionEmbeddingWriteStatus"], "unsupported")
+        self.assertEqual(matrix["local"]["sessionIntelligenceAnalyticsLevel"], "limited_optional")
+
+        self.assertEqual(matrix["enterprise"]["storageProfile"], "enterprise")
+        self.assertEqual(matrix["enterprise"]["storageBackend"], "postgres")
+        self.assertEqual(matrix["enterprise"]["storageComposition"], "enterprise-postgres")
+        self.assertFalse(matrix["enterprise"]["sharedPostgresEnabled"])
+        self.assertEqual(matrix["enterprise"]["auditWriteStatus"], "authoritative")
+        self.assertEqual(matrix["enterprise"]["sessionEmbeddingWriteStatus"], "authoritative")
+        self.assertEqual(matrix["enterprise"]["sessionIntelligenceProfile"], "enterprise_canonical")
+        self.assertEqual(matrix["enterprise"]["sessionIntelligenceIsolationBoundary"], "dedicated_instance")
+
+        self.assertEqual(matrix["shared-enterprise"]["storageProfile"], "enterprise")
+        self.assertEqual(matrix["shared-enterprise"]["storageBackend"], "postgres")
+        self.assertEqual(matrix["shared-enterprise"]["storageComposition"], "shared-enterprise-postgres")
+        self.assertTrue(matrix["shared-enterprise"]["sharedPostgresEnabled"])
+        self.assertEqual(matrix["shared-enterprise"]["supportedStorageIsolationModes"], ("schema", "tenant"))
+        self.assertEqual(
+            matrix["shared-enterprise"]["sessionIntelligenceProfile"],
+            "enterprise_canonical_shared_boundary",
+        )
+        self.assertEqual(
+            matrix["shared-enterprise"]["sessionIntelligenceIsolationBoundary"],
+            "schema_or_tenant_boundary",
+        )
 
     def test_storage_composition_matrix_covers_phase4_profiles(self) -> None:
         validate_migration_governance_contract()

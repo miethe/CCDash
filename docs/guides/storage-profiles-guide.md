@@ -1,6 +1,6 @@
 # CCDash Storage Profiles Guide
 
-Updated: 2026-04-01
+Updated: 2026-04-06
 
 ## Purpose
 
@@ -75,6 +75,26 @@ Runtime profiles and storage profiles are related but distinct:
 - `local` runtime + any enterprise storage mode is rejected because the local runtime contract is local-first only.
 
 The `/api/health` payload reports the resolved storage mode, storage profile, backend, storage composition, supported storage profiles, supported isolation modes, canonical store, audit store, audit-write capability, shared-Postgres posture, isolation mode, schema, canonical session-store mode, migration-governance status, startup migration status, and runtime capability flags such as `watchEnabled`, `syncEnabled`, `syncProvisioned`, `jobsEnabled`, and `telemetryExports` so operators can verify the runtime contract quickly.
+
+For Phase 7 session-intelligence rollout validation, `/api/health` and `RuntimeContainer.runtime_status()` also expose:
+
+- `storageFilesystemRole`
+- `sessionIntelligenceProfile`
+- `sessionIntelligenceAnalyticsLevel`
+- `sessionIntelligenceBackfillStrategy`
+- `sessionIntelligenceMemoryDraftFlow`
+- `sessionIntelligenceIsolationBoundary`
+- `storageProfileValidationMatrix`
+
+`storageProfileValidationMatrix` is a frozen three-row comparison for `local-sqlite`, `enterprise-postgres`, and `shared-enterprise-postgres`. Each row includes the resolved storage mode/profile/backend/composition plus the audit-write status, session-embedding write status, filesystem role, supported isolation modes, and session-intelligence rollout posture so operators can compare the supported capability differences without inferring them from environment variables alone.
+
+## Session-Intelligence Validation Matrix
+
+| Validation row | Audit writes | Session embeddings | Analytics posture | Backfill posture | Memory-draft flow | Isolation boundary |
+| --- | --- | --- | --- | --- | --- | --- |
+| `local-sqlite` | `unsupported` | `unsupported` | `limited_optional` | `local_rebuild_from_filesystem` | `reviewable_local_drafts` | `not_applicable` |
+| `enterprise-postgres` | `authoritative` | `authoritative` | `full` | `checkpointed_enterprise_backfill` | `approval_gated_enterprise_publish` | `dedicated_instance` |
+| `shared-enterprise-postgres` | `authoritative` | `authoritative` | `full` | `checkpointed_enterprise_backfill` | `approval_gated_enterprise_publish` | `schema_or_tenant_boundary` |
 
 ## Local Upgrade Path
 
