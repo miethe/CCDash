@@ -66,6 +66,7 @@ The exporter uses these telemetry-specific environment variables:
 `CCDASH_STORAGE_PROFILE` is the operator-facing switch for local versus enterprise storage. `CCDASH_DB_BACKEND` remains a compatibility setting behind that contract. For the full profile matrix, see [`docs/guides/storage-profiles-guide.md`](./guides/storage-profiles-guide.md).
 
 Canonical transcript intelligence is now fully rolled out under that storage contract. Use [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md) for the enterprise backfill workflow, health checks, and SkillMeat draft approval flow.
+For the full end-to-end hosted operator sequence, use [`docs/guides/enterprise-session-intelligence-runbook.md`](./guides/enterprise-session-intelligence-runbook.md).
 
 ## 3) Install Backend Dependencies
 
@@ -215,6 +216,7 @@ Expected posture by row:
 Memory-draft publishing remains approval-gated in every posture. CCDash can prepare reviewable SkillMeat memory drafts, but operators must still approve publication explicitly.
 
 For the full field list, rollout command, checkpoint semantics, and failure modes, see [`docs/guides/session-intelligence-rollout-guide.md`](./guides/session-intelligence-rollout-guide.md).
+For the end-to-end enterprise setup, backfill, and post-rollout usage sequence, see [`docs/guides/enterprise-session-intelligence-runbook.md`](./guides/enterprise-session-intelligence-runbook.md).
 
 ## Troubleshooting
 

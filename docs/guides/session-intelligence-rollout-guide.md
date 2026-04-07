@@ -175,4 +175,5 @@ Related references:
 
 - [storage-profiles-guide.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/storage-profiles-guide.md)
 - [data-platform-rollout-and-handoff.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/data-platform-rollout-and-handoff.md)
+- [enterprise-session-intelligence-runbook.md](/Users/miethe/dev/homelab/development/CCDash/docs/guides/enterprise-session-intelligence-runbook.md)
 - [session-intelligence-canonical-storage-v1.md](/Users/miethe/dev/homelab/development/CCDash/docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md)
