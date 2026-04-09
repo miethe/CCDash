@@ -30,6 +30,7 @@ from backend.observability import initialize as initialize_observability, shutdo
 from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
+    build_storage_profile_validation_matrix,
     get_runtime_storage_contract,
     get_storage_capability_contract,
     validate_runtime_storage_pairing,
@@ -297,6 +298,9 @@ class RuntimeContainer:
         audit_capability = (
             storage_probe.storage.audit_security().privileged_action_audit_records().describe_capability()
         )
+        embedding_capability = (
+            storage_probe.storage.observed_product().session_embeddings().describe_capability()
+        )
         status = {
             "profile": self.profile.name,
             "watchEnabled": self.profile.capabilities.watch,
@@ -321,6 +325,17 @@ class RuntimeContainer:
             "auditWriteAuthoritative": audit_capability.authoritative,
             "auditWriteStatus": "authoritative" if audit_capability.authoritative else "unsupported",
             "auditWriteNotes": audit_capability.notes,
+            "sessionEmbeddingWriteSupported": embedding_capability.supported,
+            "sessionEmbeddingWriteAuthoritative": embedding_capability.authoritative,
+            "sessionEmbeddingWriteStatus": (
+                "authoritative" if embedding_capability.authoritative else "unsupported"
+            ),
+            "sessionEmbeddingWriteNotes": embedding_capability.notes,
+            "sessionIntelligenceProfile": storage_contract.session_intelligence_profile,
+            "sessionIntelligenceAnalyticsLevel": storage_contract.session_intelligence_analytics_level,
+            "sessionIntelligenceBackfillStrategy": storage_contract.session_intelligence_backfill_strategy,
+            "sessionIntelligenceMemoryDraftFlow": storage_contract.session_intelligence_memory_draft_flow,
+            "sessionIntelligenceIsolationBoundary": storage_contract.session_intelligence_isolation_boundary,
             "filesystemSourceOfTruth": self.storage_profile.filesystem_source_of_truth,
             "storageFilesystemRole": storage_contract.filesystem_role,
             "sharedPostgresEnabled": self.storage_profile.shared_postgres_enabled,
@@ -329,6 +344,7 @@ class RuntimeContainer:
             "storageSchema": self.storage_profile.schema_name,
             "canonicalSessionStore": self.storage_profile.canonical_session_store,
             "requiredStorageGuarantees": storage_contract.required_guarantees,
+            "storageProfileValidationMatrix": build_storage_profile_validation_matrix(),
             "migrationGovernanceStatus": "verified",
             "migrationStatus": self.migration_status,
             "syncProvisioned": self.sync is not None,

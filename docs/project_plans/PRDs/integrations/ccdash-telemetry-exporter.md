@@ -1,14 +1,14 @@
 ---
 schema_version: 3
 doc_type: prd
-status: draft
+status: completed
 category: integrations
 title: "PRD: CCDash Closed-Loop Telemetry Exporter"
 description: "Implement a telemetry export engine in CCDash to push locally derived workflow effectiveness and project metrics to the central SkillMeat Artifact Manager (SAM)."
 author: product-manager
 audience: [backend-platform, data-platform, ai-agents, platform-engineering]
 created: 2026-03-24
-updated: 2026-03-24
+updated: 2026-04-07
 priority: high
 risk_level: medium
 complexity: High
@@ -42,6 +42,11 @@ context_files:
   - backend/runtime/container.py
   - backend/routers/analytics.py
 implementation_plan_ref: "docs/project_plans/implementation_plans/integrations/ccdash-telemetry-exporter-v1.md"
+commit_refs:
+  - https://github.com/miethe/CCDash/commit/1761bd1
+  - https://github.com/miethe/CCDash/commit/e510b13
+  - https://github.com/miethe/CCDash/commit/4e5acaa
+pr_refs: []
 ---
 
 # PRD: CCDash Closed-Loop Telemetry Exporter

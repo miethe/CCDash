@@ -218,6 +218,9 @@ class SqliteSessionRepository:
         if filters.get("conversation_family_id"):
             where_clauses.append("conversation_family_id = ?")
             params.append(str(filters["conversation_family_id"]))
+        if filters.get("task_id"):
+            where_clauses.append("task_id = ?")
+            params.append(str(filters["task_id"]))
         if filters.get("root_session_id"):
             where_clauses.append("root_session_id = ?")
             params.append(filters["root_session_id"])
@@ -321,6 +324,9 @@ class SqliteSessionRepository:
         if filters.get("conversation_family_id"):
             where_clauses.append("conversation_family_id = ?")
             params.append(str(filters["conversation_family_id"]))
+        if filters.get("task_id"):
+            where_clauses.append("task_id = ?")
+            params.append(str(filters["task_id"]))
         if filters.get("root_session_id"):
             where_clauses.append("root_session_id = ?")
             params.append(filters["root_session_id"])

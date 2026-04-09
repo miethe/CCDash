@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from backend.data_domains import (
+    ENTERPRISE_ONLY_POSTGRES_CONCERNS,
     MIGRATION_MANAGED_CONCERNS,
     PLANNED_AUTH_AUDIT_CONCERNS,
     PERSISTED_CONCERN_OWNERSHIP,
@@ -67,11 +68,16 @@ class DataDomainOwnershipTests(unittest.TestCase):
         """Postgres migration tables = shared SQLite tables + planned enterprise concerns."""
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
         postgres_tables = _migration_tables("backend/db/postgres_migrations.py")
-        self.assertSetEqual(postgres_tables, sqlite_tables | set(PLANNED_AUTH_AUDIT_CONCERNS))
+        self.assertSetEqual(postgres_tables, sqlite_tables | set(ENTERPRISE_ONLY_POSTGRES_CONCERNS))
 
     def test_current_migration_tables_are_all_classified(self) -> None:
         sqlite_tables = _migration_tables("backend/db/sqlite_migrations.py")
         classified_tables = set(MIGRATION_MANAGED_CONCERNS)
+        current_enterprise_only = {
+            concern
+            for concern in ENTERPRISE_ONLY_POSTGRES_CONCERNS
+            if PERSISTED_CONCERN_OWNERSHIP[concern].current
+        }
         directly_ownable = {
             "alert_configs",
             "sessions",
@@ -80,7 +86,7 @@ class DataDomainOwnershipTests(unittest.TestCase):
             "features",
         }
 
-        self.assertSetEqual(classified_tables, sqlite_tables)
+        self.assertSetEqual(classified_tables, sqlite_tables | current_enterprise_only)
 
         for concern in classified_tables:
             ownership = PERSISTED_CONCERN_OWNERSHIP[concern]
@@ -134,6 +140,31 @@ class DataDomainOwnershipTests(unittest.TestCase):
                 "directly-ownable",
                 f"Enterprise-only table '{concern}' must not be directly-ownable",
             )
+
+    def test_session_embeddings_is_current_enterprise_only_concern(self) -> None:
+        ownership = PERSISTED_CONCERN_OWNERSHIP["session_embeddings"]
+
+        self.assertTrue(ownership.current)
+        self.assertEqual(ownership.kind, "table")
+        self.assertEqual(ownership.domain, "observed_product_entities")
+        self.assertEqual(ownership.local_owner, "not part of the local-first storage contract")
+        self.assertEqual(
+            ownership.enterprise_owner,
+            "enterprise Postgres canonical transcript intelligence store",
+        )
+        self.assertEqual(ownership.ownership_posture, "inherits-parent-ownership")
+        self.assertIn("session_embeddings", ENTERPRISE_ONLY_POSTGRES_CONCERNS)
+
+    def test_session_intelligence_facts_inherit_parent_ownership(self) -> None:
+        for concern in (
+            "session_sentiment_facts",
+            "session_code_churn_facts",
+            "session_scope_drift_facts",
+        ):
+            ownership = PERSISTED_CONCERN_OWNERSHIP[concern]
+            self.assertEqual(ownership.domain, "observed_product_entities")
+            self.assertEqual(ownership.ownership_posture, "inherits-parent-ownership")
+            self.assertNotIn(concern, ENTERPRISE_ONLY_POSTGRES_CONCERNS)
 
 
 if __name__ == "__main__":

@@ -6,14 +6,35 @@ from typing import Any
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services.common import require_project, resolve_project
-from backend.models import SkillMeatConfigValidationRequest
-from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+from backend.models import (
+    SessionMemoryDraftGenerateRequest,
+    SessionMemoryDraftPublishRequest,
+    SessionMemoryDraftReviewRequest,
+    SkillMeatConfigValidationRequest,
+)
+from backend.services.integrations.skillmeat_client import SkillMeatClient
+from backend.services.integrations.skillmeat_memory_drafts import generate_session_memory_drafts
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache
 from backend.services.integrations.skillmeat_sync import sync_skillmeat_definitions
 from backend.services.stack_observations import backfill_session_stack_observations
 
 
 class SkillMeatApplicationService:
+    def _client_for_project(self, project: Any) -> SkillMeatClient:
+        config = getattr(project, "skillMeat", None)
+        if config is None or not bool(getattr(config, "enabled", False)):
+            raise ValueError("SkillMeat integration is not enabled for this project")
+        base_url = str(getattr(config, "baseUrl", "") or "").strip()
+        project_mapping_id = str(getattr(config, "projectId", "") or "").strip()
+        if not base_url or not project_mapping_id:
+            raise ValueError("SkillMeat base URL and project ID are required for publish operations")
+        return SkillMeatClient(
+            base_url=base_url,
+            timeout_seconds=float(getattr(config, "requestTimeoutSeconds", 5.0) or 5.0),
+            aaa_enabled=bool(getattr(config, "aaaEnabled", False)),
+            api_key=str(getattr(config, "apiKey", "") or ""),
+        )
+
     async def validate_config(self, req: SkillMeatConfigValidationRequest) -> dict[str, Any]:
         base_url = str(req.baseUrl or "").strip()
         if not base_url:
@@ -166,3 +187,132 @@ class SkillMeatApplicationService:
             if observation:
                 hydrated.append(observation)
         return hydrated
+
+    async def list_memory_drafts(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        requested_project_id: str | None,
+        session_id: str | None,
+        status: str | None,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        project = require_project(context, ports, requested_project_id=requested_project_id)
+        repo = ports.storage.agentic_intelligence()
+        normalized_session_id = str(session_id or "").strip() or None
+        normalized_status = str(status or "").strip() or None
+        rows = await repo.list_session_memory_drafts(
+            str(project.id),
+            session_id=normalized_session_id,
+            status=normalized_status,
+            limit=limit,
+            offset=offset,
+        )
+        total = await repo.count_session_memory_drafts(
+            str(project.id),
+            session_id=normalized_session_id,
+            status=normalized_status,
+        )
+        return {
+            "generatedAt": "",
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": rows,
+        }
+
+    async def generate_memory_drafts(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        requested_project_id: str | None,
+        req: SessionMemoryDraftGenerateRequest,
+    ) -> dict[str, Any]:
+        project = require_project(context, ports, requested_project_id=requested_project_id)
+        return await generate_session_memory_drafts(
+            context,
+            ports,
+            project=project,
+            session_id=req.sessionId,
+            limit=req.limit,
+            actor=req.actor,
+        )
+
+    async def review_memory_draft(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        requested_project_id: str | None,
+        draft_id: int,
+        req: SessionMemoryDraftReviewRequest,
+    ) -> dict[str, Any] | None:
+        project = require_project(context, ports, requested_project_id=requested_project_id)
+        return await ports.storage.agentic_intelligence().review_session_memory_draft(
+            str(project.id),
+            draft_id,
+            decision=req.decision,
+            actor=req.actor,
+            notes=req.notes,
+        )
+
+    async def publish_memory_draft(
+        self,
+        context: RequestContext,
+        ports: CorePorts,
+        *,
+        requested_project_id: str | None,
+        draft_id: int,
+        req: SessionMemoryDraftPublishRequest,
+    ) -> dict[str, Any] | None:
+        project = require_project(context, ports, requested_project_id=requested_project_id)
+        repo = ports.storage.agentic_intelligence()
+        draft = await repo.get_session_memory_draft(str(project.id), draft_id)
+        if draft is None:
+            return None
+        if str(draft.get("status") or "") != "approved":
+            raise ValueError("Only approved memory drafts can be published")
+
+        project_config = getattr(project, "skillMeat", None)
+        project_mapping_id = str(getattr(project_config, "projectId", "") or "").strip()
+        client = self._client_for_project(project)
+        modules = await client.list_context_modules(project_id=project_mapping_id)
+
+        module_name = str(draft.get("module_name") or "")
+        module = next((item for item in modules if str(item.get("name") or "") == module_name), None)
+        if module is None:
+            module = await client.create_context_module(
+                project_id=project_mapping_id,
+                name=module_name,
+                description=str(draft.get("module_description") or ""),
+            )
+
+        memory_payload = await client.add_context_module_memory(
+            str(module.get("id") or ""),
+            memory_type=str(draft.get("memory_type") or "learning"),
+            title=str(draft.get("title") or ""),
+            content=str(draft.get("content") or ""),
+            confidence=float(draft.get("confidence") or 0.0),
+            metadata={
+                "ccdashProjectId": str(project.id),
+                "sessionId": str(draft.get("session_id") or ""),
+                "featureId": str(draft.get("feature_id") or ""),
+                "workflowRef": str(draft.get("workflow_ref") or ""),
+                "sourceMessageId": str(draft.get("source_message_id") or ""),
+                "sourceLogId": str(draft.get("source_log_id") or ""),
+                "contentHash": str(draft.get("content_hash") or ""),
+                "evidence": draft.get("evidence_json") if isinstance(draft.get("evidence_json"), dict) else {},
+            },
+        )
+        return await repo.record_session_memory_draft_publish_attempt(
+            str(project.id),
+            draft_id,
+            actor=req.actor,
+            notes=req.notes,
+            module_id=str(module.get("id") or ""),
+            memory_id=str(memory_payload.get("id") or ""),
+            source_url=str(memory_payload.get("source_url") or memory_payload.get("url") or ""),
+        )

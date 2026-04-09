@@ -82,6 +82,7 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
             "supportedStorageProfiles": list(runtime_status.get("supportedStorageProfiles", ())),
             "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
+            "storageFilesystemRole": str(runtime_status.get("storageFilesystemRole", "")),
             "sharedPostgresEnabled": bool(runtime_status.get("sharedPostgresEnabled", False)),
             "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
             "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
@@ -91,6 +92,15 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "auditWriteAuthoritative": bool(runtime_status.get("auditWriteAuthoritative", False)),
             "auditWriteStatus": str(runtime_status.get("auditWriteStatus", "")),
             "auditWriteNotes": str(runtime_status.get("auditWriteNotes", "")),
+            "sessionEmbeddingWriteSupported": bool(runtime_status.get("sessionEmbeddingWriteSupported", False)),
+            "sessionEmbeddingWriteAuthoritative": bool(runtime_status.get("sessionEmbeddingWriteAuthoritative", False)),
+            "sessionEmbeddingWriteStatus": str(runtime_status.get("sessionEmbeddingWriteStatus", "")),
+            "sessionEmbeddingWriteNotes": str(runtime_status.get("sessionEmbeddingWriteNotes", "")),
+            "sessionIntelligenceProfile": str(runtime_status.get("sessionIntelligenceProfile", "")),
+            "sessionIntelligenceAnalyticsLevel": str(runtime_status.get("sessionIntelligenceAnalyticsLevel", "")),
+            "sessionIntelligenceBackfillStrategy": str(runtime_status.get("sessionIntelligenceBackfillStrategy", "")),
+            "sessionIntelligenceMemoryDraftFlow": str(runtime_status.get("sessionIntelligenceMemoryDraftFlow", "")),
+            "sessionIntelligenceIsolationBoundary": str(runtime_status.get("sessionIntelligenceIsolationBoundary", "")),
             "storageSchema": str(runtime_status.get("storageSchema", "")),
             "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
             "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
@@ -99,12 +109,25 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
             "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
             "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
+            "storageProfileValidationMatrix": _serialize_storage_profile_validation_matrix(
+                runtime_status.get("storageProfileValidationMatrix", ())
+            ),
             "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
             "migrationStatus": str(runtime_status.get("migrationStatus", "")),
             "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
         }
 
     return app
+
+
+def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[str, Any]]:
+    matrix: list[dict[str, Any]] = []
+    for row in entries if isinstance(entries, (list, tuple)) else ():
+        entry = dict(row)
+        entry["supportedStorageIsolationModes"] = list(entry.get("supportedStorageIsolationModes", ()))
+        entry["requiredStorageGuarantees"] = list(entry.get("requiredStorageGuarantees", ()))
+        matrix.append(entry)
+    return matrix
 
 
 def _register_routers(app: FastAPI) -> None:

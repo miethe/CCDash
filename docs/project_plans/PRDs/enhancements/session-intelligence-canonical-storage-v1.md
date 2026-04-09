@@ -3,13 +3,19 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: research_prd
-status: draft
+status: in-progress
 category: data-platform
 title: "PRD: Session Intelligence & Canonical Storage Modernization"
 description: "Evolve CCDash PostgreSQL from a read-cache to a canonical storage layer to enable DX sentiment analysis, thrashing detection, scope drift quantification, and automated SkillMeat memory capture."
 summary: "Pivots session storage to unlock full-stream conversational analytics, semantic search, and bi-directional intelligence loops for Agentic SDLC workflows."
 created: 2026-03-23
-updated: 2026-03-23
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/b88ad78
+- https://github.com/miethe/CCDash/commit/d702a74
+- https://github.com/miethe/CCDash/commit/932e5e0
+- https://github.com/miethe/CCDash/commit/be3b9fd
+pr_refs: []
 priority: high
 risk_level: medium
 complexity: High

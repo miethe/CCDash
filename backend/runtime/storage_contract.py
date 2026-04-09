@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from functools import lru_cache
+from typing import Any, Literal
 
 from backend import config
 from backend.runtime.profiles import RuntimeProfile
@@ -19,6 +20,11 @@ class StorageCapabilityContract:
     integration_store: str
     operational_store: str
     audit_store: str
+    session_intelligence_profile: str
+    session_intelligence_analytics_level: str
+    session_intelligence_backfill_strategy: str
+    session_intelligence_memory_draft_flow: str
+    session_intelligence_isolation_boundary: str
     supported_isolation_modes: tuple[config.StorageIsolationMode, ...]
     required_guarantees: tuple[str, ...]
 
@@ -41,6 +47,11 @@ _STORAGE_CAPABILITY_CONTRACTS: dict[StorageModeName, StorageCapabilityContract] 
         integration_store="profile_local_storage",
         operational_store="profile_local_storage",
         audit_store="not_supported_in_v1_local_mode",
+        session_intelligence_profile="local_cache",
+        session_intelligence_analytics_level="limited_optional",
+        session_intelligence_backfill_strategy="local_rebuild_from_filesystem",
+        session_intelligence_memory_draft_flow="reviewable_local_drafts",
+        session_intelligence_isolation_boundary="not_applicable",
         supported_isolation_modes=("dedicated",),
         required_guarantees=(
             "SQLite remains the default local-first posture.",
@@ -55,6 +66,11 @@ _STORAGE_CAPABILITY_CONTRACTS: dict[StorageModeName, StorageCapabilityContract] 
         integration_store="postgres",
         operational_store="postgres",
         audit_store="postgres_phase_4_foundation",
+        session_intelligence_profile="enterprise_canonical",
+        session_intelligence_analytics_level="full",
+        session_intelligence_backfill_strategy="checkpointed_enterprise_backfill",
+        session_intelligence_memory_draft_flow="approval_gated_enterprise_publish",
+        session_intelligence_isolation_boundary="dedicated_instance",
         supported_isolation_modes=("dedicated",),
         required_guarantees=(
             "Postgres is the canonical hosted store.",
@@ -69,6 +85,11 @@ _STORAGE_CAPABILITY_CONTRACTS: dict[StorageModeName, StorageCapabilityContract] 
         integration_store="postgres_schema_or_tenant_boundary",
         operational_store="postgres_schema_or_tenant_boundary",
         audit_store="postgres_schema_or_tenant_boundary_phase_4_foundation",
+        session_intelligence_profile="enterprise_canonical_shared_boundary",
+        session_intelligence_analytics_level="full",
+        session_intelligence_backfill_strategy="checkpointed_enterprise_backfill",
+        session_intelligence_memory_draft_flow="approval_gated_enterprise_publish",
+        session_intelligence_isolation_boundary="schema_or_tenant_boundary",
         supported_isolation_modes=("schema", "tenant"),
         required_guarantees=(
             "Shared Postgres requires an explicit CCDash isolation boundary.",
@@ -129,6 +150,65 @@ def get_storage_capability_contract(
 
 def get_runtime_storage_contract(runtime_profile: RuntimeProfile) -> RuntimeStorageContract:
     return _RUNTIME_STORAGE_CONTRACTS[runtime_profile.name]
+
+
+@lru_cache(maxsize=1)
+def build_storage_profile_validation_matrix() -> tuple[dict[str, Any], ...]:
+    validation_profiles = (
+        config.resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"}),
+        config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        ),
+        config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_STORAGE_SHARED_POSTGRES": "true",
+                "CCDASH_STORAGE_ISOLATION_MODE": "schema",
+                "CCDASH_STORAGE_SCHEMA": "ccdash_app",
+            }
+        ),
+    )
+    return tuple(_build_storage_profile_validation_row(profile) for profile in validation_profiles)
+
+
+def _build_storage_profile_validation_row(
+    storage_profile: config.StorageProfileConfig,
+) -> dict[str, Any]:
+    from backend.db.migration_governance import resolve_storage_composition_contract
+
+    storage_contract = get_storage_capability_contract(storage_profile)
+    storage_composition = resolve_storage_composition_contract(storage_profile)
+    enterprise_capability = storage_contract.mode != "local"
+    capability_status = "authoritative" if enterprise_capability else "unsupported"
+    return {
+        "storageMode": storage_contract.mode,
+        "storageProfile": storage_profile.profile,
+        "storageBackend": storage_profile.db_backend,
+        "storageComposition": storage_composition.composition,
+        "storageFilesystemRole": storage_contract.filesystem_role,
+        "sharedPostgresEnabled": storage_profile.shared_postgres_enabled,
+        "supportedStorageIsolationModes": storage_contract.supported_isolation_modes,
+        "storageCanonicalStore": storage_contract.canonical_store,
+        "auditStore": storage_contract.audit_store,
+        "auditWriteSupported": enterprise_capability,
+        "auditWriteAuthoritative": enterprise_capability,
+        "auditWriteStatus": capability_status,
+        "sessionEmbeddingWriteSupported": enterprise_capability,
+        "sessionEmbeddingWriteAuthoritative": enterprise_capability,
+        "sessionEmbeddingWriteStatus": capability_status,
+        "sessionIntelligenceProfile": storage_contract.session_intelligence_profile,
+        "sessionIntelligenceAnalyticsLevel": storage_contract.session_intelligence_analytics_level,
+        "sessionIntelligenceBackfillStrategy": storage_contract.session_intelligence_backfill_strategy,
+        "sessionIntelligenceMemoryDraftFlow": storage_contract.session_intelligence_memory_draft_flow,
+        "sessionIntelligenceIsolationBoundary": storage_contract.session_intelligence_isolation_boundary,
+        "requiredStorageGuarantees": storage_contract.required_guarantees,
+    }
 
 
 def validate_runtime_storage_pairing(

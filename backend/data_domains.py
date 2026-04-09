@@ -167,6 +167,9 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
             "entity_tags",
             "session_logs",
             "session_messages",
+            "session_sentiment_facts",
+            "session_code_churn_facts",
+            "session_scope_drift_facts",
             "session_tool_usage",
             "session_file_updates",
             "session_artifacts",
@@ -184,6 +187,20 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         enterprise_owner="enterprise Postgres canonical or mixed-mode hosted storage",
         ownership_posture="inherits-parent-ownership",
         notes="These rows inherit ownership from the governing canonical entity instead of carrying direct ownership primitives.",
+        migration_managed=True,
+    )
+    register_many(
+        ("session_embeddings",),
+        kind="table",
+        domain="observed_product_entities",
+        durability="canonical",
+        local_owner="not part of the local-first storage contract",
+        enterprise_owner="enterprise Postgres canonical transcript intelligence store",
+        ownership_posture="inherits-parent-ownership",
+        notes=(
+            "Session embedding blocks inherit ownership from the parent session/message lineage and "
+            "remain enterprise-only in Phase 2."
+        ),
         migration_managed=True,
     )
 
@@ -219,6 +236,17 @@ def _build_matrix() -> dict[str, PersistedConcernOwnership]:
         enterprise_owner="enterprise Postgres refreshable snapshot store",
         ownership_posture="inherits-parent-ownership",
         notes="Definitions inherit ownership from their governing snapshot source rather than storing direct ownership fields.",
+        migration_managed=True,
+    )
+    register_many(
+        ("session_memory_drafts",),
+        kind="table",
+        domain="operational_job_data",
+        durability="refreshable",
+        local_owner="SQLite operational state store",
+        enterprise_owner="enterprise Postgres operational state store",
+        ownership_posture="scope-owned",
+        notes="Session memory draft roots remain project-scoped operational records until explicitly published to SkillMeat.",
         migration_managed=True,
     )
 
@@ -313,6 +341,11 @@ PLANNED_AUTH_AUDIT_CONCERNS = tuple(
     concern
     for concern, ownership in PERSISTED_CONCERN_OWNERSHIP.items()
     if ownership.kind == "placeholder"
+)
+ENTERPRISE_ONLY_POSTGRES_CONCERNS = tuple(
+    concern
+    for concern, ownership in PERSISTED_CONCERN_OWNERSHIP.items()
+    if ownership.local_owner == "not part of the local-first storage contract"
 )
 
 

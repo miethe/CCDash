@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-04-06
+
+### Changed
+
+- Repo-level docs now reflect the completed `session-intelligence-canonical-storage-v1` rollout:
+  - canonical transcript intelligence is treated as complete
+  - `local` versus `enterprise` storage posture is called out explicitly
+  - enterprise historical backfill is documented as a checkpointed rollout path
+  - `/api/health` validation now points operators to the runtime storage/session-intelligence matrix
+  - SkillMeat memory drafting is documented as reviewable and approval-gated rather than auto-published
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/setup-user-guide.md`
+  - `docs/execution-workbench-user-guide.md`
+
 ## 2026-03-27
 
 ### Added

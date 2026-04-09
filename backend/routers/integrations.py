@@ -27,6 +27,12 @@ from backend.models import (
     GitHubWriteCapabilityResponse,
     Project,
     ProjectPathReference,
+    SessionMemoryDraftDTO,
+    SessionMemoryDraftGenerateRequest,
+    SessionMemoryDraftGenerateResponse,
+    SessionMemoryDraftListResponse,
+    SessionMemoryDraftPublishRequest,
+    SessionMemoryDraftReviewRequest,
     SessionStackComponent,
     SessionStackObservation,
     SkillMeatConfigValidationRequest,
@@ -53,7 +59,7 @@ from backend.services.integrations.skillmeat_routes import normalize_definitions
 from backend.services.project_paths.resolver import _normalize_relative_path
 from backend.services.repo_workspaces.cache import RepoWorkspaceCache
 from backend.services.repo_workspaces.manager import RepoWorkspaceManager, RepoWorkspaceError
-from backend.services.integrations.skillmeat_client import SkillMeatClient, SkillMeatClientError
+from backend.services.integrations.skillmeat_client import SkillMeatClientError
 
 
 integrations_router = APIRouter(prefix="/api/integrations/skillmeat", tags=["integrations"])
@@ -150,6 +156,40 @@ def _to_observation_dto(row: dict[str, Any]) -> SessionStackObservation:
         source=str(row.get("observation_source") or "backfill"),
         evidence=row.get("evidence_json", {}) if isinstance(row.get("evidence_json"), dict) else {},
         components=[_to_component_dto(component) for component in components if isinstance(component, dict)],
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+def _to_memory_draft_dto(row: dict[str, Any]) -> SessionMemoryDraftDTO:
+    return SessionMemoryDraftDTO(
+        id=int(row.get("id")) if row.get("id") is not None else None,
+        projectId=str(row.get("project_id") or ""),
+        sessionId=str(row.get("session_id") or ""),
+        featureId=str(row.get("feature_id") or ""),
+        rootSessionId=str(row.get("root_session_id") or ""),
+        threadSessionId=str(row.get("thread_session_id") or ""),
+        workflowRef=str(row.get("workflow_ref") or ""),
+        title=str(row.get("title") or ""),
+        memoryType=str(row.get("memory_type") or "learning"),
+        status=str(row.get("status") or "draft"),
+        moduleName=str(row.get("module_name") or ""),
+        moduleDescription=str(row.get("module_description") or ""),
+        content=str(row.get("content") or ""),
+        confidence=float(row.get("confidence") or 0.0),
+        sourceMessageId=str(row.get("source_message_id") or ""),
+        sourceLogId=str(row.get("source_log_id") or ""),
+        sourceMessageIndex=int(row.get("source_message_index") or 0),
+        contentHash=str(row.get("content_hash") or ""),
+        evidence=row.get("evidence_json", {}) if isinstance(row.get("evidence_json"), dict) else {},
+        publishAttempts=int(row.get("publish_attempts") or 0),
+        publishedModuleId=str(row.get("published_module_id") or ""),
+        publishedMemoryId=str(row.get("published_memory_id") or ""),
+        reviewedBy=str(row.get("reviewed_by") or ""),
+        reviewNotes=str(row.get("review_notes") or ""),
+        reviewedAt=str(row.get("reviewed_at") or ""),
+        publishedAt=str(row.get("published_at") or ""),
+        lastPublishError=str(row.get("last_publish_error") or ""),
         createdAt=str(row.get("created_at") or ""),
         updatedAt=str(row.get("updated_at") or ""),
     )
@@ -447,6 +487,127 @@ async def list_skillmeat_observations(
         offset=offset,
     )
     return [_to_observation_dto(row) for row in rows]
+
+
+@integrations_router.get("/memory-drafts", response_model=SessionMemoryDraftListResponse)
+async def list_skillmeat_memory_drafts(
+    project_id: str | None = Query(default=None, alias="projectId"),
+    session_id: str | None = Query(default=None, alias="sessionId"),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    require_skillmeat_integration_enabled()
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    payload = await skillmeat_application_service.list_memory_drafts(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=project_id,
+        session_id=session_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return SessionMemoryDraftListResponse(
+        generatedAt=str(payload.get("generatedAt") or ""),
+        total=int(payload.get("total") or 0),
+        offset=int(payload.get("offset") or offset),
+        limit=int(payload.get("limit") or limit),
+        items=[_to_memory_draft_dto(item) for item in payload.get("items", []) if isinstance(item, dict)],
+    )
+
+
+@integrations_router.post("/memory-drafts/generate", response_model=SessionMemoryDraftGenerateResponse)
+async def generate_skillmeat_memory_drafts(
+    req: SessionMemoryDraftGenerateRequest,
+    project_id: str | None = Query(default=None, alias="projectId"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    require_skillmeat_integration_enabled()
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    payload = await skillmeat_application_service.generate_memory_drafts(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=project_id,
+        req=req,
+    )
+    return SessionMemoryDraftGenerateResponse(
+        projectId=str(payload.get("projectId") or app_request.project.id),
+        generatedAt=str(payload.get("generatedAt") or ""),
+        sessionsConsidered=int(payload.get("sessionsConsidered") or 0),
+        draftsCreated=int(payload.get("draftsCreated") or 0),
+        draftsUpdated=int(payload.get("draftsUpdated") or 0),
+        draftsSkipped=int(payload.get("draftsSkipped") or 0),
+        items=[_to_memory_draft_dto(item) for item in payload.get("items", []) if isinstance(item, dict)],
+    )
+
+
+@integrations_router.post("/memory-drafts/{draft_id}/review", response_model=SessionMemoryDraftDTO)
+async def review_skillmeat_memory_draft(
+    draft_id: int,
+    req: SessionMemoryDraftReviewRequest,
+    project_id: str | None = Query(default=None, alias="projectId"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    require_skillmeat_integration_enabled()
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    payload = await skillmeat_application_service.review_memory_draft(
+        app_request.context,
+        app_request.ports,
+        requested_project_id=project_id,
+        draft_id=draft_id,
+        req=req,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Session memory draft {draft_id} not found")
+    return _to_memory_draft_dto(payload)
+
+
+@integrations_router.post("/memory-drafts/{draft_id}/publish", response_model=SessionMemoryDraftDTO)
+async def publish_skillmeat_memory_draft(
+    draft_id: int,
+    req: SessionMemoryDraftPublishRequest,
+    project_id: str | None = Query(default=None, alias="projectId"),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+):
+    require_skillmeat_integration_enabled()
+    app_request = await _resolve_skillmeat_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    try:
+        payload = await skillmeat_application_service.publish_memory_draft(
+            app_request.context,
+            app_request.ports,
+            requested_project_id=project_id,
+            draft_id=draft_id,
+            req=req,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SkillMeatClientError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.detail or str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Session memory draft {draft_id} not found")
+    return _to_memory_draft_dto(payload)
 
 
 @github_integrations_router.get("/settings", response_model=GitHubIntegrationSettingsResponse)

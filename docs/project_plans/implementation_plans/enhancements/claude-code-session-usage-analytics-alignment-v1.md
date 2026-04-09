@@ -12,7 +12,15 @@ audience:
 - developers
 - engineering-leads
 created: 2026-03-09
-updated: '2026-03-09'
+updated: '2026-04-07'
+commit_refs:
+- https://github.com/miethe/CCDash/commit/2d6fe0f
+- https://github.com/miethe/CCDash/commit/3aedf0d
+- https://github.com/miethe/CCDash/commit/09c9e30
+- https://github.com/miethe/CCDash/commit/c4b166c
+- https://github.com/miethe/CCDash/commit/df595f7
+- https://github.com/miethe/CCDash/commit/0415d52
+pr_refs: []
 tags:
 - implementation
 - claude-code
@@ -53,7 +61,13 @@ related:
 plan_ref: claude-code-session-usage-analytics-alignment-v1
 linked_sessions: []
 request_log_id: ''
-commits: []
+commits:
+- 2d6fe0f
+- 3aedf0d
+- 09c9e30
+- c4b166c
+- df595f7
+- 0415d52
 prs: []
 owner: platform-engineering
 owners:

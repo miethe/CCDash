@@ -136,6 +136,8 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
 - **SkillMeat Sync**: Read-only cache for artifact, workflow, context-module, and bundle definitions
 - Observed Stack Extraction: Backfills historical sessions into stack observations against cached SkillMeat definitions
+- Canonical Transcript Intelligence: Complete for the `session-intelligence-canonical-storage-v1` rollout, with `local` SQLite staying cache-oriented and `enterprise` Postgres acting as the canonical transcript-intelligence store
+- Approval-Gated Memory Drafts: CCDash can draft SkillMeat memory candidates from session intelligence, but publication remains operator-approved rather than automatic
 - Operator Tooling: CLI script to sync definitions, backfill observations, and recompute workflow rollups
 
 ### Platform Support
@@ -210,6 +212,16 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 | `CCDASH_DB_BACKEND` | `sqlite` | Database backend (`sqlite` or `postgres`) |
 | `CCDASH_DATABASE_URL` | — | PostgreSQL connection URL (required when using `postgres`) |
 
+#### Storage Profiles
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCDASH_STORAGE_PROFILE` | `local` | Operator-facing storage selector (`local` or `enterprise`) |
+| `CCDASH_STORAGE_SHARED_POSTGRES` | `false` | Enables the shared-enterprise Postgres posture |
+| `CCDASH_STORAGE_ISOLATION_MODE` | `dedicated` | Isolation contract (`dedicated`, `schema`, or `tenant`) |
+| `CCDASH_STORAGE_SCHEMA` | — | Required schema name for shared-enterprise schema isolation |
+| `CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED` | `false` | Optional filesystem ingestion adapter in enterprise mode |
+
 #### Feature Gates
 
 | Variable | Default | Description |
@@ -255,7 +267,13 @@ Copy `.env.example` to `.env` for local overrides. All variables are prefixed `C
 
 Telemetry exporter configuration lives in the `CCDASH_TELEMETRY_*` and `CCDASH_SAM_*` env vars documented in the operator guides.
 
-For full setup, troubleshooting, and deployment guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md).
+Storage posture is now explicit:
+
+- `local` + SQLite remains the supported desktop/local-first contract with canonical transcript projection, limited optional intelligence, and filesystem-led rebuilds.
+- `enterprise` + Postgres is the canonical hosted posture for transcript intelligence, full analytics, and checkpointed historical backfill.
+- `GET /api/health` reports the resolved posture through `sessionIntelligenceProfile`, `sessionIntelligenceBackfillStrategy`, `sessionIntelligenceMemoryDraftFlow`, and `storageProfileValidationMatrix`.
+
+For full setup, troubleshooting, and deployment guidance, see [`docs/setup-user-guide.md`](docs/setup-user-guide.md), [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md), and [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md).
 
 ---
 
@@ -338,6 +356,8 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | Guide | Audience |
 |-------|---------|
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
+| [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
+| [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
 | [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |
 | [`docs/testing-user-guide.md`](docs/testing-user-guide.md) | Test configuration and ingestion flow |
 | [`docs/shared-content-viewer-user-guide.md`](docs/shared-content-viewer-user-guide.md) | End-user content rendering behavior across documents, task sources, and sessions |

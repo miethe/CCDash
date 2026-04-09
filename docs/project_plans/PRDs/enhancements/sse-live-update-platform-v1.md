@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: product_prd
-status: inferred_complete
+status: completed
 category: enhancements
 title: 'PRD: SSE Live Update Platform V1'
 description: Introduce a reusable server-sent events platform that replaces ad hoc
@@ -13,7 +13,11 @@ summary: Establish a generic live-update transport, event contract, and subscrip
   model so CCDash can deliver bounded, low-latency updates without per-surface polling
   loops.
 created: 2026-03-11
-updated: 2026-03-11
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/e091a60
+- https://github.com/miethe/CCDash/commit/7a51d30
+pr_refs: []
 priority: high
 risk_level: medium
 complexity: High

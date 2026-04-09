@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 23
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -576,6 +576,74 @@ CREATE INDEX IF NOT EXISTS idx_commit_corr_session
 CREATE INDEX IF NOT EXISTS idx_commit_corr_feature
     ON commit_correlations(project_id, feature_id, window_end);
 
+CREATE TABLE IF NOT EXISTS session_sentiment_facts (
+    id                 BIGSERIAL PRIMARY KEY,
+    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id         TEXT DEFAULT '',
+    root_session_id    TEXT DEFAULT '',
+    thread_session_id  TEXT DEFAULT '',
+    source_message_id  TEXT DEFAULT '',
+    source_log_id      TEXT DEFAULT '',
+    message_index      INTEGER NOT NULL DEFAULT 0,
+    sentiment_label    TEXT NOT NULL DEFAULT 'neutral',
+    sentiment_score    DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    confidence         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version  TEXT DEFAULT '',
+    evidence_json      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_sentiment_facts_session
+    ON session_sentiment_facts(session_id, message_index, source_log_id);
+
+CREATE TABLE IF NOT EXISTS session_code_churn_facts (
+    id                       BIGSERIAL PRIMARY KEY,
+    session_id               TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id               TEXT DEFAULT '',
+    root_session_id          TEXT DEFAULT '',
+    thread_session_id        TEXT DEFAULT '',
+    file_path                TEXT NOT NULL,
+    first_source_log_id      TEXT DEFAULT '',
+    last_source_log_id       TEXT DEFAULT '',
+    first_message_index      INTEGER NOT NULL DEFAULT 0,
+    last_message_index       INTEGER NOT NULL DEFAULT 0,
+    touch_count              INTEGER NOT NULL DEFAULT 0,
+    distinct_edit_turn_count INTEGER NOT NULL DEFAULT 0,
+    repeat_touch_count       INTEGER NOT NULL DEFAULT 0,
+    rewrite_pass_count       INTEGER NOT NULL DEFAULT 0,
+    additions_total          INTEGER NOT NULL DEFAULT 0,
+    deletions_total          INTEGER NOT NULL DEFAULT 0,
+    net_diff_total           INTEGER NOT NULL DEFAULT 0,
+    churn_score              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    progress_score           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    low_progress_loop        BOOLEAN NOT NULL DEFAULT FALSE,
+    confidence               DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version        TEXT DEFAULT '',
+    evidence_json            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_code_churn_facts_session
+    ON session_code_churn_facts(session_id, file_path);
+
+CREATE TABLE IF NOT EXISTS session_scope_drift_facts (
+    id                      BIGSERIAL PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id              TEXT DEFAULT '',
+    root_session_id         TEXT DEFAULT '',
+    thread_session_id       TEXT DEFAULT '',
+    planned_path_count      INTEGER NOT NULL DEFAULT 0,
+    actual_path_count       INTEGER NOT NULL DEFAULT 0,
+    matched_path_count      INTEGER NOT NULL DEFAULT 0,
+    out_of_scope_path_count INTEGER NOT NULL DEFAULT 0,
+    drift_ratio             DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    adherence_score         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    confidence              DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    heuristic_version       TEXT DEFAULT '',
+    evidence_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    computed_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_scope_drift_facts_session
+    ON session_scope_drift_facts(session_id, feature_id);
+
 -- ── 11. App Metadata + Alert Configs ───────────────────────────────
 CREATE TABLE IF NOT EXISTS app_metadata (
     entity_type  TEXT NOT NULL,
@@ -732,6 +800,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_effectiveness_rollups_scope
     ON effectiveness_rollups(project_id, scope_type, scope_id, period);
 CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period
     ON effectiveness_rollups(project_id, period, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_memory_drafts (
+    id                   BIGSERIAL PRIMARY KEY,
+    project_id           TEXT NOT NULL,
+    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    feature_id           TEXT DEFAULT '',
+    root_session_id      TEXT DEFAULT '',
+    thread_session_id    TEXT DEFAULT '',
+    workflow_ref         TEXT DEFAULT '',
+    title                TEXT DEFAULT '',
+    memory_type          TEXT NOT NULL DEFAULT 'learning',
+    status               TEXT NOT NULL DEFAULT 'draft',
+    module_name          TEXT NOT NULL DEFAULT '',
+    module_description   TEXT DEFAULT '',
+    content              TEXT NOT NULL DEFAULT '',
+    confidence           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    source_message_id    TEXT DEFAULT '',
+    source_log_id        TEXT DEFAULT '',
+    source_message_index INTEGER NOT NULL DEFAULT 0,
+    content_hash         TEXT NOT NULL DEFAULT '',
+    evidence_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    publish_attempts     INTEGER NOT NULL DEFAULT 0,
+    published_module_id  TEXT DEFAULT '',
+    published_memory_id  TEXT DEFAULT '',
+    reviewed_by          TEXT DEFAULT '',
+    review_notes         TEXT DEFAULT '',
+    reviewed_at          TEXT DEFAULT '',
+    published_at         TEXT DEFAULT '',
+    last_publish_error   TEXT DEFAULT '',
+    created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+    UNIQUE(project_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status
+    ON session_memory_drafts(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session
+    ON session_memory_drafts(project_id, session_id, updated_at DESC);
 
 -- ── 13. Execution Workbench Runs ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS execution_runs (
@@ -1115,6 +1220,33 @@ CREATE INDEX IF NOT EXISTS idx_access_logs_decision
     ON audit.access_decision_logs(decision, occurred_at DESC);
 """
 
+_ENTERPRISE_SESSION_INTELLIGENCE_TABLES = """
+-- ── Enterprise-Only: Session Intelligence ─────────────────────────
+-- Transcript embedding storage is enterprise-only in Phase 2.
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE SCHEMA IF NOT EXISTS app;
+
+CREATE TABLE IF NOT EXISTS app.session_embeddings (
+    id                   BIGSERIAL PRIMARY KEY,
+    session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    block_kind           TEXT NOT NULL,
+    block_index          INTEGER NOT NULL DEFAULT 0,
+    content_hash         TEXT NOT NULL,
+    message_ids_json     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    content              TEXT NOT NULL DEFAULT '',
+    embedding_model      TEXT NOT NULL DEFAULT '',
+    embedding_dimensions INTEGER NOT NULL DEFAULT 0,
+    embedding            vector,
+    metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_embeddings_content_hash
+    ON app.session_embeddings(session_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_session_embeddings_lookup
+    ON app.session_embeddings(session_id, block_kind, block_index);
+"""
+
 _SEED_METRIC_TYPES = """
 INSERT INTO metric_types (id, display_name, unit, value_type, aggregation, description) VALUES
     ('session_cost',        'Session Cost',      '$',       'gauge',   'sum',   'Total cost per session'),
@@ -1170,6 +1302,11 @@ async def _ensure_enterprise_identity_audit_tables(db: asyncpg.Connection) -> No
     await db.execute(_ENTERPRISE_IDENTITY_AUDIT_TABLES)
 
 
+async def _ensure_enterprise_session_intelligence_tables(db: asyncpg.Connection) -> None:
+    """Create enterprise-only session intelligence tables (idempotent)."""
+    await db.execute(_ENTERPRISE_SESSION_INTELLIGENCE_TABLES)
+
+
 async def _ensure_entity_link_uniqueness(db: asyncpg.Connection) -> None:
     # Deduplicate legacy rows before enforcing unique upsert key.
     await db.execute(
@@ -1212,6 +1349,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
         logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
     await _ensure_test_visualizer_tables(db)
     await _ensure_enterprise_identity_audit_tables(db)
+    await _ensure_enterprise_session_intelligence_tables(db)
     await _ensure_entity_link_uniqueness(db)
 
     # Explicit table upgrades for existing DBs.
@@ -1639,6 +1777,48 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period ON effectiveness_rollups(project_id, period, updated_at DESC)"
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_memory_drafts (
+            id                   BIGSERIAL PRIMARY KEY,
+            project_id           TEXT NOT NULL,
+            session_id           TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            feature_id           TEXT DEFAULT '',
+            root_session_id      TEXT DEFAULT '',
+            thread_session_id    TEXT DEFAULT '',
+            workflow_ref         TEXT DEFAULT '',
+            title                TEXT DEFAULT '',
+            memory_type          TEXT NOT NULL DEFAULT 'learning',
+            status               TEXT NOT NULL DEFAULT 'draft',
+            module_name          TEXT NOT NULL DEFAULT '',
+            module_description   TEXT DEFAULT '',
+            content              TEXT NOT NULL DEFAULT '',
+            confidence           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            source_message_id    TEXT DEFAULT '',
+            source_log_id        TEXT DEFAULT '',
+            source_message_index INTEGER NOT NULL DEFAULT 0,
+            content_hash         TEXT NOT NULL DEFAULT '',
+            evidence_json        JSONB NOT NULL DEFAULT '{}'::jsonb,
+            publish_attempts     INTEGER NOT NULL DEFAULT 0,
+            published_module_id  TEXT DEFAULT '',
+            published_memory_id  TEXT DEFAULT '',
+            reviewed_by          TEXT DEFAULT '',
+            review_notes         TEXT DEFAULT '',
+            reviewed_at          TEXT DEFAULT '',
+            published_at         TEXT DEFAULT '',
+            last_publish_error   TEXT DEFAULT '',
+            created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+            UNIQUE(project_id, content_hash)
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_project_status ON session_memory_drafts(project_id, status, updated_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_memory_drafts_session ON session_memory_drafts(project_id, session_id, updated_at DESC)"
     )
 
     # Seed metric types

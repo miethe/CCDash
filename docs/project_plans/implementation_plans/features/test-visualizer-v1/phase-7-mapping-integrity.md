@@ -2,9 +2,9 @@
 title: "Phase 7: Domain Mapping & Integrity Signals - Test Visualizer"
 schema_version: 2
 doc_type: phase_plan
-status: complete
+status: completed
 created: 2026-02-28
-updated: 2026-03-03
+updated: 2026-04-07
 feature_slug: "test-visualizer"
 feature_version: "v1"
 phase: 7

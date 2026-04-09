@@ -123,6 +123,24 @@ class CodexSessionParserTests(unittest.TestCase):
         self.assertEqual(payload_signals.get("payloadTypeCounts", {}).get("function_call_output"), 1)
         self.assertEqual(payload_signals.get("toolNameCounts", {}).get("exec_command"), 1)
 
+        message_logs = [log for log in session.logs if log.type == "message"]
+        self.assertEqual(len(message_logs), 1)
+        self.assertEqual(message_logs[0].metadata.get("sourceProvenance"), "codex.user_message")
+        self.assertEqual(message_logs[0].metadata.get("messageRole"), "user")
+        self.assertTrue(str(message_logs[0].metadata.get("messageId") or "").startswith("codex-"))
+
+        self.assertEqual(tool_logs[0].metadata.get("sourceProvenance"), "codex.function_call")
+        self.assertEqual(tool_logs[0].metadata.get("messageRole"), "assistant")
+        self.assertEqual(tool_logs[0].metadata.get("messageId"), "call-1")
+        self.assertIn("rm src/old.ts", str(tool_logs[0].metadata.get("toolArgs") or ""))
+        self.assertEqual(tool_logs[0].metadata.get("toolOutput"), "command complete")
+        self.assertEqual(tool_logs[0].metadata.get("toolStatus"), "success")
+
+        thought_logs = [log for log in session.logs if log.type == "thought"]
+        self.assertEqual(len(thought_logs), 1)
+        self.assertEqual(thought_logs[0].metadata.get("sourceProvenance"), "codex.agent_reasoning")
+        self.assertEqual(thought_logs[0].metadata.get("messageRole"), "assistant")
+
     def test_codex_pytest_tool_call_captures_test_run_metadata_and_results(self) -> None:
         output_text = (
             "============================= test session starts ==============================\n"

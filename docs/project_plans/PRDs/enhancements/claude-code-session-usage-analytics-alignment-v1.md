@@ -1,6 +1,6 @@
 ---
 doc_type: prd
-status: inferred_complete
+status: completed
 category: enhancements
 title: 'PRD: Claude Code Session Usage Analytics Alignment V1'
 description: Align CCDash session storage, analytics, and UI with the richer Claude
@@ -13,7 +13,15 @@ audience:
 - engineering-leads
 - platform-engineering
 created: 2026-03-09
-updated: 2026-03-09
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/2d6fe0f
+- https://github.com/miethe/CCDash/commit/3aedf0d
+- https://github.com/miethe/CCDash/commit/09c9e30
+- https://github.com/miethe/CCDash/commit/c4b166c
+- https://github.com/miethe/CCDash/commit/df595f7
+- https://github.com/miethe/CCDash/commit/0415d52
+pr_refs: []
 tags:
 - prd
 - claude-code
@@ -50,7 +58,13 @@ related:
 - types.ts
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/claude-code-session-usage-analytics-alignment-v1.md
 request_log_id: ''
-commits: []
+commits:
+- 2d6fe0f
+- 3aedf0d
+- 09c9e30
+- c4b166c
+- df595f7
+- 0415d52
 prs: []
 owner: platform-engineering
 owners:
@@ -63,6 +77,25 @@ track: Standard
 timeline_estimate: 2-3 weeks across 6 phases
 ---
 # PRD: Claude Code Session Usage Analytics Alignment V1
+
+## Delivery Status
+
+Status: completed on 2026-03-09.
+
+Validated against the current tree:
+
+1. `backend/db/repositories/sessions.py` and `backend/db/repositories/postgres/sessions.py` persist the richer Claude usage totals.
+2. `backend/routers/analytics.py` and `backend/services/workflow_effectiveness.py` use observed-token semantics for rollups.
+3. `components/Analytics/AnalyticsDashboard.tsx` and `components/SessionInspector.tsx` render the cache-aware workload breakdowns introduced by the rollout.
+
+Relevant commits:
+
+- [2d6fe0f](https://github.com/miethe/CCDash/commit/2d6fe0f) feat(sessions): persist claude usage contract fields
+- [3aedf0d](https://github.com/miethe/CCDash/commit/3aedf0d) feat(sync): backfill persisted claude usage fields
+- [09c9e30](https://github.com/miethe/CCDash/commit/09c9e30) feat(analytics): align observed token semantics
+- [c4b166c](https://github.com/miethe/CCDash/commit/c4b166c) feat(ui): adopt observed workload token semantics
+- [df595f7](https://github.com/miethe/CCDash/commit/df595f7) feat(parser): document relay token guardrails
+- [0415d52](https://github.com/miethe/CCDash/commit/0415d52) docs(plan): record corpus token spot check
 
 ## Executive Summary
 

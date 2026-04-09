@@ -42,6 +42,9 @@ from backend.services.session_usage_attribution import (
     build_session_usage_attributions,
     build_session_usage_events,
 )
+from backend.services.session_sentiment_facts import build_session_sentiment_facts
+from backend.services.session_churn_facts import build_session_code_churn_facts
+from backend.services.session_scope_drift import build_session_scope_drift_facts
 from backend.services.session_transcript_projection import project_session_messages
 from backend.document_linking import (
     alias_tokens_from_path,
@@ -79,6 +82,7 @@ from backend.db.factory import (
     get_analytics_repository,
     get_session_usage_repository,
     get_session_message_repository,
+    get_session_intelligence_repository,
     get_entity_link_repository,
     get_sync_state_repository,
     get_tag_repository,
@@ -1187,6 +1191,7 @@ class SyncEngine:
         self.analytics_repo = get_analytics_repository(db)
         self.session_usage_repo = get_session_usage_repository(db)
         self.session_message_repo = get_session_message_repository(db)
+        self.session_intelligence_repo = get_session_intelligence_repository(db)
         self.telemetry_queue_repo = get_telemetry_queue_repository(db)
         self.telemetry_transformer = TelemetryTransformer()
         self.pricing_catalog_repo = get_pricing_catalog_repository(db)
@@ -1202,6 +1207,16 @@ class SyncEngine:
         self._linking_logic_version = str(getattr(config, "LINKING_LOGIC_VERSION", "1")).strip() or "1"
         self._test_source_errors: dict[str, str] = {}
         self._test_source_synced_at: dict[str, str] = {}
+
+    def _enterprise_canonical_transcript_authoritative(self) -> bool:
+        storage_profile = getattr(config, "STORAGE_PROFILE", None)
+        profile_name = str(getattr(storage_profile, "profile", "") or "").strip().lower()
+        return profile_name == "enterprise"
+
+    def _should_write_legacy_session_logs(self, canonical_rows: list[dict[str, Any]]) -> bool:
+        if not self._enterprise_canonical_transcript_authoritative():
+            return True
+        return not canonical_rows
 
     async def _replace_session_telemetry_events(
         self,
@@ -1375,6 +1390,40 @@ class SyncEngine:
         attributions = build_session_usage_attributions(session_payload, logs, artifacts, events)
         await self.session_usage_repo.replace_session_usage(project_id, session_id, events, attributions)
         return {"events": len(events), "attributions": len(attributions)}
+
+    async def _replace_session_intelligence_facts(
+        self,
+        project_id: str,
+        session_payload: dict[str, Any],
+        canonical_rows: list[dict[str, Any]],
+        file_updates: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        session_id = _first_non_empty(session_payload, "id")
+        if not session_id:
+            return {"sentiment": 0, "churn": 0, "scopeDrift": 0}
+
+        sentiment_facts = build_session_sentiment_facts(session_payload, canonical_rows)
+        churn_facts = build_session_code_churn_facts(session_payload, canonical_rows, file_updates)
+
+        feature_id = _first_non_empty(session_payload, "featureId", "feature_id", "taskId", "task_id")
+        linked_docs: list[dict[str, Any]] = []
+        if feature_id:
+            linked_docs = await self.document_repo.list_paginated(
+                project_id,
+                0,
+                200,
+                filters={"feature": feature_id, "include_progress": True},
+            )
+        scope_drift_facts = build_session_scope_drift_facts(session_payload, linked_docs, file_updates)
+
+        await self.session_intelligence_repo.replace_session_sentiment_facts(session_id, sentiment_facts)
+        await self.session_intelligence_repo.replace_session_code_churn_facts(session_id, churn_facts)
+        await self.session_intelligence_repo.replace_session_scope_drift_facts(session_id, scope_drift_facts)
+        return {
+            "sentiment": len(sentiment_facts),
+            "churn": len(churn_facts),
+            "scopeDrift": len(scope_drift_facts),
+        }
 
     async def _load_commit_head_state(self, project_id: str) -> dict[str, Any]:
         raw_value: str | None = None
@@ -3647,16 +3696,23 @@ class SyncEngine:
                     if not session_id:
                         continue
 
-                    previous_logs = await self.session_repo.get_logs(session_id)
                     await self.session_repo.upsert(session_dict, project_id)
 
                     logs = session_dict.get("logs", [])
                     if not isinstance(logs, list):
                         logs = []
-                    await self.session_repo.upsert_logs(session_id, logs)
+                    canonical_rows = project_session_messages(session_dict, logs)
+                    write_legacy_logs = self._should_write_legacy_session_logs(canonical_rows)
+                    if write_legacy_logs:
+                        previous_logs = await self.session_repo.get_logs(session_id)
+                        await self.session_repo.upsert_logs(session_id, logs)
+                    else:
+                        previous_logs = await self.session_message_repo.list_by_session(session_id)
+                        # Enterprise canonical mode keeps legacy logs as fallback-only history.
+                        await self.session_repo.upsert_logs(session_id, [])
                     await self.session_message_repo.replace_session_messages(
                         session_id,
-                        project_session_messages(session_dict, logs),
+                        canonical_rows,
                     )
 
                     tools = session_dict.get("toolsUsed", [])
@@ -3699,6 +3755,12 @@ class SyncEngine:
                         logs,
                         files,
                         source="sync",
+                    )
+                    await self._replace_session_intelligence_facts(
+                        project_id,
+                        session_dict,
+                        canonical_rows,
+                        files,
                     )
                     await self._maybe_enqueue_telemetry_export(project_id, session_dict)
                     append_published = await _publish_session_transcript_appends(

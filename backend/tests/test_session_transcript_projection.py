@@ -75,10 +75,35 @@ class SessionTranscriptProjectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projected[0]["rootSessionId"], "root-1")
         self.assertEqual(projected[0]["conversationFamilyId"], "family-1")
         self.assertEqual(projected[0]["parentSessionId"], "parent-1")
+        self.assertEqual(projected[0]["role"], "assistant")
         self.assertEqual(projected[0]["entryUuid"], "entry-1")
         self.assertEqual(projected[0]["parentEntryUuid"], "entry-0")
         self.assertEqual(projected[0]["messageId"], "message-1")
         self.assertEqual(projected[0]["sourceProvenance"], "claude_code_jsonl")
+
+    def test_project_session_messages_infers_platform_provenance_and_does_not_mutate_source_metadata(self) -> None:
+        session = {
+            "id": "session-2",
+            "platformType": "Codex",
+        }
+        metadata = {"messageId": "payload-1"}
+        logs = [
+            {
+                "id": "log-0",
+                "timestamp": "2026-03-27T12:00:00Z",
+                "speaker": "agent",
+                "type": "message",
+                "content": "hello",
+                "metadata": metadata,
+            }
+        ]
+
+        projected = project_session_messages(session, logs)
+
+        self.assertEqual(projected[0]["sourceProvenance"], "codex_jsonl")
+        self.assertEqual(projected[0]["messageId"], "payload-1")
+        self.assertEqual(metadata, {"messageId": "payload-1"})
+        self.assertEqual(projected[0]["metadata"]["sourceProvenance"], "codex_jsonl")
 
     async def test_session_transcript_service_prefers_canonical_rows(self) -> None:
         service = SessionTranscriptService()
@@ -112,8 +137,42 @@ class SessionTranscriptProjectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]["id"], "log-0")
+        self.assertEqual(logs[0]["speaker"], "agent")
         self.assertEqual(logs[0]["metadata"]["sourceProvenance"], "canonical_table")
         self.assertEqual(logs[0]["metadata"]["entryUuid"], "entry-1")
+
+    async def test_session_transcript_service_infers_provenance_from_canonical_row_platform(self) -> None:
+        service = SessionTranscriptService()
+        ports = types.SimpleNamespace(
+            storage=_FakeStorage(
+                logs=[],
+                rows=[
+                    {
+                        "message_index": 0,
+                        "source_log_id": "log-0",
+                        "message_id": "message-1",
+                        "role": "assistant",
+                        "message_type": "message",
+                        "content": "hello",
+                        "event_timestamp": "2026-03-27T12:00:00Z",
+                        "agent_name": "Planner",
+                        "linked_session_id": "",
+                        "related_tool_call_id": "",
+                        "tool_name": None,
+                        "tool_call_id": None,
+                        "entry_uuid": "",
+                        "parent_entry_uuid": "",
+                        "source_provenance": "",
+                        "platform_type": "Codex",
+                        "metadata_json": "{}",
+                    }
+                ],
+            )
+        )
+
+        logs = await service.list_session_logs({"id": "session-1"}, ports)
+
+        self.assertEqual(logs[0]["metadata"]["sourceProvenance"], "codex_jsonl")
 
     async def test_session_transcript_service_falls_back_to_legacy_logs(self) -> None:
         service = SessionTranscriptService()

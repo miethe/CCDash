@@ -44,6 +44,53 @@ class SessionRepository(Protocol):
 class SessionMessageRepository(Protocol):
     async def replace_session_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None: ...
     async def list_by_session(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def search_messages(
+        self,
+        project_id: str,
+        query: str,
+        *,
+        feature_id: str | None = None,
+        conversation_family_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]: ...
+
+
+@runtime_checkable
+class SessionIntelligenceRepository(Protocol):
+    async def replace_session_sentiment_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def list_session_sentiment_facts(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def replace_session_code_churn_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def list_session_code_churn_facts(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def replace_session_scope_drift_facts(self, session_id: str, facts: list[dict[str, Any]]) -> None: ...
+    async def list_session_scope_drift_facts(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def list_backfill_sessions(
+        self,
+        project_id: str,
+        *,
+        after_started_at: str = "",
+        after_session_id: str = "",
+        limit: int = 200,
+    ) -> list[dict[str, Any]]: ...
+    async def load_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> dict[str, Any]: ...
+    async def save_backfill_checkpoint(
+        self,
+        project_id: str,
+        checkpoint: dict[str, Any],
+        *,
+        checkpoint_key: str,
+    ) -> None: ...
+    async def delete_backfill_checkpoint(
+        self,
+        project_id: str,
+        *,
+        checkpoint_key: str,
+    ) -> None: ...
 
 
 # ── Document Repository ─────────────────────────────────────────────
@@ -267,6 +314,49 @@ class AgenticIntelligenceRepository(Protocol):
         *,
         period: str | None = None,
     ) -> None: ...
+    async def upsert_session_memory_draft(
+        self,
+        draft_data: dict[str, Any],
+        project_id: str | None = None,
+    ) -> dict[str, Any]: ...
+    async def get_session_memory_draft(self, project_id: str, draft_id: int) -> dict[str, Any] | None: ...
+    async def count_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    async def list_session_memory_drafts(
+        self,
+        project_id: str,
+        *,
+        session_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    async def review_session_memory_draft(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        decision: str,
+        actor: str = "",
+        notes: str = "",
+    ) -> dict[str, Any] | None: ...
+    async def record_session_memory_draft_publish_attempt(
+        self,
+        project_id: str,
+        draft_id: int,
+        *,
+        actor: str = "",
+        notes: str = "",
+        module_id: str = "",
+        memory_id: str = "",
+        source_url: str = "",
+        error: str = "",
+    ) -> dict[str, Any] | None: ...
 
 
 # ── Test Visualizer Repositories ───────────────────────────────────

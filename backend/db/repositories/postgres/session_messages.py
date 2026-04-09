@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import asyncpg
 
@@ -65,5 +66,60 @@ class PostgresSessionMessageRepository:
         rows = await self.db.fetch(
             "SELECT * FROM session_messages WHERE session_id = $1 ORDER BY message_index ASC",
             session_id,
+        )
+        return [dict(row) for row in rows]
+
+    async def search_messages(
+        self,
+        project_id: str,
+        query: str,
+        *,
+        feature_id: str | None = None,
+        conversation_family_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses = ["s.project_id = $1", "TRIM(COALESCE(sm.content, '')) != ''"]
+        params: list[Any] = [project_id]
+        idx = 2
+
+        search_terms = [term.strip().lower() for term in query.split() if term.strip()]
+        if search_terms:
+            term_clauses: list[str] = []
+            for term in search_terms:
+                term_clauses.append(f"LOWER(sm.content) LIKE ${idx}")
+                params.append(f"%{term}%")
+                idx += 1
+            clauses.append("(" + " OR ".join(term_clauses) + ")")
+
+        if feature_id:
+            clauses.append(f"s.task_id = ${idx}")
+            params.append(feature_id)
+            idx += 1
+        if conversation_family_id:
+            clauses.append(f"(sm.conversation_family_id = ${idx} OR sm.root_session_id = ${idx + 1})")
+            params.extend([conversation_family_id, conversation_family_id])
+            idx += 2
+        if session_id:
+            clauses.append(f"sm.session_id = ${idx}")
+            params.append(session_id)
+            idx += 1
+
+        params.append(limit)
+        rows = await self.db.fetch(
+            f"""
+            SELECT
+                sm.*,
+                s.project_id,
+                s.task_id AS feature_id,
+                s.status AS session_status,
+                s.started_at AS session_started_at
+            FROM session_messages sm
+            JOIN sessions s ON s.id = sm.session_id
+            WHERE {" AND ".join(clauses)}
+            ORDER BY sm.event_timestamp DESC, sm.message_index DESC
+            LIMIT ${idx}
+            """,
+            *params,
         )
         return [dict(row) for row in rows]

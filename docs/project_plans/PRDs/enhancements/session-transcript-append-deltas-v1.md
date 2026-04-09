@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: product_prd
-status: inferred_complete
+status: completed
 category: enhancements
 title: 'PRD: Session Transcript Append Deltas V1'
 description: Add transcript-specific live append delivery so active Session Inspector
@@ -14,7 +14,13 @@ summary: Extend the shared live-update platform with a dedicated session transcr
   with lower request volume.
 author: codex
 created: 2026-03-22
-updated: 2026-03-22
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/fdd3443
+- https://github.com/miethe/CCDash/commit/751559c
+- https://github.com/miethe/CCDash/commit/1bd54f6
+pr_refs:
+- https://github.com/miethe/CCDash/pull/15
 priority: medium
 risk_level: medium
 complexity: medium
@@ -69,6 +75,27 @@ context_files:
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/session-transcript-append-deltas-v1.md
 ---
 # PRD: Session Transcript Append Deltas V1
+
+## Delivery Status
+
+Status: completed on 2026-03-23.
+
+Validated against the current tree:
+
+1. `backend/application/live_updates/topics.py` and `backend/db/sync_engine.py` publish the dedicated transcript append topic and delta events.
+2. `components/SessionInspector.tsx` consumes append-safe transcript updates instead of relying on full-detail refreshes as the primary path.
+3. `backend/tests/test_live_domain_publishers.py` and `backend/tests/test_live_router.py` cover the transport contract and fallback behavior.
+
+Relevant commits:
+
+- [fdd3443](https://github.com/miethe/CCDash/commit/fdd3443) feat(live): add session transcript topic contract
+- [751559c](https://github.com/miethe/CCDash/commit/751559c) feat(live): publish session transcript append deltas
+- [36a3279](https://github.com/miethe/CCDash/commit/36a3279) feat(live): append session transcripts in inspector
+- [1bd54f6](https://github.com/miethe/CCDash/commit/1bd54f6) docs(live): document transcript append rollout
+
+Pull request:
+
+- [#15](https://github.com/miethe/CCDash/pull/15)
 
 ## Executive Summary
 

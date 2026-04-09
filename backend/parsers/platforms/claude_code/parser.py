@@ -117,6 +117,15 @@ _MAX_TOOL_RESULT_PREVIEW_BYTES = 1024 * 32
 _RELAY_MIRROR_POLICY = "excluded_from_observed_tokens_until_attribution"
 
 
+def _canonical_message_role(speaker: Any) -> str:
+    normalized = str(speaker or "").strip().lower()
+    if normalized == "agent":
+        return "assistant"
+    if normalized in {"user", "system", "assistant"}:
+        return normalized
+    return ""
+
+
 @lru_cache(maxsize=1)
 def _load_forensics_schema() -> dict[str, Any]:
     schema_path = Path(__file__).resolve().parent / "schema" / "session_forensics.schema.json"
@@ -1767,15 +1776,29 @@ def parse_session_file(path: Path) -> AgentSession | None:
     def append_log(**kwargs: Any) -> int:
         nonlocal log_idx
         metadata = kwargs.get("metadata")
-        if metadata is None:
-            kwargs["metadata"] = {}
-        elif not isinstance(metadata, dict):
-            kwargs["metadata"] = {}
-        metadata = kwargs.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
         if isinstance(metadata, dict) and current_entry_lineage_metadata:
             for key, value in current_entry_lineage_metadata.items():
                 if key not in metadata and value is not None and str(value).strip():
                     metadata[key] = value
+        role = _canonical_message_role(kwargs.get("speaker"))
+        if role:
+            metadata.setdefault("messageRole", role)
+        metadata.setdefault("sourceProvenance", "claude_code_jsonl")
+        tool_call = kwargs.get("toolCall")
+        if isinstance(tool_call, ToolCallInfo):
+            if tool_call.args not in (None, ""):
+                metadata.setdefault("toolArgs", tool_call.args)
+            if tool_call.output not in (None, ""):
+                metadata.setdefault("toolOutput", tool_call.output)
+            resolved_status = str(tool_call.status or ("error" if tool_call.isError else "success")).strip()
+            if resolved_status:
+                metadata.setdefault("toolStatus", resolved_status)
+            if str(tool_call.id or "").strip():
+                metadata.setdefault("messageId", str(tool_call.id).strip())
+        if str(metadata.get("rawMessageId") or "").strip():
+            metadata.setdefault("messageId", str(metadata.get("rawMessageId")).strip())
+        kwargs["metadata"] = metadata
         log = SessionLog(id=f"log-{log_idx}", **kwargs)
         logs.append(log)
         entry_uuid = str(log.metadata.get("entryUuid") or "").strip() if isinstance(log.metadata, dict) else ""
@@ -3208,6 +3231,8 @@ def parse_session_file(path: Path) -> AgentSession | None:
                         related_log.toolCall.output = output_text[:20000]
                         related_log.toolCall.status = "error" if is_error else "success"
                         related_log.toolCall.isError = is_error
+                    related_log.metadata["toolOutput"] = output_text[:20000]
+                    related_log.metadata["toolStatus"] = "error" if is_error else "success"
                     related_log.relatedToolCallId = related_id
                     if is_error and related_log.toolCall:
                         tool_success[related_log.toolCall.name] -= 1

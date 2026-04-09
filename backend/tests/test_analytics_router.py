@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.routers import analytics as analytics_router
@@ -196,6 +198,68 @@ def _core_ports(
 
 
 class AnalyticsRouterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_session_intelligence_search_endpoint_returns_typed_payload(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        with patch.object(
+            analytics_router.transcript_search_service,
+            "search",
+            return_value=analytics_router.SessionSemanticSearchResponse(
+                query="semantic search",
+                total=1,
+                offset=0,
+                limit=25,
+                capability=analytics_router.SessionIntelligenceCapability(
+                    supported=True,
+                    authoritative=False,
+                    storageProfile="local",
+                    searchMode="canonical_lexical",
+                    detail="fallback",
+                ),
+                items=[
+                    analytics_router.SessionSemanticSearchMatch(
+                        sessionId="S-1",
+                        featureId="feature-a",
+                        rootSessionId="S-root",
+                        threadSessionId="S-1",
+                        blockKind="message",
+                        blockIndex=1,
+                        eventTimestamp="2026-04-03T00:00:00Z",
+                        score=2.0,
+                        matchedTerms=["semantic"],
+                        messageIds=["msg-1"],
+                        sourceLogIds=["log-1"],
+                        content="semantic search",
+                        snippet="semantic search",
+                    )
+                ],
+            ),
+        ) as search_mock:
+            payload = await analytics_router.search_session_intelligence(
+                query="semantic search",
+                request_context=_request_context(project.id),
+                core_ports=_core_ports(project=project),
+            )
+
+        self.assertEqual(payload.total, 1)
+        self.assertEqual(payload.items[0].sessionId, "S-1")
+        search_mock.assert_awaited_once()
+
+    async def test_session_intelligence_drilldown_endpoint_404s_when_missing(self) -> None:
+        project = types.SimpleNamespace(id="project-1")
+        with patch.object(
+            analytics_router.session_intelligence_read_service,
+            "drilldown",
+            return_value=None,
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await analytics_router.get_session_intelligence_drilldown(
+                    concern="scope_drift",
+                    request_context=_request_context(project.id),
+                    core_ports=_core_ports(project=project),
+                )
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail, "Session intelligence drilldown not found")
+
     async def test_series_session_tokens_uses_log_usage_metadata(self) -> None:
         project = types.SimpleNamespace(id="project-1")
         payload = await analytics_router.get_series(

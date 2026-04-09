@@ -3,13 +3,20 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: research_prd
-status: pending
+status: completed
 category: refactors
 title: "PRD: Data Platform Modularization V1"
 description: "Evolve CCDash from a runtime-selected SQLite/Postgres cache implementation into a profile-aware data platform with explicit storage roles, stronger schema governance, and multi-user readiness."
 summary: "Define how local SQLite, hosted Postgres, cache data, canonical app data, and auth-era tenancy concerns should fit together."
 created: 2026-03-11
-updated: 2026-03-27
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/a533799
+- https://github.com/miethe/CCDash/commit/86f9ebc
+- https://github.com/miethe/CCDash/commit/357b081
+pr_refs:
+  - https://github.com/miethe/CCDash/pull/21
+  - https://github.com/miethe/CCDash/pull/22
 priority: high
 risk_level: high
 complexity: High

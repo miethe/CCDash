@@ -4,11 +4,11 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: enhancements
-title: Implementation Plan: Session Intelligence Canonical Storage V1
-description: Turn the existing session_messages groundwork into an enterprise-ready canonical transcript and intelligence platform for semantic search, DX sentiment, code churn, scope drift, and approval-gated SkillMeat memory drafts.
-summary: Build on the DB caching checklist's Phase 3 seams and the data-platform storage-profile contract to make Postgres the canonical enterprise transcript store while preserving local SQLite cache behavior and stable read models.
+title: "Implementation Plan: Session Intelligence Canonical Storage V1"
+description: "Turn the existing session_messages groundwork into an enterprise-ready canonical transcript and intelligence platform for semantic search, DX sentiment, code churn, scope drift, and approval-gated SkillMeat memory drafts."
+summary: "Build on the DB caching checklist's Phase 3 seams and the data-platform storage-profile contract to make Postgres the canonical enterprise transcript store while preserving local SQLite cache behavior and stable read models."
 author: codex
 audience:
   - ai-agents
@@ -17,7 +17,13 @@ audience:
   - backend-platform
   - data-platform
 created: 2026-04-01
-updated: 2026-04-01
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/b88ad78
+- https://github.com/miethe/CCDash/commit/d702a74
+- https://github.com/miethe/CCDash/commit/932e5e0
+- https://github.com/miethe/CCDash/commit/be3b9fd
+pr_refs: []
 tags:
   - implementation
   - session-intelligence
@@ -58,8 +64,10 @@ related_documents:
   - docs/guides/storage-profiles-guide.md
   - docs/guides/data-domain-ownership-matrix.md
   - docs/guides/data-domain-schema-layout.md
+  - docs/guides/session-transcript-contract-guide.md
 context_files:
   - backend/application/services/sessions.py
+  - backend/services/session_transcript_contract.py
   - backend/services/session_transcript_projection.py
   - backend/db/sync_engine.py
   - backend/db/sqlite_migrations.py
@@ -240,6 +248,13 @@ Non-negotiables:
 2. Canonical transcript rows are sufficient to power current read models.
 3. No router or UI path depends on undocumented legacy log quirks.
 
+### Phase 1 Execution Notes
+
+1. Canonical role, provenance, identity, and compatibility semantics are codified in `backend/services/session_transcript_contract.py`.
+2. Canonical projection now normalizes platform provenance and role semantics before persistence without mutating parser-owned metadata.
+3. Session transcript reads preserve the legacy API speaker contract (`assistant` canonical rows project back to `agent`).
+4. The canonical transcript contract is documented in `docs/guides/session-transcript-contract-guide.md` and backed by focused regression tests.
+
 ## Phase 2: Enterprise Transcript Canonicalization And Embeddings Substrate
 
 **Assigned Subagent(s)**: data-layer-expert, backend-architect, python-backend-engineer
@@ -247,14 +262,24 @@ Non-negotiables:
 | Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
 |---|---|---|---|---:|---|---|
 | SICS-101 | Enterprise Canonical Write Path | Update enterprise ingest so Postgres `session_messages` is treated as the authoritative transcript target rather than a mirrored compatibility store. | Enterprise sync and transcript reads no longer depend on legacy `session_logs` as the primary source for supported session types. | 4 pts | data-layer-expert, python-backend-engineer | SICS-003 |
-| SICS-102 | Transcript Block Strategy | Define how transcript content is embedded: per-message, per-window, or mixed block strategy, including dedupe and refresh rules. | The plan identifies a stable embedding unit and reindexing rule that supports search quality and manageable cost. | 3 pts | backend-architect, data-layer-expert | SICS-001 |
+| SICS-102 | Transcript Block Strategy | Define a mixed embedding strategy with per-message canonical blocks plus windowed recall blocks, including dedupe and refresh rules. | The plan identifies stable embedding units, content-addressed dedupe, and a refresh/reindex rule that supports search quality and manageable cost. | 3 pts | backend-architect, data-layer-expert | SICS-001 |
 | SICS-103 | `pgvector` And Embedding Storage | Add enterprise-only migration support for `pgvector`, `session_embeddings`, and related indexes/capability checks while keeping local mode unaffected. | Enterprise Postgres can store and query embeddings; local SQLite remains supported without extension requirements. | 5 pts | data-layer-expert | SICS-101, SICS-102 |
 
 **Phase 2 Quality Gates**
 
 1. Enterprise transcript writes are canonical and backfillable.
-2. Embedding storage is additive, enterprise-scoped, and health-checkable.
+2. Embedding storage is additive, enterprise-scoped, content-addressed, and health-checkable.
 3. Local mode still runs without enterprise-only extension requirements.
+
+### Phase 2 Execution Notes
+
+1. The embedding unit is a mixed block model built from canonical `session_messages` rows:
+   - per-message blocks for every substantive canonical row, including user prompts, assistant replies, and tool-bearing turns;
+   - 5-row sliding window blocks for local transcript context and recall around decisions, corrections, and tool usage.
+2. Block identity is content-addressed. Each stored embedding is keyed by the session, block kind, ordered canonical row membership, normalized content, provenance, role, and message identity so identical inputs collapse to one row.
+3. Dedupe is deterministic. If a block hash already exists for the same session and block kind, the embedding row is skipped; a changed canonical input produces a new hash instead of mutating the previous one.
+4. Refresh and reindex are additive. When a canonical message changes, every direct message block is recomputed and every overlapping window block is regenerated with a new hash; stale hashes can be superseded without rewriting unrelated rows.
+5. The substrate stays enterprise-only. Local SQLite continues to read canonical transcript rows without requiring `pgvector`, and embedding materialization remains disabled outside the enterprise Postgres path.
 
 ## Phase 3: Intelligence Fact Pipelines
 

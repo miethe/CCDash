@@ -32,6 +32,7 @@ _CREATE_TABLE_RE = re.compile(
 
 _IDENTITY_ACCESS_CONCERNS = frozenset({"principals", "scope_identifiers", "memberships", "role_bindings"})
 _AUDIT_SECURITY_CONCERNS = frozenset({"privileged_action_audit_records", "access_decision_logs"})
+_OBSERVED_ENTITY_ENTERPRISE_ONLY_CONCERNS = frozenset({"session_embeddings"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,19 +150,21 @@ def _backend_table_blocks(module: object) -> dict[str, str]:
 
 
 def _enterprise_only_table_blocks(module: object) -> dict[str, str]:
-    """Extract table blocks from enterprise-only DDL (_ENTERPRISE_IDENTITY_AUDIT_TABLES)."""
+    """Extract table blocks from enterprise-only DDL strings."""
     blocks: dict[str, str] = {}
-    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
-    if isinstance(enterprise, str):
-        blocks.update(_extract_table_blocks(enterprise))
+    for attr in ("_ENTERPRISE_IDENTITY_AUDIT_TABLES", "_ENTERPRISE_SESSION_INTELLIGENCE_TABLES"):
+        enterprise = getattr(module, attr, "")
+        if isinstance(enterprise, str):
+            blocks.update(_extract_table_blocks(enterprise))
     return blocks
 
 
 def _enterprise_only_table_schema_map(module: object) -> dict[str, str | None]:
     schema_map: dict[str, str | None] = {}
-    enterprise = getattr(module, "_ENTERPRISE_IDENTITY_AUDIT_TABLES", "")
-    if isinstance(enterprise, str):
-        schema_map.update(_extract_table_schema_map(enterprise))
+    for attr in ("_ENTERPRISE_IDENTITY_AUDIT_TABLES", "_ENTERPRISE_SESSION_INTELLIGENCE_TABLES"):
+        enterprise = getattr(module, attr, "")
+        if isinstance(enterprise, str):
+            schema_map.update(_extract_table_schema_map(enterprise))
     return schema_map
 
 
@@ -223,7 +226,7 @@ def get_table_backend_difference_matrix() -> dict[str, tuple[str, ...]]:
 
 
 def validate_migration_governance_contract() -> None:
-    from backend.data_domains import PLANNED_AUTH_AUDIT_CONCERNS
+    from backend.data_domains import ENTERPRISE_ONLY_POSTGRES_CONCERNS
 
     sqlite_tables = get_sqlite_migration_tables()
     postgres_tables = get_postgres_migration_tables()
@@ -240,7 +243,7 @@ def validate_migration_governance_contract() -> None:
         )
 
     # Enterprise-only Postgres tables must match the planned identity/audit concerns.
-    expected_enterprise = frozenset(PLANNED_AUTH_AUDIT_CONCERNS)
+    expected_enterprise = frozenset(ENTERPRISE_ONLY_POSTGRES_CONCERNS)
     if enterprise_only != expected_enterprise:
         missing = sorted(expected_enterprise - enterprise_only)
         extra = sorted(enterprise_only - expected_enterprise)
@@ -259,6 +262,7 @@ def validate_migration_governance_contract() -> None:
         )
     expected_schema_map = {concern: "identity" for concern in _IDENTITY_ACCESS_CONCERNS}
     expected_schema_map.update({concern: "audit" for concern in _AUDIT_SECURITY_CONCERNS})
+    expected_schema_map.update({concern: "app" for concern in _OBSERVED_ENTITY_ENTERPRISE_ONLY_CONCERNS})
     if schema_map != expected_schema_map:
         raise RuntimeError(
             "Enterprise-only Postgres tables are not in the expected schemas. "

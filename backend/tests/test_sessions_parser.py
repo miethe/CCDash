@@ -68,6 +68,66 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual(tools[0].toolCall.status, "success")
         self.assertGreaterEqual(session.toolsUsed[0].totalMs, 1000)
 
+    def test_claude_logs_include_canonical_transcript_metadata(self) -> None:
+        path = self._write_jsonl(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-02-16T10:00:00Z",
+                    "uuid": "a1",
+                    "parentUuid": "u0",
+                    "messageId": "msg-assistant-1",
+                    "message": {
+                        "role": "assistant",
+                        "model": "claude-sonnet",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_2",
+                                "name": "Bash",
+                                "input": {"command": "pwd"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-02-16T10:00:01Z",
+                    "uuid": "u1",
+                    "parentUuid": "a1",
+                    "messageId": "msg-user-1",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_2",
+                                "is_error": False,
+                                "content": "/tmp/project",
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        session = parse_session_file(path)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        tools = [log for log in session.logs if log.type == "tool" and log.toolCall and log.toolCall.id == "toolu_2"]
+        self.assertEqual(len(tools), 1)
+        metadata = tools[0].metadata
+        self.assertEqual(metadata.get("sourceProvenance"), "claude_code_jsonl")
+        self.assertEqual(metadata.get("messageRole"), "assistant")
+        self.assertEqual(metadata.get("entryUuid"), "a1")
+        self.assertEqual(metadata.get("parentUuid"), "u0")
+        self.assertEqual(metadata.get("rawMessageId"), "msg-assistant-1")
+        self.assertEqual(metadata.get("messageId"), "toolu_2")
+        self.assertEqual(metadata.get("toolStatus"), "success")
+        self.assertEqual(metadata.get("toolOutput"), "/tmp/project")
+        self.assertIn("pwd", str(metadata.get("toolArgs") or ""))
+
     def test_agent_message_usage_is_persisted_on_message_log_metadata(self) -> None:
         path = self._write_jsonl(
             [

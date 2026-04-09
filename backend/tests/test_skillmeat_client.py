@@ -125,6 +125,65 @@ class SkillMeatClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 401)
         self.assertEqual(ctx.exception.detail, "Bearer token required")
 
+    async def test_create_context_module_posts_expected_payload(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with patch.object(
+            SkillMeatClient,
+            "_request_json",
+            return_value={"id": "cm_1", "name": "Workflow memory"},
+        ) as request_mock:
+            payload = await client.create_context_module(
+                project_id="sm-project",
+                name="Workflow memory",
+                description="Derived from CCDash sessions.",
+            )
+
+        self.assertEqual(payload["id"], "cm_1")
+        request_mock.assert_called_once_with(
+            "/api/v1/context-modules",
+            None,
+            method="POST",
+            body={
+                "project_id": "sm-project",
+                "name": "Workflow memory",
+                "description": "Derived from CCDash sessions.",
+                "selectors": {},
+                "priority": 5,
+            },
+        )
+
+    async def test_add_context_module_memory_posts_expected_payload(self) -> None:
+        client = SkillMeatClient(base_url="http://skillmeat.local", timeout_seconds=2.0)
+
+        with patch.object(
+            SkillMeatClient,
+            "_request_json",
+            return_value={"id": "mem_1"},
+        ) as request_mock:
+            payload = await client.add_context_module_memory(
+                "cm_1",
+                memory_type="learning",
+                title="Successful pattern",
+                content="Keep this pattern.",
+                confidence=0.82,
+                metadata={"sessionId": "session-1"},
+            )
+
+        self.assertEqual(payload["id"], "mem_1")
+        request_mock.assert_called_once_with(
+            "/api/v1/context-modules/cm_1/memories",
+            None,
+            method="POST",
+            body={
+                "type": "learning",
+                "title": "Successful pattern",
+                "content": "Keep this pattern.",
+                "confidence": 0.82,
+                "metadata": {"sessionId": "session-1"},
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

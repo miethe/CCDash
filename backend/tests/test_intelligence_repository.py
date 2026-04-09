@@ -138,6 +138,56 @@ class IntelligenceRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["metrics_json"]["sampleSize"], 2)
         self.assertEqual(rows[0]["evidence_summary_json"]["featureIds"], ["feature-1"])
 
+    async def test_session_memory_draft_round_trip_and_publish_lifecycle(self) -> None:
+        await self.session_repo.upsert(
+            {
+                "id": "session-2",
+                "status": "completed",
+                "model": "gpt-5",
+                "createdAt": "2026-04-03T00:00:00Z",
+                "updatedAt": "2026-04-03T00:00:00Z",
+            },
+            "project-1",
+        )
+
+        stored = await self.repo.upsert_session_memory_draft(
+            {
+                "project_id": "project-1",
+                "session_id": "session-2",
+                "title": "Scope reminder",
+                "memory_type": "constraint",
+                "module_name": "Session intelligence memory",
+                "content": "Keep the rollout inside the feature boundary.",
+                "content_hash": "hash-1",
+                "evidence": {"source": "session_scope_drift_facts"},
+            }
+        )
+        reviewed = await self.repo.review_session_memory_draft(
+            "project-1",
+            int(stored["id"]),
+            decision="approved",
+            actor="reviewer",
+            notes="Looks good.",
+        )
+        published = await self.repo.record_session_memory_draft_publish_attempt(
+            "project-1",
+            int(stored["id"]),
+            actor="reviewer",
+            notes="Published to SkillMeat.",
+            module_id="cm_1",
+            memory_id="mem_1",
+        )
+        listed = await self.repo.list_session_memory_drafts("project-1", status="published")
+
+        self.assertEqual(stored["status"], "draft")
+        self.assertEqual(reviewed["status"], "approved")
+        self.assertEqual(reviewed["reviewed_by"], "reviewer")
+        self.assertEqual(published["status"], "published")
+        self.assertEqual(published["published_module_id"], "cm_1")
+        self.assertEqual(published["published_memory_id"], "mem_1")
+        self.assertEqual(published["publish_attempts"], 1)
+        self.assertEqual(len(listed), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
