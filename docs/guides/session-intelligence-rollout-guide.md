@@ -4,6 +4,8 @@ Updated: 2026-04-06
 
 This guide closes Phase 7 of `session-intelligence-canonical-storage-v1`. It documents the supported rollout posture for canonical transcript intelligence, the checkpointed enterprise backfill path, and the approval-gated SkillMeat memory-draft workflow.
 
+If you need the full enterprise operator path, including storage setup, the supported API + worker topology, `/api/health` verification, and post-rollout usage guidance, start with [`enterprise-session-intelligence-runbook.md`](/Users/miethe/dev/homelab/development/CCDash/docs/guides/enterprise-session-intelligence-runbook.md).
+
 ## Scope
 
 Phase 7 freezes three rollout expectations:

@@ -73,6 +73,22 @@ Notes:
 - Shared enterprise requires explicit isolation. If `CCDASH_STORAGE_SHARED_POSTGRES=true` is set without `schema` or `tenant`, treat the deployment as invalid.
 - Filesystem ingestion in enterprise mode is optional. Keep it off unless you intentionally want CCDash to ingest from a filesystem boundary in the hosted environment.
 
+Recommended rollout gates:
+
+```bash
+CCDASH_SKILLMEAT_INTEGRATION_ENABLED=true
+CCDASH_AGENTIC_RECOMMENDATIONS_ENABLED=true
+CCDASH_AGENTIC_WORKFLOW_ANALYTICS_ENABLED=true
+CCDASH_SESSION_USAGE_ATTRIBUTION_ENABLED=true
+CCDASH_SESSION_BLOCK_INSIGHTS_ENABLED=true
+```
+
+Notes:
+
+- `CCDASH_SKILLMEAT_INTEGRATION_ENABLED` is the global gate for SkillMeat sync/cache endpoints and the review/publish draft flow.
+- SkillMeat base URL, project mapping, and API key are configured in `Settings > Integrations > SkillMeat`, not by a dedicated environment variable in this repo.
+- There is no runtime-profile environment variable for enterprise. Runtime profile is chosen by the process entrypoint.
+
 ## 3. Runtime Topology
 
 Enterprise mode assumes a split runtime:
@@ -80,16 +96,26 @@ Enterprise mode assumes a split runtime:
 - API runtime serves HTTP and reads canonical state
 - worker runtime owns sync, refresh, and scheduled jobs
 
-Typical startup:
+Supported enterprise entrypoints:
 
 ```bash
-npm run build
-npm run start:backend
-npm run start:worker
-npm run start:frontend
+backend/.venv/bin/python -m uvicorn backend.runtime.bootstrap_api:app --host 0.0.0.0 --port 8000
+backend/.venv/bin/python -m backend.worker
 ```
 
-If you are validating locally against enterprise Postgres, use the same env vars but keep the same split between API and worker behavior. Do not rely on the desktop `local` runtime profile for enterprise validation.
+Optional frontend and worker helpers:
+
+```bash
+npm run start:frontend
+npm run start:worker
+```
+
+Operator rules:
+
+- `backend.runtime.bootstrap_api:app` is the stateless hosted API runtime.
+- `backend.worker` is the background-only runtime for sync, refresh, and scheduled jobs.
+- `backend.main:app`, `npm run dev`, and `npm run start:backend` are local-convenience entrypoints and are not the canonical hosted API posture.
+- If you are validating locally against enterprise Postgres, keep the same API/worker split. Do not rely on the desktop `local` runtime profile for enterprise validation.
 
 ## 4. Initial Health Validation
 
@@ -101,9 +127,13 @@ curl -sS http://127.0.0.1:8000/api/health
 
 Minimum fields to inspect:
 
+- `profile`
 - `storageComposition`
 - `storageMode`
 - `storageBackend`
+- `storageCanonicalStore`
+- `storageIsolationMode`
+- `storageSchema`
 - `storageFilesystemRole`
 - `canonicalSessionStore`
 - `migrationGovernanceStatus`
@@ -115,12 +145,19 @@ Minimum fields to inspect:
 - `sessionIntelligenceMemoryDraftFlow`
 - `sessionIntelligenceIsolationBoundary`
 - `storageProfileValidationMatrix`
+- `watchEnabled`
+- `syncEnabled`
+- `syncProvisioned`
+- `jobsEnabled`
 
 Expected dedicated-enterprise posture:
 
+- `profile=api`
 - `storageComposition=enterprise-postgres`
 - `storageMode=enterprise`
 - `storageBackend=postgres`
+- `storageCanonicalStore=postgres_dedicated`
+- `storageIsolationMode=dedicated`
 - `canonicalSessionStore=postgres`
 - `sessionEmbeddingWriteStatus=authoritative`
 - `sessionIntelligenceProfile=enterprise_canonical`
@@ -128,10 +165,17 @@ Expected dedicated-enterprise posture:
 - `sessionIntelligenceBackfillStrategy=checkpointed_enterprise_backfill`
 - `sessionIntelligenceMemoryDraftFlow=approval_gated_enterprise_publish`
 - `sessionIntelligenceIsolationBoundary=dedicated_instance`
+- `watchEnabled=false`
+- `syncEnabled=false`
+- `syncProvisioned=false`
+- `jobsEnabled=false`
 
 Expected shared-enterprise posture:
 
 - `storageComposition=shared-enterprise-postgres`
+- `storageCanonicalStore=postgres_shared_instance`
+- `storageIsolationMode=schema` or `tenant`
+- `storageSchema=<configured schema>` when schema isolation is used
 - `sessionIntelligenceProfile=enterprise_canonical_shared_boundary`
 - `sessionIntelligenceIsolationBoundary=schema_or_tenant_boundary`
 
@@ -160,7 +204,7 @@ backend/.venv/bin/python -m pytest backend/tests/test_runtime_bootstrap.py backe
 ### Single project
 
 ```bash
-python backend/scripts/agentic_intelligence_rollout.py \
+backend/.venv/bin/python backend/scripts/agentic_intelligence_rollout.py \
   --project <project-id> \
   --session-intelligence-backfill \
   --session-intelligence-limit 200 \
@@ -171,7 +215,7 @@ python backend/scripts/agentic_intelligence_rollout.py \
 ### All projects
 
 ```bash
-python backend/scripts/agentic_intelligence_rollout.py \
+backend/.venv/bin/python backend/scripts/agentic_intelligence_rollout.py \
   --all-projects \
   --session-intelligence-backfill \
   --session-intelligence-limit 200 \
@@ -196,6 +240,7 @@ Normal retry behavior:
 
 - rerun the same command with the same checkpoint key
 - CCDash resumes strictly after the last committed `(started_at, session_id)` cursor
+- the checkpoint is written after each processed session and again at batch end
 
 When to reset:
 
@@ -204,7 +249,7 @@ When to reset:
 Reset command:
 
 ```bash
-python backend/scripts/agentic_intelligence_rollout.py \
+backend/.venv/bin/python backend/scripts/agentic_intelligence_rollout.py \
   --project <project-id> \
   --session-intelligence-backfill \
   --reset-session-intelligence-checkpoint
@@ -290,6 +335,13 @@ Expected flow:
 4. rejected drafts remain CCDash-side operational records until cleaned up later
 
 This separation is intentional. Transcript backfill, intelligence analytics, and SkillMeat publish are related, but they are not the same operation.
+
+Relevant API endpoints:
+
+- `GET /api/integrations/skillmeat/memory-drafts?projectId=<project-id>`
+- `POST /api/integrations/skillmeat/memory-drafts/generate?projectId=<project-id>`
+- `POST /api/integrations/skillmeat/memory-drafts/{draft_id}/review?projectId=<project-id>`
+- `POST /api/integrations/skillmeat/memory-drafts/{draft_id}/publish?projectId=<project-id>`
 
 ## 11. Integration Guidance
 

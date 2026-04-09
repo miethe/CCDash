@@ -21,7 +21,14 @@ audience:
 - platform-engineering
 - backend-platform
 created: 2026-03-27
-updated: '2026-04-01'
+updated: '2026-04-07'
+commit_refs:
+- https://github.com/miethe/CCDash/commit/a533799
+- https://github.com/miethe/CCDash/commit/86f9ebc
+- https://github.com/miethe/CCDash/commit/357b081
+pr_refs:
+  - https://github.com/miethe/CCDash/pull/21
+  - https://github.com/miethe/CCDash/pull/22
 tags:
 - implementation
 - data-platform

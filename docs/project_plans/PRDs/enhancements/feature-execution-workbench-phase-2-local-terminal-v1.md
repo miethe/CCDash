@@ -1,6 +1,6 @@
 ---
 doc_type: prd
-status: draft
+status: in-progress
 category: enhancements
 
 title: "PRD: Feature Execution Workbench Phase 2 - Local Terminal Execution"
@@ -8,7 +8,11 @@ description: "Enable secure local terminal command execution from the workbench 
 author: codex
 audience: [ai-agents, developers, engineering-leads, security]
 created: 2026-02-27
-updated: 2026-02-27
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/48d2242
+- https://github.com/miethe/CCDash/commit/808ae89
+pr_refs: []
 
 tags: [prd, execution, terminal, security, audit]
 feature_slug: feature-execution-workbench-phase-2-local-terminal-v1

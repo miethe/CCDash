@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: inferred_complete
+status: completed
 category: enhancements
 title: 'PRD: Dependency-Aware Execution and Family Views V1'
 description: Make blocked work, family ordering, and sequence-aware execution first-class
@@ -12,7 +12,12 @@ summary: Turn `blocked_by`, `feature_family`, and `sequence_order` from descript
   metadata into derived dependency states, family navigation, and execution gating
   that steer users to the first actionable item.
 created: 2026-03-22
-updated: 2026-03-22
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/0a03b41
+- https://github.com/miethe/CCDash/commit/76dc881
+- https://github.com/miethe/CCDash/commit/9872685
+pr_refs: []
 priority: high
 risk_level: medium
 complexity: High

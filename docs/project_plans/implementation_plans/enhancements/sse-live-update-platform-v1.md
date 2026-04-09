@@ -12,7 +12,11 @@ summary: "Sequence live-update work through broker/contract foundations, stream 
 author: codex
 audience: [ai-agents, developers, platform-engineering, frontend-engineering]
 created: 2026-03-11
-updated: 2026-03-15
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/e091a60
+- https://github.com/miethe/CCDash/commit/7a51d30
+pr_refs: []
 tags: [implementation, sse, live-updates, transport, polling, realtime]
 priority: high
 risk_level: medium

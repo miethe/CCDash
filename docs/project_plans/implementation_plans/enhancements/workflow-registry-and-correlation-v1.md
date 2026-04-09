@@ -11,7 +11,16 @@ summary: Add a read-only workflow registry surface with a backend aggregation en
   workflow catalog/detail UI, correlation-state modeling, and drill-down actions into
   SkillMeat and CCDash evidence.
 created: 2026-03-13
-updated: '2026-03-14'
+updated: '2026-04-07'
+commit_refs:
+- https://github.com/miethe/CCDash/commit/c7c48c4
+- https://github.com/miethe/CCDash/commit/f7b5af4
+- https://github.com/miethe/CCDash/commit/e26698c
+- https://github.com/miethe/CCDash/commit/8964e3c
+- https://github.com/miethe/CCDash/commit/bd35884
+- https://github.com/miethe/CCDash/commit/da96b51
+pr_refs:
+- https://github.com/miethe/CCDash/pull/9
 priority: high
 risk_level: medium
 complexity: High

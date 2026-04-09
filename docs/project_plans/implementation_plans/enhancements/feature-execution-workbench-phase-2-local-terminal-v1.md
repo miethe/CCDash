@@ -8,7 +8,11 @@ description: "Implement secure in-app local command execution with policy checks
 author: codex
 audience: [ai-agents, developers, engineering-leads, security]
 created: 2026-02-27
-updated: 2026-03-03
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/48d2242
+- https://github.com/miethe/CCDash/commit/808ae89
+pr_refs: []
 
 tags: [implementation, execution, terminal, policy, audit, backend, frontend]
 feature_slug: feature-execution-workbench-phase-2-local-terminal-v1

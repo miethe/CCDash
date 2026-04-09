@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: inferred_complete
+status: completed
 category: enhancements
 title: 'PRD: Workflow Registry and Correlation Surface V1'
 description: Add a dedicated Workflow page in CCDash that unifies SkillMeat definitions,
@@ -13,7 +13,16 @@ summary: Create a read-only workflow registry in CCDash so teams can inspect wor
   identity, structure, correlation quality, and performance across CCDash and SkillMeat
   from one place.
 created: 2026-03-13
-updated: 2026-03-13
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/c7c48c4
+- https://github.com/miethe/CCDash/commit/f7b5af4
+- https://github.com/miethe/CCDash/commit/e26698c
+- https://github.com/miethe/CCDash/commit/8964e3c
+- https://github.com/miethe/CCDash/commit/bd35884
+- https://github.com/miethe/CCDash/commit/da96b51
+pr_refs:
+- https://github.com/miethe/CCDash/pull/9
 priority: high
 risk_level: medium
 complexity: High
@@ -71,6 +80,29 @@ context_files:
 implementation_plan_ref: docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
 ---
 # PRD: Workflow Registry and Correlation Surface V1
+
+## Delivery Status
+
+Status: completed on 2026-03-14.
+
+Validated against the current tree:
+
+1. `backend/services/workflow_registry.py` aggregates workflow identity, composition, correlation, and effectiveness evidence.
+2. `backend/routers/analytics.py` exposes the workflow registry endpoints used by the UI.
+3. `components/Workflows/WorkflowRegistryPage.tsx` and `components/Workflows/detail/WorkflowDetailPanel.tsx` provide the dedicated registry and drill-down surfaces.
+
+Relevant commits:
+
+- [c7c48c4](https://github.com/miethe/CCDash/commit/c7c48c4) feat(workflows): add registry contract foundation
+- [f7b5af4](https://github.com/miethe/CCDash/commit/f7b5af4) feat(workflows): aggregate registry correlation states
+- [e26698c](https://github.com/miethe/CCDash/commit/e26698c) feat(analytics): add workflow registry endpoints
+- [8964e3c](https://github.com/miethe/CCDash/commit/8964e3c) feat(workflows): add workflow registry page shell
+- [bd35884](https://github.com/miethe/CCDash/commit/bd35884) feat(workflows): wire workflow hub backlinks
+- [da96b51](https://github.com/miethe/CCDash/commit/da96b51) test(workflows): finish phase 7 validation and docs
+
+Pull request:
+
+- [#9](https://github.com/miethe/CCDash/pull/9)
 
 ## Executive Summary
 

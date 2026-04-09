@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: research_prd
-status: inferred_complete
+status: completed
 category: refactors
 title: 'PRD: CCDash Hexagonal Foundation V1'
 description: Refactor CCDash from a singleton-heavy local-first composition into a
@@ -11,7 +11,12 @@ description: Refactor CCDash from a singleton-heavy local-first composition into
 summary: Establish the architectural seams required for shared auth, hosted deployment,
   and multi-backend data strategies.
 created: 2026-03-11
-updated: 2026-03-11
+updated: 2026-04-07
+commit_refs:
+- https://github.com/miethe/CCDash/commit/5993636
+- https://github.com/miethe/CCDash/commit/e954416
+- https://github.com/miethe/CCDash/commit/9d51672
+pr_refs: []
 priority: critical
 risk_level: high
 complexity: High

@@ -2,9 +2,9 @@
 title: "Implementation Plan: Test Visualizer"
 schema_version: 2
 doc_type: implementation_plan
-status: in_progress
+status: in-progress
 created: 2026-02-28
-updated: 2026-03-01
+updated: 2026-04-07
 feature_slug: "test-visualizer"
 feature_version: "v1"
 prd_ref: /docs/project_plans/PRDs/features/test-visualizer-v1.md
@@ -20,6 +20,13 @@ priority: high
 risk_level: high
 category: "product-planning"
 tags: [implementation, planning, test-visualizer, testing, observability]
+commit_refs:
+  - https://github.com/miethe/CCDash/commit/af4cfbb
+  - https://github.com/miethe/CCDash/commit/9c5a880
+  - https://github.com/miethe/CCDash/commit/b8be9eb
+  - https://github.com/miethe/CCDash/commit/f3d7701
+pr_refs:
+  - https://github.com/miethe/CCDash/pull/5
 ---
 
 # Implementation Plan: Test Visualizer

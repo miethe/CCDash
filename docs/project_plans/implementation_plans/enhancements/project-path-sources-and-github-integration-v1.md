@@ -12,7 +12,12 @@ summary: Refactor project path handling behind a resolver/provider layer, add Gi
   integration services, migrate the Settings UI, and optionally enable plan-document
   write-back.
 created: 2026-03-12
-updated: '2026-03-12'
+updated: '2026-04-07'
+commit_refs:
+- https://github.com/miethe/CCDash/commit/180c52f
+- https://github.com/miethe/CCDash/commit/10e3a75
+- https://github.com/miethe/CCDash/commit/5aa509b
+pr_refs: []
 priority: high
 risk_level: high
 complexity: High
