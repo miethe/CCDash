@@ -1,33 +1,44 @@
 ---
-schema_version: "1.0"
+schema_version: '1.0'
 doc_type: implementation_plan
-title: "CCDash CLI and MCP Enablement - Implementation Plan"
-description: "Phased implementation plan for exposing CCDash project intelligence via transport-neutral query services, REST composite endpoints, Python CLI, and MCP server for coding agents."
-status: draft
-created: "2026-04-02"
-updated: "2026-04-02"
-feature_slug: "ccdash-cli-mcp-enablement"
-feature_version: "v1"
-prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
+title: CCDash CLI and MCP Enablement - Implementation Plan
+description: Phased implementation plan for exposing CCDash project intelligence via
+  transport-neutral query services, REST composite endpoints, Python CLI, and MCP
+  server for coding agents.
+status: in-progress
+created: '2026-04-02'
+updated: '2026-04-09'
+feature_slug: ccdash-cli-mcp-enablement
+feature_version: v1
+prd_ref: docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: null
-scope: "Agent query foundation, REST endpoints, CLI MVP, MCP server with 4 core tools"
-effort_estimate: "23-28 story points"
-effort_estimate_breakdown: "Phase 1: 8-10 pts | Phase 2: 4-5 pts | Phase 3: 6-7 pts | Phase 4: 5-6 pts"
+scope: Agent query foundation, REST endpoints, CLI MVP, MCP server with 4 core tools
+effort_estimate: 23-28 story points
+effort_estimate_breakdown: 'Phase 1: 8-10 pts | Phase 2: 4-5 pts | Phase 3: 6-7 pts
+  | Phase 4: 5-6 pts'
 priority: high
 risk_level: medium
-owner: "Backend Engineering"
-contributors: ["Architecture Review Team"]
+owner: Backend Engineering
+contributors:
+- Architecture Review Team
 milestone: null
 commit_refs: []
 pr_refs: []
 files_affected: []
-category: "product-planning"
-tags: ["cli", "mcp", "agent-tooling", "typer", "fastmcp", "agent-queries", "python"]
+category: product-planning
+tags:
+- cli
+- mcp
+- agent-tooling
+- typer
+- fastmcp
+- agent-queries
+- python
 related_documents:
-  - docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
-  - docs/project_plans/ccdash-cli-mcp-enablement-plan.md
-  - docs/project_plans/spikes/mcp-server-implementation-spike.md
-  - docs/project_plans/spikes/cli-framework-and-packaging-spike.md
+- docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
+- docs/project_plans/ccdash-cli-mcp-enablement-plan.md
+- docs/project_plans/spikes/mcp-server-implementation-spike.md
+- docs/project_plans/spikes/cli-framework-and-packaging-spike.md
 ---
 
 # Implementation Plan: CCDash CLI and MCP Enablement
