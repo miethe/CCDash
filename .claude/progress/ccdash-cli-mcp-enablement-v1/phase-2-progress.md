@@ -14,12 +14,12 @@ completed: null
 commit_refs: []
 pr_refs: []
 
-overall_progress: 10
+overall_progress: 75
 completion_estimate: "2-3 days"
 
 total_tasks: 4
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 3
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["explorer"]
 tasks:
   - id: "P2-T1"
     description: "Create backend/routers/agent.py, add module-scope query service instances, wire backend/request_scope.py dependencies, and register agent_router in backend/runtime/bootstrap.py."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: []
     estimated_effort: "1pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "P2-T2"
     description: "Implement GET /api/agent/project-status and GET /api/agent/feature-forensics/{feature_id} with thin handlers and repo-style parameter documentation."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P2-T1"]
     estimated_effort: "1pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "P2-T3"
     description: "Implement GET /api/agent/workflow-diagnostics and POST /api/agent/reports/aar, keeping any project_id field reserved/ignored until ReportingQueryService supports it."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P2-T1"]
     estimated_effort: "1pt"
@@ -80,7 +80,6 @@ files_modified:
   - ".claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md"
   - "backend/routers/agent.py"
   - "backend/runtime/bootstrap.py"
-  - "backend/tests/test_agent_router.py"
 ---
 
 # ccdash-cli-mcp-enablement-v1 - Phase 2: REST Composite Endpoints
@@ -97,7 +96,7 @@ Expose the completed Phase 1 agent query services through thin `/api/agent/*` HT
 
 ## Update Workflow
 
-- Complete `P2-T1` first.
-- Run `P2-T2` and `P2-T3` in parallel after `P2-T1` is done.
-- Start `P2-T4` only after both read-path batches are merged.
-- Commit after each completed task or merged batch.
+- `P2-T1`, `P2-T2`, and `P2-T3` are complete in the current worktree.
+- `P2-T4` remains pending because test creation is outside the current write scope.
+- Next validation target is the focused router test module once that scope opens.
+- Commit the implementation batch before starting Phase 2 test coverage.
