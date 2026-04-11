@@ -14,12 +14,12 @@ completed: null
 commit_refs: []
 pr_refs: []
 
-overall_progress: 5
+overall_progress: 20
 completion_estimate: "on-track"
 
 total_tasks: 8
-completed_tasks: 0
-in_progress_tasks: 1
+completed_tasks: 1
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -29,7 +29,7 @@ contributors: ["explorer"]
 tasks:
   - id: "P1-T1"
     description: "Create the agent_queries package, shared DTOs/submodels, canonical freshness/source-ref helpers, and export surface."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: []
     estimated_effort: "1pt"
