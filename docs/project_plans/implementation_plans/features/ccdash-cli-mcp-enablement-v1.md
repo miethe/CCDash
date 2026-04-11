@@ -36,6 +36,8 @@ related_documents:
 
 This implementation plan translates the PRD and planning documents into a phased, executable roadmap for shipping CCDash intelligence through three new access surfaces: a transport-neutral agent query layer, REST composite endpoints, a Python CLI, and an MCP server for coding agents.
 
+Phase 1 is complete in-repo and frozen by the [Phase 1 progress artifact](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md). Phase 2 is the next execution target and the current validation gate before CLI and MCP delegation proceeds.
+
 **Scope**: Phases 1–4 (MVP)
 **Total Effort**: 23–28 story points
 **Timeline**: 5–7 weeks (4 weeks of focused development + 1–3 weeks for integration/hardening)
@@ -103,12 +105,12 @@ See detailed phase plans:
 
 ### Recommended Sequencing
 
-1. **Execute Phase 1 fully** (all 4 services + 90% test coverage)
+1. **Phase 1 is complete in-repo** (all 4 services shipped with coverage and completion evidence)
 2. **Execute Phase 2 fully** (serves as contract validation + docs example)
 3. **Execute Phase 3 and 4 in parallel** (both call same Phase 1 services)
 4. **Integration testing** (E2E with real DB; CLI + web server coexistence)
 
-**Phase 1 execution order**: T1 first, then T2-T5 in parallel, then T6, T7, and T8.
+**Phase 1 executed in this order**: T1 first, then T2-T5 in parallel, then T6, T7, and T8.
 
 ### Why Phase 2 Before 3/4
 
@@ -130,10 +132,10 @@ REST endpoints force the query services to be complete and well-specified before
 ### Phase 2 Quality Gate
 
 - [ ] All 4 endpoints exist at `/api/agent/*` paths
-- [ ] All endpoints appear in OpenAPI schema with examples
+- [ ] All endpoints appear in OpenAPI schema with `response_model` metadata, documented params, and handler docstrings
 - [ ] No endpoint contains inline query logic (all delegate to Phase 1 services)
 - [ ] Each endpoint is called exactly once by a router handler (no double-fetching)
-- [ ] REST API tests pass; CliRunner and SDK-supported client harness tests pass
+- [ ] Top-level async router tests pass (`unittest.IsolatedAsyncioTestCase` pattern)
 - [ ] Example curl commands work
 
 ### Phase 3 Quality Gate
@@ -181,8 +183,8 @@ REST endpoints force the query services to be complete and well-specified before
 ### Integration Testing (Phase 1 + 2)
 
 - **Agent queries**: Real SQLite test DB with parsed fixture data
-- **REST endpoints**: FastAPI TestClient
-- **Approach**: Verify services return consistent data via both paths
+- **REST endpoints**: Top-level async router tests that call handlers directly with patched collaborators
+- **Approach**: Verify services return consistent data via both paths without introducing a second HTTP-only testing style
 
 ### CLI Testing (Phase 3)
 
@@ -248,8 +250,8 @@ Estimates follow Fibonacci scale with reference to CCDash's typical stories:
 |------|--------|-------|
 | Create `backend/routers/agent.py` router | 1 pt | Boilerplate, import Phase 1 services |
 | Implement 4 REST endpoints | 2 pts | ~10 lines each; all delegate to Phase 1 |
-| OpenAPI schema documentation | 1 pt | Add descriptions, example responses |
-| Integration tests (FastAPI TestClient) | 1 pt | Test all 4 endpoints + error cases |
+| OpenAPI schema documentation | 1 pt | Add `response_model`, parameter descriptions, and handler docstrings |
+| Router tests (`unittest.IsolatedAsyncioTestCase`) | 1 pt | Test all 4 handlers + error cases |
 | **Phase 2 Total** | **4–5 pts** | |
 
 ### Phase 3 Breakdown (6–7 pts total)
@@ -389,14 +391,12 @@ Modified files:
 - FastAPI application running (for Phase 2 onward)
 - SQLite with WAL mode enabled (existing configuration)
 
-### First Step: Phase 1
+### Next Step: Phase 2
 
-1. Create `backend/application/services/agent_queries/` directory
-2. Implement `ProjectStatusQueryService` with Pydantic DTO
-3. Write unit tests with >90% coverage
-4. Get architecture review sign-off before proceeding to Phase 2
-
-See [Phase 1 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-1-agent-queries.md) for task-by-task guidance.
+1. Use the completed [Phase 1 progress artifact](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md) as the frozen contract baseline.
+2. Start Phase 2 tracking in [phase-2-progress.md](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md).
+3. Execute the repo-aligned [Phase 2 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-2-rest-endpoints.md).
+4. Treat Phase 2 as the delegation gate before Phase 3/4 implementation begins.
 
 ---
 
@@ -406,7 +406,8 @@ See [Phase 1 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-1-agent-queries
 
 - All 4 query services tested
 - Graceful degradation verified (partial status)
-- Ready to move to Phase 2 (REST) or skip to Phase 3/4 (CLI/MCP directly use Phase 1)
+- Phase 1 completion evidence recorded in `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md`
+- Ready to move to Phase 2 (REST), which is the next planned execution target
 
 ### After Phase 2
 
@@ -473,7 +474,7 @@ This implementation follows MeatyPrompts layered architecture principles:
 | **Service** | New agent_queries package + existing domain services | ProjectStatusQueryService, FeatureForensicsQueryService |
 | **API** | REST routers + CLI commands + MCP tools | `/api/agent/*` endpoints + `ccdash` commands + MCP tools |
 | **UI** | Web dashboard (unchanged); CLI formatters are output adapters | TableFormatter, JsonFormatter, MarkdownFormatter |
-| **Testing** | Pytest (services), FastAPI TestClient (endpoints), CliRunner, SDK-supported client harness | Comprehensive test coverage per phase |
+| **Testing** | Pytest (services), async unittest router tests (endpoints), CliRunner, SDK-supported client harness | Comprehensive test coverage per phase |
 | **Docs** | Inline docstrings, OpenAPI schema, tool descriptions | Quality tool/command help text |
 | **Deployment** | CLI as console_scripts entry point, MCP as stdio subprocess | Backend packaging metadata + editable install in `scripts/setup.mjs`, `.mcp.json` config |
 
@@ -484,4 +485,4 @@ This implementation follows MeatyPrompts layered architecture principles:
 - **Version**: 1.0
 - **Last Updated**: 2026-04-11
 - **Author**: Architecture Planning Team
-- **Status**: In Progress (ready for Phase 1 kickoff)
+- **Status**: In Progress (Phase 1 complete; Phase 2 ready for delegation)
