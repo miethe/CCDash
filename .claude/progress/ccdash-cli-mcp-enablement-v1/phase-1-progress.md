@@ -8,18 +8,18 @@ prd_ref: /docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-1-agent-queries.md
 phase: 1
 title: "Agent Query Foundation"
-status: "in_progress"
+status: "complete"
 started: "2026-04-11"
-completed: null
+completed: "2026-04-11"
 commit_refs: []
 pr_refs: []
 
-overall_progress: 70
-completion_estimate: "on-track"
+overall_progress: 100
+completion_estimate: "complete"
 
 total_tasks: 8
-completed_tasks: 5
-in_progress_tasks: 1
+completed_tasks: 8
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -69,7 +69,7 @@ tasks:
 
   - id: "P1-T6"
     description: "Add shared fixtures, helper tests, cross-service regressions, and coverage verification for the agent_queries module."
-    status: "in_progress"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T2", "P1-T3", "P1-T4", "P1-T5"]
     estimated_effort: "2pt"
@@ -77,7 +77,7 @@ tasks:
 
   - id: "P1-T7"
     description: "Write integration tests against a real SQLite test database and verify DTO JSON round-trips."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T6"]
     estimated_effort: "1pt"
@@ -85,7 +85,7 @@ tasks:
 
   - id: "P1-T8"
     description: "Document the agent_queries architecture in README.md and complete architecture review/sign-off checks."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T2", "P1-T3", "P1-T4", "P1-T5", "P1-T6", "P1-T7"]
     estimated_effort: "1pt"
@@ -171,3 +171,4 @@ Task("worker", "Execute P1-T8: document the agent_queries architecture in README
 - Phase 1 plan and task contracts were revalidated on 2026-04-11 against the current repo APIs, packaging flow, and official Typer/MCP documentation.
 - CLI packaging work in later phases must add backend packaging metadata plus an editable install step to `scripts/setup.mjs`; the repo does not currently expose a `ccdash` console script.
 - MCP validation in later phases must use the pinned SDK's documented client harness, not a speculative `mcp.test_client()` helper.
+- `backend/.venv/bin/python -m pytest backend/tests/test_agent_queries_project_status.py backend/tests/test_agent_queries_feature_forensics.py backend/tests/test_agent_queries_workflow_diagnostics.py backend/tests/test_agent_queries_reporting.py backend/tests/test_agent_queries_shared.py backend/tests/test_agent_queries_integration.py -q` -> `18 passed`

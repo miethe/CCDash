@@ -3,7 +3,7 @@ schema_version: "1.0"
 doc_type: phase_plan
 title: "Phase 1: Agent Query Foundation"
 description: "Implement transport-neutral composite query services and Pydantic DTOs for project status, feature forensics, workflow diagnostics, and AAR reporting."
-status: in-progress
+status: completed
 created: "2026-04-02"
 updated: "2026-04-11"
 phase: 1
