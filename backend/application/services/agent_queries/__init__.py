@@ -28,6 +28,10 @@ from backend.application.services.agent_queries.models import (
     WorkflowObservation,
     WorkflowSummary,
 )
+from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
+from backend.application.services.agent_queries.reporting import ReportingQueryService
+from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
     "AARReportDTO",
@@ -39,6 +43,7 @@ __all__ = [
     "FeatureForensicsDTO",
     "KeyMetrics",
     "ProjectStatusDTO",
+    "ProjectStatusQueryService",
     "QueryStatus",
     "SessionRef",
     "SessionSummary",
@@ -47,6 +52,9 @@ __all__ = [
     "TurningPoint",
     "WorkflowDiagnostic",
     "WorkflowDiagnosticsDTO",
+    "WorkflowDiagnosticsQueryService",
+    "FeatureForensicsQueryService",
+    "ReportingQueryService",
     "WorkflowObservation",
     "WorkflowSummary",
     "collect_source_refs",

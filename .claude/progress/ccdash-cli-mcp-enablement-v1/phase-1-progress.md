@@ -14,12 +14,12 @@ completed: null
 commit_refs: []
 pr_refs: []
 
-overall_progress: 20
+overall_progress: 70
 completion_estimate: "on-track"
 
 total_tasks: 8
-completed_tasks: 1
-in_progress_tasks: 0
+completed_tasks: 5
+in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
 
@@ -37,7 +37,7 @@ tasks:
 
   - id: "P1-T2"
     description: "Implement ProjectStatusQueryService plus backend/tests/test_agent_queries_project_status.py using the real repository/service APIs."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T1"]
     estimated_effort: "3pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "P1-T3"
     description: "Implement FeatureForensicsQueryService plus backend/tests/test_agent_queries_feature_forensics.py using existing feature/session/document/task correlation helpers."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T1"]
     estimated_effort: "3pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "P1-T4"
     description: "Implement WorkflowDiagnosticsQueryService plus backend/tests/test_agent_queries_workflow_diagnostics.py by reusing workflow registry/effectiveness/failure-pattern helpers."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T1"]
     estimated_effort: "2pt"
@@ -61,7 +61,7 @@ tasks:
 
   - id: "P1-T5"
     description: "Implement ReportingQueryService plus backend/tests/test_agent_queries_reporting.py with deterministic AAR output built from existing correlated sources."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P1-T1"]
     estimated_effort: "2pt"
@@ -69,7 +69,7 @@ tasks:
 
   - id: "P1-T6"
     description: "Add shared fixtures, helper tests, cross-service regressions, and coverage verification for the agent_queries module."
-    status: "pending"
+    status: "in_progress"
     assigned_to: ["worker"]
     dependencies: ["P1-T2", "P1-T3", "P1-T4", "P1-T5"]
     estimated_effort: "2pt"
