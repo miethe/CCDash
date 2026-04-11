@@ -8,17 +8,17 @@ prd_ref: /docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-2-rest-endpoints.md
 phase: 2
 title: "REST Composite Endpoints"
-status: "in_progress"
+status: "completed"
 started: "2026-04-11"
-completed: null
-commit_refs: []
+completed: "2026-04-11"
+commit_refs: ["6a7aa8f"]
 pr_refs: []
 
-overall_progress: 75
-completion_estimate: "2-3 days"
+overall_progress: 100
+completion_estimate: "completed"
 
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -53,7 +53,7 @@ tasks:
 
   - id: "P2-T4"
     description: "Add backend/tests/test_agent_router.py using top-level async unittest patterns, verify OpenAPI visibility, and close the Phase 2 contract gate."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P2-T2", "P2-T3"]
     estimated_effort: "1pt"
@@ -80,6 +80,7 @@ files_modified:
   - ".claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md"
   - "backend/routers/agent.py"
   - "backend/runtime/bootstrap.py"
+  - "backend/tests/test_agent_router.py"
 ---
 
 # ccdash-cli-mcp-enablement-v1 - Phase 2: REST Composite Endpoints
@@ -96,7 +97,6 @@ Expose the completed Phase 1 agent query services through thin `/api/agent/*` HT
 
 ## Update Workflow
 
-- `P2-T1`, `P2-T2`, and `P2-T3` are complete in the current worktree.
-- `P2-T4` remains pending because test creation is outside the current write scope.
-- Next validation target is the focused router test module once that scope opens.
-- Commit the implementation batch before starting Phase 2 test coverage.
+- `P2-T1` through `P2-T4` are complete in the current worktree.
+- Focused validation passed via `backend/.venv/bin/python -m pytest backend/tests/test_agent_router.py -q` (`6 passed`).
+- Phase 2 is ready for handoff to the next implementation-plan phase.
