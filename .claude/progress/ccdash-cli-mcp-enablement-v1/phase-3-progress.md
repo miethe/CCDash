@@ -8,17 +8,17 @@ prd_ref: /docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md
 phase: 3
 title: "CLI MVP"
-status: "in-progress"
+status: "complete"
 started: "2026-04-11"
-completed: null
-commit_refs: []
+completed: "2026-04-11"
+commit_refs: ["7be7227", "d5fc82b", "b4b0319"]
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "on-track"
+overall_progress: 100
+completion_estimate: "complete"
 
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ contributors: ["explorer"]
 tasks:
   - id: "P3-T1"
     description: "Create backend/cli package structure, Typer root app, and a lightweight runtime/bootstrap path aligned with current RuntimeContainer and RequestMetadata patterns."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: []
     estimated_effort: "1pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "P3-T2"
     description: "Implement CLI output abstraction and human/json/markdown formatters, including any new backend Python dependencies required for rendering."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P3-T1"]
     estimated_effort: "1pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "P3-T3"
     description: "Implement the four MVP commands as thin adapters over Phase 1 query services with project override and error handling."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P3-T1", "P3-T2"]
     estimated_effort: "3pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "P3-T4"
     description: "Add CliRunner coverage for all commands and output modes, including partial/error-path validation."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P3-T3"]
     estimated_effort: "1pt"
@@ -61,7 +61,7 @@ tasks:
 
   - id: "P3-T5"
     description: "Add editable packaging and setup integration so npm run setup installs the ccdash console entry point."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P3-T1", "P3-T4"]
     estimated_effort: "1pt"
@@ -69,7 +69,7 @@ tasks:
 
   - id: "P3-T6"
     description: "Validate CLI help, focused tests, and setup/install behavior; measure startup path and document any follow-up performance work."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P3-T5"]
     estimated_effort: "1pt"
@@ -97,6 +97,27 @@ success_criteria:
 files_modified:
   - ".claude/progress/ccdash-cli-mcp-enablement-v1/phase-3-progress.md"
   - "docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md"
+  - "backend/requirements.txt"
+  - "backend/cli/__init__.py"
+  - "backend/cli/__main__.py"
+  - "backend/cli/main.py"
+  - "backend/cli/runtime.py"
+  - "backend/cli/output.py"
+  - "backend/cli/commands/__init__.py"
+  - "backend/cli/commands/status.py"
+  - "backend/cli/commands/feature.py"
+  - "backend/cli/commands/workflow.py"
+  - "backend/cli/commands/report.py"
+  - "backend/cli/formatters/__init__.py"
+  - "backend/cli/formatters/base.py"
+  - "backend/cli/formatters/_utils.py"
+  - "backend/cli/formatters/json.py"
+  - "backend/cli/formatters/markdown.py"
+  - "backend/cli/formatters/table.py"
+  - "backend/tests/test_cli_commands.py"
+  - "pyproject.toml"
+  - "scripts/setup.mjs"
+  - "README.md"
 ---
 
 # ccdash-cli-mcp-enablement-v1 - Phase 3: CLI MVP
@@ -116,3 +137,7 @@ Build the CLI surface as a thin local adapter over Phase 1 query services, then 
 - Phase 1 and Phase 2 are already complete in the current repo.
 - No existing CLI package or console-script metadata exists, so Phase 3 owns the full adapter/bootstrap/testing/packaging path.
 - Packaging must account for the namespace-style `backend` package layout at repo root.
+- `backend/.venv/bin/ccdash --help` passes after editable install.
+- `backend/.venv/bin/python -m backend.cli --help` passes.
+- `backend/.venv/bin/python -m pytest backend/tests/test_cli_commands.py -q` passes (`8 passed`).
+- `npm run setup` could not be executed in this environment because `node`/`npm` are not installed on PATH, but `scripts/setup.mjs` was updated and the equivalent editable install path succeeded via `backend/.venv/bin/python -m pip install ... -e .`.
