@@ -190,6 +190,8 @@ REST returns the shared DTOs directly, CLI renders the same data as human/json/m
 
 ### CLI
 
+For the full CLI reference, see [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md).
+
 `npm run setup` also installs the Python package in editable mode, which provides the `ccdash` CLI entry point in `backend/.venv`.
 
 ```bash
@@ -410,6 +412,7 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
 | [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | Configure the stdio MCP server and validate the shipped tool surface |
 | [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md) | Common MCP startup, project-resolution, and tool-call failures |
+| [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md) | CCDash CLI setup, commands, output modes, and troubleshooting |
 | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
 | [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
 | [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |

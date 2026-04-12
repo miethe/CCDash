@@ -17,6 +17,7 @@
 
 - Repo docs now describe the Phase 3/4 agent query stack as a transport-neutral application layer consumed by REST, CLI, and MCP.
 - README now shows how to use the CLI, how the shipped `.mcp.json` launches `python -m backend.mcp.server`, and how to validate the MCP surface with `backend/tests/test_mcp_server.py`.
+- README now links to a dedicated CLI user guide covering the four commands, project override, output modes, setup, and troubleshooting.
 - `CLAUDE.md` now includes the `backend/cli/`, `backend/mcp/`, and `/api/agent/*` surfaces in the architecture and command reference.
 
 ### Docs
@@ -26,6 +27,7 @@
   - `CHANGELOG.md`
   - `CLAUDE.md`
 - Added:
+  - `docs/guides/cli-user-guide.md`
   - `docs/guides/mcp-setup-guide.md`
   - `docs/guides/mcp-troubleshooting.md`
   - `backend/mcp/README.md`
