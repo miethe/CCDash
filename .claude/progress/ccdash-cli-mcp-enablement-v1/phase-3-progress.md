@@ -8,7 +8,7 @@ prd_ref: /docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md
 phase: 3
 title: "CLI MVP"
-status: "complete"
+status: "completed"
 started: "2026-04-11"
 completed: "2026-04-11"
 commit_refs: ["7be7227", "d5fc82b", "b4b0319"]
@@ -135,8 +135,9 @@ Build the CLI surface as a thin local adapter over Phase 1 query services, then 
 ## Validation Notes
 
 - Phase 1 and Phase 2 are already complete in the current repo.
-- No existing CLI package or console-script metadata exists, so Phase 3 owns the full adapter/bootstrap/testing/packaging path.
-- Packaging must account for the namespace-style `backend` package layout at repo root.
+- Phase 3 is complete; `backend/cli`, repo-root `pyproject.toml`, `scripts/setup.mjs`, and the shipped Typer/Rich packaging path already exist in-repo.
+- The implemented bootstrap uses the lightweight `RuntimeContainer(profile=test)` + `RequestMetadata` + `build_request_context(...)` pattern and should be treated as the baseline for Phase 4.
+- Phase 4 is still unstarted and must build on this landed CLI surface rather than replanning packaging or local-profile startup.
 - `backend/.venv/bin/ccdash --help` passes after editable install.
 - `backend/.venv/bin/python -m backend.cli --help` passes.
 - `backend/.venv/bin/python -m pytest backend/tests/test_cli_commands.py -q` passes (`8 passed`).
