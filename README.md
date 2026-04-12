@@ -175,6 +175,19 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
    Frontend runs on `http://localhost:3000`; backend API on `http://localhost:8000`. Vite proxies `/api` requests automatically.
 
+### CLI (Phase 3 MVP)
+
+`npm run setup` also installs the Python package in editable mode, which provides the `ccdash` CLI entry point in `backend/.venv`.
+
+```bash
+backend/.venv/bin/ccdash --help
+backend/.venv/bin/ccdash status project
+backend/.venv/bin/ccdash feature report FEAT-123 --output json
+python -m backend.cli --help
+```
+
+On Windows, use `backend\\.venv\\Scripts\\ccdash.exe`.
+
 ### Available Scripts
 
 | Script | Description |
