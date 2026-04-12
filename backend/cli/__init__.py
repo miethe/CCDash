@@ -1,0 +1,2 @@
+"""CCDash CLI package."""
+
