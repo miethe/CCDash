@@ -3,9 +3,9 @@ schema_version: "1.0"
 doc_type: phase_plan
 title: "Phase 3–4: CLI and MCP Implementation"
 description: "Implement Python CLI (Typer) and MCP server (FastMCP) for agent and operator access to CCDash intelligence."
-status: draft
+status: in-progress
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-11"
 phase: "3-4"
 phase_title: "CLI MVP and MCP MVP"
 feature_slug: "ccdash-cli-mcp-enablement"
@@ -13,7 +13,7 @@ prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
 plan_ref: "docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md"
 entry_criteria:
   - Phase 1 (agent query services) complete and tested
-  - Phase 2 (REST endpoints) complete and tested (recommended but not strictly required)
+  - Phase 2 (REST endpoints) complete and tested
   - Python 3.10+ and Typer/FastMCP SDK research complete (see SPIKE docs)
   - SQLite with WAL mode and busy timeout configured
 exit_criteria:
@@ -41,6 +41,16 @@ parallelization_note: "Phase 3 and 4 can proceed in parallel after Phase 1 is st
 **Why Together**: Both phases have similar architecture (thin adapters around Phase 1 services) and can proceed in parallel once Phase 1 is stable.
 
 **Key Invariant**: No business logic duplication. Both CLI and MCP delegate to Phase 1 query services.
+
+## Validation Notes (2026-04-11)
+
+- Phase 1 and Phase 2 are complete in the current worktree; Phase 3 can start immediately without waiting on additional contract work.
+- The repo does not currently contain `backend/cli`, `backend/mcp`, or any existing console-script packaging metadata, so this phase will create those surfaces from scratch.
+- `backend/requirements.txt` does not currently include `typer`, `rich`, or `mcp`; Phase 3 must add CLI dependencies explicitly, and Phase 4 must add MCP dependencies explicitly.
+- The current repo has no `pyproject.toml`. Packaging work must add a repo-root Python packaging file that supports editable install of the namespace-style `backend` package before `scripts/setup.mjs` can install `ccdash`.
+- The runtime sketch in this document must not use a nonexistent `RequestContext.from_environment()` helper. CLI and MCP bootstraps should build request context through existing runtime-container conventions or a thin shared local-request helper built on `RequestMetadata`.
+- Existing runtime profiles (`local`, `api`, `worker`, `test`) are not a clean fit for CLI/MCP adapters because `local` enables sync/jobs/watchers and `test` disables integrations. Implementation should add thin adapter-safe runtime profiles or an equivalent no-background bootstrap path.
+- Phase 4 validation must use the pinned SDK's documented stdio client/session flow, not a speculative helper.
 
 ---
 
@@ -143,44 +153,28 @@ Set up the CLI package with Typer app structure and dependency injection.
 
 4. Create `backend/cli/runtime.py` (CLI bootstrap):
    ```python
-   import asyncio
-   from backend.application.ports import CorePorts
-   from backend.db import connection
-   from backend.runtime_ports import build_core_ports
+   from backend.application.context import RequestMetadata
+   from backend.runtime.container import RuntimeContainer
    from backend.runtime.profiles import get_runtime_profile
-   from backend.config import STORAGE_PROFILE
 
-   # Globals set by main() callback
    OUTPUT_MODE = "human"
    PROJECT_OVERRIDE: str | None = None
 
-   _ports: CorePorts | None = None
+   _container: RuntimeContainer | None = None
 
-   async def bootstrap_cli() -> CorePorts:
-       """Bootstrap CLI runtime: lightweight, no HTTP server."""
-       global _ports
-       if _ports is not None:
-           return _ports
-       db = await connection.get_connection()
-       profile = get_runtime_profile("local")  # or new "cli" profile
-       _ports = build_core_ports(
-           db,
-           runtime_profile=profile,
-           storage_profile=STORAGE_PROFILE,
+   async def bootstrap_cli() -> RuntimeContainer:
+       """Bootstrap a lightweight runtime without HTTP serving concerns."""
+       ...
+
+   async def get_app_request():
+       container = await bootstrap_cli()
+       metadata = RequestMetadata(
+           headers={"x-ccdash-project-id": PROJECT_OVERRIDE} if PROJECT_OVERRIDE else {},
+           method="CLI",
+           path="cli://ccdash",
        )
-       return _ports
-
-   async def teardown_cli() -> None:
-       global _ports
-       _ports = None
-       await connection.close_connection()
-
-   def get_context() -> RequestContext:
-       """Get request context with optional project override."""
-       ctx = RequestContext.from_environment()
-       if PROJECT_OVERRIDE:
-           ctx.project.project_id = PROJECT_OVERRIDE
-       return ctx
+       context = await container.build_request_context(metadata)
+       return context, container.require_ports()
    ```
 
 5. Create `backend/cli/output.py`:
@@ -249,7 +243,7 @@ Implement the three output formatter classes (human-readable table, JSON, Markdo
    ```
 
 2. Create `backend/cli/formatters/table.py`:
-   - Use Rich library (already in requirements for backend) for table rendering
+   - Use Rich library for table rendering after adding it to backend Python dependencies
    - Render Pydantic models to human-readable tables and text
    - Example: ProjectStatusDTO → "Project: my-project | Features: 5 done, 2 in-progress | Cost: $23.45"
 
@@ -424,16 +418,15 @@ Package the CLI as a pip entry point and integrate with `npm run setup`.
 **Detailed Tasks**:
 
 1. Add to `pyproject.toml` (or `setup.py`):
+1. Add a repo-root `pyproject.toml` for editable packaging of the namespace-style `backend` package:
    ```toml
    [project.scripts]
    ccdash = "backend.cli.main:app"
    ```
 
-2. Modify `npm run setup` script:
+2. Modify `scripts/setup.mjs` to install the editable package after backend requirements:
    ```bash
-   npm run setup:python
-   cd backend && pip install -e .
-   cd ..
+   pip install -e .
    ```
 
 3. Create optional shell wrapper in `bin/ccdash` for convenience:
@@ -450,8 +443,8 @@ Package the CLI as a pip entry point and integrate with `npm run setup`.
    - Common workflows
 
 **Files to Create/Modify**:
-- `pyproject.toml` (add [project.scripts])
-- `npm run setup` script (extend)
+- `pyproject.toml` (new repo-root packaging file with editable install metadata)
+- `scripts/setup.mjs` (extend with editable install step)
 - `bin/ccdash` (optional convenience wrapper)
 - `README.md` (add CLI section)
 
