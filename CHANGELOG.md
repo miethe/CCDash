@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-04-12
+
+### Added
+
+- Transport-neutral agent intelligence queries are now documented as one shared capability exposed through three entry points:
+  - REST: `GET /api/agent/project-status`, `GET /api/agent/feature-forensics/{feature_id}`, `GET /api/agent/workflow-diagnostics`, and `POST /api/agent/reports/aar`
+  - CLI: `ccdash status project`, `ccdash feature report`, `ccdash workflow failures`, and `ccdash report aar`
+  - MCP: `ccdash_project_status`, `ccdash_feature_forensics`, `ccdash_workflow_failure_patterns`, and `ccdash_generate_aar`
+- MCP-specific documentation:
+  - `docs/guides/mcp-setup-guide.md`
+  - `docs/guides/mcp-troubleshooting.md`
+  - `backend/mcp/README.md`
+
+### Changed
+
+- Repo docs now describe the Phase 3/4 agent query stack as a transport-neutral application layer consumed by REST, CLI, and MCP.
+- README now shows how to use the CLI, how the shipped `.mcp.json` launches `python -m backend.mcp.server`, and how to validate the MCP surface with `backend/tests/test_mcp_server.py`.
+- `CLAUDE.md` now includes the `backend/cli/`, `backend/mcp/`, and `/api/agent/*` surfaces in the architecture and command reference.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `CLAUDE.md`
+- Added:
+  - `docs/guides/mcp-setup-guide.md`
+  - `docs/guides/mcp-troubleshooting.md`
+  - `backend/mcp/README.md`
+
 ## 2026-04-06
 
 ### Changed

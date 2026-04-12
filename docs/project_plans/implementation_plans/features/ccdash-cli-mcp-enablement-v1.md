@@ -47,7 +47,7 @@ Phases 1-3 are complete in-repo and frozen by their progress artifacts. Phase 4 
 1. **Phase 1 (8–10 pts)**: Agent query foundation — complete
 2. **Phase 2 (4–5 pts)**: REST composite endpoints — complete
 3. **Phase 3 (6–7 pts)**: CLI MVP — complete
-4. **Phase 4 (5–6 pts)**: MCP MVP — pending execution
+4. **Phase 4 (5–6 pts)**: MCP MVP — in progress (implementation and harness complete; manual Claude Code verification pending)
 
 The Phase 2 validation gate has already been satisfied. Phase 4 should now execute directly against the completed Phase 1-3 baseline.
 
@@ -93,7 +93,7 @@ See detailed phase plans:
 | **1** | Complete | Agent query foundation | 5–7 d | 8–10 pts | `agent_queries/` services, DTOs, unit tests (>90% coverage) | All 4 services tested, `status` field works, partial degradation verified |
 | **2** | Complete | REST composite endpoints | 2–3 d | 4–5 pts | `/api/agent/*` routes, OpenAPI docs | All 4 endpoints return valid DTOs, services never called twice per request |
 | **3** | Complete | CLI MVP | 5–7 d | 6–7 pts | `ccdash` command, 4 core commands, formatters, CliRunner tests, entry point | All commands exit 0, JSON output valid, setup/install path works |
-| **4** | Pending | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, SDK-supported client harness tests | All tools callable, responses valid, Claude Code discovers tools |
+| **4** | In Progress | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, SDK-supported client harness tests | All tools callable, responses valid, Claude Code discovers tools |
 
 ---
 

@@ -175,18 +175,57 @@ Visual previews of CCDash across its core surfaces. Screenshots are captured aga
 
    Frontend runs on `http://localhost:3000`; backend API on `http://localhost:8000`. Vite proxies `/api` requests automatically.
 
-### CLI (Phase 3 MVP)
+### Agent Query Surfaces
+
+Phase 3/4 adds a transport-neutral query layer in `backend/application/services/agent_queries/`. The same four intelligence queries are exposed through REST, CLI, and MCP so agents and operators can choose the transport that fits their workflow.
+
+| Capability | REST | CLI | MCP |
+|-----------|------|-----|-----|
+| Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
+| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash feature report <feature_id>` | `ccdash_feature_forensics` |
+| Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
+| After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
+
+REST returns the shared DTOs directly, CLI renders the same data as human/json/markdown, and MCP wraps results in a `status` + `data` + `meta` envelope.
+
+### CLI
 
 `npm run setup` also installs the Python package in editable mode, which provides the `ccdash` CLI entry point in `backend/.venv`.
 
 ```bash
 backend/.venv/bin/ccdash --help
-backend/.venv/bin/ccdash status project
-backend/.venv/bin/ccdash feature report FEAT-123 --output json
-python -m backend.cli --help
+backend/.venv/bin/ccdash --project my-project status project
+backend/.venv/bin/ccdash feature report FEAT-123 --json
+backend/.venv/bin/ccdash workflow failures --md
+backend/.venv/bin/ccdash report aar --feature FEAT-123
+backend/.venv/bin/python -m backend.cli --help
 ```
 
-On Windows, use `backend\\.venv\\Scripts\\ccdash.exe`.
+Use the top-level `--project` flag to override the active project. Each command supports `--output human|json|markdown`, plus `--json` and `--md` shortcuts. On Windows, use `backend\\.venv\\Scripts\\ccdash.exe`.
+
+### REST API
+
+The HTTP transport lives under `backend/routers/agent.py`:
+
+```bash
+curl http://localhost:8000/api/agent/project-status
+curl http://localhost:8000/api/agent/feature-forensics/FEAT-123
+curl http://localhost:8000/api/agent/workflow-diagnostics?feature_id=FEAT-123
+curl -X POST http://localhost:8000/api/agent/reports/aar \
+  -H 'Content-Type: application/json' \
+  -d '{"feature_id":"FEAT-123"}'
+```
+
+### MCP Server
+
+The repo ships a workspace `.mcp.json` that launches the stdio server with `python -m backend.mcp.server` from the repo root. That path boots the same transport-neutral query services without requiring the HTTP server to be in the request path.
+
+```bash
+python -m backend.mcp.server
+backend/.venv/bin/python -m unittest backend.tests.test_mcp_server
+```
+
+Running `python -m backend.mcp.server` directly starts a stdio MCP process and waits for a client connection. For end-user setup and client configuration, see [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md). For failure cases, see [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md).
 
 ### Available Scripts
 
@@ -369,6 +408,8 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | Guide | Audience |
 |-------|---------|
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
+| [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | Configure the stdio MCP server and validate the shipped tool surface |
+| [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md) | Common MCP startup, project-resolution, and tool-call failures |
 | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
 | [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
 | [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |
@@ -380,6 +421,7 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | [`docs/theme-modes-developer-reference.md`](docs/theme-modes-developer-reference.md) | Runtime contract, Settings bridge, and theme guardrails |
 | [`docs/shared-content-viewer-developer-reference.md`](docs/shared-content-viewer-developer-reference.md) | Wrapper architecture, heuristics, styling, and backend support for shared viewer flows |
 | [`docs/agentic-sdlc-intelligence-developer-reference.md`](docs/agentic-sdlc-intelligence-developer-reference.md) | Implementation details and rollout commands |
+| [`backend/mcp/README.md`](backend/mcp/README.md) | MCP server architecture, tool-registration workflow, and stdio test pattern |
 | [`docs/session-usage-attribution-developer-reference.md`](docs/session-usage-attribution-developer-reference.md) | Attribution contracts, API details, and rollout controls |
 | [`docs/sync-observability-and-audit.md`](docs/sync-observability-and-audit.md) | Sync and rebuild operation behavior |
 | [`docs/codebase-explorer-developer-reference.md`](docs/codebase-explorer-developer-reference.md) | Codebase explorer backend and scoring details |
