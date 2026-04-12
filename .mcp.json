@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ccdash": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "backend.mcp.server"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "CCDASH_DB_BACKEND": "sqlite",
+        "CCDASH_STORAGE_PROFILE": "local",
+        "CCDASH_STORAGE_SHARED_POSTGRES": "false",
+        "CCDASH_STORAGE_ISOLATION_MODE": "dedicated",
+        "CCDASH_ENTERPRISE_FILESYSTEM_INGESTION_ENABLED": "false",
+        "CCDASH_TELEMETRY_EXPORT_ENABLED": "false"
+      }
+    }
+  }
+}

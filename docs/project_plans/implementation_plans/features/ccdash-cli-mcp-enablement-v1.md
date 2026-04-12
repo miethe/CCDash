@@ -5,7 +5,7 @@ title: "CCDash CLI and MCP Enablement - Implementation Plan"
 description: "Phased implementation plan for exposing CCDash project intelligence via transport-neutral query services, REST composite endpoints, Python CLI, and MCP server for coding agents."
 status: in-progress
 created: "2026-04-02"
-updated: "2026-04-11"
+updated: "2026-04-12"
 feature_slug: "ccdash-cli-mcp-enablement"
 feature_version: "v1"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
@@ -36,7 +36,7 @@ related_documents:
 
 This implementation plan translates the PRD and planning documents into a phased, executable roadmap for shipping CCDash intelligence through three new access surfaces: a transport-neutral agent query layer, REST composite endpoints, a Python CLI, and an MCP server for coding agents.
 
-Phase 1 is complete in-repo and frozen by the [Phase 1 progress artifact](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md). Phase 2 is the next execution target and the current validation gate before CLI and MCP delegation proceeds.
+Phases 1-3 are complete in-repo and frozen by their progress artifacts. Phase 4 is now the only remaining MVP execution target.
 
 **Scope**: Phases 1–4 (MVP)
 **Total Effort**: 23–28 story points
@@ -44,12 +44,12 @@ Phase 1 is complete in-repo and frozen by the [Phase 1 progress artifact](../../
 **Key Constraint**: Phase 1 is the critical path; Phases 2–4 depend on its stabilization
 
 **Phased Approach**:
-1. **Phase 1 (8–10 pts)**: Agent query foundation — transport-neutral services and DTOs
-2. **Phase 2 (4–5 pts)**: REST composite endpoints — validate contracts
-3. **Phase 3 (6–7 pts)**: CLI MVP — local query interface with human/JSON/Markdown output
-4. **Phase 4 (5–6 pts)**: MCP MVP — agent-accessible tools via stdio transport
+1. **Phase 1 (8–10 pts)**: Agent query foundation — complete
+2. **Phase 2 (4–5 pts)**: REST composite endpoints — complete
+3. **Phase 3 (6–7 pts)**: CLI MVP — complete
+4. **Phase 4 (5–6 pts)**: MCP MVP — pending execution
 
-Phases 3 and 4 may proceed in parallel after Phase 1 is stable. Phase 2 is the contract validation gate and strongly recommended before Phase 3/4 ship.
+The Phase 2 validation gate has already been satisfied. Phase 4 should now execute directly against the completed Phase 1-3 baseline.
 
 ---
 
@@ -66,14 +66,16 @@ Phases 3 and 4 may proceed in parallel after Phase 1 is stable. Phase 2 is the c
 ### Critical Path
 
 ```
-Phase 1 (Agent Query Services) [CRITICAL]
-  ↓ depends on
-Phase 2 (REST Endpoints) [VALIDATION GATE]
-  ├→ Phase 3 (CLI) [parallel after Phase 1]
-  └→ Phase 4 (MCP) [parallel after Phase 1]
+Phase 1 (Agent Query Services) [COMPLETE]
+  ↓
+Phase 2 (REST Endpoints) [COMPLETE VALIDATION GATE]
+  ↓
+Phase 3 (CLI) [COMPLETE BASELINE ADAPTER]
+  ↓
+Phase 4 (MCP) [ACTIVE EXECUTION TARGET]
 ```
 
-**Recommendation**: Proceed through Phase 2 before shipping Phase 3 and 4 to catch contract issues early.
+**Recommendation**: Reuse the completed CLI bootstrap/runtime decisions while implementing Phase 4 as the final MVP adapter.
 
 ### Files to Create/Modify Per Phase
 
@@ -86,12 +88,12 @@ See detailed phase plans:
 
 ## High-Level Phase Breakdown
 
-| Phase | Goal | Duration | Effort | Key Deliverables | Acceptance Gate |
-|-------|------|----------|--------|------------------|-----------------|
-| **1** | Agent query foundation | 5–7 d | 8–10 pts | `agent_queries/` services, DTOs, unit tests (>90% coverage) | All 4 services tested, `status` field works, partial degradation verified |
-| **2** | REST composite endpoints | 2–3 d | 4–5 pts | `/api/agent/*` routes, OpenAPI docs | All 4 endpoints return valid DTOs, services never called twice per request |
-| **3** | CLI MVP | 5–7 d | 6–7 pts | `ccdash` command, 4 core commands, formatters, CliRunner tests, entry point | All commands exit 0, JSON output valid, startup < 500 ms, `npm run setup` installs CLI |
-| **4** | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, SDK-supported client harness tests | All tools callable, responses valid, Claude Code discovers tools |
+| Phase | Status | Goal | Duration | Effort | Key Deliverables | Acceptance Gate |
+|-------|--------|------|----------|--------|------------------|-----------------|
+| **1** | Complete | Agent query foundation | 5–7 d | 8–10 pts | `agent_queries/` services, DTOs, unit tests (>90% coverage) | All 4 services tested, `status` field works, partial degradation verified |
+| **2** | Complete | REST composite endpoints | 2–3 d | 4–5 pts | `/api/agent/*` routes, OpenAPI docs | All 4 endpoints return valid DTOs, services never called twice per request |
+| **3** | Complete | CLI MVP | 5–7 d | 6–7 pts | `ccdash` command, 4 core commands, formatters, CliRunner tests, entry point | All commands exit 0, JSON output valid, setup/install path works |
+| **4** | Pending | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, SDK-supported client harness tests | All tools callable, responses valid, Claude Code discovers tools |
 
 ---
 
@@ -105,16 +107,16 @@ See detailed phase plans:
 
 ### Recommended Sequencing
 
-1. **Phase 1 is complete in-repo** (all 4 services shipped with coverage and completion evidence)
-2. **Execute Phase 2 fully** (serves as contract validation + docs example)
-3. **Execute Phase 3 and 4 in parallel** (both call same Phase 1 services)
-4. **Integration testing** (E2E with real DB; CLI + web server coexistence)
+1. **Keep Phases 1-3 frozen as the validated baseline**
+2. **Execute Phase 4 using the existing lightweight bootstrap pattern from `backend/cli/runtime.py`**
+3. **Run automated stdio transport tests**
+4. **Run manual Claude Code discovery/usage verification**
 
 **Phase 1 executed in this order**: T1 first, then T2-T5 in parallel, then T6, T7, and T8.
 
-### Why Phase 2 Before 3/4
+### Why Phase 4 Can Start Now
 
-REST endpoints force the query services to be complete and well-specified before CLI and MCP build on them. Discovering contract issues at the REST layer prevents rework when agents start using MCP tools.
+REST and CLI have already validated the Phase 1 contracts, packaging decisions, and lightweight runtime bootstrap. Phase 4 should reuse those decisions rather than inventing a separate MCP-specific runtime path.
 
 ---
 
@@ -140,20 +142,20 @@ REST endpoints force the query services to be complete and well-specified before
 
 ### Phase 3 Quality Gate
 
-- [ ] `ccdash --version` and `ccdash --help` work
-- [ ] `python -m backend.cli --help` works
-- [ ] All 4 MVP commands exit 0 and produce valid output
-- [ ] JSON output is valid (can be piped to `jq`)
-- [ ] Startup latency < 500 ms
-- [ ] `npm run setup` makes `ccdash` available
-- [ ] CliRunner tests cover human/JSON/MD output modes
+- [x] `ccdash --help` works after editable install
+- [x] `python -m backend.cli --help` works
+- [x] All 4 MVP commands exit 0 and produce valid output
+- [x] JSON output is valid
+- [x] Packaging/setup integration exists in-repo
+- [x] CliRunner coverage exists for human/JSON/Markdown modes
 
 ### Phase 4 Quality Gate
 
 - [ ] `python -m backend.mcp` starts without error
 - [ ] `.mcp.json` exists and points to server
 - [ ] All 4 tools return valid response envelope
-- [ ] SDK-supported client harness tests pass
+- [ ] MCP bootstrap uses `RuntimeContainer(profile=test)` + `RequestMetadata` + `build_request_context`
+- [ ] SDK-supported stdio `ClientSession` harness tests pass
 - [ ] Claude Code discovers tools (manual verification)
 - [ ] No exception raised when subsystem unavailable
 
@@ -194,8 +196,8 @@ REST endpoints force the query services to be complete and well-specified before
 
 ### MCP Testing (Phase 4)
 
-- **Framework**: SDK-supported client harness (for example `stdio_client` + `ClientSession`, or the pinned SDK's documented test harness)
-- **Approach**: Test each tool with mocked CorePorts
+- **Framework**: stdio transport harness using `stdio_client` + `ClientSession`
+- **Approach**: Launch the actual stdio server module, initialize a session, verify `list_tools`, then `call_tool`
 - **Coverage**: All 4 tools, error cases, partial availability
 
 ### E2E Testing (All Phases)
@@ -259,11 +261,11 @@ Estimates follow Fibonacci scale with reference to CCDash's typical stories:
 | Task | Effort | Notes |
 |------|--------|-------|
 | Create `backend/cli/` package, Typer app structure | 1 pt | `main.py`, `__main__.py`, command stubs |
-| Implement `CLIRuntimeContainer`, bootstrap logic | 1 pt | `runtime.py`, lazy CorePorts init, connection lifecycle |
+| Implement lightweight CLI bootstrap logic | 1 pt | `runtime.py`, `RuntimeContainer(profile=test)`, request-context lifecycle |
 | Implement 4 MVP commands (status, feature, workflow, report) | 3 pts | ~40 lines each; all delegate to Phase 1 |
 | Implement 3 output formatters (human/JSON/Markdown) | 2 pts | TableFormatter, JsonFormatter, MarkdownFormatter |
 | CliRunner tests (all commands, all output modes) | 1 pt | ~5 tests per command × 3 modes |
-| Entry point in backend packaging metadata, `scripts/setup.mjs` editable install | 1 pt | Add `backend/pyproject.toml` so `console_scripts` creates `ccdash` |
+| Entry point in repo-root packaging metadata, `scripts/setup.mjs` editable install | 1 pt | Add repo-root `pyproject.toml` so `console_scripts` creates `ccdash` |
 | **Phase 3 Total** | **6–7 pts** | |
 
 ### Phase 4 Breakdown (5–6 pts total)
@@ -376,7 +378,7 @@ backend/
 
 Modified files:
   backend/requirements.txt         # Phase 4: Add mcp pinned to a current vetted v1.x release (<2)
-  backend/pyproject.toml           # Phase 3: add packaging metadata for console_scripts
+  pyproject.toml                   # Phase 3: packaging metadata for console_scripts
   scripts/setup.mjs                # Phase 3: extend to install backend in editable mode
 ```
 
@@ -391,12 +393,12 @@ Modified files:
 - FastAPI application running (for Phase 2 onward)
 - SQLite with WAL mode enabled (existing configuration)
 
-### Next Step: Phase 2
+### Next Step: Phase 4
 
-1. Use the completed [Phase 1 progress artifact](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md) as the frozen contract baseline.
-2. Start Phase 2 tracking in [phase-2-progress.md](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md).
-3. Execute the repo-aligned [Phase 2 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-2-rest-endpoints.md).
-4. Treat Phase 2 as the delegation gate before Phase 3/4 implementation begins.
+1. Use the completed [Phase 1](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md), [Phase 2](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md), and [Phase 3](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-3-progress.md) progress artifacts as the frozen baseline.
+2. Start Phase 4 tracking in `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-4-progress.md`.
+3. Execute the repo-aligned [Phase 3–4 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md), using only the Phase 4 task set.
+4. Treat the CLI runtime/bootstrap path as the implementation template for MCP bootstrap and testing.
 
 ---
 
@@ -407,19 +409,20 @@ Modified files:
 - All 4 query services tested
 - Graceful degradation verified (partial status)
 - Phase 1 completion evidence recorded in `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md`
-- Ready to move to Phase 2 (REST), which is the next planned execution target
+- Historical gate satisfied
 
 ### After Phase 2
 
 - REST endpoints validated
 - Contract shape finalized
 - No changes needed to Phase 1 DTOs (signals good design)
+- Historical gate satisfied for downstream adapters
 
 ### After Phase 3
 
 - CLI available as `ccdash` command
 - All human/JSON/Markdown output modes working
-- Ready for agent shell integration
+- Lightweight adapter bootstrap validated in-repo and ready to be reused by MCP
 
 ### After Phase 4
 
@@ -441,12 +444,12 @@ These are explicit out-of-scope for this PRD; tracked separately:
 
 ## Success Criteria
 
-This implementation plan is complete and ready for development when:
+This implementation plan is ready for the remaining execution scope when:
 
-- [ ] All phase-specific task breakdowns are reviewed and estimated
-- [ ] Architecture review confirms query service contracts
-- [ ] Team capacity and timeline are allocated
-- [ ] Testing infrastructure (pytest, CliRunner, SDK-supported client harness) is validated
+- [x] Phase-specific task breakdowns are reviewed and estimated
+- [x] Architecture review confirms query service contracts
+- [x] CLI/runtime baseline is validated in-repo
+- [x] Testing infrastructure for the MCP stdio client harness is validated during Phase 4
 
 ---
 
@@ -483,6 +486,6 @@ This implementation follows MeatyPrompts layered architecture principles:
 ## Document Metadata
 
 - **Version**: 1.0
-- **Last Updated**: 2026-04-11
+- **Last Updated**: 2026-04-12
 - **Author**: Architecture Planning Team
-- **Status**: In Progress (Phase 1 complete; Phase 2 ready for delegation)
+- **Status**: In Progress (Phases 1-3 complete; Phase 4 ready for execution)

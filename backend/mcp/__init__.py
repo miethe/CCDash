@@ -1,0 +1,1 @@
+"""CCDash MCP server package."""

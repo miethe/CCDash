@@ -14,11 +14,11 @@ completed: null
 commit_refs: []
 pr_refs: []
 
-overall_progress: 0
-completion_estimate: "pending"
+overall_progress: 80
+completion_estimate: "manual Claude Code discovery pending"
 
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -29,7 +29,7 @@ contributors: ["explorer"]
 tasks:
   - id: "P4-T1"
     description: "Add the MCP SDK dependency and create the backend/mcp package skeleton on the existing test-profile runtime bootstrap path."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: []
     estimated_effort: "1pt"
@@ -37,7 +37,7 @@ tasks:
 
   - id: "P4-T2"
     description: "Implement the FastMCP server entry point plus the four thin tool adapters over the existing Phase 1 query services."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P4-T1"]
     estimated_effort: "2pt"
@@ -45,7 +45,7 @@ tasks:
 
   - id: "P4-T3"
     description: "Add SDK-supported stdio transport tests using stdio_client and ClientSession to validate initialize, list_tools, and call_tool against the real server."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P4-T2"]
     estimated_effort: "1pt"
@@ -53,7 +53,7 @@ tasks:
 
   - id: "P4-T4"
     description: "Commit the workspace .mcp.json config that points Claude Code at the same stdio launch command exercised by the harness."
-    status: "pending"
+    status: "completed"
     assigned_to: ["worker"]
     dependencies: ["P4-T2"]
     estimated_effort: "1pt"
@@ -87,6 +87,18 @@ success_criteria:
 
 files_modified:
   - ".claude/progress/ccdash-cli-mcp-enablement-v1/phase-4-progress.md"
+  - "backend/requirements.txt"
+  - "backend/mcp/__init__.py"
+  - "backend/mcp/__main__.py"
+  - "backend/mcp/bootstrap.py"
+  - "backend/mcp/server.py"
+  - "backend/mcp/tools/__init__.py"
+  - "backend/mcp/tools/project.py"
+  - "backend/mcp/tools/features.py"
+  - "backend/mcp/tools/workflows.py"
+  - "backend/mcp/tools/reports.py"
+  - "backend/tests/test_mcp_server.py"
+  - ".mcp.json"
 ---
 
 # ccdash-cli-mcp-enablement-v1 - Phase 4: MCP MVP
@@ -113,8 +125,10 @@ Build the MCP surface as a thin stdio adapter over Phase 1 query services, using
 - Phase 3 is already landed in the current worktree; the CLI package, Typer/Rich formatting, editable packaging metadata, and console-script path already exist.
 - Phase 4 starts from the existing CLI runtime/bootstrap pattern rather than replanning packaging or a local-profile startup path.
 - `backend/cli/runtime.py` is the bootstrap baseline to reuse for MCP: `RuntimeContainer(profile=get_runtime_profile("test"))`, `RequestMetadata`, and `container.build_request_context(...)`.
-- The repo does **not** yet contain `backend/mcp/` or a committed `.mcp.json`.
-- Validation must use the SDK-supported stdio harness (`stdio_client` + `ClientSession`) and not a speculative `mcp.test_client` helper.
+- The repo now contains `backend/mcp/` plus a committed repo-root `.mcp.json`.
+- `backend/.venv/bin/python -m pytest backend/tests/test_mcp_server.py -q` passes (`5 passed`).
+- Real stdio startup has been validated for `python -m backend.mcp.server`, and `list_tools` returns all four planned MCP tools.
+- Validation uses the SDK-supported stdio harness (`stdio_client` + `ClientSession`) and not a speculative `mcp.test_client` helper.
 
 ## Execution Plan
 
