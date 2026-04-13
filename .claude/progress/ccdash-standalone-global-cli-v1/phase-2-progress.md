@@ -5,63 +5,62 @@ doc_type: progress
 prd: ccdash-standalone-global-cli-v1
 feature_slug: ccdash-standalone-global-cli-v1
 phase: 2
-status: in_progress
+status: completed
 created: '2026-04-13'
 updated: '2026-04-13'
 prd_ref: docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/ccdash-standalone-global-cli-v1.md
-commit_refs: []
+commit_refs:
+- 7f45dce
+- afe8294
 pr_refs: []
-
 owners:
 - python-backend-engineer
 - backend-architect
 contributors: []
-
 tasks:
-  - id: P2-T1
-    title: Add instance metadata endpoint
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies: []
-  - id: P2-T2
-    title: Promote project/workflow endpoints into versioned client surface
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies: []
-  - id: P2-T3
-    title: Add feature list/detail endpoints
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies: []
-  - id: P2-T4
-    title: Add feature-linked session/documents endpoints
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies:
-    - P2-T3
-  - id: P2-T5
-    title: Add session intelligence list/detail/search/drilldown/family endpoints
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies: []
-  - id: P2-T6
-    title: Add contract tests
-    status: pending
-    assigned_to:
-    - python-backend-engineer
-    dependencies:
-    - P2-T1
-    - P2-T2
-    - P2-T3
-    - P2-T4
-    - P2-T5
-
+- id: P2-T1
+  title: Add instance metadata endpoint
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+- id: P2-T2
+  title: Promote project/workflow endpoints into versioned client surface
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+- id: P2-T3
+  title: Add feature list/detail endpoints
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+- id: P2-T4
+  title: Add feature-linked session/documents endpoints
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - P2-T3
+- id: P2-T5
+  title: Add session intelligence list/detail/search/drilldown/family endpoints
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+- id: P2-T6
+  title: Add contract tests
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - P2-T1
+  - P2-T2
+  - P2-T3
+  - P2-T4
+  - P2-T5
 parallelization:
   batch_1:
   - P2-T1
@@ -76,12 +75,11 @@ parallelization:
   - P2-T3
   - P2-T4
   - P2-T6
-
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
-progress: 0
+progress: 100
 ---
 
 # Phase 2: Server-Side Client API Foundation
