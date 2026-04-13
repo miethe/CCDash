@@ -13,12 +13,29 @@ from fastapi import APIRouter, Depends, Path, Query
 from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
+from backend.application.services.agent_queries import (
+    AARReportDTO,
+    FeatureForensicsDTO,
+    ProjectStatusDTO,
+    WorkflowDiagnosticsDTO,
+)
 from backend.models import SessionIntelligenceConcern
+from backend.models import (
+    SessionIntelligenceDetailResponse,
+    SessionIntelligenceDrilldownResponse,
+    SessionIntelligenceSessionRollup,
+    SessionSemanticSearchResponse,
+)
 from backend.request_scope import get_core_ports, get_request_context
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
-    ClientV1Meta,
+    ClientV1PaginatedEnvelope,
     InstanceMetaDTO,
+    FeatureDocumentsDTO,
+    FeatureSessionsDTO,
+    FeatureSummaryDTO,
+    SessionFamilyDTO,
+    build_client_v1_meta,
 )
 from backend.routers._client_v1_project import (
     get_project_status_v1,
@@ -77,7 +94,7 @@ async def get_instance_metadata() -> ClientV1Envelope[InstanceMetaDTO]:
     )
     return ClientV1Envelope(
         data=data,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )
 
 
@@ -91,7 +108,7 @@ async def project_status(
     project_id: str | None = Query(default=None, description="Optional project override."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[ProjectStatusDTO]:
     """Return the project status snapshot."""
     return await get_project_status_v1(project_id, request_context, core_ports)
 
@@ -106,7 +123,7 @@ async def workflow_failures(
     feature_id: str | None = Query(default=None, description="Optional feature filter."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[WorkflowDiagnosticsDTO]:
     """Return workflow failure patterns and diagnostics."""
     return await get_workflow_failures_v1(feature_id, request_context, core_ports)
 
@@ -124,7 +141,7 @@ async def features_list(
     offset: int = Query(default=0, ge=0, description="Page offset."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
     """Return a paginated list of features."""
     return await list_features_v1(status, category, limit, offset, request_context, core_ports)
 
@@ -134,7 +151,7 @@ async def feature_detail(
     feature_id: str = Path(..., description="Feature ID to inspect."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[FeatureForensicsDTO]:
     """Return full forensic detail for a single feature."""
     return await get_feature_detail_v1(feature_id, request_context, core_ports)
 
@@ -146,7 +163,7 @@ async def feature_sessions(
     offset: int = Query(default=0, ge=0, description="Page offset."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[FeatureSessionsDTO]:
     """Return sessions linked to a feature."""
     return await get_feature_sessions_v1(feature_id, limit, offset, request_context, core_ports)
 
@@ -156,7 +173,7 @@ async def feature_documents(
     feature_id: str = Path(..., description="Feature ID."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[FeatureDocumentsDTO]:
     """Return documents linked to a feature."""
     return await get_feature_documents_v1(feature_id, request_context, core_ports)
 
@@ -176,7 +193,7 @@ async def sessions_search(
     offset: int = Query(default=0, ge=0, description="Page offset."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[SessionSemanticSearchResponse]:
     """Full-text / semantic search across session transcripts."""
     return await search_sessions_v1(q, feature_id, root_session_id, session_id, limit, offset, request_context, core_ports)
 
@@ -189,7 +206,7 @@ async def sessions_list(
     offset: int = Query(default=0, ge=0, description="Page offset."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1PaginatedEnvelope[SessionIntelligenceSessionRollup]:
     """Return a paginated list of session intelligence rollups."""
     return await list_sessions_v1(feature_id, root_session_id, limit, offset, request_context, core_ports)
 
@@ -199,7 +216,7 @@ async def session_detail(
     session_id: str = Path(..., description="Session ID to inspect."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[SessionIntelligenceDetailResponse]:
     """Return detailed intelligence for a single session."""
     return await get_session_detail_v1(session_id, request_context, core_ports)
 
@@ -210,7 +227,7 @@ async def session_drilldown(
     concern: SessionIntelligenceConcern = Query(..., description="Which intelligence concern to inspect."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[SessionIntelligenceDrilldownResponse]:
     """Return drilldown intelligence for a specific concern on a session."""
     return await get_session_drilldown_v1(session_id, concern, request_context, core_ports)
 
@@ -220,7 +237,7 @@ async def session_family(
     session_id: str = Path(..., description="Session ID."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[SessionFamilyDTO]:
     """Return all sessions sharing the same root session."""
     return await get_session_family_v1(session_id, request_context, core_ports)
 
@@ -235,7 +252,7 @@ async def generate_aar_report(
     feature_id: str = Query(..., description="Feature ID for the after-action report."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
-):
+) -> ClientV1Envelope[AARReportDTO]:
     """Generate a deterministic after-action report for a feature."""
     from backend.application.services.agent_queries import ReportingQueryService
     from backend.application.services import resolve_application_request
@@ -251,5 +268,5 @@ async def generate_aar_report(
     )
     return ClientV1Envelope(
         data=result,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )

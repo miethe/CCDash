@@ -19,10 +19,11 @@ from backend.application.services.agent_queries import (
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
     ClientV1PaginatedEnvelope,
-    ClientV1PaginatedMeta,
     FeatureDocumentsDTO,
     FeatureSummaryDTO,
     FeatureSessionsDTO,
+    build_client_v1_meta,
+    build_client_v1_paginated_meta,
 )
 
 logger = logging.getLogger("ccdash.client_v1.features")
@@ -38,6 +39,12 @@ _MAX_LIMIT = 200
 
 def _clamp_limit(limit: int) -> int:
     return max(1, min(limit, _MAX_LIMIT))
+
+
+def _instance_id() -> str:
+    from backend import config as _cfg
+
+    return getattr(_cfg, "INSTANCE_ID", "") or "ccdash-local"
 
 
 async def _resolve_app_request(
@@ -136,7 +143,8 @@ async def list_features_v1(
 
     return ClientV1PaginatedEnvelope(
         data=items,
-        meta=ClientV1PaginatedMeta(
+        meta=build_client_v1_paginated_meta(
+            instance_id=_instance_id(),
             total=total,
             offset=effective_offset,
             limit=effective_limit,
@@ -157,7 +165,10 @@ async def get_feature_detail_v1(
 ) -> ClientV1Envelope[FeatureForensicsDTO]:
     """Return full forensic detail for a single feature."""
     forensics, _ = await _get_forensics(feature_id, request_context, core_ports)
-    return ClientV1Envelope(data=forensics)
+    return ClientV1Envelope(
+        data=forensics,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +198,10 @@ async def get_feature_sessions_v1(
         sessions=page,
         total=len(all_sessions),
     )
-    return ClientV1Envelope(data=dto)
+    return ClientV1Envelope(
+        data=dto,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -208,4 +222,7 @@ async def get_feature_documents_v1(
         feature_slug=feature_slug,
         documents=forensics.linked_documents,
     )
-    return ClientV1Envelope(data=dto)
+    return ClientV1Envelope(
+        data=dto,
+        meta=build_client_v1_meta(instance_id=_instance_id()),
+    )

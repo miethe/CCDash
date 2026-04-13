@@ -23,14 +23,15 @@ from backend.models import (
     SessionIntelligenceDetailResponse,
     SessionIntelligenceDrilldownResponse,
     SessionIntelligenceListResponse,
+    SessionIntelligenceSessionRollup,
     SessionSemanticSearchResponse,
 )
 from backend.routers.client_v1_models import (
     ClientV1Envelope,
-    ClientV1Meta,
     ClientV1PaginatedEnvelope,
-    ClientV1PaginatedMeta,
     SessionFamilyDTO,
+    build_client_v1_meta,
+    build_client_v1_paginated_meta,
 )
 
 
@@ -78,7 +79,7 @@ async def list_sessions_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
-) -> ClientV1PaginatedEnvelope:
+) -> ClientV1PaginatedEnvelope[SessionIntelligenceSessionRollup]:
     """Return a paginated list of session intelligence rollups.
 
     Wraps ``SessionIntelligenceReadService.list_sessions``.  Default limit is
@@ -101,7 +102,7 @@ async def list_sessions_v1(
     return ClientV1PaginatedEnvelope(
         status="ok",
         data=items,
-        meta=ClientV1PaginatedMeta(
+        meta=build_client_v1_paginated_meta(
             instance_id=_instance_id(),
             total=total,
             limit=limit,
@@ -120,7 +121,7 @@ async def get_session_detail_v1(
     session_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
-) -> ClientV1Envelope:
+) -> ClientV1Envelope[SessionIntelligenceDetailResponse]:
     """Return detailed intelligence for a single session.
 
     Raises HTTP 404 when the session is unknown.
@@ -142,7 +143,7 @@ async def get_session_detail_v1(
     return ClientV1Envelope(
         status="ok",
         data=detail,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )
 
 
@@ -160,7 +161,7 @@ async def search_sessions_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
-) -> ClientV1Envelope:
+) -> ClientV1Envelope[SessionSemanticSearchResponse]:
     """Full-text / semantic search across session transcripts.
 
     ``q`` must be at least 2 characters.  Default limit is 25; maximum is 100.
@@ -186,7 +187,7 @@ async def search_sessions_v1(
     return ClientV1Envelope(
         status="ok",
         data=result,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )
 
 
@@ -200,7 +201,7 @@ async def get_session_drilldown_v1(
     concern: SessionIntelligenceConcern,
     request_context: RequestContext,
     core_ports: CorePorts,
-) -> ClientV1Envelope:
+) -> ClientV1Envelope[SessionIntelligenceDrilldownResponse]:
     """Return drilldown intelligence for a specific concern on a single session.
 
     ``session_id`` is a path parameter (unlike the legacy analytics endpoint
@@ -228,7 +229,7 @@ async def get_session_drilldown_v1(
     return ClientV1Envelope(
         status="ok",
         data=detail,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )
 
 
@@ -241,7 +242,7 @@ async def get_session_family_v1(
     session_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
-) -> ClientV1Envelope:
+) -> ClientV1Envelope[SessionFamilyDTO]:
     """Return all sessions that share the same ``root_session_id`` as *session_id*.
 
     Algorithm:
@@ -302,5 +303,5 @@ async def get_session_family_v1(
     return ClientV1Envelope(
         status="ok",
         data=dto,
-        meta=ClientV1Meta(instance_id=_instance_id()),
+        meta=build_client_v1_meta(instance_id=_instance_id()),
     )

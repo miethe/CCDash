@@ -15,7 +15,7 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsDTO,
     WorkflowDiagnosticsQueryService,
 )
-from backend.routers.client_v1_models import ClientV1Envelope, ClientV1Meta
+from backend.routers.client_v1_models import ClientV1Envelope, build_client_v1_meta
 
 # ---------------------------------------------------------------------------
 # Module-level service singletons (stateless; safe to share across requests)
@@ -77,7 +77,7 @@ async def get_project_status_v1(
     )
     return ClientV1Envelope(
         data=result,
-        meta=ClientV1Meta(instance_id=_get_instance_id()),
+        meta=build_client_v1_meta(instance_id=_get_instance_id()),
     )
 
 
@@ -99,5 +99,5 @@ async def get_workflow_failures_v1(
     )
     return ClientV1Envelope(
         data=result,
-        meta=ClientV1Meta(instance_id=_get_instance_id()),
+        meta=build_client_v1_meta(instance_id=_get_instance_id()),
     )

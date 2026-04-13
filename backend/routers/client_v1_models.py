@@ -1,98 +1,63 @@
-"""DTOs and envelope models for the versioned CCDash client API (v1)."""
+"""Shared and compatibility DTOs for the versioned CCDash client API (v1)."""
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Generic, Literal, TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ccdash_contracts import (
+    ClientV1Envelope,
+    ClientV1ErrorDetail,
+    ClientV1ErrorEnvelope,
+    ClientV1Meta,
+    ClientV1PaginatedEnvelope,
+    ClientV1PaginatedMeta,
+    FeatureSummaryDTO,
+    InstanceMetaDTO,
+)
+
 from backend.application.services.agent_queries.models import DocumentRef, SessionRef
 
-T = TypeVar("T")
+
+def build_client_v1_meta(*, instance_id: str = "") -> ClientV1Meta:
+    """Populate the shared metadata model with the server-side defaults."""
+    return ClientV1Meta(
+        generated_at=datetime.now(timezone.utc),
+        instance_id=instance_id,
+        request_id=str(uuid4()),
+    )
 
 
-# ---------------------------------------------------------------------------
-# Core envelope types
-# ---------------------------------------------------------------------------
+def build_client_v1_paginated_meta(
+    *,
+    instance_id: str = "",
+    cursor: str | None = None,
+    has_more: bool = False,
+    total: int = 0,
+    limit: int = 50,
+    offset: int = 0,
+) -> ClientV1PaginatedMeta:
+    """Populate paginated metadata using the shared contract type."""
+    return ClientV1PaginatedMeta(
+        generated_at=datetime.now(timezone.utc),
+        instance_id=instance_id,
+        request_id=str(uuid4()),
+        cursor=cursor,
+        has_more=has_more,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
-class ClientV1Meta(BaseModel):
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    instance_id: str = ""
-    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-
-
-class ClientV1Envelope(BaseModel, Generic[T]):
-    status: Literal["ok", "partial", "error"] = "ok"
-    data: T
-    meta: ClientV1Meta = Field(default_factory=ClientV1Meta)
-
-
-# ---------------------------------------------------------------------------
-# Paginated envelope
-# ---------------------------------------------------------------------------
-
-
-class ClientV1PaginatedMeta(ClientV1Meta):
-    cursor: str | None = None
-    has_more: bool = False
-    total: int = 0
-    limit: int = 50
-    offset: int = 0
-
-
-class ClientV1PaginatedEnvelope(BaseModel, Generic[T]):
-    status: Literal["ok", "partial", "error"] = "ok"
-    data: list[T]
-    meta: ClientV1PaginatedMeta = Field(default_factory=ClientV1PaginatedMeta)
-
-
-# ---------------------------------------------------------------------------
-# Error envelope
-# ---------------------------------------------------------------------------
-
-
-class ClientV1ErrorDetail(BaseModel):
-    code: Literal["NOT_FOUND", "INVALID_PARAM", "SERVER_ERROR", "UNAUTHORIZED", "UNAVAILABLE"]
-    message: str = ""
-    detail: dict[str, Any] = Field(default_factory=dict)
-
-
-class ClientV1ErrorEnvelope(BaseModel):
-    status: Literal["error"] = "error"
-    error: ClientV1ErrorDetail
-    meta: ClientV1Meta = Field(default_factory=ClientV1Meta)
-
-
-# ---------------------------------------------------------------------------
-# Instance metadata DTO
-# ---------------------------------------------------------------------------
-
-
-class InstanceMetaDTO(BaseModel):
-    instance_id: str
-    version: str
-    environment: str
-    db_backend: str
-    capabilities: list[str]
-    server_time: datetime
-
-
-# ---------------------------------------------------------------------------
-# Feature DTOs
-# ---------------------------------------------------------------------------
-
-
-class FeatureSummaryDTO(BaseModel):
-    id: str
-    name: str = ""
-    status: str = ""
-    category: str = ""
-    priority: str = ""
-    total_tasks: int = 0
-    completed_tasks: int = 0
-    updated_at: str = ""
+# NOTE:
+# The shared package is now the source of truth for public envelope/meta models
+# plus the DTOs whose field shapes already match the live API surface.
+#
+# The feature/session document refs below still depend on richer backend-owned
+# query-service DTOs. Keeping these as thin router-local compatibility models
+# avoids widening this remediation into a service-layer/public-contract rewrite.
 
 
 class FeatureSessionsDTO(BaseModel):
@@ -108,12 +73,24 @@ class FeatureDocumentsDTO(BaseModel):
     documents: list[DocumentRef] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Session family DTO
-# ---------------------------------------------------------------------------
-
-
 class SessionFamilyDTO(BaseModel):
     root_session_id: str
     session_count: int = 0
     members: list[SessionRef] = Field(default_factory=list)
+
+
+__all__ = [
+    "ClientV1Envelope",
+    "ClientV1ErrorDetail",
+    "ClientV1ErrorEnvelope",
+    "ClientV1Meta",
+    "ClientV1PaginatedEnvelope",
+    "ClientV1PaginatedMeta",
+    "FeatureDocumentsDTO",
+    "FeatureSessionsDTO",
+    "FeatureSummaryDTO",
+    "InstanceMetaDTO",
+    "SessionFamilyDTO",
+    "build_client_v1_meta",
+    "build_client_v1_paginated_meta",
+]
