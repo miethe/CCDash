@@ -1,0 +1,1 @@
+"""CCDash standalone CLI."""
