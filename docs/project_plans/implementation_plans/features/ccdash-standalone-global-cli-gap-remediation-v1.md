@@ -5,7 +5,7 @@ title: CCDash Standalone Global CLI - Gap Remediation Plan
 description: Focused remediation plan for the post-implementation review gaps identified
   against the standalone global CLI PRD, design specs, and completed implementation
   plan.
-status: in-progress
+status: completed
 created: '2026-04-13'
 updated: '2026-04-13'
 feature_slug: ccdash-standalone-global-cli-gap-remediation
@@ -23,7 +23,12 @@ owner: Platform Engineering
 contributors:
 - Architecture Review Team
 milestone: standalone-cli-pr-readiness
-commit_refs: []
+commit_refs:
+- bd8b6c0
+- 4257af6
+- 4f34f8f
+- 0192ba9
+- 1a17a5b
 pr_refs: []
 files_affected: []
 category: product-planning
