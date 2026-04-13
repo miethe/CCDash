@@ -21,7 +21,7 @@ from ccdash_cli.runtime.client import (
     ConnectionError,
     NotFoundError,
 )
-from ccdash_cli.runtime.config import TargetConfig
+from ccdash_cli.runtime.config import ConfigStore, TargetConfig
 
 # ---------------------------------------------------------------------------
 # Shared runner
@@ -245,6 +245,46 @@ def _invoke(*args: str, **kwargs: Any):
 # ---------------------------------------------------------------------------
 
 
+class TestRootAndTargetCommands:
+    def test_root_version_flag_prints_version(self):
+        with patch("ccdash_cli.main._cli_version", return_value="9.9.9"):
+            result = runner.invoke(app, ["--version"])
+
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "ccdash-cli 9.9.9"
+
+    def test_version_subcommand_prints_version(self):
+        with patch("ccdash_cli.main._cli_version", return_value="9.9.9"):
+            result = runner.invoke(app, ["version"])
+
+        assert result.exit_code == 0, result.output
+        assert result.output.strip() == "ccdash-cli 9.9.9"
+
+    def test_target_show_reports_active_target(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        store = ConfigStore(config_path=config_path)
+        store.add_target(
+            "staging",
+            "https://staging.example.com",
+            token_ref="target:staging",
+            project="proj-a",
+        )
+        store.set_active_target("staging")
+
+        with (
+            patch.object(ConfigStore, "default_config_path", return_value=config_path),
+            patch("ccdash_cli.runtime.config._resolve_token", return_value="secret"),
+        ):
+            result = runner.invoke(app, ["target", "show"])
+
+        assert result.exit_code == 0, result.output
+        assert "Name: staging" in result.output
+        assert "URL: https://staging.example.com" in result.output
+        assert "Project: proj-a" in result.output
+        assert "Authentication: token ref 'target:staging' (token loaded)" in result.output
+        assert "Source: configured target" in result.output
+
+
 class TestFeatureCommands:
     """Tests for `ccdash feature <subcommand>`."""
 
@@ -276,6 +316,17 @@ class TestFeatureCommands:
         _, kw = client.get.call_args
         assert "status" in kw.get("params", {})
         assert "active" in kw["params"]["status"]
+
+    def test_feature_list_expands_comma_separated_status_filters(self):
+        client = _mock_client({"/api/v1/features": FEATURES_LIST_RESPONSE})
+        result = _invoke(
+            "feature", "list", "--status", "active,completed", "--status", "planned", "--json",
+            client=client,
+            modules=["ccdash_cli.commands.feature.CCDashClient"],
+        )
+        assert result.exit_code == 0
+        _, kw = client.get.call_args
+        assert kw["params"]["status"] == ["active", "completed", "planned"]
 
     def test_feature_show_json_returns_feature_detail(self):
         """feature show FEAT-123 --json should return feature detail data."""

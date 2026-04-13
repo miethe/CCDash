@@ -186,6 +186,8 @@ class TestConnectionFailures:
             with pytest.raises(ConnectionError) as exc_info:
                 client.get("/api/v1/instance")
         assert exc_info.value.exit_code == 4
+        assert "ccdash target show" in exc_info.value.message
+        assert "--timeout" not in exc_info.value.message
 
 
 # ---------------------------------------------------------------------------

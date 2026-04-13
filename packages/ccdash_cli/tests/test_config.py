@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import stat
+import warnings
 from pathlib import Path
 
 import pytest
@@ -162,8 +163,8 @@ class TestResolveTarget:
         monkeypatch.delenv("CCDASH_TOKEN", raising=False)
         monkeypatch.delenv("CCDASH_PROJECT", raising=False)
         store = ConfigStore(config_path=tmp_path / "config.toml")
-        store.add_target("flag-target", "http://flag.local")
-        store.add_target("env-target", "http://env.local")
+        store.add_target("flag-target", "https://flag.local")
+        store.add_target("env-target", "https://env.local")
         target = resolve_target(target_flag="flag-target", config_store=store)
         assert target.name == "flag-target"
 
@@ -179,12 +180,12 @@ class TestResolveTarget:
 
     def test_env_url_override(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CCDASH_TARGET", raising=False)
-        monkeypatch.setenv("CCDASH_URL", "http://custom:9999")
+        monkeypatch.setenv("CCDASH_URL", "https://custom:9999")
         monkeypatch.delenv("CCDASH_TOKEN", raising=False)
         monkeypatch.delenv("CCDASH_PROJECT", raising=False)
         store = ConfigStore(config_path=tmp_path / "config.toml")
         target = resolve_target(config_store=store)
-        assert target.url == "http://custom:9999"
+        assert target.url == "https://custom:9999"
 
     def test_env_token_override(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CCDASH_TARGET", raising=False)
@@ -207,7 +208,7 @@ class TestResolveTarget:
     def test_url_trailing_slash_stripped(self, tmp_path, monkeypatch):
         """Resolved URL never has a trailing slash."""
         monkeypatch.delenv("CCDASH_TARGET", raising=False)
-        monkeypatch.setenv("CCDASH_URL", "http://custom:9999/")
+        monkeypatch.setenv("CCDASH_URL", "https://custom:9999/")
         monkeypatch.delenv("CCDASH_TOKEN", raising=False)
         monkeypatch.delenv("CCDASH_PROJECT", raising=False)
         store = ConfigStore(config_path=tmp_path / "config.toml")
@@ -227,6 +228,36 @@ class TestResolveTarget:
         # active_target is explicitly set in [defaults], so is_implicit_local is False
         assert target.name == "local"
         assert target.is_implicit_local is False
+
+    def test_remote_http_target_warns(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CCDASH_TARGET", raising=False)
+        monkeypatch.delenv("CCDASH_URL", raising=False)
+        monkeypatch.delenv("CCDASH_TOKEN", raising=False)
+        monkeypatch.delenv("CCDASH_PROJECT", raising=False)
+        store = ConfigStore(config_path=tmp_path / "config.toml")
+        store.add_target("remote", "http://remote.example.com")
+        store.set_active_target("remote")
+
+        with pytest.warns(UserWarning, match="plain HTTP"):
+            target = resolve_target(config_store=store)
+
+        assert target.url == "http://remote.example.com"
+
+    def test_local_http_target_does_not_warn(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CCDASH_TARGET", raising=False)
+        monkeypatch.delenv("CCDASH_URL", raising=False)
+        monkeypatch.delenv("CCDASH_TOKEN", raising=False)
+        monkeypatch.delenv("CCDASH_PROJECT", raising=False)
+        store = ConfigStore(config_path=tmp_path / "config.toml")
+        store.add_target("local-dev", "http://localhost:8000")
+        store.set_active_target("local-dev")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            target = resolve_target(config_store=store)
+
+        assert target.url == "http://localhost:8000"
+        assert not [item for item in caught if "plain HTTP" in str(item.message)]
 
     def test_unknown_target_flag_exits(self, tmp_path, monkeypatch):
         """--target for unknown name raises SystemExit."""
