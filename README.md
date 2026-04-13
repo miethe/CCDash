@@ -182,7 +182,7 @@ Phase 3/4 adds a transport-neutral query layer in `backend/application/services/
 | Capability | REST | CLI | MCP |
 |-----------|------|-----|-----|
 | Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
-| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash feature report <feature_id>` | `ccdash_feature_forensics` |
+| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
 | Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
 | After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
 
@@ -195,7 +195,8 @@ CCDash provides two CLI entry points:
 **Standalone CLI** (recommended for operators): Install globally with `pipx install ccdash-cli` and use from any terminal. Talks to a running CCDash server over HTTP. See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md).
 
 ```bash
-ccdash version
+ccdash --version
+ccdash target show
 ccdash status project
 ccdash feature list --status active
 ccdash session search "authentication" --json

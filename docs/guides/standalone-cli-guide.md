@@ -20,7 +20,8 @@ pipx install ccdash-cli
 Verify installation:
 
 ```bash
-ccdash version
+ccdash --version
+ccdash target show
 ccdash doctor
 ```
 
@@ -35,7 +36,8 @@ pip install ccdash-cli
 Then run commands as:
 
 ```bash
-ccdash version
+ccdash --version
+ccdash target show
 ccdash doctor
 ```
 
@@ -76,6 +78,16 @@ This architecture makes it suitable for:
 
 All commands accept these global flags:
 
+### --version
+
+Print the CLI version and exit from the root command:
+
+```bash
+ccdash --version
+```
+
+The `ccdash version` subcommand is still available, but the root flag is the preferred quick check for installs and automation.
+
 ### --target NAME
 
 Use a named target from your configuration instead of the default. Resolves targets in order:
@@ -96,7 +108,7 @@ ccdash --target production feature list
 
 Set the output format for all commands. Defaults depend on command type:
 
-- Report commands (aar, feature report) default to `markdown`
+- Report commands (`ccdash report aar`, `ccdash report feature`) default to `markdown`
 - All other commands default to `human`
 
 Supported formats: `human`, `json`, `markdown`
@@ -131,7 +143,7 @@ Target management commands control which servers the CLI targets and how authent
 
 ### ccdash target list
 
-List all configured targets with their URLs and active status.
+List all configured targets with their URLs, stored token refs, and active status.
 
 ```bash
 ccdash target list
@@ -140,11 +152,11 @@ ccdash target list
 Output:
 
 ```
-Name       URL                           Project      Active
-----       ---                           -------      ------
-local      http://localhost:8000         (default)    *
-staging    https://ccdash-staging.com    my-project
-prod       https://ccdash-prod.com       (none)
+  Name     URL                           Token Ref        Project      Active
+------------------------------------------------------------------------
+* local    http://localhost:8000                                       *
+  staging  https://ccdash-staging.com    target:staging   my-project
+  prod     https://ccdash-prod.com                      production
 ```
 
 ### ccdash target add NAME URL
@@ -156,6 +168,8 @@ ccdash target add local http://localhost:8000
 ccdash target add staging https://ccdash-staging.example.com --project my-project
 ccdash target add prod https://ccdash-prod.example.com
 ```
+
+The CLI warns when a non-localhost target uses plain `http://`. Prefer `https://` for remote targets.
 
 ### ccdash target remove NAME
 
@@ -175,9 +189,28 @@ ccdash target use staging
 
 Updates `active_target` in `~/.config/ccdash/config.toml`.
 
+### ccdash target show [NAME]
+
+Show the resolved target state the CLI will use, including auth source and whether it came from config or the implicit local fallback.
+
+```bash
+ccdash target show
+ccdash target show staging
+```
+
+Example output:
+
+```
+Name: staging
+URL: https://ccdash-staging.example.com
+Project: my-project
+Authentication: token ref 'target:staging' (token loaded)
+Source: configured target
+```
+
 ### ccdash target login NAME [--token TOKEN]
 
-Store bearer token authentication for a target. Tokens are stored securely in the OS keyring (macOS Keychain, Linux Secret Service, Windows Credential Manager).
+Store bearer token authentication for a target. Tokens are stored securely in the OS keyring (macOS Keychain, Linux Secret Service, Windows Credential Manager). If no keyring backend is available, use `CCDASH_TOKEN` instead.
 
 Interactive prompt:
 
@@ -206,7 +239,7 @@ Future requests to this target will not include an `Authorization` header.
 
 ### ccdash target check NAME
 
-Verify connectivity and authentication for a target. Useful for diagnosing connection issues.
+Verify connectivity and authentication for a target. Use `target show` to inspect the resolved config locally; use `target check` to confirm live server reachability and whether the server accepts the current credentials.
 
 ```bash
 ccdash target check staging
@@ -215,21 +248,19 @@ ccdash target check staging
 Output on success:
 
 ```
-Target: staging
-URL: https://ccdash-staging.example.com
-Status: OK (200)
-Auth: Present (valid)
-API Version: 1.0
+Checking target 'staging' at https://ccdash-staging.example.com ...
+  Connection: OK
+  Auth:       OK
+  Instance:   staging  (version 0.1.0  env=api)
 ```
 
 Output on failure:
 
 ```
-Target: staging
-URL: https://ccdash-staging.example.com
-Status: ERROR (401)
-Auth: Present (invalid or expired)
-Try: ccdash target login staging
+Checking target 'staging' at https://ccdash-staging.example.com ...
+  Connection: OK
+  Auth:       FAILED (HTTP 401 — invalid or missing bearer token)
+  Tip: run 'ccdash target login staging' to store credentials.
 ```
 
 ## Status Commands
@@ -781,98 +812,65 @@ Output:
 
 ```
 CCDash CLI Doctor
-=================
+========================================
 
-Configuration:
-  Config file: /home/user/.config/ccdash/config.toml
-  Targets configured: 3 (local, staging, prod)
-  Active target: staging
+Target
+  Name:                 staging
+  URL:                  https://ccdash-staging.example.com
+  Source:               staging (from config)
+  Project:              my-project
+  Auth token:           present
 
-Target Resolution:
-  --target flag: Not specified (would use active target)
-  CCDASH_TARGET env: Not set
-  active_target in config: staging
-  Implicit fallback: local (http://localhost:8000)
-
-Active Target: staging
-  URL: https://ccdash-staging.example.com
-  Connectivity: OK (TCP connection successful)
-  HTTP Status: 200 OK
-  Auth: Present (bearer token in keyring)
-  Auth Status: VALID (server accepted token)
-  API Version: 1.0
-  Server Version: CCDash 0.8.0
-
-Per-Field Overrides:
-  CCDASH_URL: Not set (using target URL)
-  CCDASH_TOKEN: Not set (using keyring)
-  CCDASH_PROJECT: Not set (using target default: my-project)
-
-Summary:
-  Status: HEALTHY
-  All checks passed
+Server
+  Reachable:            PASS
+  Instance ID:          staging
+  Server version:       0.1.0
+  Environment:          api
+  Capabilities:         feature-documents, feature-sessions, instance
 ```
 
 Output on failure:
 
 ```
 CCDash CLI Doctor
-=================
+========================================
 
-[... snip ...]
+Target
+  Name:                 prod
+  URL:                  https://ccdash-prod.example.com
+  Source:               prod (from config)
+  Auth token:           not set (unauthenticated)
 
-Active Target: prod
-  URL: https://ccdash-prod.example.com
-  Connectivity: ERROR (connection refused)
-  HTTP Status: N/A
+Server
+  Reachable:            FAIL
 
-Summary:
-  Status: FAILED
-  Issues:
-    - Target 'prod' is not reachable
-    - Check firewall, VPN, or server status
-    - Fallback to 'local' or 'staging' for testing
+  Connection error: Cannot connect to CCDash server at https://ccdash-prod.example.com.
+
+  Verify the server is running and the URL is correct:
+    https://ccdash-prod.example.com
 ```
 
-### ccdash version
+### ccdash --version
 
-Display CLI and server version information.
+Display the standalone CLI package version.
 
 ```bash
-ccdash version
+ccdash --version
 ```
 
 Output:
 
 ```
-CCDash CLI
-  Version: 0.8.0
-  Python: 3.11.2
-  Installation: pipx (isolated)
-
-Active Target: staging
-  Server: https://ccdash-staging.example.com
-  Server Version: 0.8.0
-  API Version: 1.0
-
-Status: Compatible
+ccdash-cli 0.1.0
 ```
+
+Use `ccdash doctor` when you also need live server version and instance metadata.
 
 If CLI and server versions differ significantly:
 
 ```
-CCDash CLI
-  Version: 0.7.0
-  Python: 3.11.2
-
-Active Target: staging
-  Server: https://ccdash-staging.example.com
-  Server Version: 0.8.0
-  API Version: 1.0
-
-Status: WARNING - Version mismatch detected
-  CLI (0.7.0) vs Server (0.8.0)
-  Try: pipx upgrade ccdash-cli
+Error: API version mismatch. The server did not accept the expected /api/v1 surface.
+Try: pipx upgrade ccdash-cli
 ```
 
 ## Target Configuration
@@ -917,7 +915,7 @@ project = "production"
 - `url` — HTTP/HTTPS URL of the CCDash server (required)
 - `project` — default project ID for this target (optional; can be overridden with `--project`)
 
-Tokens are NOT stored in the config file; they are stored securely in the OS keyring via `ccdash target login`.
+Tokens are NOT stored in the config file; they are stored securely in the OS keyring via `ccdash target login`, or supplied per-process with `CCDASH_TOKEN`.
 
 ### Target Resolution Order
 
@@ -984,12 +982,15 @@ ccdash report aar --feature FEAT-123 > report.md
 
 ### Local Server (No Auth)
 
-For local development with `http://localhost:8000`:
+For local development with the implicit `local` target at `http://localhost:8000`:
 
 ```bash
+ccdash target show
 ccdash status project
-# No authentication required
+# Authentication: not configured
 ```
+
+If the server itself runs in a protected profile, local unauthenticated requests may still be rejected. The CLI only sends a bearer token when one resolves from the environment or keyring.
 
 ### Remote Server with Token
 
@@ -1017,11 +1018,13 @@ Non-interactive (for CI/CD):
 ccdash target login staging --token "sk-xyz123..."
 ```
 
-**Step 3: Verify connectivity**
+**Step 3: Inspect and verify**
 
 ```bash
+ccdash target show staging
 ccdash target check staging
-# Output: Status: OK, Auth: Valid
+# target show: resolved URL, project, auth source
+# target check: live connectivity and auth validation
 ```
 
 **Step 4: Use the target**
@@ -1037,8 +1040,7 @@ If a token expires:
 
 1. You'll see an authentication error:
    ```
-   Error: HTTP 401 - Unauthorized
-   Token may have expired. Try: ccdash target login staging
+   Error: Authentication failed (HTTP 401). Check your bearer token and retry.
    ```
 
 2. Re-login with a fresh token:
@@ -1274,8 +1276,10 @@ jobs:
 
 1. Check auth status:
    ```bash
+   ccdash target show staging
    ccdash target check staging
-   # Shows if token is present and valid
+   # target show: token source and resolved target
+   # target check: live credential validation
    ```
 
 2. Re-authenticate:
@@ -1314,8 +1318,9 @@ jobs:
 
 2. Check versions:
    ```bash
-   ccdash version
-   # Shows both CLI and server versions
+   ccdash --version
+   ccdash doctor
+   # --version shows the CLI package version; doctor shows live server metadata
    ```
 
 3. If multiple targets have different versions, use explicit `--target`:
@@ -1463,7 +1468,7 @@ ccdash report --help
 
 If you encounter bugs or unexpected behavior, open an issue on the CCDash repository with:
 
-- CLI version: `ccdash version`
+- CLI version: `ccdash --version`
 - Server version: `ccdash doctor`
 - Full error message with `--json` output
 - Reproduction steps
