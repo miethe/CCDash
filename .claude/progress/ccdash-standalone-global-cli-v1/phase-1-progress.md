@@ -6,11 +6,12 @@ prd: ccdash-standalone-global-cli-v1
 feature_slug: ccdash-standalone-global-cli-v1
 phase: 1
 status: completed
-created: 2026-04-12
+created: '2026-04-12'
 updated: '2026-04-13'
 prd_ref: docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md
 plan_ref: docs/project_plans/implementation_plans/features/ccdash-standalone-global-cli-v1.md
-commit_refs: []
+commit_refs:
+- e6e1bba
 pr_refs: []
 owners:
 - backend-architect
