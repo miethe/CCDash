@@ -10,14 +10,21 @@ without depending on any existing data on disk.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 
+from ccdash_contracts import ClientV1Envelope, ClientV1PaginatedEnvelope, FeatureSummaryDTO, InstanceMetaDTO
+
+from backend.adapters.auth import StaticBearerTokenIdentityProvider
+from backend.application.ports import CorePorts
 from backend.runtime.bootstrap import build_runtime_app
+from backend.runtime.profiles import get_runtime_profile
 
 
 class TestClientV1Contract(unittest.TestCase):
@@ -92,6 +99,36 @@ class TestClientV1Contract(unittest.TestCase):
         for field in ("total", "offset", "limit", "has_more"):
             self.assertIn(field, meta, f"paginated meta missing required field: {field}")
 
+    @contextmanager
+    def _api_bearer_auth_enabled(self, token: str = "test-token"):
+        container = self._app.state.runtime_container
+        original_profile = container.profile
+        original_runtime_profile = self._app.state.runtime_profile
+        original_app_ports = self._app.state.core_ports
+        original_container_ports = container.ports
+
+        auth_ports = CorePorts(
+            identity_provider=StaticBearerTokenIdentityProvider(),
+            authorization_policy=original_app_ports.authorization_policy,
+            workspace_registry=original_app_ports.workspace_registry,
+            storage=original_app_ports.storage,
+            job_scheduler=original_app_ports.job_scheduler,
+            integration_client=original_app_ports.integration_client,
+        )
+
+        container.profile = get_runtime_profile("api")
+        self._app.state.runtime_profile = container.profile
+        self._app.state.core_ports = auth_ports
+        container.ports = auth_ports
+        try:
+            with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": token}):
+                yield
+        finally:
+            container.profile = original_profile
+            self._app.state.runtime_profile = original_runtime_profile
+            self._app.state.core_ports = original_app_ports
+            container.ports = original_container_ports
+
     # ------------------------------------------------------------------
     # Instance
     # ------------------------------------------------------------------
@@ -119,12 +156,45 @@ class TestClientV1Contract(unittest.TestCase):
         body = self.client.get("/api/v1/instance").json()
         self._assert_meta_fields(body["meta"])
 
+    def test_instance_response_validates_against_shared_contract_package(self) -> None:
+        body = self.client.get("/api/v1/instance").json()
+        parsed = TypeAdapter(ClientV1Envelope[InstanceMetaDTO]).validate_python(body)
+
+        self.assertEqual(parsed.status, "ok")
+        self.assertEqual(parsed.data.instance_id, body["data"]["instance_id"])
+
     # ------------------------------------------------------------------
     # Project status
     # ------------------------------------------------------------------
 
     def test_project_status_returns_200(self) -> None:
         resp = self.client.get("/api/v1/project/status")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_project_status_requires_bearer_token_when_api_auth_is_enabled(self) -> None:
+        with self._api_bearer_auth_enabled():
+            resp = self.client.get("/api/v1/project/status")
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["detail"], "Bearer token required for /api/v1 requests.")
+
+    def test_project_status_rejects_invalid_bearer_token_when_api_auth_is_enabled(self) -> None:
+        with self._api_bearer_auth_enabled():
+            resp = self.client.get(
+                "/api/v1/project/status",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["detail"], "Bearer token rejected for /api/v1 request.")
+
+    def test_project_status_accepts_valid_bearer_token_when_api_auth_is_enabled(self) -> None:
+        with self._api_bearer_auth_enabled():
+            resp = self.client.get(
+                "/api/v1/project/status",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
         self.assertEqual(resp.status_code, 200)
 
     def test_project_status_envelope_has_required_fields(self) -> None:
@@ -171,6 +241,13 @@ class TestClientV1Contract(unittest.TestCase):
         body = self.client.get("/api/v1/features?limit=7&offset=3").json()
         self.assertEqual(body["meta"]["limit"], 7)
         self.assertEqual(body["meta"]["offset"], 3)
+
+    def test_features_list_response_validates_against_shared_contract_package(self) -> None:
+        body = self.client.get("/api/v1/features?limit=10&offset=0").json()
+        parsed = TypeAdapter(ClientV1PaginatedEnvelope[FeatureSummaryDTO]).validate_python(body)
+
+        self.assertEqual(parsed.meta.limit, 10)
+        self.assertIsInstance(parsed.data, list)
 
     # ------------------------------------------------------------------
     # Feature detail — not found

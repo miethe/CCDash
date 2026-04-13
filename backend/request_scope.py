@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 
+from backend.adapters.auth import RequestAuthenticationError
 from backend.application.context import RequestContext, RequestMetadata
 from backend.application.ports import CorePorts
 
@@ -43,6 +44,9 @@ async def get_request_context(
         path=request.url.path,
         client_host=request.client.host if request.client else None,
     )
-    context = await container.build_request_context(metadata)
+    try:
+        context = await container.build_request_context(metadata)
+    except RequestAuthenticationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     request.state.request_context = context
     return context
