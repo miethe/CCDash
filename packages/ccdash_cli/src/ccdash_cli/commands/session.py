@@ -59,13 +59,20 @@ def session_list(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(get_formatter(mode).render(body.get("data", []), title="Sessions"))
+    data = body.get("data", [])
+    meta = body.get("meta", {})
 
-    if mode == OutputMode.human:
-        meta = body.get("meta", {})
-        total = meta.get("total", "?")
-        shown = len(body.get("data", []))
-        typer.echo(f"\n({shown} shown, offset={offset}, total={total})")
+    typer.echo(get_formatter(mode).render(data, title="Sessions"))
+
+    if mode == OutputMode.human and meta:
+        total = meta.get("total", len(data) if isinstance(data, list) else 0)
+        shown = len(data) if isinstance(data, list) else 0
+        start = offset + 1 if shown else 0
+        end = offset + shown
+        summary = f"Showing {start}-{end} of {total} sessions"
+        if meta.get("has_more"):
+            summary += " (more available)"
+        typer.echo(summary)
 
 
 @session_app.command("show")
@@ -148,13 +155,20 @@ def session_search(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(get_formatter(mode).render(body.get("data", []), title=f'Search: "{query}"'))
+    data = body.get("data", [])
+    meta = body.get("meta", {})
 
-    if mode == OutputMode.human:
-        meta = body.get("meta", {})
-        total = meta.get("total", "?")
-        shown = len(body.get("data", []))
-        typer.echo(f"\n({shown} shown, offset={offset}, total={total})")
+    typer.echo(get_formatter(mode).render(data, title=f'Search: "{query}"'))
+
+    if mode == OutputMode.human and meta:
+        total = meta.get("total", len(data) if isinstance(data, list) else 0)
+        shown = len(data) if isinstance(data, list) else 0
+        start = offset + 1 if shown else 0
+        end = offset + shown
+        summary = f"Showing {start}-{end} of {total} results"
+        if meta.get("has_more"):
+            summary += " (more available)"
+        typer.echo(summary)
 
 
 @session_app.command("drilldown")
@@ -233,8 +247,12 @@ def session_family(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(get_formatter(mode).render(body.get("data", []), title=f"Session Family — {session_id}"))
+    data = body.get("data", {})
+    members = data.get("members", []) if isinstance(data, dict) else data
+
+    typer.echo(get_formatter(mode).render(members, title=f"Session Family — {session_id}"))
 
     if mode == OutputMode.human:
-        shown = len(body.get("data", []))
-        typer.echo(f"\n({shown} family member(s))")
+        count = data.get("session_count", len(members)) if isinstance(data, dict) else len(members)
+        root = data.get("root_session_id", session_id) if isinstance(data, dict) else session_id
+        typer.echo(f"{count} session(s) in family (root: {root})")
