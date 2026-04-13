@@ -5,7 +5,7 @@ title: CCDash Standalone Global CLI - Implementation Plan
 description: Phased implementation plan for turning CCDash into a true globally installed
   CLI backed by a versioned HTTP client contract, local-default targeting, remote-ready
   configuration, and expanded feature/session insight commands.
-status: in-progress
+status: completed
 created: '2026-04-12'
 updated: '2026-04-13'
 feature_slug: ccdash-standalone-global-cli

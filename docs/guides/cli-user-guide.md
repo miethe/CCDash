@@ -1,6 +1,8 @@
-# CLI User Guide
+# CLI User Guide (Repo-Local)
 
-This guide covers the CCDash CLI entry point installed from the repo's editable Python package.
+This guide covers the repo-local CCDash CLI entry point installed from the backend's editable Python package.
+
+> **Looking for the standalone CLI?** For the globally installable CLI that works from any terminal, see [`standalone-cli-guide.md`](standalone-cli-guide.md). For migration guidance, see [`cli-migration-guide.md`](cli-migration-guide.md).
 
 ## Setup
 
