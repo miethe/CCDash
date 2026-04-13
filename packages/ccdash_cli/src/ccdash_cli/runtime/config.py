@@ -23,6 +23,7 @@ import stat
 import warnings
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import tomllib
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 _IMPLICIT_LOCAL_URL = "http://localhost:8000"
 _DEFAULT_TARGET_NAME = "local"
 _KEYRING_SERVICE = "ccdash"
+_LOCAL_HTTP_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +410,7 @@ def resolve_target(
 
     # Normalise URL: strip trailing slash for consistency.
     url = url.rstrip("/")
+    _warn_on_insecure_remote_http(target_name, url)
 
     return TargetConfig(
         name=target_name,
@@ -415,4 +418,16 @@ def resolve_target(
         token=token,
         project=project,
         is_implicit_local=is_implicit_local,
+    )
+
+
+def _warn_on_insecure_remote_http(target_name: str, url: str) -> None:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if parsed.scheme != "http" or hostname in _LOCAL_HTTP_HOSTS or hostname is None:
+        return
+    warnings.warn(
+        f"Target '{target_name}' uses plain HTTP for a non-localhost endpoint ({url}). "
+        "Credentials and response data may be exposed in transit; prefer HTTPS.",
+        stacklevel=3,
     )

@@ -12,6 +12,13 @@ from ccdash_cli.runtime.config import resolve_target
 feature_app = typer.Typer(help="Feature investigations.")
 
 
+def _expand_csv_values(values: list[str] | None) -> list[str]:
+    expanded: list[str] = []
+    for value in values or []:
+        expanded.extend(item.strip() for item in value.split(",") if item.strip())
+    return expanded
+
+
 @feature_app.command("list")
 def feature_list(
     status: Optional[List[str]] = typer.Option(None, "--status", help="Filter by status (repeatable or comma-separated)."),
@@ -25,11 +32,7 @@ def feature_list(
     """List features with optional filters."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
-    # Expand comma-separated values so --status active,completed works too
-    expanded_statuses: list[str] = []
-    if status:
-        for s in status:
-            expanded_statuses.extend(v.strip() for v in s.split(",") if v.strip())
+    expanded_statuses = _expand_csv_values(status)
 
     params: dict = {"limit": limit, "offset": offset}
     if expanded_statuses:

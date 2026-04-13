@@ -1,6 +1,8 @@
 """Root Typer app for standalone CCDash CLI."""
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version as pkg_version
+
 import typer
 
 from ccdash_cli.commands.doctor import doctor_app
@@ -27,12 +29,34 @@ app.add_typer(report_app, name="report")
 app.add_typer(session_app, name="session")
 
 
+def _cli_version() -> str:
+    try:
+        return pkg_version("ccdash-cli")
+    except PackageNotFoundError:
+        return "0.1.0-dev"
+
+
+def _print_version_and_exit(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(f"ccdash-cli {_cli_version()}")
+    raise typer.Exit()
+
+
 @app.callback()
 def _global_options(
     target: str | None = typer.Option(None, "--target", help="Named target from config."),
     output: OutputMode | None = typer.Option(None, "--output", help="Default output format."),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version_and_exit,
+        is_eager=True,
+        help="Show CLI version and exit.",
+    ),
 ) -> None:
     """Global options applied to all sub-commands."""
+    _ = version
     if target is not None:
         app_state.TARGET_FLAG = target
     if output is not None:
@@ -42,9 +66,4 @@ def _global_options(
 @app.command()
 def version() -> None:
     """Show CLI version."""
-    from importlib.metadata import version as pkg_version
-    try:
-        ver = pkg_version("ccdash-cli")
-    except Exception:
-        ver = "0.1.0-dev"
-    typer.echo(f"ccdash-cli {ver}")
+    typer.echo(f"ccdash-cli {_cli_version()}")

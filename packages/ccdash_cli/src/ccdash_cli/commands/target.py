@@ -94,6 +94,44 @@ def target_add(
 
 
 # ---------------------------------------------------------------------------
+# show
+# ---------------------------------------------------------------------------
+
+
+@target_app.command("show")
+def target_show(
+    name: str | None = typer.Argument(
+        None,
+        help="Optional target name. Defaults to the resolved active target.",
+    ),
+) -> None:
+    """Show the resolved target configuration used by CLI commands."""
+    store = ConfigStore()
+    target = resolve_target(target_flag=name, config_store=store)
+    record = store.get_target(target.name) or {}
+    token_ref = record.get("token_ref")
+
+    if token_ref:
+        auth_state = (
+            f"token ref {token_ref!r} (token loaded)"
+            if target.token
+            else f"token ref {token_ref!r} (no token resolved)"
+        )
+    elif target.token:
+        auth_state = "token loaded from environment"
+    else:
+        auth_state = "not configured"
+
+    source = "implicit local fallback" if target.is_implicit_local else "configured target"
+
+    typer.echo(f"Name: {target.name}")
+    typer.echo(f"URL: {target.url}")
+    typer.echo(f"Project: {target.project or '-'}")
+    typer.echo(f"Authentication: {auth_state}")
+    typer.echo(f"Source: {source}")
+
+
+# ---------------------------------------------------------------------------
 # use
 # ---------------------------------------------------------------------------
 

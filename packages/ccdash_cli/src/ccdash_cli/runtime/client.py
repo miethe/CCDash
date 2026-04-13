@@ -13,6 +13,7 @@ Exit code contract (mirrors the design spec):
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -286,8 +287,8 @@ class CCDashClient:
     def check_version(self) -> None:
         """Verify that the server supports the expected API version.
 
-        Calls ``/api/v1/instance`` as a lightweight probe.  A ``404``
-        response indicates the server does not expose the ``{_EXPECTED_API_VERSION}``
+        Calls ``/api/v1/instance`` as a lightweight probe. A ``404``
+        response indicates the server does not expose the ``v1``
         API surface — either it predates v1 or is a completely different
         service.
 
@@ -354,8 +355,8 @@ class CCDashClient:
             raise ConnectionError(
                 f"Request to {self._base_url}{url} timed out after"
                 f" {self._timeout}s. The server may be overloaded or the"
-                " timeout too low. Increase with:"
-                " ccdash target add <name> --timeout <seconds>"
+                " network path may be slow. Verify the active target with:"
+                " ccdash target show"
             ) from exc
         except httpx.HTTPError as exc:
             raise ConnectionError(
@@ -423,7 +424,7 @@ class CCDashClient:
         """
         try:
             body: dict[str, Any] = response.json()
-        except Exception as exc:
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ServerError(
                 f"Invalid JSON response from {url}: {exc}; "
                 f"body={response.text[:200]!r}"
