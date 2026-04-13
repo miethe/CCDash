@@ -8,11 +8,7 @@ from ccdash_cli.commands.status import status_app
 from ccdash_cli.commands.target import target_app
 from ccdash_cli.commands.workflow import workflow_app
 from ccdash_cli.formatters import OutputMode
-
-# Module-level state written by the global --target / --output options so that
-# sub-commands can access them without passing values through the call stack.
-TARGET_FLAG: str | None = None
-OUTPUT_MODE: OutputMode = OutputMode.human
+from ccdash_cli.runtime import state as app_state
 
 app = typer.Typer(
     help="CCDash CLI — project intelligence from any terminal.",
@@ -31,11 +27,10 @@ def _global_options(
     output: OutputMode | None = typer.Option(None, "--output", help="Default output format."),
 ) -> None:
     """Global options applied to all sub-commands."""
-    global TARGET_FLAG, OUTPUT_MODE  # noqa: PLW0603
     if target is not None:
-        TARGET_FLAG = target
+        app_state.TARGET_FLAG = target
     if output is not None:
-        OUTPUT_MODE = output
+        app_state.OUTPUT_MODE = output
 
 
 @app.command()

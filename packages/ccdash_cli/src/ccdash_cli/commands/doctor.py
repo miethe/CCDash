@@ -43,8 +43,7 @@ def doctor_check(
 
     # --- Resolve target ---
     try:
-        # Import here to read the module-level TARGET_FLAG set by the root callback.
-        from ccdash_cli import main as app_state
+        from ccdash_cli.runtime import state as app_state
 
         effective_flag = target_flag or app_state.TARGET_FLAG
         target = resolve_target(target_flag=effective_flag)

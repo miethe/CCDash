@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import typer
 
-from ccdash_cli import main as app_state
+from ccdash_cli.runtime import state as app_state
 from ccdash_cli.formatters import OutputMode, get_formatter, resolve_output_mode
 from ccdash_cli.runtime.client import CCDashClient, CCDashClientError
 from ccdash_cli.runtime.config import resolve_target
