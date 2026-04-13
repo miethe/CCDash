@@ -1,0 +1,84 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/features/instance-command",
+  "title": "Instance command | Docs | IBM Bob",
+  "content": "FeedbackSwitch between IBM instances and teams using the /instance command.\n\nType /instance to open an interactive selection dialog where you can view and select from your available instances and teams.\n\nWhen you type /instance, an interactive table appears showing your available instances and teams. Navigate through options using keyboard controls and select the instance or team you want to use.\n\nType /instance to open the selection dialog.\n\nNavigate through available options using the arrow keys.\n\nThe highlighted option is marked with ●, and your current selection is marked with ★.\n\nPress Enter to select the highlighted instance or team.\n\nA success message displays your selection. Authentication refreshes automatically, and your selection persists across sessions.\n\nDuring first-time setup, you must select an instance before you can use Bob Shell. The Esc key is disabled until you complete the initial configuration.\n\nThe instance selection table displays different information depending on your plan type:\n\nEnterprise users see additional team information:\n\nIndividual plan users work with instances only:\n\nCreate custom slash commands to automate workflows and standardize team practices.\n\nBob has capabilities for coding and system interaction. To use safely, follow these guidelines.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Instance command",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Why use the instance command?",
+      "id": "why-use-the-instance-command"
+    },
+    {
+      "level": "h2",
+      "text": "How the instance command works",
+      "id": "how-the-instance-command-works"
+    },
+    {
+      "level": "h2",
+      "text": "Switching instances or teams",
+      "id": "switching-instances-or-teams"
+    },
+    {
+      "level": "h2",
+      "text": "Understanding the instance table",
+      "id": "understanding-the-instance-table"
+    },
+    {
+      "level": "h2",
+      "text": "Troubleshooting",
+      "id": "troubleshooting"
+    },
+    {
+      "level": "h3",
+      "text": "Cannot cancel during first-time setup",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Instance not appearing",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Selection not persisting",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

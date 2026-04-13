@@ -1,0 +1,134 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+  "title": "Keyboard shortcuts | Docs | IBM Bob",
+  "content": "FeedbackFind all available shortcuts by function, with platform-specific variations where applicable.\n\nEfficiently move through text and command history:\n\nEfficiently edit and modify text:\n\nControl Bob Shell's core functionality:\n\nAccess specialized functionality:\n\nOn macOS, many shortcuts use the Option key (also called Alt or ⌥) instead of Ctrl for word-based operations:\n\nSome shortcuts may be intercepted by your terminal emulator before reaching Bob Shell:\n\nYou can configure Bob Shell to match your workflow preferences.\n\nCustom rules influence how Bob Shell responds to your requests in the terminal environment, aligning output with your specific preferences and project requirements. You can control coding style, documentation approach, and decision-making processes.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Keyboard shortcuts",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Quick reference",
+      "id": "quick-reference"
+    },
+    {
+      "level": "h2",
+      "text": "Navigation shortcuts",
+      "id": "navigation-shortcuts"
+    },
+    {
+      "level": "h3",
+      "text": "Cursor movement",
+      "id": "cursor-movement"
+    },
+    {
+      "level": "h3",
+      "text": "History navigation",
+      "id": "history-navigation"
+    },
+    {
+      "level": "h2",
+      "text": "Editing shortcuts",
+      "id": "editing-shortcuts"
+    },
+    {
+      "level": "h3",
+      "text": "Text deletion",
+      "id": "text-deletion"
+    },
+    {
+      "level": "h3",
+      "text": "Text manipulation",
+      "id": "text-manipulation"
+    },
+    {
+      "level": "h2",
+      "text": "Application control",
+      "id": "application-control"
+    },
+    {
+      "level": "h3",
+      "text": "Session management",
+      "id": "session-management"
+    },
+    {
+      "level": "h3",
+      "text": "Mode toggles",
+      "id": "mode-toggles"
+    },
+    {
+      "level": "h2",
+      "text": "Special features",
+      "id": "special-features"
+    },
+    {
+      "level": "h3",
+      "text": "Suggestions and selections",
+      "id": "suggestions-and-selections"
+    },
+    {
+      "level": "h3",
+      "text": "Radio button selection",
+      "id": "radio-button-selection"
+    },
+    {
+      "level": "h3",
+      "text": "IDE integration",
+      "id": "ide-integration"
+    },
+    {
+      "level": "h2",
+      "text": "Platform-specific notes",
+      "id": "platform-specific-notes"
+    },
+    {
+      "level": "h3",
+      "text": "macOS users",
+      "id": "macos-users"
+    },
+    {
+      "level": "h3",
+      "text": "Terminal compatibility",
+      "id": "terminal-compatibility"
+    },
+    {
+      "level": "h2",
+      "text": "Keyboard shortcut tips",
+      "id": "keyboard-shortcut-tips"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

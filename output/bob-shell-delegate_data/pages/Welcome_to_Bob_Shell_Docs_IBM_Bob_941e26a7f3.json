@@ -1,0 +1,220 @@
+{
+  "url": "https://bob.ibm.com/docs/shell",
+  "title": "Welcome to Bob Shell | Docs | IBM Bob",
+  "content": "FeedbackBob Shell brings IBM Bob's AI capabilities to your command line.\n\nAs a terminal-based interface, Bob Shell provides AI-assistance for command-line tasks, script automation, and terminal-based workflows.\n\nBob Shell delivers the same context awareness and reasoning-focused approach from IBM Bob, but optimized for shell environments and automated processes.\n\nGenerate and optimize shell scripts for complex automation tasks.\n\nRun terminal commands with AI-powered assistance and validation.\n\nCreate comprehensive documentation for scripts and workflows.\n\nDebug command failures and resolve terminal-based problems.\n\nParse and analyze log files to identify issues and patterns.\n\nInitialize new projects and generate boilerplate code from the terminal.\n\nBob Shell adapts to your workflow with flexible ways to work:\n\nEngage in conversational sessions directly in your terminal\n\nRun commands or tasks for automation and scripting\n\nSeamlessly integrate into automated processes and workflows\n\nRun Bob Shell inside terminal views of supported editors\n\nInteractive sessions provide a conversational experience for complex tasks, while non-interactive sessions enable automation and scripting scenarios where Bob Shell can be invoked programmatically.\n\nUse interactive sessions for exploratory tasks and problem-solving. Switch to non-interactive sessions when you need to automate repetitive workflows or integrate Bob into scripts.\n\nBob Shell includes purpose-built modes that optimize behavior for different command-line scenarios:\n\nGenerate, modify, and refactor code from the command line.\n\nGet answers about your codebase and development questions.\n\nDesign and plan implementations before running them.\n\nAccess extended capabilities including MCP tools.\n\nEach mode is optimized for specific terminal-based development scenarios, allowing you to work efficiently without changing your communication approach.\n\nBob Shell provides comprehensive tools designed for terminal environments:\n\nRead, write, and manipulate files directly from the command line.\n\nRun shell commands with intelligent error handling and validation.\n\nMonitor and control running processes and system resources.\n\nExtend capabilities through the MCP (Model Context Protocol) framework for custom integrations.\n\nThese tools work seamlessly together, so you can accomplish complex terminal-based tasks without switching contexts or applications.\n\nModel Context Protocol (MCP) extends Bob Shell's capabilities with custom tools tailored for command-line workflows:\n\nMCP integration in Bob Shell can be used for DevOps workflows. Connect to monitoring systems, deployment tools, and infrastructure APIs to create comprehensive automation solutions.\n\nUse Bob Shell for automation tasks:\n\nAutomate repetitive development tasks with intelligent shell scripts.\n\nProcess multiple files or projects in automated workflows.\n\nExtend Bob Shell's functionality with custom modes and slash commands:\n\nReady to bring AI assistance to your terminal? Follow these steps to get up and running:\n\nStart by using Bob Shell for a task you're already familiar with. This helps you understand how Bob Shell interprets commands and provides assistance in a terminal context.\n\nNow that you understand what Bob Shell can do, explore these resources to deepen your knowledge:\n\nLearn how to use Bob Shell in interactive sessions for complex tasks.\n\nDiscover how to use Bob Shell in scripts and automation workflows.\n\nConfigure Bob Shell settings and customize your experience.\n\nMaster Bob Shell's slash commands for efficient terminal workflows.\n\nFind answers to common questions about Bob Shell.\n\nLearn about version-specific updates for Bob Shell.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Welcome to Bob Shell",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "What you can do with Bob Shell",
+      "id": "what-you-can-do-with-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Automate scripts",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Execute commands",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Generate documentation",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Troubleshoot issues",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Analyze logs",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Scaffold projects",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Key capabilities",
+      "id": "key-capabilities"
+    },
+    {
+      "level": "h3",
+      "text": "Flexible ways to run Bob Shell",
+      "id": "flexible-ways-to-run-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Interactive sessions",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Non-interactive sessions",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Automation support",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Editor terminal support",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Specialized modes",
+      "id": "specialized-modes"
+    },
+    {
+      "level": "h3",
+      "text": "Code mode",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Ask mode",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Plan mode",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Advanced mode",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Powerful command-line tools",
+      "id": "powerful-command-line-tools"
+    },
+    {
+      "level": "h3",
+      "text": "File operations",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Running commands",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Process management",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "External tools with MCP",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "MCP (Model Context Protocol) integration",
+      "id": "mcp-model-context-protocol-integration"
+    },
+    {
+      "level": "h3",
+      "text": "Automation capabilities",
+      "id": "automation-capabilities"
+    },
+    {
+      "level": "h3",
+      "text": "Script automation",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Batch processing",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Custom modes and slash commands",
+      "id": "custom-modes-and-slash-commands"
+    },
+    {
+      "level": "h2",
+      "text": "Getting started with Bob Shell",
+      "id": "getting-started-with-bob-shell"
+    },
+    {
+      "level": "h2",
+      "text": "Next steps",
+      "id": "next-steps"
+    },
+    {
+      "level": "h3",
+      "text": "Interactive sessions",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Non-interactive sessions",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Configuration guide",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Slash commands",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Frequently asked questions",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot",
+    "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell"
+  ]
+}

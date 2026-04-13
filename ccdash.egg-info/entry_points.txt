@@ -1,0 +1,2 @@
+[console_scripts]
+ccdash = backend.cli.main:app

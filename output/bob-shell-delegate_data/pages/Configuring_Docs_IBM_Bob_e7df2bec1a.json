@@ -1,0 +1,210 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/configuring",
+  "title": "Configuring | Docs | IBM Bob",
+  "content": "FeedbackYou can configure Bob Shell to match your workflow preferences.\n\nYou can configure Bob Shell using:\n\nBob Shell uses a layered configuration system where settings from different sources are combined according to a specific precedence order:\n\nWhen the same setting is defined in multiple places, the higher-priority source takes precedence.\n\nBob Shell looks for settings files in these locations:\n\nBob Shell settings are organized into categories. Each category contains related settings that control specific aspects of Bob Shell's behavior.\n\nControl basic Bob Shell behavior and preferences.\n\nCustomize Bob Shell's appearance and interface elements.\n\nControl how Bob Shell manages project context and memory.\n\nConfigure how Bob Shell uses and manages tools.\n\nConfigure Model Context Protocol server connections.\n\nFor each MCP server, you can configure:\n\nPass these arguments when starting Bob Shell to override settings for that session:\n\nContext files (like AGENTS.md) provide instructions to the AI model. These files are loaded hierarchically:\n\nSandboxing provides security when running potentially unsafe operations:\n\nYou can create custom sandbox environments:\n\nBuild and use your custom sandbox:\n\nThe create-pr command is not compatible with Sandbox sessions.\n\nBob Shell collects anonymous usage statistics to improve the product. This includes:\n\nNo personal information, prompt content, or file content is collected.\n\nTo opt out, add this to your settings:\n\nLearn how Bob Shell uses specialized tools to read files, edit code, run commands, and interact with your development environment from the command line.\n\nFind all available shortcuts by function, with platform-specific variations where applicable.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Configuring",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Getting started",
+      "id": "getting-started"
+    },
+    {
+      "level": "h2",
+      "text": "Configuration system",
+      "id": "configuration-system"
+    },
+    {
+      "level": "h3",
+      "text": "How configuration works",
+      "id": "how-configuration-works"
+    },
+    {
+      "level": "h3",
+      "text": "Settings file locations",
+      "id": "settings-file-locations"
+    },
+    {
+      "level": "h2",
+      "text": "Core settings categories",
+      "id": "core-settings-categories"
+    },
+    {
+      "level": "h3",
+      "text": "General settings",
+      "id": "general-settings"
+    },
+    {
+      "level": "h3",
+      "text": "UI settings",
+      "id": "ui-settings"
+    },
+    {
+      "level": "h3",
+      "text": "Context settings",
+      "id": "context-settings"
+    },
+    {
+      "level": "h3",
+      "text": "Tools settings",
+      "id": "tools-settings"
+    },
+    {
+      "level": "h3",
+      "text": "MCP settings",
+      "id": "mcp-settings"
+    },
+    {
+      "level": "h2",
+      "text": "Command-line arguments",
+      "id": "command-line-arguments"
+    },
+    {
+      "level": "h2",
+      "text": "Context files",
+      "id": "context-files"
+    },
+    {
+      "level": "h3",
+      "text": "Example context file",
+      "id": "example-context-file"
+    },
+    {
+      "level": "h3",
+      "text": "Managing context",
+      "id": "managing-context"
+    },
+    {
+      "level": "h2",
+      "text": "Sandboxing",
+      "id": "sandboxing"
+    },
+    {
+      "level": "h2",
+      "text": "Usage statistics",
+      "id": "usage-statistics"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "# Example: Start Bob Shell with sandbox mode enabled\nbob --sandbox",
+      "language": "markdown"
+    },
+    {
+      "code": "/etc/bobshell/settings.json",
+      "language": "unknown"
+    },
+    {
+      "code": "C:\\ProgramData\\bobshell\\settings.json",
+      "language": "yaml"
+    },
+    {
+      "code": "/Library/Application Support/Bob Shell/settings.json",
+      "language": "unknown"
+    },
+    {
+      "code": "/etc/bobshell/system-defaults.json",
+      "language": "unknown"
+    },
+    {
+      "code": "C:\\ProgramData\\bobshell\\system-defaults.json",
+      "language": "yaml"
+    },
+    {
+      "code": "/Library/Application\\ Support/Bob\\ Shell/system-defaults.json",
+      "language": "unknown"
+    },
+    {
+      "code": "{\n  \"general\": {\n    \"preferredEditor\": \"code\",\n    \"vimMode\": false,\n    \"disableAutoUpdate\": false,\n    \"disableUpdateNag\": false,\n    \"checkpointing\": {\n      \"enabled\": true\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"ui\": {\n    \"theme\": \"GitHub\",\n    \"hideBanner\": true,\n    \"hideTips\": false,\n    \"showLineNumbers\": true\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"context\": {\n    \"fileName\": [\"CONTEXT.md\", \"AGENTS.md\"],\n    \"discoveryMaxDirs\": 200,\n    \"includeDirectories\": [\"../shared-lib\", \"~/reference-code\"],\n    \"fileFiltering\": {\n      \"respectGitIgnore\": true,\n      \"respectBobIgnore\": true\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"tools\": {\n    \"sandbox\": \"docker\",\n    \"allowed\": [\"run_shell_command(git)\", \"run_shell_command(npm test)\"],\n    \"exclude\": [\"write_file\"]\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"mcpServers\": {\n    \"mainServer\": {\n      \"command\": \"bin/mcp_server.py\"\n    },\n    \"remoteServer\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer token123\"\n      }\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "# Start Bob Shell with specific settings\nbob --sandbox --approval-mode auto_edit",
+      "language": "markdown"
+    },
+    {
+      "code": "# Project: My TypeScript Library\n\n## General instructions\n\n- Follow existing coding style\n- Add JSDoc comments to all functions\n- Prefer functional programming patterns\n- Target TypeScript 5.0 and Node.js 20+\n\n## Coding style\n\n- Use 2 spaces for indentation\n- Interface names should be prefixed with `I`\n- Private class members should be prefixed with `_`\n- Use strict equality (`===` and `!==`)",
+      "language": "perl"
+    },
+    {
+      "code": "# Enable sandboxing for a session\nbob --sandbox",
+      "language": "markdown"
+    },
+    {
+      "code": "FROM bobshell-sandbox\n\n# Add custom dependencies\nRUN apt-get update && apt-get install -y python3-dev",
+      "language": "sql"
+    },
+    {
+      "code": "BUILD_SANDBOX=1 bob -s",
+      "language": "sass"
+    },
+    {
+      "code": "{\n  \"privacy\": {\n    \"usageStatisticsEnabled\": false\n  }\n}",
+      "language": "json"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellConfiguringConfiguringFeedbackYou can configure Bob Shell to match your workflow preferences.Copy MarkdownGetting started FeedbackYou can configure Bob Shell using: Feedback Project-specific settings: Create .bob/settings.json in your project directory User-wide settings: Edit ~/.bob/settings.json in your home directory Command-line arguments: Run --sandbox when starting Bob Shell # Example: Start Bob Shell with sandbox mode enabled bob --sandbox Configuration system How configuration works FeedbackBob Shell uses a layered configuration system where settings from different sources are combined according to a specific precedence order: PrioritySourceLocationScope1 (Highest)Command-line argumentsbob --option valueCurrent session2Environment variablesShell or .env filesSystem/session3System settings file/etc/bobshell/settings.jsonAll users, all projects4Project settings file.bob/settings.jsonCurrent project5User settings file~/.bob/settings.jsonCurrent user, all projects6System defaults file/etc/bobshell/system-defaults.jsonAll users, all projects7 (Lowest)Hardcoded defaultsBuilt into Bob ShellAlways applied FeedbackWhen the same setting is defined in multiple places, the higher-priority source takes precedence. Settings file locations FeedbackBob Shell looks for settings files in these locations: Feedback Project settings: .bob/settings.json in your project directory User settings: ~/.bob/settings.json in your home directory System settings: LinuxWindowsMacOS/etc/bobshell/settings.jsonC:\\ProgramData\\bobshell\\settings.json/Library/Application Support/Bob Shell/settings.json Feedback System defaults: LinuxWindowsMacOS/etc/bobshell/system-defaults.jsonC:\\ProgramData\\bobshell\\system-defaults.json/Library/Application\\ Support/Bob\\ Shell/system-defaults.json Core settings categories FeedbackBob Shell settings are organized into categories. Each category contains related settings that control specific aspects of Bob Shell's behavior. General settings FeedbackControl basic Bob Shell behavior and preferences. { \"general\": { \"preferredEditor\": \"code\", \"vimMode\": false, \"disableAutoUpdate\": false, \"disableUpdateNag\": false, \"checkpointing\": { \"enabled\": true } } } SettingTypeDefaultDescriptionpreferredEditorstringundefinedEditor to use when opening filesvimModebooleanfalseEnable Vim keybindingsdisableAutoUpdatebooleanfalsePrevent automatic updatesdisableUpdateNagbooleanfalseHide update notificationscheckpointing.enabledbooleanfalseEnable session checkpointing UI settings FeedbackCustomize Bob Shell's appearance and interface elements. { \"ui\": { \"theme\": \"GitHub\", \"hideBanner\": true, \"hideTips\": false, \"showLineNumbers\": true } } SettingTypeDefaultDescriptionthemestringundefinedUI color themecustomThemesobject{}Custom theme definitionshideWindowTitlebooleanfalseHide window title barhideTipsbooleanfalseHide helpful tipshideBannerbooleanfalseHide application bannerhideFooterbooleanfalseHide footershowMemoryUsagebooleanfalseShow memory usage statsshowLineNumbersbooleanfalseShow line numbers in chatshowCitationsbooleanfalseShow citations for generated textaccessibility.disableLoadingPhrasesbooleanfalseDisable loading phrases Context settings FeedbackControl how Bob Shell manages project context and memory. { \"context\": { \"fileName\": [\"CONTEXT.md\", \"AGENTS.md\"], \"discoveryMaxDirs\": 200, \"includeDirectories\": [\"../shared-lib\", \"~/reference-code\"], \"fileFiltering\": { \"respectGitIgnore\": true, \"respectBobIgnore\": true } } } SettingTypeDefaultDescriptionfileNamestring/arrayundefinedContext file name(s)importFormatstringundefinedMemory import formatdiscoveryMaxDirsnumber200Max directories to searchincludeDirectoriesarray[]Additional directories to includeloadFromIncludeDirectoriesbooleanfalseLoad context from included dirsfileFiltering.respectGitIgnorebooleantrueHonor .gitignore filesfileFiltering.respectBobIgnorebooleantrueHonor .bobignore filesfileFiltering.enableRecursiveFileSearchbooleantrueEnable recursive file search Tools settings FeedbackConfigure how Bob Shell uses and manages tools. { \"tools\": { \"sandbox\": \"docker\", \"allowed\": [\"run_shell_command(git)\", \"run_shell_command(npm test)\"], \"exclude\": [\"write_file\"] } } SettingTypeDefaultDescriptionsandboxboolean/stringundefinedSandbox running environmentusePtybooleanfalseUse node-pty for shell commandscorearrayundefinedRestrict built-in tools (allowlist)excludearrayundefinedTools to exclude from discoveryallowedarrayundefinedTools that bypass confirmationdiscoveryCommandstringundefinedCommand for tool discoverycallCommandstringundefinedCommand for calling tools MCP settings FeedbackConfigure Model Context Protocol server connections. { \"mcpServers\": { \"mainServer\": { \"command\": \"bin/mcp_server.py\" }, \"remoteServer\": { \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer token123\" } } } } SettingTypeDefaultDescriptionmcp.serverCommandstringundefinedCommand to start MCP servermcp.allowedarrayundefinedAllowlist of MCP serversmcp.excludedarrayundefinedDenylist of MCP serversmcpServers.<SERVER_NAME>object-Server-specific configuration FeedbackFor each MCP server, you can configure: Feedback command: Command to run (for local servers) args: Command-line arguments env: Environment variables cwd: Working directory url: Server-Sent Events (SSE) endpoint URL (for remote servers) httpUrl: HTTP endpoint URL (for remote servers) headers: HTTP headers for requests timeout: Request timeout in milliseconds trust: Trust server and bypass confirmations includeTools: Tool names to include excludeTools: Tool names to exclude Command-line arguments FeedbackPass these arguments when starting Bob Shell to override settings for that session: # Start Bob Shell with specific settings bob --sandbox --approval-mode auto_edit ArgumentDescriptionExample--prompt, -pNon-interactive promptbob -p \"Explain this code\"--prompt-interactive, -iInteractive initial promptbob -i \"Help me debug\"--sandbox, -sEnable sandbox modebob -s--debug, -dEnable debug modebob -d--yoloAuto-approve all tool callsbob --yolo--approval-modeSet tool approval modebob --approval-mode=auto_edit--allowed-toolsTools to auto-approvebob --allowed-tools=\"git status\"--include-directoriesAdd directories to workspacebob --include-directories=../lib--chat-modeChoose the mode for interactionbob --chat-mode--hide-intermediary-outputOutput only the final task completion outputbob --hide-intermediary-output--show-licenseShow full path to license files for reviewbob --show-license--accept-licenseAccept the IBM license agreement and continuebob --accept-license--instance-idInstance ID to use for this Bob Shell sessionbob --instance-id=my-instance--team-idTeam ID to use for this Bob Shell sessionbob --team-id=my-team Context files FeedbackContext files (like AGENTS.md) provide instructions to the AI model. These files are loaded hierarchically: Feedback Global context: ~/.bob/AGENTS.md (applies to all projects) Project context: AGENTS.md in project root and parent directories Local context: AGENTS.md in subdirectories (for component-specific instructions) Example context file # Project: My TypeScript Library ## General instructions - Follow existing coding style - Add JSDoc comments to all functions - Prefer functional programming patterns - Target TypeScript 5.0 and Node.js 20+ ## Coding style - Use 2 spaces for indentation - Interface names should be prefixed with `I` - Private class members should be prefixed with `_` - Use strict equality (`===` and `!==`) Managing context Feedback Use /memory refresh to reload all context files Use /memory show to view the current context Sandboxing FeedbackSandboxing provides security when running potentially unsafe operations: # Enable sandboxing for a session bob --sandbox FeedbackYou can create custom sandbox environments: Feedback Create .bob/sandbox.Dockerfile in your project Base it on the bobshell-sandbox image Add your custom dependencies FROM bobshell-sandbox # Add custom dependencies RUN apt-get update && apt-get install -y python3-dev FeedbackBuild and use your custom sandbox: BUILD_SANDBOX=1 bob -s Note:FeedbackThe create-pr command is not compatible with Sandbox sessions. Usage statistics FeedbackBob Shell collects anonymous usage statistics to improve the product. This includes: Feedback Tool usage patterns (names, success/failure, duration) API request metrics (model, duration, success) Session configuration information FeedbackNo personal information, prompt content, or file content is collected. FeedbackTo opt out, add this to your settings: { \"privacy\": { \"usageStatisticsEnabled\": false } }How is this topic?GoodBadToolsLearn how Bob Shell uses specialized tools to read files, edit code, run commands, and interact with your development environment from the command line.Keyboard shortcutsFind all available shortcuts by function, with platform-specific variations where applicable.On this pageGetting startedConfiguration systemHow configuration worksSettings file locationsCore settings categoriesGeneral settingsUI settingsContext settingsTools settingsMCP settingsCommand-line argumentsContext filesExample context fileManaging contextSandboxingUsage statistics",
+      "code": "# Example: Start Bob Shell with sandbox mode enabled\nbob --sandbox"
+    },
+    {
+      "description": "Getting started FeedbackYou can configure Bob Shell using: Feedback Project-specific settings: Create .bob/settings.json in your project directory User-wide settings: Edit ~/.bob/settings.json in your home directory Command-line arguments: Run --sandbox when starting Bob Shell # Example: Start Bob Shell with sandbox mode enabled bob --sandbox Configuration system How configuration works FeedbackBob Shell uses a layered configuration system where settings from different sources are combined according to a specific precedence order: PrioritySourceLocationScope1 (Highest)Command-line argumentsbob --option valueCurrent session2Environment variablesShell or .env filesSystem/session3System settings file/etc/bobshell/settings.jsonAll users, all projects4Project settings file.bob/settings.jsonCurrent project5User settings file~/.bob/settings.jsonCurrent user, all projects6System defaults file/etc/bobshell/system-defaults.jsonAll users, all projects7 (Lowest)Hardcoded defaultsBuilt into Bob ShellAlways applied FeedbackWhen the same setting is defined in multiple places, the higher-priority source takes precedence. Settings file locations FeedbackBob Shell looks for settings files in these locations: Feedback Project settings: .bob/settings.json in your project directory User settings: ~/.bob/settings.json in your home directory System settings: LinuxWindowsMacOS/etc/bobshell/settings.jsonC:\\ProgramData\\bobshell\\settings.json/Library/Application Support/Bob Shell/settings.json Feedback System defaults: LinuxWindowsMacOS/etc/bobshell/system-defaults.jsonC:\\ProgramData\\bobshell\\system-defaults.json/Library/Application\\ Support/Bob\\ Shell/system-defaults.json Core settings categories FeedbackBob Shell settings are organized into categories. Each category contains related settings that control specific aspects of Bob Shell's behavior. General settings FeedbackControl basic Bob Shell behavior and preferences. { \"general\": { \"preferredEditor\": \"code\", \"vimMode\": false, \"disableAutoUpdate\": false, \"disableUpdateNag\": false, \"checkpointing\": { \"enabled\": true } } } SettingTypeDefaultDescriptionpreferredEditorstringundefinedEditor to use when opening filesvimModebooleanfalseEnable Vim keybindingsdisableAutoUpdatebooleanfalsePrevent automatic updatesdisableUpdateNagbooleanfalseHide update notificationscheckpointing.enabledbooleanfalseEnable session checkpointing UI settings FeedbackCustomize Bob Shell's appearance and interface elements. { \"ui\": { \"theme\": \"GitHub\", \"hideBanner\": true, \"hideTips\": false, \"showLineNumbers\": true } } SettingTypeDefaultDescriptionthemestringundefinedUI color themecustomThemesobject{}Custom theme definitionshideWindowTitlebooleanfalseHide window title barhideTipsbooleanfalseHide helpful tipshideBannerbooleanfalseHide application bannerhideFooterbooleanfalseHide footershowMemoryUsagebooleanfalseShow memory usage statsshowLineNumbersbooleanfalseShow line numbers in chatshowCitationsbooleanfalseShow citations for generated textaccessibility.disableLoadingPhrasesbooleanfalseDisable loading phrases Context settings FeedbackControl how Bob Shell manages project context and memory. { \"context\": { \"fileName\": [\"CONTEXT.md\", \"AGENTS.md\"], \"discoveryMaxDirs\": 200, \"includeDirectories\": [\"../shared-lib\", \"~/reference-code\"], \"fileFiltering\": { \"respectGitIgnore\": true, \"respectBobIgnore\": true } } } SettingTypeDefaultDescriptionfileNamestring/arrayundefinedContext file name(s)importFormatstringundefinedMemory import formatdiscoveryMaxDirsnumber200Max directories to searchincludeDirectoriesarray[]Additional directories to includeloadFromIncludeDirectoriesbooleanfalseLoad context from included dirsfileFiltering.respectGitIgnorebooleantrueHonor .gitignore filesfileFiltering.respectBobIgnorebooleantrueHonor .bobignore filesfileFiltering.enableRecursiveFileSearchbooleantrueEnable recursive file search Tools settings FeedbackConfigure how Bob Shell uses and manages tools. { \"tools\": { \"sandbox\": \"docker\", \"allowed\": [\"run_shell_command(git)\", \"run_shell_command(npm test)\"], \"exclude\": [\"write_file\"] } } SettingTypeDefaultDescriptionsandboxboolean/stringundefinedSandbox running environmentusePtybooleanfalseUse node-pty for shell commandscorearrayundefinedRestrict built-in tools (allowlist)excludearrayundefinedTools to exclude from discoveryallowedarrayundefinedTools that bypass confirmationdiscoveryCommandstringundefinedCommand for tool discoverycallCommandstringundefinedCommand for calling tools MCP settings FeedbackConfigure Model Context Protocol server connections. { \"mcpServers\": { \"mainServer\": { \"command\": \"bin/mcp_server.py\" }, \"remoteServer\": { \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer token123\" } } } } SettingTypeDefaultDescriptionmcp.serverCommandstringundefinedCommand to start MCP servermcp.allowedarrayundefinedAllowlist of MCP serversmcp.excludedarrayundefinedDenylist of MCP serversmcpServers.<SERVER_NAME>object-Server-specific configuration FeedbackFor each MCP server, you can configure: Feedback command: Command to run (for local servers) args: Command-line arguments env: Environment variables cwd: Working directory url: Server-Sent Events (SSE) endpoint URL (for remote servers) httpUrl: HTTP endpoint URL (for remote servers) headers: HTTP headers for requests timeout: Request timeout in milliseconds trust: Trust server and bypass confirmations includeTools: Tool names to include excludeTools: Tool names to exclude Command-line arguments FeedbackPass these arguments when starting Bob Shell to override settings for that session: # Start Bob Shell with specific settings bob --sandbox --approval-mode auto_edit ArgumentDescriptionExample--prompt, -pNon-interactive promptbob -p \"Explain this code\"--prompt-interactive, -iInteractive initial promptbob -i \"Help me debug\"--sandbox, -sEnable sandbox modebob -s--debug, -dEnable debug modebob -d--yoloAuto-approve all tool callsbob --yolo--approval-modeSet tool approval modebob --approval-mode=auto_edit--allowed-toolsTools to auto-approvebob --allowed-tools=\"git status\"--include-directoriesAdd directories to workspacebob --include-directories=../lib--chat-modeChoose the mode for interactionbob --chat-mode--hide-intermediary-outputOutput only the final task completion outputbob --hide-intermediary-output--show-licenseShow full path to license files for reviewbob --show-license--accept-licenseAccept the IBM license agreement and continuebob --accept-license--instance-idInstance ID to use for this Bob Shell sessionbob --instance-id=my-instance--team-idTeam ID to use for this Bob Shell sessionbob --team-id=my-team Context files FeedbackContext files (like AGENTS.md) provide instructions to the AI model. These files are loaded hierarchically: Feedback Global context: ~/.bob/AGENTS.md (applies to all projects) Project context: AGENTS.md in project root and parent directories Local context: AGENTS.md in subdirectories (for component-specific instructions) Example context file # Project: My TypeScript Library ## General instructions - Follow existing coding style - Add JSDoc comments to all functions - Prefer functional programming patterns - Target TypeScript 5.0 and Node.js 20+ ## Coding style - Use 2 spaces for indentation - Interface names should be prefixed with `I` - Private class members should be prefixed with `_` - Use strict equality (`===` and `!==`) Managing context Feedback Use /memory refresh to reload all context files Use /memory show to view the current context Sandboxing FeedbackSandboxing provides security when running potentially unsafe operations: # Enable sandboxing for a session bob --sandbox FeedbackYou can create custom sandbox environments: Feedback Create .bob/sandbox.Dockerfile in your project Base it on the bobshell-sandbox image Add your custom dependencies FROM bobshell-sandbox # Add custom dependencies RUN apt-get update && apt-get install -y python3-dev FeedbackBuild and use your custom sandbox: BUILD_SANDBOX=1 bob -s Note:FeedbackThe create-pr command is not compatible with Sandbox sessions. Usage statistics FeedbackBob Shell collects anonymous usage statistics to improve the product. This includes: Feedback Tool usage patterns (names, success/failure, duration) API request metrics (model, duration, success) Session configuration information FeedbackNo personal information, prompt content, or file content is collected. FeedbackTo opt out, add this to your settings: { \"privacy\": { \"usageStatisticsEnabled\": false } }",
+      "code": "# Example: Start Bob Shell with sandbox mode enabled\nbob --sandbox"
+    },
+    {
+      "description": "# Example: Start Bob Shell with sandbox mode enabled bob --sandbox",
+      "code": "# Example: Start Bob Shell with sandbox mode enabled\nbob --sandbox"
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

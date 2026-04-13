@@ -1,0 +1,143 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell",
+  "title": "MCP | Docs | IBM Bob",
+  "content": "FeedbackBob Shell supports the Model Context Protocol (MCP), allowing you to extend Bob's capabilities by connecting to external services and tools. This guide explains how to configure and use MCP servers with Bob Shell.\n\nAn MCP (Model Context Protocol) server acts as a bridge between Bob and external services like databases, APIs, or custom scripts. With MCP, you can extend Bob's capabilities beyond its built-in features.\n\nMCP servers provide Bob with:\n\nYou can manage MCP server configurations at two levels:\n\nWhen a server name exists in both global and project configurations, the project-level configuration takes precedence.\n\nUse Bob IDE, or another text editor, to modify your MCP settings files.\n\nRefer to the following example:\n\nEach server configuration requires one of these properties:\n\nOptional properties include:\n\nMCP supports two ways to communicate with servers:\n\nSTDIO transport runs servers locally on your machine:\n\nExample configuration:\n\nSSE transport connects to remote servers over HTTP/HTTPS:\n\nExample configuration:\n\nWhen using version managers like asdf or mise:\n\nLearn about the telemetry data Bob Shell can collect, how it's used to improve the product, and how to enable or disable data collection.\n\nCreate automatic snapshots of your project before applying changes.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "MCP",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "What is MCP?",
+      "id": "what-is-mcp"
+    },
+    {
+      "level": "h2",
+      "text": "Why use MCP?",
+      "id": "why-use-mcp"
+    },
+    {
+      "level": "h2",
+      "text": "Configuring MCP servers",
+      "id": "configuring-mcp-servers"
+    },
+    {
+      "level": "h3",
+      "text": "Edit MCP settings files",
+      "id": "edit-mcp-settings-files"
+    },
+    {
+      "level": "h3",
+      "text": "Configuration properties",
+      "id": "configuration-properties"
+    },
+    {
+      "level": "h2",
+      "text": "Transport types",
+      "id": "transport-types"
+    },
+    {
+      "level": "h3",
+      "text": "STDIO transport",
+      "id": "stdio-transport"
+    },
+    {
+      "level": "h3",
+      "text": "SSE transport",
+      "id": "sse-transport"
+    },
+    {
+      "level": "h2",
+      "text": "Platform-specific examples",
+      "id": "platform-specific-examples"
+    },
+    {
+      "level": "h3",
+      "text": "Windows configuration",
+      "id": "windows-configuration"
+    },
+    {
+      "level": "h3",
+      "text": "macOS and Linux configuration",
+      "id": "macos-and-linux-configuration"
+    },
+    {
+      "level": "h3",
+      "text": "Runtime version manager configuration",
+      "id": "runtime-version-manager-configuration"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "{\n  \"mcpServers\": {\n    \"server1\": {\n      \"command\": \"python\",\n      \"args\": [\"/path/to/server.py\"],\n      \"env\": {\n        \"API_KEY\": \"your_api_key\"\n      },\n      \"alwaysAllow\": [\"tool1\", \"tool2\"],\n      \"disabled\": false\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n \"mcpServers\": {\n   \"local-server\": {\n     \"command\": \"node\",\n     \"args\": [\"server.js\"],\n     \"cwd\": \"/path/to/project/Bob\",\n     \"env\": {\n       \"API_KEY\": \"your_api_key\"\n     },\n     \"alwaysAllow\": [\"tool1\", \"tool2\"]\n   }\n }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n \"mcpServers\": {\n   \"remote-server\": {\n     \"url\": \"https://your-server-url.com/mcp\",\n     \"headers\": {\n       \"Authorization\": \"Bearer your-token\"\n     },\n     \"alwaysAllow\": [\"tool3\"]\n   }\n }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"mcpServers\": {\n    \"puppeteer\": {\n      \"command\": \"cmd\",\n      \"args\": [\n        \"/c\",\n        \"npx\",\n        \"-y\",\n        \"@modelcontextprotocol/server-puppeteer\"\n      ]\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"mcpServers\": {\n    \"puppeteer\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"@modelcontextprotocol/server-puppeteer\"\n      ]\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"mcpServers\": {\n    \"mcp-batchit\": {\n      \"command\": \"mise\",\n      \"args\": [\n        \"x\",\n        \"--\",\n        \"node\",\n        \"/Users/myself/workspace/mcp-batchit/build/index.js\"\n      ],\n      \"alwaysAllow\": [\n        \"search\",\n        \"batch_execute\"\n      ]\n    }\n  }\n}",
+      "language": "json"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellMCPMCPMCPFeedbackBob Shell supports the Model Context Protocol (MCP), allowing you to extend Bob's capabilities by connecting to external services and tools. This guide explains how to configure and use MCP servers with Bob Shell.Copy MarkdownWhat is MCP? FeedbackAn MCP (Model Context Protocol) server acts as a bridge between Bob and external services like databases, APIs, or custom scripts. With MCP, you can extend Bob's capabilities beyond its built-in features. FeedbackMCP servers provide Bob with: Feedback Tool discovery: Access to available tools with their descriptions and parameters Tool invocation: The ability to call specific tools with arguments and receive structured responses Resource access: The capability to read data from specific resources Why use MCP? Feedback Extend functionality: Add custom capabilities to Bob that aren't available out-of-the-box Integrate with services: Connect Bob to your databases, APIs, and other systems Automate workflows: Create specialized tools for your specific needs Share capabilities: Distribute useful tools across your team Configuring MCP servers FeedbackYou can manage MCP server configurations at two levels: Feedback Global configuration: Settings in <USER_HOME>/.bob/mcp_settings.json apply to all workspaces Project-level configuration: Settings in .bob/mcp.json apply only to the current project FeedbackWhen a server name exists in both global and project configurations, the project-level configuration takes precedence. Edit MCP settings files FeedbackUse Bob IDE, or another text editor, to modify your MCP settings files. FeedbackRefer to the following example: { \"mcpServers\": { \"server1\": { \"command\": \"python\", \"args\": [\"/path/to/server.py\"], \"env\": { \"API_KEY\": \"your_api_key\" }, \"alwaysAllow\": [\"tool1\", \"tool2\"], \"disabled\": false } } } Configuration properties FeedbackEach server configuration requires one of these properties: Feedback command: Path to the executable for Stdio transport url: SSE endpoint URL for remote servers httpURL: HTTP endpoint URL for streamable http FeedbackOptional properties include: Feedback args: Command-line arguments for Stdio transport headers: Custom HTTP headers for SSE transport env: Environment variables for the server process cwd: Working directory for Stdio transport timeout: Request timeout in milliseconds (default: 600,000ms; 10min) alwaysAllow: Tool names to approve automatically disabled: Set to true to disable the server Transport types FeedbackMCP supports two ways to communicate with servers: STDIO transport FeedbackSTDIO transport runs servers locally on your machine: Feedback Uses standard input/output streams for communication Provides lower latency and better security Runs as a child process on your machine FeedbackExample configuration: { \"mcpServers\": { \"local-server\": { \"command\": \"node\", \"args\": [\"server.js\"], \"cwd\": \"/path/to/project/Bob\", \"env\": { \"API_KEY\": \"your_api_key\" }, \"alwaysAllow\": [\"tool1\", \"tool2\"] } } } SSE transport FeedbackSSE transport connects to remote servers over HTTP/HTTPS: Feedback Uses Server-Sent Events protocol Works with servers hosted on different machines Requires network access FeedbackExample configuration: { \"mcpServers\": { \"remote-server\": { \"url\": \"https://your-server-url.com/mcp\", \"headers\": { \"Authorization\": \"Bearer your-token\" }, \"alwaysAllow\": [\"tool3\"] } } } Platform-specific examples Windows configuration { \"mcpServers\": { \"puppeteer\": { \"command\": \"cmd\", \"args\": [ \"/c\", \"npx\", \"-y\", \"@modelcontextprotocol/server-puppeteer\" ] } } } macOS and Linux configuration { \"mcpServers\": { \"puppeteer\": { \"command\": \"npx\", \"args\": [ \"-y\", \"@modelcontextprotocol/server-puppeteer\" ] } } } Runtime version manager configuration FeedbackWhen using version managers like asdf or mise: { \"mcpServers\": { \"mcp-batchit\": { \"command\": \"mise\", \"args\": [ \"x\", \"--\", \"node\", \"/Users/myself/workspace/mcp-batchit/build/index.js\" ], \"alwaysAllow\": [ \"search\", \"batch_execute\" ] } } }How is this topic?GoodBadTelemetry dataLearn about the telemetry data Bob Shell can collect, how it's used to improve the product, and how to enable or disable data collection.CheckpointingCreate automatic snapshots of your project before applying changes.On this pageWhat is MCP?Why use MCP?Configuring MCP serversEdit MCP settings filesConfiguration propertiesTransport typesSTDIO transportSSE transportPlatform-specific examplesWindows configurationmacOS and Linux configurationRuntime version manager configuration",
+      "code": "{\n  \"mcpServers\": {\n    \"server1\": {\n      \"command\": \"python\",\n      \"args\": [\"/path/to/server.py\"],\n      \"env\": {\n        \"API_KEY\": \"your_api_key\"\n      },\n      \"alwaysAllow\": [\"tool1\", \"tool2\"],\n      \"disabled\": false\n    }\n  }\n}"
+    },
+    {
+      "description": "What is MCP? FeedbackAn MCP (Model Context Protocol) server acts as a bridge between Bob and external services like databases, APIs, or custom scripts. With MCP, you can extend Bob's capabilities beyond its built-in features. FeedbackMCP servers provide Bob with: Feedback Tool discovery: Access to available tools with their descriptions and parameters Tool invocation: The ability to call specific tools with arguments and receive structured responses Resource access: The capability to read data from specific resources Why use MCP? Feedback Extend functionality: Add custom capabilities to Bob that aren't available out-of-the-box Integrate with services: Connect Bob to your databases, APIs, and other systems Automate workflows: Create specialized tools for your specific needs Share capabilities: Distribute useful tools across your team Configuring MCP servers FeedbackYou can manage MCP server configurations at two levels: Feedback Global configuration: Settings in <USER_HOME>/.bob/mcp_settings.json apply to all workspaces Project-level configuration: Settings in .bob/mcp.json apply only to the current project FeedbackWhen a server name exists in both global and project configurations, the project-level configuration takes precedence. Edit MCP settings files FeedbackUse Bob IDE, or another text editor, to modify your MCP settings files. FeedbackRefer to the following example: { \"mcpServers\": { \"server1\": { \"command\": \"python\", \"args\": [\"/path/to/server.py\"], \"env\": { \"API_KEY\": \"your_api_key\" }, \"alwaysAllow\": [\"tool1\", \"tool2\"], \"disabled\": false } } } Configuration properties FeedbackEach server configuration requires one of these properties: Feedback command: Path to the executable for Stdio transport url: SSE endpoint URL for remote servers httpURL: HTTP endpoint URL for streamable http FeedbackOptional properties include: Feedback args: Command-line arguments for Stdio transport headers: Custom HTTP headers for SSE transport env: Environment variables for the server process cwd: Working directory for Stdio transport timeout: Request timeout in milliseconds (default: 600,000ms; 10min) alwaysAllow: Tool names to approve automatically disabled: Set to true to disable the server Transport types FeedbackMCP supports two ways to communicate with servers: STDIO transport FeedbackSTDIO transport runs servers locally on your machine: Feedback Uses standard input/output streams for communication Provides lower latency and better security Runs as a child process on your machine FeedbackExample configuration: { \"mcpServers\": { \"local-server\": { \"command\": \"node\", \"args\": [\"server.js\"], \"cwd\": \"/path/to/project/Bob\", \"env\": { \"API_KEY\": \"your_api_key\" }, \"alwaysAllow\": [\"tool1\", \"tool2\"] } } } SSE transport FeedbackSSE transport connects to remote servers over HTTP/HTTPS: Feedback Uses Server-Sent Events protocol Works with servers hosted on different machines Requires network access FeedbackExample configuration: { \"mcpServers\": { \"remote-server\": { \"url\": \"https://your-server-url.com/mcp\", \"headers\": { \"Authorization\": \"Bearer your-token\" }, \"alwaysAllow\": [\"tool3\"] } } } Platform-specific examples Windows configuration { \"mcpServers\": { \"puppeteer\": { \"command\": \"cmd\", \"args\": [ \"/c\", \"npx\", \"-y\", \"@modelcontextprotocol/server-puppeteer\" ] } } } macOS and Linux configuration { \"mcpServers\": { \"puppeteer\": { \"command\": \"npx\", \"args\": [ \"-y\", \"@modelcontextprotocol/server-puppeteer\" ] } } } Runtime version manager configuration FeedbackWhen using version managers like asdf or mise: { \"mcpServers\": { \"mcp-batchit\": { \"command\": \"mise\", \"args\": [ \"x\", \"--\", \"node\", \"/Users/myself/workspace/mcp-batchit/build/index.js\" ], \"alwaysAllow\": [ \"search\", \"batch_execute\" ] } } }",
+      "code": "{\n  \"mcpServers\": {\n    \"server1\": {\n      \"command\": \"python\",\n      \"args\": [\"/path/to/server.py\"],\n      \"env\": {\n        \"API_KEY\": \"your_api_key\"\n      },\n      \"alwaysAllow\": [\"tool1\", \"tool2\"],\n      \"disabled\": false\n    }\n  }\n}"
+    },
+    {
+      "description": "Refer to the following example:",
+      "code": "{\n  \"mcpServers\": {\n    \"server1\": {\n      \"command\": \"python\",\n      \"args\": [\"/path/to/server.py\"],\n      \"env\": {\n        \"API_KEY\": \"your_api_key\"\n      },\n      \"alwaysAllow\": [\"tool1\", \"tool2\"],\n      \"disabled\": false\n    }\n  }\n}"
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

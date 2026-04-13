@@ -1,0 +1,163 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+  "title": "Custom rules | Docs | IBM Bob",
+  "content": "FeedbackCustom rules influence how Bob Shell responds to your requests in the terminal environment, aligning output with your specific preferences and project requirements. You can control coding style, documentation approach, and decision-making processes.\n\nCustom rules extend Bob Shell's default behavior by defining preferences, constraints, and guidelines that direct how Bob Shell approaches tasks to match your needs when working in the terminal environment.\n\nBob Shell supports two rule scopes that determine where your rules apply:\n\nUse global rules for personal or organization-wide standards. Use workspace rules for project-specific requirements.\n\nBob Shell uses the same custom rules system as IBM Bob IDE.\n\nThe simplest approach uses single files in your workspace root:\n\nCreate a .bobrules file:\n\nFor better organization, use directories:\n\nLinux/macOS: ~/.bob/rules/ Windows: %USERPROFILE%\\.bob\\rules\\\n\nCreate workspace rules:\n\nBob Shell combines rules from multiple sources in this order:\n\nWithin each level, mode-specific rules load before general rules. Workspace rules can override global rules.\n\nGood: \"Always use relative paths when suggesting file operations in the terminal\"\n\nAvoid: \"Use good paths\"\n\nOrganize rules by topic:\n\nTarget specific modes with dedicated directories:\n\nFor team standardization, you can use an AGENTS.md file in your workspace root:\n\nUse workspace .bob/rules/ directories under version control:\n\nThis ensures consistent behavior across team members using Bob Shell for specific projects.\n\nDistribute global rules to team members:\n\nYou can combine both approaches:\n\nFind all available shortcuts by function, with platform-specific variations where applicable.\n\nYou can create custom modes to tailor Bob's behavior to specific tasks or workflows. Custom modes in Bob Shell work similarly to Bob IDE modes.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Custom rules",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "What are custom rules?",
+      "id": "what-are-custom-rules"
+    },
+    {
+      "level": "h2",
+      "text": "Rule scopes",
+      "id": "rule-scopes"
+    },
+    {
+      "level": "h2",
+      "text": "Configuration methods",
+      "id": "configuration-methods"
+    },
+    {
+      "level": "h3",
+      "text": "File-based configuration",
+      "id": "file-based-configuration"
+    },
+    {
+      "level": "h3",
+      "text": "Directory-based configuration",
+      "id": "directory-based-configuration"
+    },
+    {
+      "level": "h2",
+      "text": "Rule priority",
+      "id": "rule-priority"
+    },
+    {
+      "level": "h2",
+      "text": "Writing effective rules",
+      "id": "writing-effective-rules"
+    },
+    {
+      "level": "h3",
+      "text": "Be specific and actionable",
+      "id": "be-specific-and-actionable"
+    },
+    {
+      "level": "h3",
+      "text": "Use clear structure",
+      "id": "use-clear-structure"
+    },
+    {
+      "level": "h3",
+      "text": "Examples of effective rules",
+      "id": "examples-of-effective-rules"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced configuration",
+      "id": "advanced-configuration"
+    },
+    {
+      "level": "h3",
+      "text": "Mode-specific rules",
+      "id": "mode-specific-rules"
+    },
+    {
+      "level": "h3",
+      "text": "Using AGENTS.md files",
+      "id": "using-agentsmd-files"
+    },
+    {
+      "level": "h3",
+      "text": "File behavior",
+      "id": "file-behavior"
+    },
+    {
+      "level": "h2",
+      "text": "Team standardization",
+      "id": "team-standardization"
+    },
+    {
+      "level": "h3",
+      "text": "Project-level standards",
+      "id": "project-level-standards"
+    },
+    {
+      "level": "h3",
+      "text": "Organization-wide standards",
+      "id": "organization-wide-standards"
+    },
+    {
+      "level": "h3",
+      "text": "Hybrid approach",
+      "id": "hybrid-approach"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "# In your project root\necho \"Use 4 spaces for indentation\" > .bobrules",
+      "language": "markdown"
+    },
+    {
+      "code": ".bob/\n├── rules/              # General rules\n│   └── coding-style.md\n└── rules-code/         # Code mode rules\n    └── typescript.md",
+      "language": "unknown"
+    },
+    {
+      "code": "mkdir -p .bob/rules\necho \"# Project standards\" > .bob/rules/coding-style.md",
+      "language": "bash"
+    },
+    {
+      "code": "# Linux/macOS\nmkdir -p ~/.bob/rules\necho \"# Global standards\" > ~/.bob/rules/coding-standards.md\n\n# Windows\nmkdir %USERPROFILE%\\.bob\\rules\necho # Global standards > %USERPROFILE%\\.bob\\rules\\coding-standards.md",
+      "language": "markdown"
+    },
+    {
+      "code": "# Shell Commands\n- Prefer using standard Unix commands over specialized tools when possible\n- Include explanations of what each flag does\n\n# Script Style\n- Format shell script examples with proper error handling\n- Use portable shell syntax that works across bash, zsh, and other common shells\n\n# File Operations\n- Always check for file existence before operations in shell scripts\n- Always use relative paths when suggesting file operations",
+      "language": "markdown"
+    },
+    {
+      "code": "# Team Standards\n- Follow company coding guidelines\n- Use approved libraries only\n- Document all API changes",
+      "language": "markdown"
+    },
+    {
+      "code": "# Add to version control\ngit add .bob/rules/\ngit commit -m \"Add Bob custom rules\"",
+      "language": "markdown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

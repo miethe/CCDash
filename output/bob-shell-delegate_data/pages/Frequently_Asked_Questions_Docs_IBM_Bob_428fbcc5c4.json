@@ -1,0 +1,164 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/faq",
+  "title": "Frequently Asked Questions | Docs | IBM Bob",
+  "content": "FeedbackFind answers to common questions about IBM Bob and Bob Shell.\n\nLearn about version-specific updates for Bob Shell.\n\nYou can install Bob Shell an installation script, your package manager, or the command palette.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Frequently Asked Questions",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "General",
+      "id": "general"
+    },
+    {
+      "level": "h3",
+      "text": "What is Bob?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "How does Bob work?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "What can Bob do?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "What are the risks of using Bob?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Can I choose which model Bob uses?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Does IBM collect data from my prompts?",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Usage",
+      "id": "usage"
+    },
+    {
+      "level": "h3",
+      "text": "How do I start a new task?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "How do I switch between modes?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "What are tools and how do I use them?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "What are context mentions?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Can Bob run commands in my terminal?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "How do I provide feedback to Bob?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Can I customize Bob's behavior?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Does Bob have any auto approval settings?",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Advanced Features",
+      "id": "advanced-features"
+    },
+    {
+      "level": "h3",
+      "text": "What is MCP (Model Context Protocol)?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Can I create my own MCP servers?",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Troubleshooting",
+      "id": "troubleshooting"
+    },
+    {
+      "level": "h3",
+      "text": "Help! I'm getting an error.",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Bob isn't responding. What should I do?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "My Bob panel is in the wrong place. How do I move it?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Bob made changes I didn't want. How do I undo them?",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "name": "bob-shell-delegate",
+  "total_pages": 25,
+  "base_url": "https://bob.ibm.com/docs/shell",
+  "llms_txt_detected": false,
+  "llms_txt_variant": null,
+  "pages": [
+    {
+      "title": "Welcome to Bob Shell | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell"
+    },
+    {
+      "title": "Keyboard shortcuts | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts"
+    },
+    {
+      "title": "Configuring | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/configuring"
+    },
+    {
+      "title": "Security guidelines | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/security/bob-security-guidance"
+    },
+    {
+      "title": "Integrating with Bob IDE | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/ide-integration"
+    },
+    {
+      "title": "Trusted folders | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/security/trusted-folders"
+    },
+    {
+      "title": "Slash commands | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/features/slash-commands"
+    },
+    {
+      "title": "Frequently Asked Questions | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/faq"
+    },
+    {
+      "title": "Checkpointing | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/features/checkpointing"
+    },
+    {
+      "title": "Custom rules | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules"
+    },
+    {
+      "title": "Installing | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/getting-started/install-and-setup"
+    },
+    {
+      "title": "Starting a non-interactive session | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive"
+    },
+    {
+      "title": "Memory files | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/memory-import"
+    },
+    {
+      "title": "Ignoring files | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/ignoring-files"
+    },
+    {
+      "title": "Starting an interactive session | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive"
+    },
+    {
+      "title": "Sandboxing | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/security/sandboxing"
+    },
+    {
+      "title": "Telemetry data | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell"
+    },
+    {
+      "title": "Custom modes | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell"
+    },
+    {
+      "title": "Tools | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/core-concepts/tools"
+    },
+    {
+      "title": "Changelog | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/changelog"
+    },
+    {
+      "title": "Usage examples | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples"
+    },
+    {
+      "title": "Troubleshooting Bob Shell | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+    },
+    {
+      "title": "MCP | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell"
+    },
+    {
+      "title": "Uninstalling | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell"
+    },
+    {
+      "title": "Instance command | Docs | IBM Bob",
+      "url": "https://bob.ibm.com/docs/shell/features/instance-command"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+  "title": "Security guidelines | Docs | IBM Bob",
+  "content": "FeedbackBob has capabilities for coding and system interaction. To use safely, follow these guidelines.\n\nYou can control Bob's file access by configuring which directories and file types it can interact with. The .bobignore file uses the same syntax as .gitignore and should be one of the first security measures you implement when setting up Bob.\n\nAdd patterns for sensitive files and directories. Include patterns for any non-approved data types.\n\nBob actively monitors the .bobignore file, and any changes are automatically applied. For detailed information, see Using .bobignore to Control File Access.\n\nWhile .bobignore effectively controls Bob's access through its tools, it has some important limitations:\n\nReview the complete key limitations and scope to understand how .bobignore protects your files.\n\nBob Shell uses trusted folders to control which projects it can access. You must explicitly approve a folder before Bob Shell loads project-specific configurations, protecting you from potentially malicious code.\n\nWhen you run Bob Shell from a folder for the first time, you can choose to:\n\nUntrusted folders operate in safe mode with significant restrictions:\n\nFor complete details on how trusted folders work, managing trust settings, and best practices, see Trusted folders.\n\nWith Bob, you can automatically approve various actions without confirmation prompts. While this speeds up your workflow, it significantly increases security risks.\n\nAuto-approve settings bypass confirmation prompts, giving Bob direct access to your system. This can result in data loss, file corruption, or worse. Command line access is particularly dangerous, as it can potentially run harmful operations.\n\nAlways review Bob's output to ensure it's accurate and that any generated code will act as intended. Never inherently trust output from any AI system.\n\nFor detailed information on each setting and its security implications, see Configuring Bob Shell.\n\nNever provide secrets directly to any AI system, including Bob. Even temporary inclusion of secrets in code can lead to unintended exposure.\n\nAI systems should not leverage credentials that allow them to act on your behalf without your intervention and review. When AI systems need to act on your behalf:\n\nModel Context Protocol (MCP) extends Bob's functionality by connecting to external tools and services. While powerful, MCP connections require careful security consideration.\n\nMCP uses a client-server architecture:\n\nWhen using MCP servers, practice the following guidelines:\n\nRemote MCP servers must adhere to the same security requirements as any traditional server infrastructure, including endpoint protection, network restrictions, and proper access controls.\n\nFor shared MCP servers, ensure proper auditability and accountability so actions can be traced.\n\nBy following these security best practices, you can leverage Bob's powerful capabilities while maintaining a secure development environment.\n\nSwitch between IBM instances and teams using the /instance command.\n\nIsolate Bob Shell operations in a secure sandbox environment to protect your host system.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Security guidelines",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Security checklist",
+      "id": "security-checklist"
+    },
+    {
+      "level": "h2",
+      "text": "File access restrictions",
+      "id": "file-access-restrictions"
+    },
+    {
+      "level": "h3",
+      "text": "Setting up .bobignore",
+      "id": "setting-up-bobignore"
+    },
+    {
+      "level": "h3",
+      "text": "Understanding limitations",
+      "id": "understanding-limitations"
+    },
+    {
+      "level": "h2",
+      "text": "Trusted folders",
+      "id": "trusted-folders"
+    },
+    {
+      "level": "h2",
+      "text": "Auto-approve settings",
+      "id": "auto-approve-settings"
+    },
+    {
+      "level": "h3",
+      "text": "High-risk auto-approve settings",
+      "id": "high-risk-auto-approve-settings"
+    },
+    {
+      "level": "h2",
+      "text": "Handling secrets securely",
+      "id": "handling-secrets-securely"
+    },
+    {
+      "level": "h3",
+      "text": "Best practices for secrets management",
+      "id": "best-practices-for-secrets-management"
+    },
+    {
+      "level": "h3",
+      "text": "Delegation of permissions",
+      "id": "delegation-of-permissions"
+    },
+    {
+      "level": "h2",
+      "text": "Using MCP securely",
+      "id": "using-mcp-securely"
+    },
+    {
+      "level": "h3",
+      "text": "MCP architecture overview",
+      "id": "mcp-architecture-overview"
+    },
+    {
+      "level": "h3",
+      "text": "Security requirements for MCP servers",
+      "id": "security-requirements-for-mcp-servers"
+    },
+    {
+      "level": "h2",
+      "text": "Additional security considerations",
+      "id": "additional-security-considerations"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "# Example .bobignore patterns\n.env\nsecrets/\n*.key\nconfig/credentials.json",
+      "language": "markdown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

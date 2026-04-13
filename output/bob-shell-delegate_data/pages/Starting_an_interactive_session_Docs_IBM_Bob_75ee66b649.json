@@ -1,0 +1,104 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+  "title": "Starting an interactive session | Docs | IBM Bob",
+  "content": "FeedbackInteractive sessions provide a conversational interface to Bob directly in your terminal, allowing real-time assistance with your development tasks.\n\nOpen a new terminal window.\n\nWhen you start Bob Shell for the first time, you must login with your IBMid and accept the license agreement.\n\nNavigate to the main directory of your project.\n\nTo start a Bob Shell interactive session, run:\n\nUse the @ symbol to reference files in your project:\n\nThis tells Bob Shell to read and analyze the specified file before responding.\n\nType / to access a menu of available commands:\n\nFor a complete list of available commands, see Slash commands in Bob Shell.\n\nWhen Bob Shell needs to modify files, it will show you the proposed changes:\n\nFor security, Bob Shell requires your approval before:\n\nYou can approve or decline each action individually when prompted.\n\nBob Shell maintains context throughout your conversation, allowing you to:\n\nInteractive session works best for:\n\nRemove Bob Shell from your system using the appropriate method for your installation.\n\nStarting a non-interactive session\n\nNon-interactive session provide a method to use Bob Shell directly from the command line without entering an interactive session. Use for automation, scripting, and batch processing tasks.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Starting an interactive session",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "To start an interactive session:",
+      "id": "to-start-an-interactive-session"
+    },
+    {
+      "level": "h2",
+      "text": "Basic usage",
+      "id": "basic-usage"
+    },
+    {
+      "level": "h3",
+      "text": "Interact with Bob Shell",
+      "id": "interact-with-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Reference files",
+      "id": "reference-files"
+    },
+    {
+      "level": "h2",
+      "text": "Use slash commands",
+      "id": "use-slash-commands"
+    },
+    {
+      "level": "h2",
+      "text": "View file changes",
+      "id": "view-file-changes"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced features",
+      "id": "advanced-features"
+    },
+    {
+      "level": "h3",
+      "text": "Tool approvals",
+      "id": "tool-approvals"
+    },
+    {
+      "level": "h3",
+      "text": "Multi-turn conversations",
+      "id": "multi-turn-conversations"
+    },
+    {
+      "level": "h2",
+      "text": "Tips for effective use",
+      "id": "tips-for-effective-use"
+    },
+    {
+      "level": "h2",
+      "text": "When to use interactive session",
+      "id": "when-to-use-interactive-session"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "Explain the functionality in @src/main.js",
+      "language": "elixir"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

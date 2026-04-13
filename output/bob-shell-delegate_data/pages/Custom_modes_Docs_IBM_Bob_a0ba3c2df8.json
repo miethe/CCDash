@@ -1,0 +1,241 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+  "title": "Custom modes | Docs | IBM Bob",
+  "content": "FeedbackYou can create custom modes to tailor Bob's behavior to specific tasks or workflows. Custom modes in Bob Shell work similarly to Bob IDE modes.\n\nCustom modes in Bob Shell use the same core structure as Bob IDE modes:\n\nBob Shell uses the same configuration format as Bob IDE, supporting both YAML (preferred) and JSON formats.\n\nCreate or edit ~/.bob/custom_modes.yaml for modes available across all projects:\n\nCreate or edit .bob/custom_modes.yaml in your project root:\n\nSpecify a mode when starting Bob Shell:\n\nIn interactive mode, switch modes using slash commands:\n\nCreate a safety-focused mode for production environments:\n\nCreate a mode for shell script development:\n\nControl which commands a mode can run by omitting the command group:\n\nUse Bob Shell's allowed tools configuration with custom modes in your settings file:\n\nCreate modes that work well in both interactive and non-interactive sessions:\n\nUse modes in non-interactive mode:\n\nCreate mode-specific instruction files in .bob/rules-{mode-slug}/:\n\nExample instruction file (.bob/rules-shell-debug/01-environment-checks.md):\n\nAlternatively, use a single file .bobrules-{mode-slug} in your workspace root.\n\nMode configurations are applied in this order:\n\nCombine custom modes with Bob Shell's sandbox feature for safe experimentation:\n\nWhen migrating custom modes from Bob IDE to Bob Shell:\n\nWhen adapting Bob IDE modes for Bob Shell:\n\nOriginal Bob IDE mode:\n\nAdapted for Bob Shell:\n\nCustom rules influence how Bob Shell responds to your requests in the terminal environment, aligning output with your specific preferences and project requirements. You can control coding style, documentation approach, and decision-making processes.\n\nIntegrating with Bob IDE\n\nConnect Bob Shell directly to your code editor for a seamless development experience. This integration enhances Bob Shell's capabilities by providing real-time workspace awareness and enabling powerful features like in-editor diff viewing.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Custom modes",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Why use custom modes in Bob Shell",
+      "id": "why-use-custom-modes-in-bob-shell"
+    },
+    {
+      "level": "h2",
+      "text": "What's included in a custom mode",
+      "id": "whats-included-in-a-custom-mode"
+    },
+    {
+      "level": "h2",
+      "text": "Available tools",
+      "id": "available-tools"
+    },
+    {
+      "level": "h3",
+      "text": "Available tool groups",
+      "id": "available-tool-groups"
+    },
+    {
+      "level": "h2",
+      "text": "Creating custom modes",
+      "id": "creating-custom-modes"
+    },
+    {
+      "level": "h3",
+      "text": "Configuration files",
+      "id": "configuration-files"
+    },
+    {
+      "level": "h4",
+      "text": "Global modes",
+      "id": "global-modes"
+    },
+    {
+      "level": "h4",
+      "text": "Project-specific modes",
+      "id": "project-specific-modes"
+    },
+    {
+      "level": "h3",
+      "text": "Command-line mode selection",
+      "id": "command-line-mode-selection"
+    },
+    {
+      "level": "h3",
+      "text": "Interactive mode switching",
+      "id": "interactive-mode-switching"
+    },
+    {
+      "level": "h2",
+      "text": "Shell-specific configurations",
+      "id": "shell-specific-configurations"
+    },
+    {
+      "level": "h3",
+      "text": "Production safety mode",
+      "id": "production-safety-mode"
+    },
+    {
+      "level": "h3",
+      "text": "Script development mode",
+      "id": "script-development-mode"
+    },
+    {
+      "level": "h2",
+      "text": "Command running permissions",
+      "id": "command-running-permissions"
+    },
+    {
+      "level": "h3",
+      "text": "Restricting command access",
+      "id": "restricting-command-access"
+    },
+    {
+      "level": "h3",
+      "text": "Allowing specific commands",
+      "id": "allowing-specific-commands"
+    },
+    {
+      "level": "h2",
+      "text": "Interactive vs non-interactive behavior",
+      "id": "interactive-vs-non-interactive-behavior"
+    },
+    {
+      "level": "h3",
+      "text": "Designing for both modes",
+      "id": "designing-for-both-modes"
+    },
+    {
+      "level": "h3",
+      "text": "Non-interactive usage",
+      "id": "non-interactive-usage"
+    },
+    {
+      "level": "h2",
+      "text": "Mode-specific instructions via files",
+      "id": "mode-specific-instructions-via-files"
+    },
+    {
+      "level": "h3",
+      "text": "Directory-based instructions",
+      "id": "directory-based-instructions"
+    },
+    {
+      "level": "h3",
+      "text": "Single file instructions (fallback)",
+      "id": "single-file-instructions-fallback"
+    },
+    {
+      "level": "h2",
+      "text": "Configuration precedence",
+      "id": "configuration-precedence"
+    },
+    {
+      "level": "h2",
+      "text": "Sandboxing with custom modes",
+      "id": "sandboxing-with-custom-modes"
+    },
+    {
+      "level": "h2",
+      "text": "Migrating modes from Bob IDE",
+      "id": "migrating-modes-from-bob-ide"
+    },
+    {
+      "level": "h3",
+      "text": "Key differences",
+      "id": "key-differences"
+    },
+    {
+      "level": "h3",
+      "text": "Adaptation checklist",
+      "id": "adaptation-checklist"
+    },
+    {
+      "level": "h3",
+      "text": "Example migration",
+      "id": "example-migration"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "customModes:\n  - slug: shell-debug\n    name: 🐛 Shell Debugger\n    roleDefinition: >-\n      You are a debugging specialist focused on command-line troubleshooting.\n      You excel at analyzing shell output, environment variables, and system logs.\n    whenToUse: Use for debugging shell scripts, command failures, and environment issues.\n    customInstructions: |-\n      When debugging:\n      - Always check environment variables first\n      - Examine command exit codes\n      - Review relevant log files\n      - Test commands in isolation before suggesting fixes\n    groups:\n      - read\n      - command\n      - browser",
+      "language": "yaml"
+    },
+    {
+      "code": "customModes:\n  - slug: deploy-helper\n    name: 🚀 Deployment Assistant\n    roleDefinition: You are a deployment specialist for this project's infrastructure.\n    whenToUse: Use for deployment tasks, infrastructure changes, and release management.\n    customInstructions: |-\n      Deployment guidelines:\n      - Always verify the target environment before running commands\n      - Check for running processes that might be affected\n      - Validate configuration files before applying changes\n      - Create backups before destructive operations\n    groups:\n      - read\n      - - edit\n        - fileRegex: \\.(yaml|yml|sh|env)$\n          description: Configuration and script files only\n      - command",
+      "language": "yaml"
+    },
+    {
+      "code": "# Start Bob Shell in a specific mode\nbob --chat-mode=shell-debug\n\n# Combine with other options\nbob --chat-mode=deploy-helper --sandbox",
+      "language": "sass"
+    },
+    {
+      "code": "# Switch to a custom mode\n/mode shell-debug\n\n# Or use the mode's slug directly\n/shell-debug",
+      "language": "elixir"
+    },
+    {
+      "code": "customModes:\n  - slug: prod-ops\n    name: 🔒 Production Operations\n    roleDefinition: >-\n      You are a production operations specialist with a strong focus on safety.\n      You never run destructive commands without explicit confirmation.\n    whenToUse: Use when working with production systems or sensitive environments.\n    customInstructions: |-\n      Production safety rules:\n      - NEVER run destructive commands without explicit user confirmation\n      - Always verify the target environment before any operation\n      - Suggest dry-run options when available\n      - Check for active connections or processes before changes\n      - Recommend backup procedures before modifications\n    groups:\n      - read\n      - browser\n      # Note: No edit or command groups for maximum safety",
+      "language": "yaml"
+    },
+    {
+      "code": "customModes:\n  - slug: script-dev\n    name: 📜 Script Developer\n    roleDefinition: >-\n      You are a shell scripting expert specializing in bash, zsh, and POSIX-compliant scripts.\n    whenToUse: Use for creating, debugging, or improving shell scripts.\n    customInstructions: |-\n      Shell scripting best practices:\n      - Use shellcheck-compliant syntax\n      - Include proper error handling with set -e and set -u\n      - Add usage documentation at the top of scripts\n      - Quote variables to prevent word splitting\n      - Provide exit codes for different error conditions\n    groups:\n      - read\n      - - edit\n        - fileRegex: \\.(sh|bash|zsh)$\n          description: Shell script files only\n      - command",
+      "language": "yaml"
+    },
+    {
+      "code": "customModes:\n  - slug: safe-reviewer\n    name: 👀 Safe Code Reviewer\n    roleDefinition: You are a code reviewer focused on analysis, not modification.\n    whenToUse: Use for code reviews and analysis without making changes.\n    groups:\n      - read\n      - browser\n      # No command or edit groups - read-only mode",
+      "language": "yaml"
+    },
+    {
+      "code": "{\n  \"tools\": {\n    \"allowed\": [\n      \"run_shell_command(git status)\",\n      \"run_shell_command(git log)\",\n      \"run_shell_command(git diff)\"\n    ]\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "customModes:\n  - slug: test-runner\n    name: 🧪 Test Runner\n    roleDefinition: >-\n      You are a testing specialist who runs and analyzes test suites.\n      You adapt your output based on the running context.\n    whenToUse: Use for running tests, analyzing test results, and debugging test failures.\n    customInstructions: |-\n      Testing guidelines:\n      - In interactive mode: Provide detailed explanations and suggestions\n      - In non-interactive mode: Focus on concise, actionable output\n      - Always report test results clearly\n      - Suggest fixes for failing tests\n    groups:\n      - read\n      - command",
+      "language": "yaml"
+    },
+    {
+      "code": "# Use a mode designed for automation\nbob --chat-mode=test-runner -p \"Run the test suite and report failures\"\n\n# Combine with output processing\nbob --chat-mode=test-runner -p \"Run tests\" --hide-intermediary-output > results.txt",
+      "language": "sass"
+    },
+    {
+      "code": "# Environment Debugging Checklist\n\nWhen debugging shell issues, always check:\n\n1. **Environment Variables**: PATH, SHELL, TERM, and application-specific variables\n2. **Shell Configuration**: .bashrc, .zshrc, .profile files\n3. **System State**: Current working directory, file permissions, disk space\n4. **Command Availability**: Use `command -v <cmd>` to verify commands exist",
+      "language": "markdown"
+    },
+    {
+      "code": "# Start a custom mode in sandbox\nbob --chat-mode=script-dev --sandbox\n\n# Use with Docker sandbox\nbob --chat-mode=deploy-helper --sandbox",
+      "language": "sass"
+    },
+    {
+      "code": "customModes:\n  - slug: code-reviewer\n    name: 👀 Code Reviewer\n    roleDefinition: You are a code reviewer who provides detailed feedback.\n    groups:\n      - read\n      - browser",
+      "language": "yaml"
+    },
+    {
+      "code": "customModes:\n  - slug: code-reviewer\n    name: 👀 Code Reviewer\n    roleDefinition: >-\n      You are a code reviewer who provides detailed feedback.\n      You work efficiently in terminal environments and provide clear, actionable suggestions.\n    whenToUse: Use for code reviews, pull request analysis, and code quality checks.\n    customInstructions: |-\n      Code review guidelines:\n      - Provide feedback in a structured format suitable for terminal output\n      - Reference specific line numbers and file paths\n      - Suggest concrete improvements with examples\n      - Format output for easy parsing if used in non-interactive mode\n    groups:\n      - read\n      - command  # Added for git operations\n      - browser",
+      "language": "yaml"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}
