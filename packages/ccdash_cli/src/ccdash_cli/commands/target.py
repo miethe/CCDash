@@ -10,7 +10,7 @@ import getpass
 
 import typer
 
-from ccdash_cli.runtime.config import ConfigStore, set_token
+from ccdash_cli.runtime.config import ConfigStore, resolve_target, set_token
 
 target_app = typer.Typer(help="Manage CCDash server targets.")
 
@@ -175,3 +175,182 @@ def target_set_token(
         raise typer.Exit(code=1) from exc
 
     typer.echo(f"Token for '{name}' stored in keyring under ref '{token_ref}'.")
+
+
+# ---------------------------------------------------------------------------
+# login
+# ---------------------------------------------------------------------------
+
+
+@target_app.command("login")
+def target_login(
+    name: str = typer.Argument(..., help="Name of the target to authenticate."),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Bearer token to store. Prompted interactively if not provided.",
+    ),
+) -> None:
+    """Store a bearer token for a target using the conventional token ref.
+
+    The token is saved to the OS keyring under the key ``target:<name>``.
+    If no keyring backend is available, you can instead set the
+    ``CCDASH_TOKEN`` environment variable.
+    """
+    store = ConfigStore()
+    record = store.get_target(name)
+    if record is None:
+        typer.echo(
+            f"Error: target '{name}' not found. "
+            f"Add it with: ccdash target add {name} <url>",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    token_value: str = token or typer.prompt(
+        f"Bearer token for '{name}'", hide_input=True
+    )
+    if not token_value:
+        typer.echo("Error: empty token not stored.", err=True)
+        raise typer.Exit(code=1)
+
+    token_ref = f"target:{name}"
+
+    try:
+        set_token(token_ref, token_value)
+    except RuntimeError as exc:
+        typer.echo(
+            f"Error: {exc}\n"
+            f"Tip: set the CCDASH_TOKEN environment variable to authenticate "
+            f"without a keyring backend.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    # Persist the token_ref back to the target record so resolution picks it up.
+    config = store.load()
+    config.setdefault("targets", {}).setdefault(name, {})["token_ref"] = token_ref
+    store.save(config)
+
+    typer.echo(
+        f"Logged in to '{name}'. Token stored in keyring under ref '{token_ref}'."
+    )
+
+
+# ---------------------------------------------------------------------------
+# logout
+# ---------------------------------------------------------------------------
+
+
+@target_app.command("logout")
+def target_logout(
+    name: str = typer.Argument(..., help="Name of the target to deauthenticate."),
+) -> None:
+    """Remove the stored bearer token for a target.
+
+    Clears the keyring entry (if one exists) and removes the ``token_ref``
+    from the target record so the target will no longer send credentials.
+    """
+    store = ConfigStore()
+    record = store.get_target(name)
+    if record is None:
+        typer.echo(
+            f"Error: target '{name}' not found.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    token_ref: str | None = record.get("token_ref")
+    if not token_ref:
+        typer.echo(f"No stored credentials for target '{name}'.")
+        return
+
+    # Attempt to remove the keyring entry (lazy import — may not be installed).
+    try:
+        import keyring
+        import keyring.errors
+
+        try:
+            keyring.delete_password("ccdash", token_ref)
+        except keyring.errors.PasswordDeleteError:
+            # Entry was not in the keyring — still remove from config below.
+            pass
+        except keyring.errors.NoKeyringError:
+            pass
+    except ImportError:
+        pass
+
+    # Remove token_ref from the persisted target record.
+    config = store.load()
+    target_record: dict = config.get("targets", {}).get(name, {})
+    target_record.pop("token_ref", None)
+    config.setdefault("targets", {})[name] = target_record
+    store.save(config)
+
+    typer.echo(f"Logged out of '{name}'. Credentials removed.")
+
+
+# ---------------------------------------------------------------------------
+# check
+# ---------------------------------------------------------------------------
+
+
+@target_app.command("check")
+def target_check(
+    name: str = typer.Argument(..., help="Name of the target to check."),
+) -> None:
+    """Probe a target's reachability and authentication status.
+
+    Attempts to connect to the CCDash instance and reports whether:
+    - The server is reachable
+    - The stored credentials (if any) are accepted
+    """
+    from ccdash_cli.runtime.client import (
+        AuthenticationError,
+        CCDashClient,
+        CCDashClientError,
+    )
+
+    store = ConfigStore()
+    record = store.get_target(name)
+    if record is None:
+        typer.echo(
+            f"Error: target '{name}' not found. "
+            f"Add it with: ccdash target add {name} <url>",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    target = resolve_target(target_flag=name, config_store=store)
+
+    typer.echo(f"Checking target '{name}' at {target.url} ...")
+
+    with CCDashClient(target.url, token=target.token) as client:
+        # Step 1: basic connectivity via check_health (swallows ConnectionError).
+        reachable = client.check_health()
+        if not reachable:
+            typer.echo("  Connection: FAILED (server unreachable)")
+            raise typer.Exit(code=4)
+
+        typer.echo("  Connection: OK")
+
+        # Step 2: authenticated instance probe to validate credentials.
+        try:
+            meta = client.get_instance()
+            typer.echo("  Auth:       OK")
+            instance_label = meta.instance_id or name
+            env_label = f"  env={meta.environment}" if meta.environment else ""
+            typer.echo(
+                f"  Instance:   {instance_label}"
+                f"  (version {meta.version or 'unknown'}{env_label})"
+            )
+        except AuthenticationError:
+            typer.echo(
+                "  Auth:       FAILED (HTTP 401 — invalid or missing bearer token)\n"
+                f"  Tip: run 'ccdash target login {name}' to store credentials.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        except CCDashClientError as exc:
+            typer.echo(f"  Auth:       ERROR — {exc.message}", err=True)
+            raise typer.Exit(code=exc.exit_code)

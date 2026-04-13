@@ -9,6 +9,7 @@ Exit code contract (mirrors the design spec):
     2 — HTTP 401 authentication failure
     3 — HTTP 403 permission denied
     4 — Network / connection failure
+    5 — API version mismatch
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ __all__ = [
     "ConnectionError",
     "ServerError",
     "NotFoundError",
+    "VersionMismatchError",
     # Client
     "CCDashClient",
 ]
@@ -35,6 +37,7 @@ __all__ = [
 _LOG = logging.getLogger(__name__)
 
 _CLI_USER_AGENT = "ccdash-cli/0.1.0"
+_EXPECTED_API_VERSION = "v1"
 
 # HTTP status codes that are safe to retry (transient server-side conditions).
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({502, 503, 504})
@@ -101,6 +104,16 @@ class NotFoundError(CCDashClientError):
     """Raised when the server returns HTTP 404."""
 
     exit_code = 1
+
+
+class VersionMismatchError(CCDashClientError):
+    """Raised when the server does not support the expected API version.
+
+    Typically triggered when ``/api/v1/instance`` returns 404, indicating the
+    server predates the v1 API surface or is a completely different service.
+    """
+
+    exit_code = 5
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +196,7 @@ class CCDashClient:
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
 
         headers: dict[str, str] = {"User-Agent": _CLI_USER_AGENT}
         if token:
@@ -269,6 +283,28 @@ class CCDashClient:
             # Server is reachable but returned an error envelope — still up.
             return True
 
+    def check_version(self) -> None:
+        """Verify that the server supports the expected API version.
+
+        Calls ``/api/v1/instance`` as a lightweight probe.  A ``404``
+        response indicates the server does not expose the ``{_EXPECTED_API_VERSION}``
+        API surface — either it predates v1 or is a completely different
+        service.
+
+        Raises:
+            VersionMismatchError: When ``/api/v1/instance`` returns 404.
+            CCDashClientError:    On any other network or server error.
+        """
+        try:
+            self.get_instance()
+        except NotFoundError:
+            raise VersionMismatchError(
+                f"Server at {self._base_url} does not support the"
+                f" {_EXPECTED_API_VERSION} API (GET /api/v1/instance returned 404)."
+                " The server may be running an older version of CCDash."
+                " Upgrade the server or downgrade the CLI to match."
+            )
+
     def close(self) -> None:
         """Close the underlying :class:`httpx.Client` and release resources."""
         self._client.close()
@@ -311,11 +347,15 @@ class CCDashClient:
             )
         except httpx.ConnectError as exc:
             raise ConnectionError(
-                f"Cannot connect to CCDash server at {self._base_url}: {exc}"
+                f"Cannot connect to CCDash server at {self._base_url}."
+                " Is the server running? Check with: ccdash doctor"
             ) from exc
         except httpx.TimeoutException as exc:
             raise ConnectionError(
-                f"Request to {self._base_url}{url} timed out: {exc}"
+                f"Request to {self._base_url}{url} timed out after"
+                f" {self._timeout}s. The server may be overloaded or the"
+                " timeout too low. Increase with:"
+                " ccdash target add <name> --timeout <seconds>"
             ) from exc
         except httpx.HTTPError as exc:
             raise ConnectionError(
@@ -344,17 +384,22 @@ class CCDashClient:
         status = response.status_code
         if status == 401:
             raise AuthenticationError(
-                "Authentication failed: check your bearer token (HTTP 401)"
+                "Authentication failed. Check your bearer token with:"
+                " ccdash target check <name>"
             )
         if status == 403:
             raise PermissionError(
-                f"Permission denied accessing {url} (HTTP 403)"
+                f"Permission denied accessing {url}."
+                " Your token may lack required scopes."
             )
         if status == 404:
-            raise NotFoundError(f"Resource not found: {url} (HTTP 404)")
+            raise NotFoundError(
+                f"Resource not found: {url}. Verify the ID is correct."
+            )
         if status >= 500:
             raise ServerError(
-                f"Server error {status} from {url}: {response.text[:200]}"
+                f"Server error {status} from {url}."
+                " Check server logs or retry later."
             )
 
     @staticmethod
