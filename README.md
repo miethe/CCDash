@@ -182,7 +182,7 @@ Phase 3/4 adds a transport-neutral query layer in `backend/application/services/
 | Capability | REST | CLI | MCP |
 |-----------|------|-----|-----|
 | Project status | `GET /api/agent/project-status` | `ccdash status project` | `ccdash_project_status` |
-| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash feature report <feature_id>` | `ccdash_feature_forensics` |
+| Feature forensics | `GET /api/agent/feature-forensics/{feature_id}` | `ccdash report feature <feature_id>` | `ccdash_feature_forensics` |
 | Workflow diagnostics | `GET /api/agent/workflow-diagnostics` | `ccdash workflow failures` | `ccdash_workflow_failure_patterns` |
 | After-action report | `POST /api/agent/reports/aar` | `ccdash report aar --feature <feature_id>` | `ccdash_generate_aar` |
 
@@ -190,20 +190,31 @@ REST returns the shared DTOs directly, CLI renders the same data as human/json/m
 
 ### CLI
 
-For the full CLI reference, see [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md).
+CCDash provides two CLI entry points:
 
-`npm run setup` also installs the Python package in editable mode, which provides the `ccdash` CLI entry point in `backend/.venv`.
+**Standalone CLI** (recommended for operators): Install globally with `pipx install ccdash-cli` and use from any terminal. Talks to a running CCDash server over HTTP. See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md).
+
+```bash
+ccdash --version
+ccdash target show
+ccdash status project
+ccdash feature list --status active
+ccdash session search "authentication" --json
+ccdash report aar --feature FEAT-123
+ccdash target add staging https://ccdash-staging.example.com
+```
+
+**Repo-local CLI** (for development): Installed via `npm run setup` in `backend/.venv`. Directly imports backend runtime. See [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md).
 
 ```bash
 backend/.venv/bin/ccdash --help
-backend/.venv/bin/ccdash --project my-project status project
+backend/.venv/bin/ccdash status project
 backend/.venv/bin/ccdash feature report FEAT-123 --json
-backend/.venv/bin/ccdash workflow failures --md
-backend/.venv/bin/ccdash report aar --feature FEAT-123
-backend/.venv/bin/python -m backend.cli --help
 ```
 
-Use the top-level `--project` flag to override the active project. Each command supports `--output human|json|markdown`, plus `--json` and `--md` shortcuts. On Windows, use `backend\\.venv\\Scripts\\ccdash.exe`.
+For migrating from the repo-local CLI, see [`docs/guides/cli-migration-guide.md`](docs/guides/cli-migration-guide.md).
+
+Each command supports `--output human|json|markdown`, plus `--json` and `--md` shortcuts.
 
 ### REST API
 
@@ -412,7 +423,9 @@ Markdown documentation with typed identity/classification metadata, canonical de
 | [`docs/setup-user-guide.md`](docs/setup-user-guide.md) | Setup, troubleshooting, and deployment |
 | [`docs/guides/mcp-setup-guide.md`](docs/guides/mcp-setup-guide.md) | Configure the stdio MCP server and validate the shipped tool surface |
 | [`docs/guides/mcp-troubleshooting.md`](docs/guides/mcp-troubleshooting.md) | Common MCP startup, project-resolution, and tool-call failures |
-| [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md) | CCDash CLI setup, commands, output modes, and troubleshooting |
+| [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md) | Standalone CLI operator reference: install, commands, targets, auth, and troubleshooting |
+| [`docs/guides/cli-user-guide.md`](docs/guides/cli-user-guide.md) | Repo-local CLI setup, commands, output modes, and troubleshooting |
+| [`docs/guides/cli-migration-guide.md`](docs/guides/cli-migration-guide.md) | Migrating from repo-local CLI to standalone CLI |
 | [`docs/guides/storage-profiles-guide.md`](docs/guides/storage-profiles-guide.md) | Local vs enterprise storage posture, runtime pairings, and validation matrix |
 | [`docs/guides/session-intelligence-rollout-guide.md`](docs/guides/session-intelligence-rollout-guide.md) | Canonical transcript-intelligence rollout, checkpointed enterprise backfill, and SkillMeat draft approval flow |
 | [`docs/theme-modes-user-guide.md`](docs/theme-modes-user-guide.md) | Theme selection, persistence, and `system` behavior |

@@ -13,6 +13,7 @@ CCDash is a local-first dashboard for orchestrating, monitoring, and analyzing A
 - **Frontend**: React 19 + TypeScript + Vite (port 3000). Uses HashRouter. All frontend source lives at the repo root (`App.tsx`, `types.ts`, `constants.ts`, `components/`, `services/`, `contexts/`). Path alias `@/` maps to repo root.
 - **Backend**: Python FastAPI + explicit runtime profiles (`local`, `api`, `worker`, `test`). API runtime serves HTTP on port 8000; worker runtime lives at `backend/worker.py`. Located in `backend/`. Uses async SQLite (default) or PostgreSQL via `CCDASH_DB_BACKEND` env var. Python venv at `backend/.venv/`.
 - **Agent Query Surfaces**: `backend/application/services/agent_queries/` is the shared transport-neutral intelligence layer used by REST, CLI, and MCP.
+- **Standalone CLI**: `packages/ccdash_cli/` — globally installable CLI that talks to the server over HTTP via `backend/routers/client_v1.py`. Shared contracts in `packages/ccdash_contracts/`.
 - **Proxy**: Vite proxies `/api` requests to the backend in dev mode.
 - **Styling**: Tailwind CSS with a slate dark mode theme.
 
@@ -91,13 +92,23 @@ backend/.venv/bin/python -m unittest backend.tests.test_runtime_bootstrap backen
 # Or, if pytest is installed in the venv:
 backend/.venv/bin/python -m pytest backend/tests/ -v
 
-# Query surfaces
+# Query surfaces (repo-local CLI)
 backend/.venv/bin/ccdash --help
 backend/.venv/bin/ccdash status project
 backend/.venv/bin/ccdash feature report FEAT-123 --json
 backend/.venv/bin/ccdash workflow failures --md
 backend/.venv/bin/ccdash report aar --feature FEAT-123
 backend/.venv/bin/python -m backend.cli --help
+
+# Standalone CLI (install globally: pipx install ccdash-cli)
+ccdash version
+ccdash feature list --status active --json
+ccdash session search "authentication" --limit 10
+ccdash report aar --feature FEAT-123
+ccdash target check local
+
+# Standalone CLI tests
+python -m pytest packages/ccdash_cli/tests/ -v
 
 # MCP server and MCP regression coverage
 backend/.venv/bin/python -m backend.mcp.server

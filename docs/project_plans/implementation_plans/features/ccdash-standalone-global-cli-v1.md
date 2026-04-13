@@ -1,33 +1,45 @@
 ---
-schema_version: "1.0"
+schema_version: '1.0'
 doc_type: implementation_plan
-title: "CCDash Standalone Global CLI - Implementation Plan"
-description: "Phased implementation plan for turning CCDash into a true globally installed CLI backed by a versioned HTTP client contract, local-default targeting, remote-ready configuration, and expanded feature/session insight commands."
-status: draft
-created: "2026-04-12"
-updated: "2026-04-12"
-feature_slug: "ccdash-standalone-global-cli"
-feature_version: "v1"
-prd_ref: "docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md"
+title: CCDash Standalone Global CLI - Implementation Plan
+description: Phased implementation plan for turning CCDash into a true globally installed
+  CLI backed by a versioned HTTP client contract, local-default targeting, remote-ready
+  configuration, and expanded feature/session insight commands.
+status: completed
+created: '2026-04-12'
+updated: '2026-04-13'
+feature_slug: ccdash-standalone-global-cli
+feature_version: v1
+prd_ref: docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md
 plan_ref: null
-scope: "Standalone CLI distribution, versioned client API, target config, local-default connectivity, remote-ready auth, expanded feature/session commands"
-effort_estimate: "28-36 story points"
-effort_estimate_breakdown: "Phase 1: 4-5 pts | Phase 2: 8-10 pts | Phase 3: 6-7 pts | Phase 4: 6-8 pts | Phase 5: 4-6 pts"
+scope: Standalone CLI distribution, versioned client API, target config, local-default
+  connectivity, remote-ready auth, expanded feature/session commands
+effort_estimate: 28-36 story points
+effort_estimate_breakdown: 'Phase 1: 4-5 pts | Phase 2: 8-10 pts | Phase 3: 6-7 pts
+  | Phase 4: 6-8 pts | Phase 5: 4-6 pts'
 priority: high
 risk_level: medium
-owner: "Platform Engineering"
-contributors: ["Architecture Review Team"]
+owner: Platform Engineering
+contributors:
+- Architecture Review Team
 milestone: null
 commit_refs: []
 pr_refs: []
 files_affected: []
-category: "product-planning"
-tags: ["cli", "distribution", "remote-access", "http-client", "features", "sessions", "packaging"]
+category: product-planning
+tags:
+- cli
+- distribution
+- remote-access
+- http-client
+- features
+- sessions
+- packaging
 related_documents:
-  - docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md
-  - docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
-  - docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md
-  - docs/guides/cli-user-guide.md
+- docs/project_plans/PRDs/features/ccdash-standalone-global-cli-v1.md
+- docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
+- docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md
+- docs/guides/cli-user-guide.md
 ---
 
 # Implementation Plan: CCDash Standalone Global CLI

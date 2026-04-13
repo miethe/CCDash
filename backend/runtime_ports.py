@@ -4,7 +4,11 @@ from __future__ import annotations
 from typing import Any
 
 from backend import config
-from backend.adapters.auth import LocalIdentityProvider, PermitAllAuthorizationPolicy
+from backend.adapters.auth import (
+    LocalIdentityProvider,
+    PermitAllAuthorizationPolicy,
+    StaticBearerTokenIdentityProvider,
+)
 from backend.adapters.integrations import NoopIntegrationClient
 from backend.adapters.jobs import InProcessJobScheduler
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
@@ -31,8 +35,9 @@ def build_core_ports(
     workspace_manager = manager or project_manager
     resolved_storage_profile = storage_profile or config.STORAGE_PROFILE
     validate_runtime_storage_pairing(runtime_profile, resolved_storage_profile)
+    resolved_identity_provider = identity_provider or _build_identity_provider(runtime_profile)
     return CorePorts(
-        identity_provider=identity_provider or LocalIdentityProvider(),
+        identity_provider=resolved_identity_provider,
         authorization_policy=authorization_policy or PermitAllAuthorizationPolicy(),
         workspace_registry=workspace_registry or _build_workspace_registry(workspace_manager, runtime_profile, resolved_storage_profile),
         storage=storage or _build_storage_unit_of_work(db, runtime_profile, resolved_storage_profile),
@@ -48,6 +53,12 @@ def _build_workspace_registry(
 ) -> ProjectManagerWorkspaceRegistry:
     _ = runtime_profile, storage_profile
     return ProjectManagerWorkspaceRegistry(manager)
+
+
+def _build_identity_provider(runtime_profile: RuntimeProfile | None) -> object:
+    if runtime_profile is not None and runtime_profile.capabilities.auth:
+        return StaticBearerTokenIdentityProvider()
+    return LocalIdentityProvider()
 
 
 def _build_storage_unit_of_work(

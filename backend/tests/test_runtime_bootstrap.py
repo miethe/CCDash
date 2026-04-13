@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
+from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
@@ -280,6 +281,7 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertIsInstance(ports.storage, LocalStorageUnitOfWork)
+        self.assertIsInstance(ports.identity_provider, LocalIdentityProvider)
         self.assertIs(ports.storage.db, marker)
         self.assertIsInstance(ports.storage.identity_access().principals(), LocalPrincipalRepository)
         self.assertFalse(ports.storage.principals().describe_capability().supported)
@@ -294,6 +296,7 @@ class RuntimeProfileTests(unittest.TestCase):
         )
 
         self.assertIsInstance(ports.storage, EnterpriseStorageUnitOfWork)
+        self.assertIsInstance(ports.identity_provider, StaticBearerTokenIdentityProvider)
         self.assertIsInstance(ports.storage.identity_access().principals(), PostgresPrincipalRepository)
         self.assertTrue(ports.storage.principals().describe_capability().supported)
         self.assertTrue(ports.storage.audit_security().privileged_action_audit_records().describe_capability().authoritative)

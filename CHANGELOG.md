@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-04-13
+
+### Added
+
+- **Standalone CLI** (`ccdash-cli` package): A globally installable operator CLI that talks to a running CCDash server over HTTP, with no repo checkout required.
+  - Feature command group: `feature list`, `feature show`, `feature sessions`, `feature documents`
+  - Session command group: `session list`, `session show`, `session search`, `session drilldown`, `session family`
+  - Report command group: `report aar`, `report feature` (default markdown output)
+  - Target management: `target add`, `target remove`, `target list`, `target use`, `target login`, `target logout`, `target check`
+  - Diagnostics: `doctor`, `version`
+  - Bearer-token authentication via OS keyring or `CCDASH_TOKEN` env var
+  - Named target configuration stored in `~/.config/ccdash/config.toml`
+  - Standardized pagination (`--limit`, `--offset`) and output modes (`--json`, `--md`, `--output`)
+- Versioned client API (`/api/v1/`) with endpoints for instance, project, features, sessions, workflows, and reports
+- Shared contract types in `packages/ccdash_contracts/` consumed by both server and CLI
+- `VersionMismatchError` (exit code 5) for API compatibility detection
+- 85 tests covering client, config, import boundary, and all command groups
+
+### Docs
+
+- Added:
+  - `docs/guides/standalone-cli-guide.md` — comprehensive operator reference
+  - `docs/guides/cli-migration-guide.md` — migration from repo-local to standalone CLI
+- Updated:
+  - `README.md` — CLI section now covers both standalone and repo-local entry points
+  - `docs/guides/cli-user-guide.md` — cross-references standalone CLI guide
+
+---
+
 ## 2026-04-12
 
 ### Added

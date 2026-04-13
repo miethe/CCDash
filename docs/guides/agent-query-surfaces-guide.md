@@ -45,7 +45,7 @@ Use it when you want to understand the current shape of a project before startin
 
 Available through:
 
-- CLI: `ccdash feature report <feature-id>`
+- CLI: `ccdash report feature <feature-id>`
 - MCP: `ccdash_feature_forensics`
 - REST: `GET /api/agent/feature-forensics/{feature_id}`
 
@@ -117,10 +117,10 @@ Use it when you want a structured retrospective or handoff artifact.
 Examples:
 
 ```bash
-backend/.venv/bin/ccdash status project
-backend/.venv/bin/ccdash feature report FEAT-123 --json
-backend/.venv/bin/ccdash workflow failures --md
-backend/.venv/bin/ccdash report aar --feature FEAT-123
+ccdash status project
+ccdash report feature FEAT-123 --json
+ccdash workflow failures --md
+ccdash report aar --feature FEAT-123
 ```
 
 ### Use MCP When
