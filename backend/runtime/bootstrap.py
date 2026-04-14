@@ -109,6 +109,13 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
             "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
             "syncProvisioned": bool(runtime_status.get("syncProvisioned", False)),
             "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
+            "authEnabled": bool(runtime_status.get("authEnabled", False)),
+            "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
+            "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
+            "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
+            "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
+            "runtimeAuthBehavior": str(runtime_status.get("runtimeAuthBehavior", "")),
+            "runtimeIntegrationBehavior": str(runtime_status.get("runtimeIntegrationBehavior", "")),
             "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
             "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
             "storageProfileValidationMatrix": _serialize_storage_profile_validation_matrix(

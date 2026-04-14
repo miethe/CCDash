@@ -14,9 +14,14 @@ from backend.adapters.jobs import InProcessJobScheduler
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.ports import CorePorts, StorageUnitOfWork
+from backend.db.migration_governance import resolve_storage_composition_contract
 from backend.project_manager import ProjectManager, project_manager
 from backend.runtime.profiles import RuntimeProfile
-from backend.runtime.storage_contract import validate_runtime_storage_pairing
+from backend.runtime.storage_contract import (
+    get_runtime_storage_contract,
+    get_storage_capability_contract,
+    validate_runtime_storage_pairing,
+)
 
 
 def build_core_ports(
@@ -44,6 +49,44 @@ def build_core_ports(
         job_scheduler=job_scheduler or InProcessJobScheduler(),
         integration_client=integration_client or NoopIntegrationClient(),
     )
+
+
+def build_runtime_metadata(
+    runtime_profile: RuntimeProfile,
+    storage_profile: config.StorageProfileConfig,
+) -> dict[str, object]:
+    validate_runtime_storage_pairing(runtime_profile, storage_profile)
+    runtime_contract = get_runtime_storage_contract(runtime_profile)
+    storage_contract = get_storage_capability_contract(storage_profile)
+    storage_composition = resolve_storage_composition_contract(storage_profile)
+    return {
+        "profile": runtime_profile.name,
+        "watchEnabled": runtime_profile.capabilities.watch,
+        "syncEnabled": runtime_profile.capabilities.sync,
+        "jobsEnabled": runtime_profile.capabilities.jobs,
+        "authEnabled": runtime_profile.capabilities.auth,
+        "integrationsEnabled": runtime_profile.capabilities.integrations,
+        "recommendedStorageProfile": runtime_profile.recommended_storage_profile,
+        "allowedStorageProfiles": runtime_contract.allowed_storage_profiles,
+        "supportedStorageProfiles": runtime_contract.allowed_storage_profiles,
+        "runtimeSyncBehavior": runtime_contract.sync_behavior,
+        "runtimeJobBehavior": runtime_contract.job_behavior,
+        "runtimeAuthBehavior": runtime_contract.auth_behavior,
+        "runtimeIntegrationBehavior": runtime_contract.integration_behavior,
+        "storageMode": storage_contract.mode,
+        "storageProfile": storage_profile.profile,
+        "storageBackend": storage_profile.db_backend,
+        "storageComposition": storage_composition.composition,
+        "storageCanonicalStore": storage_contract.canonical_store,
+        "filesystemSourceOfTruth": storage_profile.filesystem_source_of_truth,
+        "storageFilesystemRole": storage_contract.filesystem_role,
+        "sharedPostgresEnabled": storage_profile.shared_postgres_enabled,
+        "storageIsolationMode": storage_profile.isolation_mode,
+        "supportedStorageIsolationModes": storage_contract.supported_isolation_modes,
+        "storageSchema": storage_profile.schema_name,
+        "canonicalSessionStore": storage_profile.canonical_session_store,
+        "requiredStorageGuarantees": storage_contract.required_guarantees,
+    }
 
 
 def _build_workspace_registry(

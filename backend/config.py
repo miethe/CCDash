@@ -80,6 +80,7 @@ CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE = _env_int("CCDASH_TELEMETRY_EXPORT_MAX_Q
 CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS = _env_int("CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS", 30)
 CCDASH_TELEMETRY_ALLOW_INSECURE = _env_bool("CCDASH_TELEMETRY_ALLOW_INSECURE", False)
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
+CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 
 
 StorageProfileName = Literal["local", "enterprise"]
@@ -170,6 +171,11 @@ def resolve_storage_profile_config(environ: Mapping[str, str] | None = None) -> 
         isolation_mode=requested_isolation,
         schema_name=schema_name,
     )
+
+
+def resolve_api_bearer_token(environ: Mapping[str, str] | None = None) -> str:
+    env = environ or os.environ
+    return str(env.get(CCDASH_API_BEARER_TOKEN_ENV, "")).strip()
 
 
 class TelemetryExporterConfig(BaseModel):

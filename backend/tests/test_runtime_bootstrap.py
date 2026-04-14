@@ -20,6 +20,7 @@ from backend.runtime.bootstrap_worker import build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
 from backend.runtime.storage_contract import (
     build_storage_profile_validation_matrix,
+    get_storage_capability_contract,
     get_runtime_storage_contract,
     resolve_storage_mode,
 )
@@ -435,6 +436,35 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertEqual(payload["storageProfileValidationMatrix"], _expected_health_validation_matrix())
 
+    def test_health_endpoint_exposes_runtime_contract_metadata(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile(shared=True)
+
+        payload = _health_payload(app)
+
+        self.assertFalse(payload["watchEnabled"])
+        self.assertFalse(payload["syncEnabled"])
+        self.assertFalse(payload["jobsEnabled"])
+        self.assertTrue(payload["authEnabled"])
+        self.assertTrue(payload["integrationsEnabled"])
+        self.assertEqual(payload["recommendedStorageProfile"], "enterprise")
+        self.assertEqual(payload["supportedStorageProfiles"], ["enterprise"])
+        self.assertEqual(payload["allowedStorageProfiles"], ["enterprise"])
+        self.assertEqual(payload["runtimeSyncBehavior"], "no_incidental_sync_or_watch")
+        self.assertEqual(payload["runtimeJobBehavior"], "no_background_jobs")
+        self.assertEqual(payload["runtimeAuthBehavior"], "hosted_auth_expected")
+        self.assertEqual(payload["runtimeIntegrationBehavior"], "integrations_available")
+        self.assertEqual(payload["storageIsolationMode"], "schema")
+        self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
+        self.assertEqual(
+            payload["requiredStorageGuarantees"],
+            list(
+                get_storage_capability_contract(
+                    app.state.runtime_container.storage_profile
+                ).required_guarantees
+            ),
+        )
+
 
 class StorageAdapterCompositionTests(unittest.TestCase):
     """DPM-101 / DPM-102 — Adapter composition and unit-of-work split.
@@ -623,6 +653,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime.container.connection.close_connection", AsyncMock()) as close_connection,
             patch("backend.runtime.container.migrations.run_migrations", AsyncMock()),
             patch("backend.runtime.container.sync_engine.SyncEngine", return_value=fake_sync),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="test-token"),
             patch("backend.adapters.jobs.runtime.resolve_test_sources", return_value=[]),
             patch("backend.adapters.jobs.runtime.effective_test_flags", return_value=types.SimpleNamespace(testVisualizerEnabled=False)),
             patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
@@ -644,6 +675,25 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             watcher_stop.assert_not_awaited()
             close_connection.assert_awaited_once()
+
+    async def test_api_profile_requires_bearer_token_before_opening_db(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=""),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'api' requires a non-empty CCDASH_API_BEARER_TOKEN before serving traffic.",
+            ):
+                async with app.router.lifespan_context(app):
+                    await asyncio.sleep(0)
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
 
     async def test_test_profile_disables_background_work_by_default(self) -> None:
         app = build_test_app()
