@@ -3400,24 +3400,17 @@ class SyncEngine:
         should_rebuild_links = False
         project_root = infer_project_root(docs_dir, progress_dir)
         resolved_test_sources = list(test_sources or [])
-        if not resolved_test_sources:
-            resolved_test_results_dir = test_results_dir
-            if not resolved_test_results_dir and config.TEST_RESULTS_DIR:
-                configured = Path(config.TEST_RESULTS_DIR)
-                resolved_test_results_dir = (
-                    configured if configured.is_absolute() else (project_root / configured)
+        if not resolved_test_sources and test_results_dir:
+            resolved_test_sources = [
+                ResolvedTestSource(
+                    platform_id="pytest",
+                    enabled=True,
+                    watch=True,
+                    results_dir=str(test_results_dir),
+                    resolved_dir=test_results_dir,
+                    patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
                 )
-            if resolved_test_results_dir:
-                resolved_test_sources = [
-                    ResolvedTestSource(
-                        platform_id="pytest",
-                        enabled=True,
-                        watch=True,
-                        results_dir=str(resolved_test_results_dir),
-                        resolved_dir=resolved_test_results_dir,
-                        patterns=["**/*.xml", "**/junit*.xml", "**/pytest*.xml"],
-                    )
-                ]
+            ]
         root_scopes: list[Path] = []
         if docs_dir.exists():
             root_scopes.append(docs_dir)

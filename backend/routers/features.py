@@ -32,8 +32,7 @@ from backend.db.factory import (
     get_task_repository,
 )
 
-# Still need parsers to resolve file paths for updates?
-# Write-through logic: Update frontmatter file -> FileWatcher syncs it back to DB
+# Write-through logic: update the source file, then immediately sync it back into the DB cache.
 from backend.parsers.features import (
     resolve_file_for_feature,
     resolve_file_for_phase,
@@ -105,6 +104,32 @@ _STATUS_RANK = {
     "done": 3,
     "deferred": 3,
 }
+
+
+def _runtime_profile_name(request: Request) -> str:
+    runtime_profile = getattr(request.app.state, "runtime_profile", None)
+    if hasattr(runtime_profile, "name"):
+        return str(runtime_profile.name or "unknown")
+    value = str(runtime_profile or "").strip()
+    return value or "unknown"
+
+
+def _require_feature_write_through_sync_engine(request: Request):
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine is not None:
+        return sync_engine
+    profile_name = _runtime_profile_name(request)
+    logger.info(
+        "Rejecting feature write-through update because sync engine is unavailable",
+        extra={"runtime_profile": profile_name},
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"Runtime profile '{profile_name}' does not support filesystem write-through "
+            "updates because sync_engine is unavailable."
+        ),
+    )
 
 
 def _feature_row_score(row: dict[str, Any]) -> tuple[int, int, int, str, int]:
@@ -1661,7 +1686,7 @@ async def get_feature_linked_sessions(feature_id: str):
 # ── PATCH endpoints (Write-Through) ─────────────────────────────────
 
 async def _sync_changed_feature_files(
-    request: Request,
+    sync_engine,
     project_id: str,
     file_paths: list,
     sessions_dir,
@@ -1669,10 +1694,6 @@ async def _sync_changed_feature_files(
     progress_dir,
 ) -> None:
     """Force-sync a changed docs/progress file for immediate feature consistency."""
-    sync_engine = getattr(request.app.state, "sync_engine", None)
-    if sync_engine is None:
-        logger.warning("Sync engine not available in app state; relying on file watcher")
-        return
     changed_files = [("modified", path) for path in file_paths]
     if not changed_files:
         return
@@ -1690,6 +1711,7 @@ async def update_feature_status(feature_id: str, req: StatusUpdateRequest, reque
     db = await connection.get_connection()
     repo = get_feature_repository(db)
     target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
+    sync_engine = _require_feature_write_through_sync_engine(request)
 
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
     changed_files = []
@@ -1713,7 +1735,7 @@ async def update_feature_status(feature_id: str, req: StatusUpdateRequest, reque
         raise HTTPException(status_code=404, detail=f"No source files found for feature '{target_feature_id}'")
 
     await _sync_changed_feature_files(
-        request,
+        sync_engine,
         active_project.id,
         changed_files,
         sessions_dir,
@@ -1741,6 +1763,7 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
     db = await connection.get_connection()
     repo = get_feature_repository(db)
     target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
+    sync_engine = _require_feature_write_through_sync_engine(request)
 
     file_path = resolve_file_for_phase(target_feature_id, phase_id, progress_dir)
     if not file_path:
@@ -1752,7 +1775,7 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
     fm_status = _REVERSE_STATUS.get(req.status, req.status)
     update_frontmatter_field(file_path, "status", fm_status)
     await _sync_changed_feature_files(
-        request,
+        sync_engine,
         active_project.id,
         [file_path],
         sessions_dir,
@@ -1780,6 +1803,7 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
     db = await connection.get_connection()
     repo = get_feature_repository(db)
     target_feature_id = await _resolve_feature_alias_id(repo, active_project.id, feature_id)
+    sync_engine = _require_feature_write_through_sync_engine(request)
 
     file_path = resolve_file_for_phase(target_feature_id, phase_id, progress_dir)
     if not file_path:
@@ -1797,7 +1821,7 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
         )
 
     await _sync_changed_feature_files(
-        request,
+        sync_engine,
         active_project.id,
         [file_path],
         sessions_dir,

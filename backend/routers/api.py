@@ -1302,18 +1302,36 @@ def _plan_docs_write_reference(project: Project) -> ProjectPathReference | None:
     return None
 
 
-async def _sync_changed_document_file(
+def _require_document_write_through_sync_engine(
     request: Request,
+    *,
+    runtime_profile: str,
+):
+    sync_engine = getattr(request.app.state, "sync_engine", None)
+    if sync_engine is not None:
+        return sync_engine
+    profile_name = str(runtime_profile or "unknown").strip() or "unknown"
+    logger.info(
+        "Rejecting document write-through update because sync engine is unavailable",
+        extra={"runtime_profile": profile_name},
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"Runtime profile '{profile_name}' does not support filesystem write-through "
+            "updates because sync_engine is unavailable."
+        ),
+    )
+
+
+async def _sync_changed_document_file(
+    sync_engine,
     project_id: str,
     file_path: Path,
     sessions_dir: Path,
     docs_dir: Path,
     progress_dir: Path,
 ) -> None:
-    sync_engine = getattr(request.app.state, "sync_engine", None)
-    if sync_engine is None:
-        logger.warning("Sync engine not available in app state; relying on file watcher")
-        return
     await sync_engine.sync_changed_files(
         project_id,
         [("modified", file_path)],
@@ -1678,6 +1696,11 @@ async def update_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="The document source file is outside the resolved plan-docs path.") from exc
 
+    sync_engine = _require_document_write_through_sync_engine(
+        request,
+        runtime_profile=request_context.runtime_profile,
+    )
+
     request_content = str(req.content or "").replace("\r\n", "\n")
     content = _preserve_document_frontmatter(
         source_file,
@@ -1727,7 +1750,7 @@ async def update_document(
         source_file.write_text(content, encoding="utf-8")
 
     await _sync_changed_document_file(
-        request,
+        sync_engine,
         active_project.id,
         source_file,
         bundle.sessions.path,
