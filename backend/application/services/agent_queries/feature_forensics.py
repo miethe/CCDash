@@ -10,7 +10,7 @@ from backend.application.services.session_intelligence import SessionIntelligenc
 from backend.application.services.sessions import SessionTranscriptService
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
-from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef
+from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef, TelemetryAvailability
 
 
 def _safe_float(value: Any) -> float:
@@ -186,12 +186,24 @@ class FeatureForensicsQueryService:
     ) -> FeatureForensicsDTO:
         scope = resolve_project_scope(context, ports)
         if scope is None:
-            return FeatureForensicsDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
+            return FeatureForensicsDTO(
+                status="error",
+                feature_id=feature_id,
+                name=feature_id,
+                telemetry_available=TelemetryAvailability(),
+                source_refs=[feature_id],
+            )
 
         partial = False
         feature_row = await ports.storage.features().get_by_id(feature_id)
         if feature_row is None:
-            return FeatureForensicsDTO(status="error", feature_id=feature_id, source_refs=[feature_id])
+            return FeatureForensicsDTO(
+                status="error",
+                feature_id=feature_id,
+                name=feature_id,
+                telemetry_available=TelemetryAvailability(),
+                source_refs=[feature_id],
+            )
 
         links: list[dict[str, Any]] = []
         try:
@@ -268,6 +280,18 @@ class FeatureForensicsQueryService:
             f"Observed cost is {total_cost:.2f} across {total_tokens} tokens."
         )
 
+        name = str(
+            feature_row.get("name")
+            or feature_row.get("title")
+            or _feature_slug(feature_row)
+            or feature_id
+        )
+        telemetry_available = TelemetryAvailability(
+            tasks=len(task_refs) > 0,
+            documents=len(document_refs) > 0,
+            sessions=len(session_refs) > 0,
+        )
+
         status = "ok"
         if partial:
             status = "partial"
@@ -277,6 +301,8 @@ class FeatureForensicsQueryService:
             feature_id=feature_id,
             feature_slug=_feature_slug(feature_row),
             feature_status=str(feature_row.get("status") or ""),
+            name=name,
+            telemetry_available=telemetry_available,
             linked_sessions=session_refs,
             linked_documents=document_refs,
             linked_tasks=task_refs,

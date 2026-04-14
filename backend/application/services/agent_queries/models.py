@@ -145,10 +145,28 @@ class ProjectStatusDTO(AgentQueryEnvelope):
     blocked_features: list[str] = Field(default_factory=list)
 
 
+class TelemetryAvailability(BaseModel):
+    """Indicates whether each evidence category contains populated data."""
+
+    tasks: bool = False
+    documents: bool = False
+    sessions: bool = False
+
+
 class FeatureForensicsDTO(AgentQueryEnvelope):
+    """Feature execution history and evidence forensics.
+
+    Alias fields: ``name`` mirrors the canonical feature name; ``feature_status`` is the
+    feature lifecycle status. Use ``feature_status`` (not the envelope ``status``) for
+    feature state — the envelope ``status`` represents query-result status (ok/partial/error).
+    ``telemetry_available`` indicates data completeness (tasks/documents/sessions populated).
+    """
+
     feature_id: str
     feature_slug: str = ""
     feature_status: str = ""
+    name: str = ""
+    telemetry_available: TelemetryAvailability = Field(default_factory=TelemetryAvailability)
     linked_sessions: list[SessionRef] = Field(default_factory=list)
     linked_documents: list[DocumentRef] = Field(default_factory=list)
     linked_tasks: list[TaskRef] = Field(default_factory=list)

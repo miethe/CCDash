@@ -2,121 +2,159 @@
 schema_version: 2
 doc_type: progress
 type: progress
-prd: "ccdash-query-caching-and-cli-ergonomics"
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
+prd: ccdash-query-caching-and-cli-ergonomics
+feature_slug: ccdash-query-caching-and-cli-ergonomics
 phase: 2
-title: "DTO Alias Fields"
-status: pending
-created: 2026-04-14
-updated: 2026-04-14 (telemetry_available tasks expanded)
+title: DTO Alias Fields
+status: completed
+created: '2026-04-14'
+updated: '2026-04-14'
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 commit_refs: []
 pr_refs: []
-owners: ["python-backend-engineer"]
-contributors: ["backend-architect"]
+owners:
+- python-backend-engineer
+contributors:
+- backend-architect
 execution_model: batch-parallel
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 6
-completed_tasks: 0
+completed_tasks: 6
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "DTO-001"
-    description: "Inspect FeatureForensicsDTO and identify canonical feature name/status field sources in models.py and feature_forensics.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "low"
-    assigned_model: "haiku"
-    model_effort: "low"
-
-  - id: "DTO-002"
-    description: "Add name: str = '', status: str = '', and telemetry_available: {tasks: bool, documents: bool, sessions: bool} top-level fields to FeatureForensicsDTO with docstring note"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["DTO-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "DTO-003"
-    description: "Populate alias fields and telemetry_available in FeatureForensicsQueryService (get_forensics method): name/status from feature row; telemetry_available.tasks = len(dto.linked_tasks) > 0, etc."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["DTO-002"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "DTO-004"
-    description: "Update CLI formatters and MCP tool schema to use top-level name/status fields and include telemetry_available indicator in feature detail output"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["DTO-003"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "DTO-005"
-    description: "Add pytest regression test: dto.name == dto.<nested>, dto.status == dto.<nested>, and telemetry_available.sessions == (len(dto.linked_sessions) > 0) — CI guard for parity"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["DTO-004"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "DTO-006"
-    description: "Verify backward compatibility: old nested access still deserializes and functions; no breaking schema changes"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["DTO-005"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "haiku"
-    model_effort: "low"
-
+- id: DTO-001
+  description: Inspect FeatureForensicsDTO and identify canonical feature name/status
+    field sources in models.py and feature_forensics.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: low
+  assigned_model: haiku
+  model_effort: low
+- id: DTO-002
+  description: 'Add name: str = '''', status: str = '''', and telemetry_available:
+    {tasks: bool, documents: bool, sessions: bool} top-level fields to FeatureForensicsDTO
+    with docstring note'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - DTO-001
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: DTO-003
+  description: 'Populate alias fields and telemetry_available in FeatureForensicsQueryService
+    (get_forensics method): name/status from feature row; telemetry_available.tasks
+    = len(dto.linked_tasks) > 0, etc.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - DTO-002
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: DTO-004
+  description: Update CLI formatters and MCP tool schema to use top-level name/status
+    fields and include telemetry_available indicator in feature detail output
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - DTO-003
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: DTO-005
+  description: "Add pytest regression test: dto.name == dto.<nested>, dto.status ==\
+    \ dto.<nested>, and telemetry_available.sessions == (len(dto.linked_sessions)\
+    \ > 0) \u2014 CI guard for parity"
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - DTO-004
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: DTO-006
+  description: 'Verify backward compatibility: old nested access still deserializes
+    and functions; no breaking schema changes'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - DTO-005
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: haiku
+  model_effort: low
 parallelization:
-  batch_1: ["DTO-001"]
-  batch_2: ["DTO-002"]
-  batch_3: ["DTO-003"]
-  batch_4: ["DTO-004"]
-  batch_5: ["DTO-005"]
-  batch_6: ["DTO-006"]
-  critical_path: ["DTO-001", "DTO-002", "DTO-003", "DTO-004", "DTO-005", "DTO-006"]
-  estimated_total_time: "1-1.5 days"
-
+  batch_1:
+  - DTO-001
+  batch_2:
+  - DTO-002
+  batch_3:
+  - DTO-003
+  batch_4:
+  - DTO-004
+  batch_5:
+  - DTO-005
+  batch_6:
+  - DTO-006
+  critical_path:
+  - DTO-001
+  - DTO-002
+  - DTO-003
+  - DTO-004
+  - DTO-005
+  - DTO-006
+  estimated_total_time: 1-1.5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-2.1", description: "FeatureForensicsDTO updated with name, status, and telemetry_available fields", status: "pending" }
-  - { id: "SC-2.2", description: "Fields populated correctly in service layer (alias + telemetry_available)", status: "pending" }
-  - { id: "SC-2.3", description: "CLI and MCP formatters use top-level fields and surface telemetry_available", status: "pending" }
-  - { id: "SC-2.4", description: "Regression test asserts parity between alias fields and nested values, including telemetry_available semantics", status: "pending" }
-  - { id: "SC-2.5", description: "Backward compatibility: old nested access still works", status: "pending" }
-  - { id: "SC-2.6", description: "No schema-level breaking changes", status: "pending" }
-
+- id: SC-2.1
+  description: FeatureForensicsDTO updated with name, status, and telemetry_available
+    fields
+  status: pending
+- id: SC-2.2
+  description: Fields populated correctly in service layer (alias + telemetry_available)
+  status: pending
+- id: SC-2.3
+  description: CLI and MCP formatters use top-level fields and surface telemetry_available
+  status: pending
+- id: SC-2.4
+  description: Regression test asserts parity between alias fields and nested values,
+    including telemetry_available semantics
+  status: pending
+- id: SC-2.5
+  description: 'Backward compatibility: old nested access still works'
+  status: pending
+- id: SC-2.6
+  description: No schema-level breaking changes
+  status: pending
 files_modified:
-  - "backend/application/services/agent_queries/models.py"
-  - "backend/application/services/agent_queries/feature_forensics.py"
-  - "packages/ccdash_cli/src/ccdash_cli/"
-  - "backend/mcp/server.py"
-  - "backend/tests/"
+- backend/application/services/agent_queries/models.py
+- backend/application/services/agent_queries/feature_forensics.py
+- packages/ccdash_cli/src/ccdash_cli/
+- backend/mcp/server.py
+- backend/tests/
+progress: 100
 ---
 
 # CCDash Query Caching and CLI Ergonomics - Phase 2: DTO Alias Fields
