@@ -122,6 +122,23 @@ Use this for hosted CCDash deployments where Postgres is the canonical store. Th
 
 For canonical transcript intelligence, this is the authoritative posture: enterprise Postgres owns transcript intelligence, full analytics, and checkpointed historical backfill.
 
+Background job ownership in this hosted posture is explicit:
+
+| Concern | local | api | worker | test |
+| --- | --- | --- | --- | --- |
+| Startup sync | owns | none | owns | none |
+| File watch | owns | none | none | none |
+| Analytics snapshots | owns | none | owns | none |
+| Telemetry export | owns in local co-run | manual push-now only | owns scheduled export | none |
+| Integration refresh/backfill | owns | manual exception only | owns scheduled refresh/backfill | none |
+| Reconciliation / cache sync | owns | manual exception only when `sync_engine` exists | owns | none |
+
+The API-local rows are manual operator controls, not background ownership. Keep these paths narrow and fail closed when the sync engine is not provisioned:
+
+- `telemetry push-now`
+- `integration refresh/backfill`
+- `cache` sync/rebuild endpoints, guarded by `sync_engine` availability
+
 Shared enterprise Postgres:
 
 ```bash
