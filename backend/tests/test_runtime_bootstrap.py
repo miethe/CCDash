@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
+from backend.application.ports.core import ProjectBinding
 from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
@@ -44,6 +45,7 @@ class _ResolvedBundle:
 def _active_project() -> types.SimpleNamespace:
     return types.SimpleNamespace(
         id="project-1",
+        name="Project 1",
         testConfig=types.SimpleNamespace(
             autoSyncOnStartup=False,
             maxFilesPerScan=25,
@@ -58,6 +60,23 @@ def _fake_sync_engine() -> types.SimpleNamespace:
         sync_test_sources=AsyncMock(return_value={"synced": 0}),
         rebuild_links=AsyncMock(return_value={"created": 0}),
         capture_analytics_snapshot=AsyncMock(return_value={"captured": True}),
+    )
+
+
+def _project_binding(
+    project: types.SimpleNamespace | None = None,
+    bundle: _ResolvedBundle | None = None,
+    *,
+    source: str = "explicit",
+    requested_project_id: str | None = None,
+) -> ProjectBinding:
+    resolved_project = project or _active_project()
+    resolved_bundle = bundle or _ResolvedBundle()
+    return ProjectBinding(
+        project=resolved_project,
+        paths=resolved_bundle,
+        source=source,
+        requested_project_id=requested_project_id or resolved_project.id,
     )
 
 
@@ -604,6 +623,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         app.state.runtime_container.storage_profile = _local_storage_profile()
         project = _active_project()
         bundle = _ResolvedBundle()
+        binding = _project_binding(project, bundle, source="active", requested_project_id=None)
         fake_sync = _fake_sync_engine()
 
         with (
@@ -622,8 +642,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
             patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -642,8 +661,6 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_profile_skips_incidental_background_startup(self) -> None:
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile()
-        project = _active_project()
-        bundle = _ResolvedBundle()
         fake_sync = _fake_sync_engine()
 
         with (
@@ -659,8 +676,6 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
             patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -710,7 +725,6 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.file_watcher.start", AsyncMock()) as watcher_start,
             patch("backend.adapters.jobs.runtime.file_watcher.stop", AsyncMock()) as watcher_stop,
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=None),
         ):
             async with app.router.lifespan_context(app):
                 await asyncio.sleep(0)
@@ -728,6 +742,7 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_process_starts_without_http_server(self) -> None:
         project = _active_project()
         bundle = _ResolvedBundle()
+        binding = _project_binding(project, bundle)
         fake_sync = _fake_sync_engine()
         stop_event = asyncio.Event()
         container = build_worker_runtime()
@@ -756,18 +771,68 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.adapters.jobs.runtime.config.STARTUP_SYNC_LIGHT_MODE", True),
             patch("backend.adapters.jobs.runtime.config.STARTUP_DEFERRED_REBUILD_LINKS", False),
             patch("backend.adapters.jobs.runtime.config.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0),
-            patch("backend.runtime_ports.project_manager.get_active_project", return_value=project),
-            patch("backend.runtime_ports.project_manager.get_active_path_bundle", return_value=bundle),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=project.id),
+            ),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
+            patch("backend.runtime_ports.project_manager.get_active_project") as get_active_project,
         ):
             task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
             await asyncio.sleep(0.05)
             self.assertTrue(fake_sync.sync_project.await_count >= 1)
+            self.assertEqual(container.project_binding.project.id, project.id)
+            self.assertEqual(container.runtime_status()["boundProjectId"], project.id)
             watcher_start.assert_not_awaited()
+            get_active_project.assert_not_called()
             stop_event.set()
             await task
 
         watcher_stop.assert_not_awaited()
         close_connection.assert_awaited_once()
+
+    async def test_worker_profile_requires_explicit_project_binding_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=""),
+            ),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
+    async def test_worker_profile_rejects_unknown_project_binding_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+
+        with (
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="missing-project"),
+            ),
+            patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=None),
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' could not resolve project 'missing-project' from the workspace registry.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
 
 
 if __name__ == "__main__":

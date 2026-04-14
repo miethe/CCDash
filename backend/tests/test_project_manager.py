@@ -130,6 +130,63 @@ class ProjectManagerTests(unittest.TestCase):
         self.assertEqual(project.sessionsPath, "/tmp/sessions")
         self.assertEqual(project.progressPath, ".claude/progress")
 
+    def test_resolve_project_binding_prefers_explicit_project_over_active_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_path = Path(tmpdir) / "projects.json"
+            storage_path.write_text(
+                json.dumps(
+                    {
+                        "activeProjectId": "project-active",
+                        "projects": [
+                            {
+                                "id": "project-active",
+                                "name": "Active Project",
+                                "path": str(Path(tmpdir) / "active"),
+                            },
+                            {
+                                "id": "project-worker",
+                                "name": "Worker Project",
+                                "path": str(Path(tmpdir) / "worker"),
+                            },
+                        ],
+                    }
+                )
+            )
+
+            manager = ProjectManager(storage_path)
+
+            binding = manager.resolve_project_binding("project-worker", allow_active_fallback=False)
+
+            self.assertIsNotNone(binding)
+            assert binding is not None
+            self.assertEqual(binding.project.id, "project-worker")
+            self.assertEqual(binding.source, "explicit")
+            self.assertEqual(binding.requested_project_id, "project-worker")
+
+    def test_resolve_project_binding_returns_none_when_explicit_project_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_path = Path(tmpdir) / "projects.json"
+            storage_path.write_text(
+                json.dumps(
+                    {
+                        "activeProjectId": "project-active",
+                        "projects": [
+                            {
+                                "id": "project-active",
+                                "name": "Active Project",
+                                "path": str(Path(tmpdir) / "active"),
+                            }
+                        ],
+                    }
+                )
+            )
+
+            manager = ProjectManager(storage_path)
+
+            binding = manager.resolve_project_binding("missing-project", allow_active_fallback=False)
+
+            self.assertIsNone(binding)
+
 
 if __name__ == "__main__":
     unittest.main()

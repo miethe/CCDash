@@ -81,6 +81,7 @@ CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS = _env_int("CCDASH_TELEMETRY_QUEUE_RETENTI
 CCDASH_TELEMETRY_ALLOW_INSECURE = _env_bool("CCDASH_TELEMETRY_ALLOW_INSECURE", False)
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
+CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
 
 
 StorageProfileName = Literal["local", "enterprise"]
@@ -176,6 +177,23 @@ def resolve_storage_profile_config(environ: Mapping[str, str] | None = None) -> 
 def resolve_api_bearer_token(environ: Mapping[str, str] | None = None) -> str:
     env = environ or os.environ
     return str(env.get(CCDASH_API_BEARER_TOKEN_ENV, "")).strip()
+
+
+class WorkerBindingConfig(BaseModel):
+    """Validated worker runtime binding configuration."""
+
+    project_id: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.project_id)
+
+
+def resolve_worker_binding_config(environ: Mapping[str, str] | None = None) -> WorkerBindingConfig:
+    env = environ or os.environ
+    return WorkerBindingConfig(
+        project_id=str(env.get(CCDASH_WORKER_PROJECT_ID_ENV, "")).strip(),
+    )
 
 
 class TelemetryExporterConfig(BaseModel):

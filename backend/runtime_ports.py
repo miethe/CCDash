@@ -44,7 +44,11 @@ def build_core_ports(
     return CorePorts(
         identity_provider=resolved_identity_provider,
         authorization_policy=authorization_policy or PermitAllAuthorizationPolicy(),
-        workspace_registry=workspace_registry or _build_workspace_registry(workspace_manager, runtime_profile, resolved_storage_profile),
+        workspace_registry=workspace_registry or build_workspace_registry(
+            runtime_profile=runtime_profile,
+            storage_profile=resolved_storage_profile,
+            manager=workspace_manager,
+        ),
         storage=storage or _build_storage_unit_of_work(db, runtime_profile, resolved_storage_profile),
         job_scheduler=job_scheduler or InProcessJobScheduler(),
         integration_client=integration_client or NoopIntegrationClient(),
@@ -89,13 +93,14 @@ def build_runtime_metadata(
     }
 
 
-def _build_workspace_registry(
-    manager: ProjectManager,
-    runtime_profile: RuntimeProfile | None,
-    storage_profile: config.StorageProfileConfig,
+def build_workspace_registry(
+    *,
+    runtime_profile: RuntimeProfile | None = None,
+    storage_profile: config.StorageProfileConfig | None = None,
+    manager: ProjectManager | None = None,
 ) -> ProjectManagerWorkspaceRegistry:
     _ = runtime_profile, storage_profile
-    return ProjectManagerWorkspaceRegistry(manager)
+    return ProjectManagerWorkspaceRegistry(manager or project_manager)
 
 
 def _build_identity_provider(runtime_profile: RuntimeProfile | None) -> object:

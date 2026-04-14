@@ -22,6 +22,7 @@ from backend.application.context import (
 from backend.application.live_updates import BrokerLiveEventPublisher, LiveEventBroker, LiveEventPublisher
 from backend.application.live_updates.runtime_state import set_live_event_publisher
 from backend.application.ports import CorePorts
+from backend.application.ports.core import ProjectBinding
 from backend import config
 from backend.db import connection, migrations, sync_engine
 from backend.db.migration_governance import validate_migration_governance_contract
@@ -34,7 +35,7 @@ from backend.runtime.storage_contract import (
     get_storage_capability_contract,
     validate_runtime_storage_pairing,
 )
-from backend.runtime_ports import build_core_ports, build_runtime_metadata
+from backend.runtime_ports import build_core_ports, build_runtime_metadata, build_workspace_registry
 from backend.services.integrations import TelemetryExportCoordinator, TelemetrySettingsStore
 
 logger = logging.getLogger("ccdash.runtime")
@@ -53,19 +54,21 @@ class RuntimeContainer:
         self.live_event_publisher: LiveEventPublisher | None = None
         self.telemetry_exporter: TelemetryExportCoordinator | None = None
         self.telemetry_settings_store: TelemetrySettingsStore | None = None
+        self.project_binding: ProjectBinding | None = None
         self.migration_status = "not_started"
 
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
         self._validate_startup_auth_contract()
+        self.project_binding = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
         logger.info(
             "CCDash backend starting up "
             "(profile=%s, storage_profile=%s, storage_backend=%s, storage_composition=%s, "
             "auth_enabled=%s, integrations_enabled=%s, allowed_storage_profiles=%s, "
             "runtime_sync_behavior=%s, runtime_job_behavior=%s, runtime_auth_behavior=%s, "
-            "runtime_integration_behavior=%s)",
+            "runtime_integration_behavior=%s, bound_project_id=%s, bound_project_source=%s)",
             startup_metadata["profile"],
             startup_metadata["storageProfile"],
             startup_metadata["storageBackend"],
@@ -77,10 +80,13 @@ class RuntimeContainer:
             startup_metadata["runtimeJobBehavior"],
             startup_metadata["runtimeAuthBehavior"],
             startup_metadata["runtimeIntegrationBehavior"],
+            startup_metadata["boundProjectId"],
+            startup_metadata["projectBindingSource"],
         )
         app.state.runtime_profile = self.profile
         app.state.storage_profile = self.storage_profile
         app.state.runtime_container = self
+        app.state.runtime_project_binding = self.project_binding
 
         initialize_observability(app)
 
@@ -112,6 +118,7 @@ class RuntimeContainer:
             profile=self.profile,
             ports=self.require_ports(),
             sync_engine=self.sync,
+            project_binding=self.project_binding,
             telemetry_exporter_job=(
                 TelemetryExporterJob(self.telemetry_exporter)
                 if self.profile.name == "worker" and self.telemetry_exporter is not None
@@ -365,6 +372,20 @@ class RuntimeContainer:
                 "sessionIntelligenceBackfillStrategy": storage_contract.session_intelligence_backfill_strategy,
                 "sessionIntelligenceMemoryDraftFlow": storage_contract.session_intelligence_memory_draft_flow,
                 "sessionIntelligenceIsolationBoundary": storage_contract.session_intelligence_isolation_boundary,
+                "boundProjectId": self.project_binding.project.id if self.project_binding is not None else None,
+                "boundProjectName": self.project_binding.project.name if self.project_binding is not None else None,
+                "boundProjectRoot": (
+                    str(self.project_binding.paths.root.path)
+                    if self.project_binding is not None
+                    else None
+                ),
+                "projectBindingSource": self.project_binding.source if self.project_binding is not None else None,
+                "projectBindingRequestedId": (
+                    self.project_binding.requested_project_id
+                    if self.project_binding is not None
+                    else None
+                ),
+                "projectBindingLocked": self.project_binding.locked if self.project_binding is not None else False,
             }
         )
         return metadata
@@ -378,3 +399,36 @@ class RuntimeContainer:
             f"Runtime profile '{self.profile.name}' requires a non-empty "
             f"{config.CCDASH_API_BEARER_TOKEN_ENV} before serving traffic."
         )
+
+    def _resolve_startup_project_binding(self) -> ProjectBinding | None:
+        if self.profile.name != "worker":
+            return None
+
+        binding_config = config.resolve_worker_binding_config()
+        if not binding_config.configured:
+            raise RuntimeError(
+                f"Runtime profile 'worker' requires a non-empty "
+                f"{config.CCDASH_WORKER_PROJECT_ID_ENV} before starting background jobs."
+            )
+
+        workspace_registry = build_workspace_registry(
+            runtime_profile=self.profile,
+            storage_profile=self.storage_profile,
+        )
+        binding = workspace_registry.resolve_project_binding(
+            binding_config.project_id,
+            allow_active_fallback=False,
+        )
+        if binding is None:
+            raise RuntimeError(
+                f"Runtime profile 'worker' could not resolve project "
+                f"'{binding_config.project_id}' from the workspace registry."
+            )
+
+        logger.info(
+            "Resolved worker project binding (project_id=%s, source=%s, project_root=%s)",
+            binding.project.id,
+            binding.source,
+            binding.paths.root.path,
+        )
+        return binding

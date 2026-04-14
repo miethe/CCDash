@@ -9,6 +9,7 @@ from typing import Any
 
 from backend import config
 from backend.application.ports import CorePorts
+from backend.application.ports.core import ProjectBinding
 from backend.db.file_watcher import file_watcher
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
@@ -35,19 +36,33 @@ class RuntimeJobAdapter:
         profile: RuntimeProfile,
         ports: CorePorts,
         sync_engine: Any | None,
+        project_binding: ProjectBinding | None = None,
         telemetry_exporter_job: TelemetryExporterJob | None = None,
     ) -> None:
         self.profile = profile
         self.ports = ports
         self.sync = sync_engine
+        self.project_binding = project_binding
         self.telemetry_exporter_job = telemetry_exporter_job
         self.state = RuntimeJobState()
 
     async def start(self) -> RuntimeJobState:
         workspace_registry = self.ports.workspace_registry
-        active_project = workspace_registry.get_active_project()
-        active_bundle = workspace_registry.get_active_path_bundle() if active_project else None
-        sessions_dir, docs_dir, progress_dir = self._resolve_paths(active_bundle)
+        resolved_binding = self.project_binding
+        if resolved_binding is None and (
+            self.profile.capabilities.sync
+            or self.profile.capabilities.watch
+            or self.profile.capabilities.jobs
+        ):
+            resolved_binding = workspace_registry.resolve_project_binding()
+
+        active_project = resolved_binding.project if resolved_binding is not None else None
+        active_bundle = resolved_binding.paths if resolved_binding is not None else None
+        sessions_dir, docs_dir, progress_dir = active_bundle.as_tuple() if active_bundle is not None else (
+            config.SESSIONS_DIR,
+            config.DOCUMENTS_DIR,
+            config.PROGRESS_DIR,
+        )
         test_sources = (
             resolve_test_sources(active_project, project_root=active_bundle.root.path)
             if active_project and active_bundle is not None
@@ -134,15 +149,6 @@ class RuntimeJobAdapter:
             "jobsEnabled": self.profile.capabilities.jobs,
         }
 
-    def _resolve_paths(self, active_bundle: Any | None) -> tuple[Path, Path, Path]:
-        if active_bundle is None:
-            return (
-                config.SESSIONS_DIR,
-                config.DOCUMENTS_DIR,
-                config.PROGRESS_DIR,
-            )
-        return active_bundle.as_tuple()
-
     async def _run_startup_sync_pipeline(
         self,
         *,
@@ -211,11 +217,12 @@ class RuntimeJobAdapter:
         if analytics_interval <= 0:
             return None
         workspace_registry = self.ports.workspace_registry
+        bound_project = self.project_binding.project if self.project_binding is not None else None
 
         async def _run_periodic_analytics_snapshots() -> None:
             while True:
                 await asyncio.sleep(analytics_interval)
-                current_project = workspace_registry.get_active_project()
+                current_project = bound_project or workspace_registry.get_active_project()
                 if not current_project:
                     continue
                 try:
