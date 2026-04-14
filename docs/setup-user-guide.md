@@ -118,7 +118,7 @@ CCDASH_DB_BACKEND=postgres
 CCDASH_DATABASE_URL=postgresql://...
 ```
 
-Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, refresh, and scheduled jobs.
+Use this for hosted CCDash deployments where Postgres is the canonical store. The API should stay stateless; the worker owns startup sync, startup refresh/backfill, telemetry export, and scheduled jobs.
 
 For canonical transcript intelligence, this is the authoritative posture: enterprise Postgres owns transcript intelligence, full analytics, and checkpointed historical backfill.
 
@@ -129,11 +129,11 @@ Background job ownership in this hosted posture is explicit:
 | Startup sync | owns | none | owns | none |
 | File watch | owns | none | none | none |
 | Analytics snapshots | owns | none | owns | none |
-| Telemetry export | owns in local co-run | manual push-now only | owns scheduled export | none |
-| Integration refresh/backfill | owns | manual exception only | owns scheduled refresh/backfill | none |
+| Telemetry export | manual push-now only | manual push-now only | owns scheduled export | none |
+| Integration refresh/backfill | startup refresh/backfill when configured | manual sync/refresh/backfill only | startup refresh/backfill when configured | none |
 | Reconciliation / cache sync | owns | manual exception only when `sync_engine` exists | owns | none |
 
-The API-local rows are manual operator controls, not background ownership. Keep these paths narrow and fail closed when the sync engine is not provisioned:
+The API-local rows are manual operator controls, not background ownership. Keep these paths narrow and fail closed when the sync engine is not provisioned. Integration refresh/backfill runs at startup in local and worker runtimes when SkillMeat is configured; it is not a separate periodic job.
 
 - `telemetry push-now`
 - `integration refresh/backfill`
