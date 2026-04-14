@@ -92,8 +92,9 @@ contributors: [codex]
 
 ### Hosted deployment modularization
 
-- Deploy `backend.main:app` as stateless API profile.
-- Deploy `backend.worker` separately for background sync/refresh/scheduled jobs.
+- Deploy `backend.runtime.bootstrap_api:app` as the stateless hosted API profile.
+- Deploy `python -m backend.worker` separately for background sync/refresh/scheduled jobs.
+- Keep `backend.main:app` as the local-convenience entrypoint only; it is not a hosted API bootstrap.
 
 ### Data platform modularization
 

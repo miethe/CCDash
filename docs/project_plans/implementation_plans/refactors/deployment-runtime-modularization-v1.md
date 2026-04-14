@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: draft
+status: in-progress
 category: refactors
 title: 'Implementation Plan: Deployment and Runtime Modularization V1'
 description: Turn CCDash runtime profiles into deployable API, worker, local, and test operating modes with explicit launch contracts, health semantics, and packaging.
@@ -17,7 +17,7 @@ audience:
 - backend-platform
 - devops
 created: 2026-04-08
-updated: '2026-04-08'
+updated: '2026-04-14'
 commit_refs: []
 pr_refs: []
 tags:

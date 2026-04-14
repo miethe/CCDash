@@ -96,6 +96,15 @@ Enterprise mode assumes a split runtime:
 - API runtime serves HTTP and reads canonical state
 - worker runtime owns sync, refresh, and scheduled jobs
 
+Canonical runtime matrix for hosted validation:
+
+| Runtime | Canonical entrypoint | Hosted use |
+| --- | --- | --- |
+| `api` | `backend.runtime.bootstrap_api:app` | required |
+| `worker` | `python -m backend.worker` | required |
+| `local` | `backend.main:app` and `npm run dev` | never use for hosted validation |
+| `test` | `backend.runtime.bootstrap_test:app` | test-only |
+
 Supported enterprise entrypoints:
 
 ```bash
@@ -114,7 +123,7 @@ Operator rules:
 
 - `backend.runtime.bootstrap_api:app` is the stateless hosted API runtime.
 - `backend.worker` is the background-only runtime for sync, refresh, and scheduled jobs.
-- `backend.main:app`, `npm run dev`, and `npm run start:backend` are local-convenience entrypoints and are not the canonical hosted API posture.
+- `backend.main:app`, `npm run dev`, `npm run dev:backend`, and `npm run start:backend` are local-convenience entrypoints and are not the canonical hosted API posture.
 - If you are validating locally against enterprise Postgres, keep the same API/worker split. Do not rely on the desktop `local` runtime profile for enterprise validation.
 
 ## 4. Initial Health Validation

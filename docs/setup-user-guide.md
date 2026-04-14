@@ -157,16 +157,33 @@ npm run dev:worker
 
 ## Production-Style Startup
 
+Canonical runtime entrypoints:
+
+| Runtime | Canonical entrypoint | Intended use |
+| --- | --- | --- |
+| `local` | `backend.main:app` and `npm run dev` | one-command contributor workflow with local-friendly sync/watch/jobs behavior |
+| `api` | `backend.runtime.bootstrap_api:app` | hosted HTTP API only |
+| `worker` | `python -m backend.worker` | hosted or local background sync, refresh, and scheduled jobs |
+| `test` | `backend.runtime.bootstrap_test:app` | deterministic test harness with incidental background work disabled |
+
+The matrix above is the operator-facing contract. Wrapper scripts are not equivalent just because they start Python. In the current Phase 1 repo state, `npm run dev:backend` and `npm run start:backend` still route through the local-convenience backend path, so they are valid local workflows but not the canonical hosted API entrypoint.
+
 Build frontend assets:
 
 ```bash
 npm run build
 ```
 
-Start backend:
+Start local-convenience backend:
 
 ```bash
 npm run start:backend
+```
+
+Start hosted API explicitly:
+
+```bash
+backend/.venv/bin/python -m uvicorn backend.runtime.bootstrap_api:app --host 0.0.0.0 --port 8000
 ```
 
 Start background worker:
@@ -181,7 +198,7 @@ Serve built frontend:
 npm run start:frontend
 ```
 
-For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` remains the local-convenience entrypoint.
+For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app`, `npm run dev`, `npm run dev:backend`, and `npm run start:backend` remain local-convenience entrypoints in this Phase 1 contract.
 
 Enterprise operator split:
 

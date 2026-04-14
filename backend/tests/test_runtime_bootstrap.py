@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
+from backend.main import app as local_entrypoint_app
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.db.repositories.identity_access import LocalPrincipalRepository
 from backend.db.repositories.postgres.identity_access import PostgresPrincipalRepository
@@ -117,6 +118,28 @@ class RuntimeProfileTests(unittest.TestCase):
         container = build_worker_runtime()
 
         self.assertEqual(container.profile, get_runtime_profile("worker"))
+
+    def test_canonical_runtime_entrypoint_matrix_is_explicit(self) -> None:
+        local_app = build_local_app()
+        api_app = build_api_app()
+        test_app = build_test_app()
+        worker_runtime = build_worker_runtime()
+
+        self.assertEqual(local_entrypoint_app.state.runtime_profile, get_runtime_profile("local"))
+        self.assertEqual(local_app.state.runtime_profile, get_runtime_profile("local"))
+        self.assertEqual(api_app.state.runtime_profile, get_runtime_profile("api"))
+        self.assertEqual(test_app.state.runtime_profile, get_runtime_profile("test"))
+        self.assertEqual(worker_runtime.profile, get_runtime_profile("worker"))
+
+    def test_backend_main_health_contract_remains_local_only(self) -> None:
+        local_entrypoint_app.state.runtime_container.storage_profile = _local_storage_profile()
+
+        payload = _health_payload(local_entrypoint_app)
+
+        self.assertEqual(payload["profile"], "local")
+        self.assertEqual(payload["storageProfile"], "local")
+        self.assertTrue(payload["watchEnabled"])
+        self.assertTrue(payload["jobsEnabled"])
 
     def test_runtime_to_storage_mapping_is_explicit(self) -> None:
         mappings = {
