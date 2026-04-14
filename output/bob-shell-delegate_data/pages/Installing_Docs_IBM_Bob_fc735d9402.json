@@ -1,0 +1,181 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+  "title": "Installing | Docs | IBM Bob",
+  "content": "FeedbackYou can install Bob Shell an installation script, your package manager, or the command palette.\n\nmacOS, Linux, or Windows\n\nMinimum 4 GB RAM (8 GB recommended)\n\nMinimum 500 MB available disk space\n\nActive internet connection\n\nVersion 22.15.0 or later\n\nInstall with terminal commands or the command palette\n\nChoose to install Bob Shell with an installation script, your package manager, or the command palette.\n\nSelect your operating system, then copy and run the command to install Bob Shell.\n\nIf you have manually downloaded the Bob Shell package from the Releases page, you can install it by using one of the following package managers:\n\nYou must revise the following commands to use the actual path where you downloaded the file.\n\nYou must run the following Windows commands with Powershell.\n\nYou must have Bob IDE installed to use the command palette to install Bob Shell.\n\nInstall Bob Shell directly from the command palette:\n\nPress Ctrl+Shift+P on Windows/Linux or Cmd+Shift+P on macOS.\n\nRun the following command from the command palette to install Bob IDE:\n\nType and select the following command:\n\nWhen using Bob Shell, you will be prompted to authenticate with your internet browser and IBMid. After authenticating, close your browser and return to your Bob Shell instance.\n\nFrequently Asked Questions\n\nFind answers to common questions about IBM Bob and Bob Shell.\n\nRemove Bob Shell from your system using the appropriate method for your installation.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Installing",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "System requirements",
+      "id": "system-requirements"
+    },
+    {
+      "level": "h3",
+      "text": "Operating systems",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Memory",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Storage",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Network",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Node.js",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Package manager or Bob IDE",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Installation",
+      "id": "installation"
+    },
+    {
+      "level": "h3",
+      "text": "Using installation scripts",
+      "id": "using-installation-scripts"
+    },
+    {
+      "level": "h3",
+      "text": "Installing from the downloaded package",
+      "id": "installing-from-the-downloaded-package"
+    },
+    {
+      "level": "h3",
+      "text": "npm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "pnpm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "yarn",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "npm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "pnpm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "yarn",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "npm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "pnpm",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "yarn",
+      "id": ""
+    },
+    {
+      "level": "h3",
+      "text": "Using the command palette",
+      "id": "using-the-command-palette"
+    },
+    {
+      "level": "h3",
+      "text": "Open the command palette",
+      "id": "open-the-command-palette"
+    },
+    {
+      "level": "h3",
+      "text": "Install Bob IDE",
+      "id": "install-bob-ide"
+    },
+    {
+      "level": "h3",
+      "text": "Run Bob Shell",
+      "id": "run-bob-shell"
+    },
+    {
+      "level": "h2",
+      "text": "Authentication",
+      "id": "authentication"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash",
+      "language": "unknown"
+    },
+    {
+      "code": "curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash",
+      "language": "unknown"
+    },
+    {
+      "code": "powershell -ep Bypass 'irm -Uri \"https://bob.ibm.com/download/bobshell.ps1\" | iex'",
+      "language": "unknown"
+    },
+    {
+      "code": "run bobshell",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

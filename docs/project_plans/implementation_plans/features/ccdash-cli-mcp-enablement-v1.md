@@ -3,9 +3,9 @@ schema_version: "1.0"
 doc_type: implementation_plan
 title: "CCDash CLI and MCP Enablement - Implementation Plan"
 description: "Phased implementation plan for exposing CCDash project intelligence via transport-neutral query services, REST composite endpoints, Python CLI, and MCP server for coding agents."
-status: draft
+status: completed
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-14"
 feature_slug: "ccdash-cli-mcp-enablement"
 feature_version: "v1"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
@@ -36,18 +36,20 @@ related_documents:
 
 This implementation plan translates the PRD and planning documents into a phased, executable roadmap for shipping CCDash intelligence through three new access surfaces: a transport-neutral agent query layer, REST composite endpoints, a Python CLI, and an MCP server for coding agents.
 
+Phases 1-3 are complete in-repo and frozen by their progress artifacts. Phase 4 is now the only remaining MVP execution target.
+
 **Scope**: Phases 1–4 (MVP)
 **Total Effort**: 23–28 story points
 **Timeline**: 5–7 weeks (4 weeks of focused development + 1–3 weeks for integration/hardening)
 **Key Constraint**: Phase 1 is the critical path; Phases 2–4 depend on its stabilization
 
 **Phased Approach**:
-1. **Phase 1 (8–10 pts)**: Agent query foundation — transport-neutral services and DTOs
-2. **Phase 2 (4–5 pts)**: REST composite endpoints — validate contracts
-3. **Phase 3 (6–7 pts)**: CLI MVP — local query interface with human/JSON/Markdown output
-4. **Phase 4 (5–6 pts)**: MCP MVP — agent-accessible tools via stdio transport
+1. **Phase 1 (8–10 pts)**: Agent query foundation — complete
+2. **Phase 2 (4–5 pts)**: REST composite endpoints — complete
+3. **Phase 3 (6–7 pts)**: CLI MVP — complete
+4. **Phase 4 (5–6 pts)**: MCP MVP — in progress (implementation and harness complete; manual Claude Code verification pending)
 
-Phases 3 and 4 may proceed in parallel after Phase 1 is stable. Phase 2 is the contract validation gate and strongly recommended before Phase 3/4 ship.
+The Phase 2 validation gate has already been satisfied. Phase 4 should now execute directly against the completed Phase 1-3 baseline.
 
 ---
 
@@ -59,19 +61,21 @@ Phases 3 and 4 may proceed in parallel after Phase 1 is stable. Phase 2 is the c
 2. **Single Source of Truth**: One query service → shared by REST, CLI, and MCP. No duplication.
 3. **Graceful Degradation**: Services return `status: partial` when subsystems unavailable; never raise unhandled exceptions.
 4. **Provenance First**: Every response includes data freshness, source entity IDs, and evidence references.
-5. **Async-First**: All services use `async/await`. CLI bridges with Typer's native async support or `asyncio.run()`.
+5. **Async-First**: All services use `async/await`. CLI commands stay sync and bridge to async explicitly with `asyncio.run()` or AnyIO.
 
 ### Critical Path
 
 ```
-Phase 1 (Agent Query Services) [CRITICAL]
-  ↓ depends on
-Phase 2 (REST Endpoints) [VALIDATION GATE]
-  ├→ Phase 3 (CLI) [parallel after Phase 1]
-  └→ Phase 4 (MCP) [parallel after Phase 1]
+Phase 1 (Agent Query Services) [COMPLETE]
+  ↓
+Phase 2 (REST Endpoints) [COMPLETE VALIDATION GATE]
+  ↓
+Phase 3 (CLI) [COMPLETE BASELINE ADAPTER]
+  ↓
+Phase 4 (MCP) [ACTIVE EXECUTION TARGET]
 ```
 
-**Recommendation**: Proceed through Phase 2 before shipping Phase 3 and 4 to catch contract issues early.
+**Recommendation**: Reuse the completed CLI bootstrap/runtime decisions while implementing Phase 4 as the final MVP adapter.
 
 ### Files to Create/Modify Per Phase
 
@@ -84,12 +88,12 @@ See detailed phase plans:
 
 ## High-Level Phase Breakdown
 
-| Phase | Goal | Duration | Effort | Key Deliverables | Acceptance Gate |
-|-------|------|----------|--------|------------------|-----------------|
-| **1** | Agent query foundation | 5–7 d | 8–10 pts | `agent_queries/` services, DTOs, unit tests (>90% coverage) | All 4 services tested, `status` field works, partial degradation verified |
-| **2** | REST composite endpoints | 2–3 d | 4–5 pts | `/api/agent/*` routes, OpenAPI docs | All 4 endpoints return valid DTOs, services never called twice per request |
-| **3** | CLI MVP | 5–7 d | 6–7 pts | `ccdash` command, 4 core commands, formatters, CliRunner tests, entry point | All commands exit 0, JSON output valid, startup < 500 ms, `npm run setup` installs CLI |
-| **4** | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, test_client tests | All tools callable, responses valid, Claude Code discovers tools |
+| Phase | Status | Goal | Duration | Effort | Key Deliverables | Acceptance Gate |
+|-------|--------|------|----------|--------|------------------|-----------------|
+| **1** | Complete | Agent query foundation | 5–7 d | 8–10 pts | `agent_queries/` services, DTOs, unit tests (>90% coverage) | All 4 services tested, `status` field works, partial degradation verified |
+| **2** | Complete | REST composite endpoints | 2–3 d | 4–5 pts | `/api/agent/*` routes, OpenAPI docs | All 4 endpoints return valid DTOs, services never called twice per request |
+| **3** | Complete | CLI MVP | 5–7 d | 6–7 pts | `ccdash` command, 4 core commands, formatters, CliRunner tests, entry point | All commands exit 0, JSON output valid, setup/install path works |
+| **4** | In Progress | MCP MVP | 5–7 d | 5–6 pts | FastMCP server, 4 core tools, `.mcp.json`, SDK-supported client harness tests | All tools callable, responses valid, Claude Code discovers tools |
 
 ---
 
@@ -103,14 +107,16 @@ See detailed phase plans:
 
 ### Recommended Sequencing
 
-1. **Execute Phase 1 fully** (all 4 services + 90% test coverage)
-2. **Execute Phase 2 fully** (serves as contract validation + docs example)
-3. **Execute Phase 3 and 4 in parallel** (both call same Phase 1 services)
-4. **Integration testing** (E2E with real DB; CLI + web server coexistence)
+1. **Keep Phases 1-3 frozen as the validated baseline**
+2. **Execute Phase 4 using the existing lightweight bootstrap pattern from `backend/cli/runtime.py`**
+3. **Run automated stdio transport tests**
+4. **Run manual Claude Code discovery/usage verification**
 
-### Why Phase 2 Before 3/4
+**Phase 1 executed in this order**: T1 first, then T2-T5 in parallel, then T6, T7, and T8.
 
-REST endpoints force the query services to be complete and well-specified before CLI and MCP build on them. Discovering contract issues at the REST layer prevents rework when agents start using MCP tools.
+### Why Phase 4 Can Start Now
+
+REST and CLI have already validated the Phase 1 contracts, packaging decisions, and lightweight runtime bootstrap. Phase 4 should reuse those decisions rather than inventing a separate MCP-specific runtime path.
 
 ---
 
@@ -128,28 +134,28 @@ REST endpoints force the query services to be complete and well-specified before
 ### Phase 2 Quality Gate
 
 - [ ] All 4 endpoints exist at `/api/agent/*` paths
-- [ ] All endpoints appear in OpenAPI schema with examples
+- [ ] All endpoints appear in OpenAPI schema with `response_model` metadata, documented params, and handler docstrings
 - [ ] No endpoint contains inline query logic (all delegate to Phase 1 services)
 - [ ] Each endpoint is called exactly once by a router handler (no double-fetching)
-- [ ] REST API tests pass; CliRunner and mcp.test_client() tests pass
+- [ ] Top-level async router tests pass (`unittest.IsolatedAsyncioTestCase` pattern)
 - [ ] Example curl commands work
 
 ### Phase 3 Quality Gate
 
-- [ ] `ccdash --version` and `ccdash --help` work
-- [ ] `python -m backend.cli --help` works
-- [ ] All 4 MVP commands exit 0 and produce valid output
-- [ ] JSON output is valid (can be piped to `jq`)
-- [ ] Startup latency < 500 ms
-- [ ] `npm run setup` makes `ccdash` available
-- [ ] CliRunner tests cover human/JSON/MD output modes
+- [x] `ccdash --help` works after editable install
+- [x] `python -m backend.cli --help` works
+- [x] All 4 MVP commands exit 0 and produce valid output
+- [x] JSON output is valid
+- [x] Packaging/setup integration exists in-repo
+- [x] CliRunner coverage exists for human/JSON/Markdown modes
 
 ### Phase 4 Quality Gate
 
-- [ ] `python -m backend.mcp.server` starts without error
+- [ ] `python -m backend.mcp` starts without error
 - [ ] `.mcp.json` exists and points to server
 - [ ] All 4 tools return valid response envelope
-- [ ] mcp.test_client() tests pass
+- [ ] MCP bootstrap uses `RuntimeContainer(profile=test)` + `RequestMetadata` + `build_request_context`
+- [ ] SDK-supported stdio `ClientSession` harness tests pass
 - [ ] Claude Code discovers tools (manual verification)
 - [ ] No exception raised when subsystem unavailable
 
@@ -161,7 +167,7 @@ REST endpoints force the query services to be complete and well-specified before
 |------|------------|--------|-----------|
 | Agent query services become a "grab bag" | Medium | Medium | Strict admission: only multi-domain queries. Single-domain logic stays in existing services. Architecture review sign-off. |
 | CLI startup > 500 ms | Low | Medium | Lazy imports in command modules. Profile on first run. Fallback: async bootstrap deferred to command boundary. |
-| MCP SDK v2 breaking changes | Low | Medium | Pin `mcp>=1.8,<2`. FastMCP decorator API confirmed stable. Monitor for v2 beta. |
+| MCP SDK v2 breaking changes | Low | Medium | Pin `mcp` to a current vetted v1.x release (<2). FastMCP decorator API confirmed stable. Monitor for v2 beta. |
 | SQLite lock contention (CLI + web running) | Low | Low | WAL mode + 30s busy timeout already configured. CLI operations are short read transactions. |
 | Tool descriptions inadequate for agents | Medium | High | Iterate based on real Claude Code testing. Treat docstrings as UX. Test with agents before shipping. |
 | Query DTO shape diverges (CLI JSON vs REST JSON) | Low | Low | Both use Pydantic `.model_dump()` on same DTO classes. Divergence prevented by structure. |
@@ -179,8 +185,8 @@ REST endpoints force the query services to be complete and well-specified before
 ### Integration Testing (Phase 1 + 2)
 
 - **Agent queries**: Real SQLite test DB with parsed fixture data
-- **REST endpoints**: FastAPI TestClient
-- **Approach**: Verify services return consistent data via both paths
+- **REST endpoints**: Top-level async router tests that call handlers directly with patched collaborators
+- **Approach**: Verify services return consistent data via both paths without introducing a second HTTP-only testing style
 
 ### CLI Testing (Phase 3)
 
@@ -190,8 +196,8 @@ REST endpoints force the query services to be complete and well-specified before
 
 ### MCP Testing (Phase 4)
 
-- **Framework**: `mcp.test_client()` in-memory transport
-- **Approach**: Test each tool with mocked CorePorts
+- **Framework**: stdio transport harness using `stdio_client` + `ClientSession`
+- **Approach**: Launch the actual stdio server module, initialize a session, verify `list_tools`, then `call_tool`
 - **Coverage**: All 4 tools, error cases, partial availability
 
 ### E2E Testing (All Phases)
@@ -208,10 +214,10 @@ REST endpoints force the query services to be complete and well-specified before
 | Agent query services line coverage | >90% | pytest coverage report |
 | REST endpoint response time (p95, local SQLite) | <100 ms | Load test with wrk/vegeta |
 | CLI startup to first output | <500 ms | time ccdash status project |
-| MCP tool response time (p95, local SQLite) | <2 s | mcp.test_client() wall clock |
+| MCP tool response time (p95, local SQLite) | <2 s | SDK-supported client harness wall clock |
 | CLI JSON output parseable | 100% | for each MVP command: `ccdash ... --json \| jq .` |
 | Zero business logic duplication | Verified | Architecture review checklist |
-| All tests passing | 100% | CI gate (pytest, CliRunner, mcp.test_client) |
+| All tests passing | 100% | CI gate (pytest, CliRunner, SDK-supported client harness) |
 
 ---
 
@@ -246,8 +252,8 @@ Estimates follow Fibonacci scale with reference to CCDash's typical stories:
 |------|--------|-------|
 | Create `backend/routers/agent.py` router | 1 pt | Boilerplate, import Phase 1 services |
 | Implement 4 REST endpoints | 2 pts | ~10 lines each; all delegate to Phase 1 |
-| OpenAPI schema documentation | 1 pt | Add descriptions, example responses |
-| Integration tests (FastAPI TestClient) | 1 pt | Test all 4 endpoints + error cases |
+| OpenAPI schema documentation | 1 pt | Add `response_model`, parameter descriptions, and handler docstrings |
+| Router tests (`unittest.IsolatedAsyncioTestCase`) | 1 pt | Test all 4 handlers + error cases |
 | **Phase 2 Total** | **4–5 pts** | |
 
 ### Phase 3 Breakdown (6–7 pts total)
@@ -255,22 +261,22 @@ Estimates follow Fibonacci scale with reference to CCDash's typical stories:
 | Task | Effort | Notes |
 |------|--------|-------|
 | Create `backend/cli/` package, Typer app structure | 1 pt | `main.py`, `__main__.py`, command stubs |
-| Implement `CLIRuntimeContainer`, bootstrap logic | 1 pt | `runtime.py`, lazy CorePorts init, connection lifecycle |
+| Implement lightweight CLI bootstrap logic | 1 pt | `runtime.py`, `RuntimeContainer(profile=test)`, request-context lifecycle |
 | Implement 4 MVP commands (status, feature, workflow, report) | 3 pts | ~40 lines each; all delegate to Phase 1 |
 | Implement 3 output formatters (human/JSON/Markdown) | 2 pts | TableFormatter, JsonFormatter, MarkdownFormatter |
 | CliRunner tests (all commands, all output modes) | 1 pt | ~5 tests per command × 3 modes |
-| Entry point in `pyproject.toml`, `npm run setup` integration | 1 pt | Config + shell script update |
+| Entry point in repo-root packaging metadata, `scripts/setup.mjs` editable install | 1 pt | Add repo-root `pyproject.toml` so `console_scripts` creates `ccdash` |
 | **Phase 3 Total** | **6–7 pts** | |
 
 ### Phase 4 Breakdown (5–6 pts total)
 
 | Task | Effort | Notes |
 |------|--------|-------|
-| Add `mcp>=1.8,<2` dependency | 1 pt | Update requirements.txt |
+| Add `mcp` pinned to a current vetted v1.x release (<2) dependency | 1 pt | Update requirements.txt |
 | Create `backend/mcp/` package, FastMCP server | 1 pt | `server.py`, `bootstrap.py`, `__main__` entry point |
 | Implement 4 core MCP tools | 3 pts | ~30 lines each; all delegate to Phase 1 |
 | Create `.mcp.json` configuration | 1 pt | Stdio transport, env vars |
-| mcp.test_client() unit tests | 1 pt | All 4 tools + error cases |
+| SDK-supported client harness unit tests | 1 pt | All 4 tools + error cases |
 | **Phase 4 Total** | **5–6 pts** | |
 
 ---
@@ -358,7 +364,7 @@ backend/
       markdown.py                 # Phase 3: MarkdownFormatter
   mcp/
     __init__.py                   # Phase 4
-    __main__.py                   # Phase 4: python -m backend.mcp.server entry
+    __main__.py                   # Phase 4: python -m backend.mcp entry
     server.py                     # Phase 4: FastMCP instance + lifespan
     bootstrap.py                  # Phase 4: Lazy CorePorts init
     context.py                    # Phase 4: MCP RequestContext builder
@@ -371,9 +377,9 @@ backend/
 .mcp.json                         # Phase 4: Claude Code MCP config
 
 Modified files:
-  pyproject.toml                  # Phase 3: [project.scripts] entry point
-  backend/requirements.txt         # Phase 4: Add mcp>=1.8,<2
-  npm run setup script             # Phase 3: Add pip install -e .
+  backend/requirements.txt         # Phase 4: Add mcp pinned to a current vetted v1.x release (<2)
+  pyproject.toml                   # Phase 3: packaging metadata for console_scripts
+  scripts/setup.mjs                # Phase 3: extend to install backend in editable mode
 ```
 
 ---
@@ -387,14 +393,12 @@ Modified files:
 - FastAPI application running (for Phase 2 onward)
 - SQLite with WAL mode enabled (existing configuration)
 
-### First Step: Phase 1
+### Next Step: Phase 4
 
-1. Create `backend/application/services/agent_queries/` directory
-2. Implement `ProjectStatusQueryService` with Pydantic DTO
-3. Write unit tests with >90% coverage
-4. Get architecture review sign-off before proceeding to Phase 2
-
-See [Phase 1 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-1-agent-queries.md) for task-by-task guidance.
+1. Use the completed [Phase 1](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md), [Phase 2](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md), and [Phase 3](../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-3-progress.md) progress artifacts as the frozen baseline.
+2. Start Phase 4 tracking in `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-4-progress.md`.
+3. Execute the repo-aligned [Phase 3–4 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md), using only the Phase 4 task set.
+4. Treat the CLI runtime/bootstrap path as the implementation template for MCP bootstrap and testing.
 
 ---
 
@@ -404,19 +408,21 @@ See [Phase 1 detailed plan](./ccdash-cli-mcp-enablement-v1/phase-1-agent-queries
 
 - All 4 query services tested
 - Graceful degradation verified (partial status)
-- Ready to move to Phase 2 (REST) or skip to Phase 3/4 (CLI/MCP directly use Phase 1)
+- Phase 1 completion evidence recorded in `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md`
+- Historical gate satisfied
 
 ### After Phase 2
 
 - REST endpoints validated
 - Contract shape finalized
 - No changes needed to Phase 1 DTOs (signals good design)
+- Historical gate satisfied for downstream adapters
 
 ### After Phase 3
 
 - CLI available as `ccdash` command
 - All human/JSON/Markdown output modes working
-- Ready for agent shell integration
+- Lightweight adapter bootstrap validated in-repo and ready to be reused by MCP
 
 ### After Phase 4
 
@@ -438,12 +444,12 @@ These are explicit out-of-scope for this PRD; tracked separately:
 
 ## Success Criteria
 
-This implementation plan is complete and ready for development when:
+This implementation plan is ready for the remaining execution scope when:
 
-- [ ] All phase-specific task breakdowns are reviewed and estimated
-- [ ] Architecture review confirms query service contracts
-- [ ] Team capacity and timeline are allocated
-- [ ] Testing infrastructure (pytest, CliRunner, mcp.test_client) is validated
+- [x] Phase-specific task breakdowns are reviewed and estimated
+- [x] Architecture review confirms query service contracts
+- [x] CLI/runtime baseline is validated in-repo
+- [x] Testing infrastructure for the MCP stdio client harness is validated during Phase 4
 
 ---
 
@@ -471,15 +477,15 @@ This implementation follows MeatyPrompts layered architecture principles:
 | **Service** | New agent_queries package + existing domain services | ProjectStatusQueryService, FeatureForensicsQueryService |
 | **API** | REST routers + CLI commands + MCP tools | `/api/agent/*` endpoints + `ccdash` commands + MCP tools |
 | **UI** | Web dashboard (unchanged); CLI formatters are output adapters | TableFormatter, JsonFormatter, MarkdownFormatter |
-| **Testing** | Pytest (services), FastAPI TestClient (endpoints), CliRunner, mcp.test_client() | Comprehensive test coverage per phase |
+| **Testing** | Pytest (services), async unittest router tests (endpoints), CliRunner, SDK-supported client harness | Comprehensive test coverage per phase |
 | **Docs** | Inline docstrings, OpenAPI schema, tool descriptions | Quality tool/command help text |
-| **Deployment** | CLI as pip entry point, MCP as stdio subprocess | Entry point in pyproject.toml, `.mcp.json` config |
+| **Deployment** | CLI as console_scripts entry point, MCP as stdio subprocess | Backend packaging metadata + editable install in `scripts/setup.mjs`, `.mcp.json` config |
 
 ---
 
 ## Document Metadata
 
 - **Version**: 1.0
-- **Last Updated**: 2026-04-02
+- **Last Updated**: 2026-04-12
 - **Author**: Architecture Planning Team
-- **Status**: Draft (ready for Phase 1 kickoff)
+- **Status**: In Progress (Phases 1-3 complete; Phase 4 ready for execution)

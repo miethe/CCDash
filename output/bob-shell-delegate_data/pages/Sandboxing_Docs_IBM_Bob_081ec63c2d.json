@@ -1,0 +1,191 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/security/sandboxing",
+  "title": "Sandboxing | Docs | IBM Bob",
+  "content": "FeedbackIsolate Bob Shell operations in a secure sandbox environment to protect your host system.\n\nSandboxing isolates potentially dangerous operations, such as shell commands or file modifications, from your host system.\n\nSandboxing provides several key benefits:\n\nChoose from the following options to create a sandbox environment:\n\nYou can use the default sandbox-exec utility.\n\nDefault profile: permissive-open - restricts writes outside your project directory while allowing most other operations.\n\nCross-platform sandboxing with complete process isolation using Docker or Podman containers.\n\nContainer-based sandboxing requires building the sandbox image locally or using a published image from your organization's registry.\n\nYou can enable sandboxing through command flags, environment variables, or configuration files.\n\nEnable sandboxing for a single command using the -s or --sandbox flag. Use command flags for one-time testing or when you need sandboxing for a specific command without affecting your default workflow.\n\nSet the BOB_SHELL_SANDBOX environment variable. Use environment variables when you want sandboxing enabled for an entire terminal session or specific project without modifying configuration files.\n\nYou can also specify the sandbox type:\n\nAdd the sandbox option to the tools object in your settings.json. Use the settings file for persistent, project-wide sandboxing that applies to all team members and sessions.\n\nYou can also use a specific sandbox type:\n\nConfiguration precedence (highest to lowest):\n\nControl the level of restriction using the SEATBELT_PROFILE environment variable:\n\nFor container-based sandboxing, inject custom flags into the docker or podman command using the SANDBOX_FLAGS environment variable. Use this when you need more control over container resources, security settings, or volume mounts, best for advanced users who need to customize memory limits, CPU allocation, or SELinux configurations for specific workloads.\n\nMultiple flags example:\n\nBob Shell automatically handles user permissions on Linux to ensure files created in the sandbox have the correct ownership. Use this to control file ownership mapping between the container and host system, best for Linux environments where you need to ensure files created in the sandbox have correct permissions or when troubleshooting permission issues.\n\nOverride this behavior if needed:\n\nWhile sandboxing significantly improves security, it has some important limitations to be aware of:\n\nBob has capabilities for coding and system interaction. To use safely, follow these guidelines.\n\nControl which projects can use Bob Shell's full capabilities with trusted folder security.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Sandboxing",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Why use sandboxing?",
+      "id": "why-use-sandboxing"
+    },
+    {
+      "level": "h2",
+      "text": "Sandboxing methods",
+      "id": "sandboxing-methods"
+    },
+    {
+      "level": "h3",
+      "text": "macOS Seatbelt (macOS only)",
+      "id": "macos-seatbelt-macos-only"
+    },
+    {
+      "level": "h3",
+      "text": "Container-based (Docker/Podman)",
+      "id": "container-based-dockerpodman"
+    },
+    {
+      "level": "h2",
+      "text": "Configuration",
+      "id": "configuration"
+    },
+    {
+      "level": "h3",
+      "text": "Command flags",
+      "id": "command-flags"
+    },
+    {
+      "level": "h3",
+      "text": "Environment variables",
+      "id": "environment-variables"
+    },
+    {
+      "level": "h3",
+      "text": "Settings file",
+      "id": "settings-file"
+    },
+    {
+      "level": "h3",
+      "text": "macOS Seatbelt profiles",
+      "id": "macos-seatbelt-profiles"
+    },
+    {
+      "level": "h3",
+      "text": "Custom sandbox flags",
+      "id": "custom-sandbox-flags"
+    },
+    {
+      "level": "h3",
+      "text": "Linux UID/GID handling",
+      "id": "linux-uidgid-handling"
+    },
+    {
+      "level": "h2",
+      "text": "Limitations",
+      "id": "limitations"
+    },
+    {
+      "level": "h3",
+      "text": "General:",
+      "id": "general"
+    },
+    {
+      "level": "h3",
+      "text": "File system:",
+      "id": "file-system"
+    },
+    {
+      "level": "h3",
+      "text": "Network:",
+      "id": "network"
+    },
+    {
+      "level": "h3",
+      "text": "Tools and commands:",
+      "id": "tools-and-commands"
+    },
+    {
+      "level": "h3",
+      "text": "macOS Seatbelt:",
+      "id": "macos-seatbelt"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "bob -s \"analyze this shell script for potential security issues before execution\"",
+      "language": "unknown"
+    },
+    {
+      "code": "export BOB_SHELL_SANDBOX=true\nbob \"analyze this shell script for potential security issues before execution\"",
+      "language": "sass"
+    },
+    {
+      "code": "export BOB_SHELL_SANDBOX=docker  # or podman, or sandbox-exec",
+      "language": "sass"
+    },
+    {
+      "code": "{\n  \"tools\": {\n    \"sandbox\": true\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "{\n  \"tools\": {\n    \"sandbox\": \"docker\"\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "export SEATBELT_PROFILE=restrictive-open\nbob -s \"analyze this shell script for potential security issues before execution\"",
+      "language": "sass"
+    },
+    {
+      "code": "export SANDBOX_FLAGS=\"--security-opt label=disable\"\nbob -s \"analyze this shell script for potential security issues before execution\"",
+      "language": "sass"
+    },
+    {
+      "code": "export SANDBOX_FLAGS=\"--memory=4g --cpus=2\"\nbob -s \"analyze this shell script for potential security issues before execution\"",
+      "language": "sass"
+    },
+    {
+      "code": "# Force host UID/GID mapping\nexport SANDBOX_SET_UID_GID=true",
+      "language": "sass"
+    },
+    {
+      "code": "# Disable UID/GID mapping\nexport SANDBOX_SET_UID_GID=false",
+      "language": "sass"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellSandboxingSandboxingFeedbackIsolate Bob Shell operations in a secure sandbox environment to protect your host system.Copy MarkdownFeedbackSandboxing isolates potentially dangerous operations, such as shell commands or file modifications, from your host system. Why use sandboxing? FeedbackSandboxing provides several key benefits: Feedback Isolation: Limits file system access to your project directory only Consistency: Ensures reproducible environments across different systems Safety: Reduces risk when experimenting with untrusted code or commands Sandboxing methods FeedbackChoose from the following options to create a sandbox environment: macOS Seatbelt (macOS only) FeedbackYou can use the default sandbox-exec utility. FeedbackDefault profile: permissive-open - restricts writes outside your project directory while allowing most other operations. Container-based (Docker/Podman) FeedbackCross-platform sandboxing with complete process isolation using Docker or Podman containers. Note:FeedbackContainer-based sandboxing requires building the sandbox image locally or using a published image from your organization's registry. Configuration FeedbackYou can enable sandboxing through command flags, environment variables, or configuration files. Command flags FeedbackEnable sandboxing for a single command using the -s or --sandbox flag. Use command flags for one-time testing or when you need sandboxing for a specific command without affecting your default workflow. bob -s \"analyze this shell script for potential security issues before execution\" Environment variables FeedbackSet the BOB_SHELL_SANDBOX environment variable. Use environment variables when you want sandboxing enabled for an entire terminal session or specific project without modifying configuration files. export BOB_SHELL_SANDBOX=true bob \"analyze this shell script for potential security issues before execution\" FeedbackYou can also specify the sandbox type: export BOB_SHELL_SANDBOX=docker # or podman, or sandbox-exec Settings file FeedbackAdd the sandbox option to the tools object in your settings.json. Use the settings file for persistent, project-wide sandboxing that applies to all team members and sessions. { \"tools\": { \"sandbox\": true } } FeedbackYou can also use a specific sandbox type: { \"tools\": { \"sandbox\": \"docker\" } } FeedbackConfiguration precedence (highest to lowest): Feedback Command flag (-s or --sandbox) Environment variable (BOB_SHELL_SANDBOX) Settings file (settings.json) macOS Seatbelt profiles FeedbackControl the level of restriction using the SEATBELT_PROFILE environment variable: ProfileNetworkWrite accessUse caseWhen to usepermissive-open (default)AllowedProject onlyGeneral developmentEveryday development work where you need network access and reasonable security without significant restrictions.permissive-closedBlockedProject onlyOffline workWorking offline or in environments where network access should be blocked, but you still need full project directory access.permissive-proxiedVia proxyProject onlyCorporate environmentsCorporate environments where all network traffic must route through a proxy server. Best for enterprise settings with strict network policies.restrictive-openAllowedStrict limitsHigh securityHigh security with network access, but strict file system limitations beyond the project directory. Ideal for working with potentially malicious code that needs internet access.restrictive-closedBlockedMaximum restrictionsMaximum securityMaximum security. Use when working with untrusted or potentially dangerous code that requires complete isolation from your network and file system. FeedbackExample: export SEATBELT_PROFILE=restrictive-open bob -s \"analyze this shell script for potential security issues before execution\" Custom sandbox flags FeedbackFor container-based sandboxing, inject custom flags into the docker or podman command using the SANDBOX_FLAGS environment variable. Use this when you need more control over container resources, security settings, or volume mounts, best for advanced users who need to customize memory limits, CPU allocation, or SELinux configurations for specific workloads. FeedbackSingle flag example: export SANDBOX_FLAGS=\"--security-opt label=disable\" bob -s \"analyze this shell script for potential security issues before execution\" FeedbackMultiple flags example: export SANDBOX_FLAGS=\"--memory=4g --cpus=2\" bob -s \"analyze this shell script for potential security issues before execution\" FeedbackThis is useful for: Feedback Disabling SELinux labeling on Podman. Setting resource limits. Configuring network settings. Adding custom volume mounts. Linux UID/GID handling FeedbackBob Shell automatically handles user permissions on Linux to ensure files created in the sandbox have the correct ownership. Use this to control file ownership mapping between the container and host system, best for Linux environments where you need to ensure files created in the sandbox have correct permissions or when troubleshooting permission issues. FeedbackOverride this behavior if needed: # Force host UID/GID mapping export SANDBOX_SET_UID_GID=true # Disable UID/GID mapping export SANDBOX_SET_UID_GID=false Limitations FeedbackWhile sandboxing significantly improves security, it has some important limitations to be aware of: General: Feedback Not a complete security solution: Sandboxing reduces but doesn't eliminate all risks. Always review Bob's actions before approval. Performance overhead: Container-based sandboxing has minimal overhead after the initial build, but operations may be slightly slower than native execution. GUI applications: Graphical applications typically won't work inside sandboxes due to display isolation. File system: Feedback Project directory only: By default, only your current project directory is accessible inside the sandbox. Symbolic links: Symlinks pointing outside the project directory may not work correctly. File permissions: Permission issues may occur with files created inside the sandbox, especially on Linux. Network: Feedback Restricted profiles: Some Seatbelt profiles (permissive-closed, restrictive-closed) block all network access. Localhost services: Services running on your host machine may not be accessible from inside container sandboxes without additional configuration. VPN connections: Container sandboxes may not have access to VPN-connected resources. Tools and commands: Feedback Missing tools: The sandbox environment may not have all tools installed that are available on your host system. You can add tools via custom Dockerfile or sandbox.bashrc. System commands: Commands that require system-level access (e.g., sudo, system service management) won't work in sandboxes. Hardware access: Direct hardware access (USB devices, GPUs, etc.) is typically not available in sandboxes. macOS Seatbelt: Feedback macOS only: Seatbelt sandboxing only works on macOS systems. Less isolation: Provides less isolation than container-based approaches. Profile restrictions: Some operations may be blocked depending on the chosen profile. How is this topic?GoodBadSecurity guidelinesBob has capabilities for coding and system interaction. To use safely, follow these guidelines.Trusted foldersControl which projects can use Bob Shell's full capabilities with trusted folder security.On this pageWhy use sandboxing?Sandboxing methodsmacOS Seatbelt (macOS only)Container-based (Docker/Podman)ConfigurationCommand flagsEnvironment variablesSettings filemacOS Seatbelt profilesCustom sandbox flagsLinux UID/GID handlingLimitationsGeneral:File system:Network:Tools and commands:macOS Seatbelt:",
+      "code": "bob -s \"analyze this shell script for potential security issues before execution\""
+    },
+    {
+      "description": "FeedbackSandboxing isolates potentially dangerous operations, such as shell commands or file modifications, from your host system. Why use sandboxing? FeedbackSandboxing provides several key benefits: Feedback Isolation: Limits file system access to your project directory only Consistency: Ensures reproducible environments across different systems Safety: Reduces risk when experimenting with untrusted code or commands Sandboxing methods FeedbackChoose from the following options to create a sandbox environment: macOS Seatbelt (macOS only) FeedbackYou can use the default sandbox-exec utility. FeedbackDefault profile: permissive-open - restricts writes outside your project directory while allowing most other operations. Container-based (Docker/Podman) FeedbackCross-platform sandboxing with complete process isolation using Docker or Podman containers. Note:FeedbackContainer-based sandboxing requires building the sandbox image locally or using a published image from your organization's registry. Configuration FeedbackYou can enable sandboxing through command flags, environment variables, or configuration files. Command flags FeedbackEnable sandboxing for a single command using the -s or --sandbox flag. Use command flags for one-time testing or when you need sandboxing for a specific command without affecting your default workflow. bob -s \"analyze this shell script for potential security issues before execution\" Environment variables FeedbackSet the BOB_SHELL_SANDBOX environment variable. Use environment variables when you want sandboxing enabled for an entire terminal session or specific project without modifying configuration files. export BOB_SHELL_SANDBOX=true bob \"analyze this shell script for potential security issues before execution\" FeedbackYou can also specify the sandbox type: export BOB_SHELL_SANDBOX=docker # or podman, or sandbox-exec Settings file FeedbackAdd the sandbox option to the tools object in your settings.json. Use the settings file for persistent, project-wide sandboxing that applies to all team members and sessions. { \"tools\": { \"sandbox\": true } } FeedbackYou can also use a specific sandbox type: { \"tools\": { \"sandbox\": \"docker\" } } FeedbackConfiguration precedence (highest to lowest): Feedback Command flag (-s or --sandbox) Environment variable (BOB_SHELL_SANDBOX) Settings file (settings.json) macOS Seatbelt profiles FeedbackControl the level of restriction using the SEATBELT_PROFILE environment variable: ProfileNetworkWrite accessUse caseWhen to usepermissive-open (default)AllowedProject onlyGeneral developmentEveryday development work where you need network access and reasonable security without significant restrictions.permissive-closedBlockedProject onlyOffline workWorking offline or in environments where network access should be blocked, but you still need full project directory access.permissive-proxiedVia proxyProject onlyCorporate environmentsCorporate environments where all network traffic must route through a proxy server. Best for enterprise settings with strict network policies.restrictive-openAllowedStrict limitsHigh securityHigh security with network access, but strict file system limitations beyond the project directory. Ideal for working with potentially malicious code that needs internet access.restrictive-closedBlockedMaximum restrictionsMaximum securityMaximum security. Use when working with untrusted or potentially dangerous code that requires complete isolation from your network and file system. FeedbackExample: export SEATBELT_PROFILE=restrictive-open bob -s \"analyze this shell script for potential security issues before execution\" Custom sandbox flags FeedbackFor container-based sandboxing, inject custom flags into the docker or podman command using the SANDBOX_FLAGS environment variable. Use this when you need more control over container resources, security settings, or volume mounts, best for advanced users who need to customize memory limits, CPU allocation, or SELinux configurations for specific workloads. FeedbackSingle flag example: export SANDBOX_FLAGS=\"--security-opt label=disable\" bob -s \"analyze this shell script for potential security issues before execution\" FeedbackMultiple flags example: export SANDBOX_FLAGS=\"--memory=4g --cpus=2\" bob -s \"analyze this shell script for potential security issues before execution\" FeedbackThis is useful for: Feedback Disabling SELinux labeling on Podman. Setting resource limits. Configuring network settings. Adding custom volume mounts. Linux UID/GID handling FeedbackBob Shell automatically handles user permissions on Linux to ensure files created in the sandbox have the correct ownership. Use this to control file ownership mapping between the container and host system, best for Linux environments where you need to ensure files created in the sandbox have correct permissions or when troubleshooting permission issues. FeedbackOverride this behavior if needed: # Force host UID/GID mapping export SANDBOX_SET_UID_GID=true # Disable UID/GID mapping export SANDBOX_SET_UID_GID=false Limitations FeedbackWhile sandboxing significantly improves security, it has some important limitations to be aware of: General: Feedback Not a complete security solution: Sandboxing reduces but doesn't eliminate all risks. Always review Bob's actions before approval. Performance overhead: Container-based sandboxing has minimal overhead after the initial build, but operations may be slightly slower than native execution. GUI applications: Graphical applications typically won't work inside sandboxes due to display isolation. File system: Feedback Project directory only: By default, only your current project directory is accessible inside the sandbox. Symbolic links: Symlinks pointing outside the project directory may not work correctly. File permissions: Permission issues may occur with files created inside the sandbox, especially on Linux. Network: Feedback Restricted profiles: Some Seatbelt profiles (permissive-closed, restrictive-closed) block all network access. Localhost services: Services running on your host machine may not be accessible from inside container sandboxes without additional configuration. VPN connections: Container sandboxes may not have access to VPN-connected resources. Tools and commands: Feedback Missing tools: The sandbox environment may not have all tools installed that are available on your host system. You can add tools via custom Dockerfile or sandbox.bashrc. System commands: Commands that require system-level access (e.g., sudo, system service management) won't work in sandboxes. Hardware access: Direct hardware access (USB devices, GPUs, etc.) is typically not available in sandboxes. macOS Seatbelt: Feedback macOS only: Seatbelt sandboxing only works on macOS systems. Less isolation: Provides less isolation than container-based approaches. Profile restrictions: Some operations may be blocked depending on the chosen profile.",
+      "code": "bob -s \"analyze this shell script for potential security issues before execution\""
+    },
+    {
+      "description": "Example:",
+      "code": "export SEATBELT_PROFILE=restrictive-open\nbob -s \"analyze this shell script for potential security issues before execution\""
+    },
+    {
+      "description": "Single flag example:",
+      "code": "export SANDBOX_FLAGS=\"--security-opt label=disable\"\nbob -s \"analyze this shell script for potential security issues before execution\""
+    },
+    {
+      "description": "Multiple flags example:",
+      "code": "export SANDBOX_FLAGS=\"--memory=4g --cpus=2\"\nbob -s \"analyze this shell script for potential security issues before execution\""
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

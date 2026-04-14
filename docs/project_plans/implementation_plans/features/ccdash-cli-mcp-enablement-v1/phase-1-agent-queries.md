@@ -3,9 +3,9 @@ schema_version: "1.0"
 doc_type: phase_plan
 title: "Phase 1: Agent Query Foundation"
 description: "Implement transport-neutral composite query services and Pydantic DTOs for project status, feature forensics, workflow diagnostics, and AAR reporting."
-status: draft
+status: completed
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-11"
 phase: 1
 phase_title: "Agent Query Foundation"
 feature_slug: "ccdash-cli-mcp-enablement"
@@ -37,6 +37,8 @@ duration_estimate_unit: days
 
 **Key Invariant**: No business logic duplication. All three delivery surfaces (REST, CLI, MCP) call these services unchanged.
 
+**Reuse Rule**: Reuse existing shared models and workflow helpers where shapes already exist; only add new DTOs for agent-specific aggregates that cannot be expressed by current models.
+
 ---
 
 ## Task Breakdown
@@ -49,21 +51,21 @@ duration_estimate_unit: days
 **Depends on**: Nothing
 
 **Description**:
-Create the `backend/application/services/agent_queries/` package and define all shared Pydantic DTOs in a models module.
+Create the `backend/application/services/agent_queries/` package and define all shared Pydantic DTOs, nested submodels, and canonical freshness/source-reference helpers in a models module.
 
 **Detailed Tasks**:
 
 1. Create `backend/application/services/agent_queries/__init__.py` (empty or minimal imports)
 2. Create `backend/application/services/agent_queries/models.py` with the following Pydantic models:
-   - `ProjectStatusDTO` — project identity, feature counts, session summary, cost totals, sync freshness
-   - `FeatureForensicsDTO` — feature metadata, linked sessions/docs/tasks, iteration count, cost, failure patterns
-   - `WorkflowDiagnosticsDTO` — per-workflow effectiveness, session counts, failure patterns
-   - `AARReportDTO` — scope, timeline, key metrics, turning points, lessons learned, evidence links
-   - Common envelope: `status: Literal["ok", "partial", "error"]`, `data_freshness: datetime`, `generated_at: datetime`, `source_refs: list[str]`
+   - `ProjectStatusDTO`, `FeatureForensicsDTO`, `WorkflowDiagnosticsDTO`, `AARReportDTO`
+   - Nested submodels: `SessionSummary`, `CostSummary`, `WorkflowSummary`, `TimelineData`, `KeyMetrics`, `TurningPoint`, `WorkflowObservation`, `Bottleneck`, `SessionRef`, `DocumentRef`, `TaskRef`
+   - Common envelope fields: `status: Literal["ok", "partial", "error"]`, `data_freshness: datetime`, `generated_at: datetime`, `source_refs: list[str]`
 3. Create `backend/application/services/agent_queries/_filters.py` with helper functions:
-   - `resolve_project_scope(context, ports, project_id_override)` → ProjectScope
+   - `resolve_project(context, ports, requested_project_id)` → ProjectScope
    - `resolve_time_window(since, until, default_days)` → tuple[datetime, datetime]
    - `normalize_entity_ids(session_ids, feature_ids, etc.)` → normalized list
+   - `derive_data_freshness(...)` and `collect_source_refs(...)` as canonical helpers
+4. Export shared DTOs, nested submodels, and helpers from `backend/application/services/agent_queries/__init__.py`
 
 **Files to Create**:
 - `backend/application/services/agent_queries/__init__.py`
@@ -104,13 +106,13 @@ Implement the service that answers "what is the current state of this project?" 
            """Get high-level project status and trends."""
    ```
 3. Implementation should:
-   - Call `SessionRepository.list_sessions(project_id, limit=100)` for recent activity
-   - Call `FeatureRepository.list_features(project_id)` to count by status
+   - Call `ports.storage.sessions().list_paginated(...)` or `SessionIntelligenceReadService.list_sessions(...)` for recent activity
+   - Call `ports.storage.features().list_all(project_id)` and/or `count(project_id)` to count by status
    - Call `AnalyticsOverviewService.get_overview(context, ports)` for cost/token data
-   - Call `WorkflowRegistry` to identify top workflows
-   - Check cache freshness via `SyncEngineRepository`
+   - Call `list_workflow_registry(...)` from `backend.services.workflow_registry` to identify top workflows
+   - Check cache freshness via `ports.storage.sync_state().list_all(project_id)`
    - Aggregate into a single `ProjectStatusDTO`
-   - If any subsystem errors, return `status: partial` with available data, not raise
+   - If any subsystem errors, return `status: partial` with available data; return `status: error` only when the project context cannot be resolved or no usable data is available
 
 4. Populate `ProjectStatusDTO` fields:
    - `project_id`, `project_name`
@@ -134,7 +136,8 @@ Implement the service that answers "what is the current state of this project?" 
 **Acceptance Criteria**:
 - [ ] Service returns `ProjectStatusDTO` with all required fields
 - [ ] Calls to repositories are correct (no N+1 queries)
-- [ ] Returns `status: partial` when a subsystem is unavailable
+- [ ] Returns `status: ok` on full success, `status: partial` when a subsystem is unavailable, and `status: error` only when no usable project data exists
+- [ ] `data_freshness` comes from the canonical freshness helper and `source_refs` only include source entity IDs actually used in the response
 - [ ] DTO serializes to JSON and can be deserialized back
 - [ ] Unit tests pass with mocked CorePorts and repositories
 - [ ] Coverage >90% for the service method
@@ -166,17 +169,19 @@ Implement the service that answers "what happened during development of this fea
            """Get detailed feature development history and forensics."""
    ```
 3. Implementation should:
-   - Fetch feature via `FeatureRepository.get_feature(feature_id)`
-   - Fetch linked sessions via `SessionRepository.get_feature_sessions(feature_id)`
-   - Fetch linked docs via `DocumentRepository.get_feature_documents(feature_id)`
-   - Fetch linked tasks via `TaskRepository.get_feature_tasks(feature_id)`
+   - Fetch feature via `ports.storage.features().get_by_id(feature_id)` or the existing feature lookup helper
+   - Fetch linked sessions via `SessionIntelligenceReadService.list_sessions(feature_id=feature_id)` and fall back to repository pagination plus entity-link correlation only if the service output is insufficient
+   - Fetch linked docs via `ports.storage.documents().list_paginated(..., filters={"feature": feature_id, "include_progress": True})`
+   - Fetch linked tasks via `ports.storage.tasks().list_by_feature(feature_id)`
+   - Use `ports.storage.entity_links().get_links_for("feature", feature_id, "related")` as needed for cross-entity provenance
    - Compute iteration count (number of session generations for this feature)
    - Compute total cost/tokens (sum across all linked sessions)
    - Analyze workflow mix (tool usage patterns across sessions)
    - Detect rework signals (repeated attempts, backtracking)
    - Extract failure patterns from session logs
    - Assemble into `FeatureForensicsDTO`
-   - Return `status: partial` if feature not found or subsystem unavailable
+   - Return `status: partial` when supporting subsystems are unavailable; return `status: error` when the feature cannot be resolved or no usable feature context exists
+   - Keep the narrative output deterministic and directly derivable from the assembled inputs so tests can assert on it
 
 4. Populate `FeatureForensicsDTO` fields:
    - `feature_id`, `feature_slug`, `status` (done, in_progress, etc.)
@@ -202,8 +207,9 @@ Implement the service that answers "what happened during development of this fea
 - [ ] Service returns `FeatureForensicsDTO` with all required fields
 - [ ] Iteration count correctly computed from linked sessions
 - [ ] Rework signals and failure patterns detected (or empty if none)
-- [ ] Summary narrative generated (can be placeholder initially)
-- [ ] Returns `status: partial` or `status: error` for missing feature
+- [ ] Summary narrative generated and deterministic from the assembled inputs
+- [ ] Returns `status: ok` on full success, `status: partial` for missing subsystem data, and `status: error` only for missing feature context
+- [ ] `data_freshness` comes from the canonical freshness helper and `source_refs` only include source entity IDs actually used in the response
 - [ ] Unit tests >90% coverage
 
 ---
@@ -233,7 +239,8 @@ Implement the service that answers "which workflows are effective or problematic
            """Analyze workflow effectiveness across project or single feature."""
    ```
 3. Implementation should:
-   - Fetch workflow registry via `WorkflowRegistry.list_workflows(project_id)`
+   - Reuse workflow registry and effectiveness helpers from `backend.services.workflow_registry` and `backend.services.workflow_effectiveness`
+   - Call `list_workflow_registry(...)` and `detect_failure_patterns(...)` rather than introducing a synthetic registry class
    - For each workflow, compute:
      - Effectiveness score: `(successful_sessions / total_sessions) * (cost_efficiency) * (speed_score)`
      - Session count, success/failure ratio
@@ -241,7 +248,7 @@ Implement the service that answers "which workflows are effective or problematic
      - Common failure patterns (from execution logs)
    - Optional feature filter: if `feature_id` provided, analyze workflows only for that feature's sessions
    - Return `WorkflowDiagnosticsDTO` with per-workflow analytics
-   - Return `status: partial` if registry unavailable
+   - Return `status: partial` if registry data is unavailable and `status: error` only when no workflow context can be assembled
 
 4. Populate `WorkflowDiagnosticsDTO` fields:
    - `project_id`
@@ -267,7 +274,8 @@ Implement the service that answers "which workflows are effective or problematic
 - [ ] Service returns `WorkflowDiagnosticsDTO` with all workflows analyzed
 - [ ] Effectiveness score correctly computed
 - [ ] Feature filter (if provided) correctly scopes analysis
-- [ ] Returns `status: partial` when workflow registry unavailable
+- [ ] Returns `status: ok` on full success, `status: partial` when registry/effectiveness data is unavailable, and `status: error` only when no workflow context exists
+- [ ] `data_freshness` comes from the canonical freshness helper and `source_refs` only include source entity IDs actually used in the response
 - [ ] Unit tests >90% coverage
 
 ---
@@ -297,15 +305,19 @@ Implement the service that answers "what was accomplished and learned during thi
            """Generate an AAR report for a feature."""
    ```
 3. Implementation should:
-   - Fetch feature via `FeatureRepository.get_feature(feature_id)`
+   - Reuse the existing feature/session/document/task correlation helpers instead of re-deriving them
+   - Fetch feature via `ports.storage.features().get_by_id(feature_id)` or the existing feature lookup helper
    - Fetch all linked sessions, compute timeline (start → end)
+   - Fetch linked docs via `ports.storage.documents().list_paginated(..., filters={"feature": feature_id, "include_progress": True})`
+   - Fetch linked tasks via `ports.storage.tasks().list_by_feature(feature_id)`
    - Compute key metrics: total cost, total tokens, iteration count, duration
    - Identify turning points (first success, major pivots, breakthroughs)
    - Analyze workflow sequence (which workflows used, in what order)
    - Extract bottlenecks (where time/cost accumulated most)
    - Identify successful patterns (workflows with high success rate)
-   - Generate narrative sections (scope statement, timeline, findings, lessons)
+   - Generate narrative sections (scope statement, timeline, findings, lessons) deterministically from the assembled inputs
    - Assemble into `AARReportDTO`
+   - Return `status: partial` when supporting subsystems are unavailable; return `status: error` when the feature cannot be resolved or no usable feature context exists
 
 4. Populate `AARReportDTO` fields:
    - `feature_id`, `feature_slug`
@@ -331,6 +343,8 @@ Implement the service that answers "what was accomplished and learned during thi
 - [ ] Narrative sections (scope, lessons) are human-readable (not machine-generated gibberish)
 - [ ] Timeline correctly computed from session start/end dates
 - [ ] Turning points detected (or empty list if too few sessions)
+- [ ] Returns `status: ok` on full success, `status: partial` when some source data is unavailable, and `status: error` only when no feature context exists
+- [ ] `data_freshness` comes from the canonical freshness helper and `source_refs` only include source entity IDs actually used in the response
 - [ ] Unit tests >90% coverage
 
 ---
@@ -343,7 +357,7 @@ Implement the service that answers "what was accomplished and learned during thi
 **Depends on**: P1-T2, P1-T3, P1-T4, P1-T5
 
 **Description**:
-Write comprehensive unit tests for all four query services using mocked CorePorts, repositories, and domain services. Target >90% line coverage.
+Write shared fixtures and cross-service regression tests for all four query services using mocked CorePorts, repositories, and domain services. Target >90% line coverage across the module.
 
 **Detailed Tasks**:
 
@@ -352,13 +366,11 @@ Write comprehensive unit tests for all four query services using mocked CorePort
    - Mock repositories (SessionRepository, FeatureRepository, etc.)
    - Test data builders (fake sessions, features, documents)
 
-2. For each query service, create a test module:
-   - `backend/tests/test_agent_queries_project_status.py`
-   - `backend/tests/test_agent_queries_feature_forensics.py`
-   - `backend/tests/test_agent_queries_workflow_diagnostics.py`
-   - `backend/tests/test_agent_queries_reporting.py`
+2. Add shared helper tests and regression coverage:
+   - `backend/tests/test_agent_queries_shared.py` for fixture helpers, shared envelope assertions, and cross-service regressions
+   - Keep the per-service unit test modules owned by P1-T2 through P1-T5
 
-3. Test coverage per service:
+3. Test coverage areas:
    - **Happy path**: Standard case with complete data
    - **Partial degradation**: One subsystem unavailable; service returns `status: partial`
    - **Multiple subsystem failures**: Verify no exception raised
@@ -368,11 +380,8 @@ Write comprehensive unit tests for all four query services using mocked CorePort
 4. Use pytest parametrization for variants (feature exists/not exists, sync fresh/stale, etc.)
 
 **Files to Create/Modify**:
-- `backend/tests/test_agent_queries_project_status.py` (~300 lines)
-- `backend/tests/test_agent_queries_feature_forensics.py` (~300 lines)
-- `backend/tests/test_agent_queries_workflow_diagnostics.py` (~250 lines)
-- `backend/tests/test_agent_queries_reporting.py` (~280 lines)
 - `backend/tests/conftest.py` (or extend existing with new fixtures)
+- `backend/tests/test_agent_queries_shared.py` (~150 lines)
 
 **Acceptance Criteria**:
 - [ ] All service tests pass
@@ -455,6 +464,14 @@ Present query service architecture to architecture review team for sign-off. Doc
 - [ ] README provides clear guidance for future extensions
 - [ ] No breaking changes to existing services or repositories
 
+### Execution Order
+
+- Batch 1: P1-T1
+- Batch 2: P1-T2, P1-T3, P1-T4, P1-T5
+- Batch 3: P1-T6
+- Batch 4: P1-T7
+- Batch 5: P1-T8
+
 ---
 
 ## Quality Gate
@@ -464,7 +481,7 @@ All of the following must be true to declare Phase 1 complete:
 1. **All 4 query services implemented** (ProjectStatus, FeatureForensics, WorkflowDiagnostics, Reporting)
 2. **All 4 DTOs include envelope fields** (status, data_freshness, generated_at, source_refs)
 3. **Unit test coverage >90%** for agent_queries module (pytest coverage report)
-4. **Graceful degradation tested**: Services return `status: partial` when subsystems unavailable; no unhandled exceptions
+4. **Graceful degradation tested**: Services return `status: partial` when subsystems unavailable, `status: error` only when no usable context exists, and `data_freshness` / `source_refs` come from the canonical helpers; no unhandled exceptions
 5. **Integration tests passing** against test SQLite DB
 6. **Architecture review signed off** on query service contracts
 7. **No business logic duplication** with existing services (verified by code review)

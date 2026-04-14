@@ -1,0 +1,303 @@
+meta:
+  project: "CCDash"
+  last_refreshed: "2026-04-11"
+  distiller_version: "1.1"
+  mode: full
+  conflicts: []
+
+claims:
+  - id: "inv-001"
+    type: evidence
+    confidence: H
+    claim: "CCDash is a full-stack app with React 19 + Vite frontend at repo root and Python FastAPI backend in backend/"
+    source: "CLAUDE.md"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-002"
+    type: evidence
+    confidence: H
+    claim: "Frontend uses HashRouter with 13 top-level routes wired in App.tsx"
+    source: "App.tsx"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-003"
+    type: evidence
+    confidence: H
+    claim: "Backend runs under 4 runtime profiles (local, api, worker, test) defined as Literal types"
+    source: "backend/runtime/profiles.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-004"
+    type: evidence
+    confidence: H
+    claim: "Backend local entrypoint is a 7-line file delegating to build_runtime_app('local')"
+    source: "backend/main.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-005"
+    type: evidence
+    confidence: H
+    claim: "Storage profiles are local and enterprise with opt-in shared Postgres, defined as StorageProfileName Literal"
+    source: "backend/runtime/profiles.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-006"
+    type: evidence
+    confidence: H
+    claim: "13 backend routers exist in backend/routers/ covering api, analytics, cache, codebase, execution, features, integrations, live, pricing, projects, session_mappings, telemetry, test_visualizer"
+    source: "backend/routers/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-007"
+    type: evidence
+    confidence: H
+    claim: "28 backend services exist in backend/services/ including execution_policy, execution_runtime, stack_recommendations, session_transcript_projection, workflow_effectiveness"
+    source: "backend/services/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-008"
+    type: evidence
+    confidence: H
+    claim: "25 repositories in backend/db/repositories/ including sessions, session_messages, session_embeddings, session_intelligence, entity_links, identity_access"
+    source: "backend/db/repositories/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-009"
+    type: evidence
+    confidence: H
+    claim: "Multi-platform session parser routing with dedicated Claude Code and Codex parsers"
+    source: "backend/parsers/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-010"
+    type: evidence
+    confidence: H
+    claim: "Frontend contexts are split into Session/Entity/Runtime shells with DataContext as compatibility facade"
+    source: "CLAUDE.md"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-011"
+    type: evidence
+    confidence: H
+    claim: "Five ADRs present: SSE over polling, MCP separate from extension, transport-neutral agent queries, dual-transport MCP, Typer CLI"
+    source: "docs/project_plans/adrs/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-012"
+    type: evidence
+    confidence: H
+    claim: "SkillMeat integration lives under backend/services/integrations/ with separate memory-draft, sync, resolver, and client modules"
+    source: "backend/services/integrations/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-013"
+    type: evidence
+    confidence: H
+    claim: "Background jobs adapter layer exists at backend/adapters/jobs/ with runtime, local, and telemetry_exporter modules"
+    source: "backend/adapters/jobs/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-014"
+    type: evidence
+    confidence: H
+    claim: "SAM telemetry client and batch exporter are first-class services; telemetry_exporter exists as both service and job adapter"
+    source: "backend/services/integrations/telemetry_exporter.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-015"
+    type: evidence
+    confidence: H
+    claim: "Document linking module exists at backend/document_linking.py handling cross-references between sessions, documents, features, tasks"
+    source: "backend/document_linking.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-016"
+    type: evidence
+    confidence: H
+    claim: "backend/config.py exposes 40+ CCDASH_* environment variables including feature flags, DB, OTEL, telemetry export, startup tuning"
+    source: "backend/config.py"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-017"
+    type: evidence
+    confidence: H
+    claim: "97 backend test files cover session parser, analytics router, execution policy, runtime bootstrap, storage profiles, sync engine, session intelligence, telemetry exporter"
+    source: "backend/tests/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-018"
+    type: evidence
+    confidence: H
+    claim: "Frontend Vitest covers components, contexts, services, lib with ~92 test files"
+    source: "CLAUDE.md"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-019"
+    type: evidence
+    confidence: H
+    claim: "React 19.2, react-router-dom 7, recharts 3, framer-motion 12, Radix primitives, @miethe/ui in package.json"
+    source: "package.json"
+    phase: 1
+    evidence_ids: []
+
+  - id: "inv-020"
+    type: evidence
+    confidence: H
+    claim: "Zero TODO/FIXME/XXX/HACK and only 2 NotImplementedError sites across backend/"
+    source: "backend/"
+    phase: 1
+    evidence_ids: []
+
+  - id: "doc-001"
+    type: evidence
+    confidence: H
+    claim: "README frames CCDash as Agent-First Traceability / Deep Forensics / Workflow Intelligence / Local Context / Multi-Platform across 12 categories and 60+ features"
+    source: "README.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-002"
+    type: evidence
+    confidence: H
+    claim: "CHANGELOG records 2026-04-06 rollout of session-intelligence-canonical-storage-v1 with enterprise backfill and SkillMeat memory drafting documented as approval-gated"
+    source: "CHANGELOG.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-003"
+    type: evidence
+    confidence: H
+    claim: "CHANGELOG 2026-03-27 documents telemetry exporter hardening with queue cap, purge, observability, <2% CPU load target"
+    source: "CHANGELOG.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-004"
+    type: evidence
+    confidence: H
+    claim: "CHANGELOG 2026-03-23 documents dependency-aware execution surfacing with blocked-by chips and family-sequence metadata shipped"
+    source: "CHANGELOG.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-005"
+    type: evidence
+    confidence: H
+    claim: "PRD shared-auth-rbac-sso-v1 exists but backend identity_access repo is near-empty"
+    source: "docs/project_plans/PRDs/enhancements/shared-auth-rbac-sso-v1.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-006"
+    type: evidence
+    confidence: H
+    claim: "Feature Execution Workbench phases 3 (platform connectors) and 4 (SDK orchestration) are PRD-only"
+    source: "docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md"
+    phase: 2
+    evidence_ids: []
+
+  - id: "doc-007"
+    type: evidence
+    confidence: H
+    claim: "CLI MCP enablement in-progress plan lives at docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1"
+    source: "docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1"
+    phase: 2
+    evidence_ids: []
+
+  - id: "arch-001"
+    type: inference
+    confidence: H
+    claim: "Primary persona is a solo developer or small team running Claude Code or Codex against local repos"
+    source: "multiple"
+    phase: 3
+    evidence_ids: ["inv-001", "inv-003", "inv-016", "doc-001"]
+
+  - id: "arch-002"
+    type: inference
+    confidence: H
+    claim: "Filesystem is the source of truth; the cache DB is a derived, rebuildable index"
+    source: "multiple"
+    phase: 5
+    evidence_ids: ["inv-009", "inv-015", "inv-003"]
+
+  - id: "arch-003"
+    type: inference
+    confidence: H
+    claim: "Single-tenant local-first is the default reality; multi-tenant/auth is aspirational"
+    source: "multiple"
+    phase: 5
+    evidence_ids: ["inv-005", "doc-005", "inv-003"]
+
+  - id: "arch-004"
+    type: inference
+    confidence: H
+    claim: "Team uses plan/progress files rather than inline TODO comments to track incomplete work"
+    source: "multiple"
+    phase: 5
+    evidence_ids: ["inv-020", "doc-002", "doc-007"]
+
+  - id: "arch-005"
+    type: inference
+    confidence: H
+    claim: "Layered Router -> Service -> Repository pattern is strictly enforced per CLAUDE.md convention"
+    source: "CLAUDE.md"
+    phase: 5
+    evidence_ids: ["inv-006", "inv-007", "inv-008"]
+
+  - id: "arch-006"
+    type: inference
+    confidence: M
+    claim: "Observability is first-class with fallback Prometheus if OTEL is unavailable, configured via CCDASH_OTEL_* env vars"
+    source: "backend/observability/otel.py"
+    phase: 5
+    evidence_ids: ["inv-016"]
+
+  - id: "arch-007"
+    type: inference
+    confidence: M
+    claim: "Large load-bearing files are accumulating refactor pressure: sync_engine.py, parsers/platforms/claude_code/parser.py, routers/analytics.py, models.py"
+    source: "multiple"
+    phase: 5
+    evidence_ids: ["inv-009", "inv-006"]
+
+  - id: "open-001"
+    type: open
+    confidence: L
+    claim: "Which embedding provider backs session_embeddings is not verified in this pass"
+    source: "backend/db/repositories/session_embeddings.py"
+    phase: 5
+    evidence_ids: []
+
+  - id: "open-002"
+    type: open
+    confidence: L
+    claim: "VSCode extension code from ADR-001 is not present in this repo tree; may live elsewhere"
+    source: "docs/project_plans/adrs/adr-001-vscode-extension-realtime-sse-over-polling.md"
+    phase: 5
+    evidence_ids: []
+
+  - id: "open-003"
+    type: open
+    confidence: L
+    claim: "Enterprise filesystem ingestion flag wiring depth is unverified"
+    source: "backend/config.py"
+    phase: 5
+    evidence_ids: []

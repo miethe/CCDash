@@ -1,0 +1,71 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+  "title": "Uninstalling | Docs | IBM Bob",
+  "content": "FeedbackRemove Bob Shell from your system using the appropriate method for your installation.\n\nTo uninstall Bob Shell, use the corresponding uninstall command for the package manager you used when you installed Bob Shell:\n\nAfter uninstalling Bob Shell, remove configuration files and data:\n\nThis permanently deletes your Bob Shell settings and any saved data.\n\nYou can install Bob Shell an installation script, your package manager, or the command palette.\n\nStarting an interactive session\n\nInteractive sessions provide a conversational interface to Bob directly in your terminal, allowing real-time assistance with your development tasks.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Uninstalling",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Uninstall Bob Shell",
+      "id": "uninstall-bob-shell"
+    },
+    {
+      "level": "h2",
+      "text": "Remove configuration files (optional)",
+      "id": "remove-configuration-files-optional"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "npm uninstall -g bobshell",
+      "language": "unknown"
+    },
+    {
+      "code": "pnpm remove -g bobshell",
+      "language": "unknown"
+    },
+    {
+      "code": "yarn global remove bobshell",
+      "language": "unknown"
+    },
+    {
+      "code": "# Remove Bob Shell configuration directory\nrm -rf ~/.bob",
+      "language": "markdown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

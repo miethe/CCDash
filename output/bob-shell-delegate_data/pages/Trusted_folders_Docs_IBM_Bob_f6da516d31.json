@@ -1,0 +1,134 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/security/trusted-folders",
+  "title": "Trusted folders | Docs | IBM Bob",
+  "content": "FeedbackControl which projects can use Bob Shell's full capabilities with trusted folder security.\n\nTrusted folders give you control over which projects can be used with Bob Shell. You must approve a folder before Bob Shell loads any project-specific configurations, protecting you from potentially malicious code.\n\nWhen you run Bob Shell from a folder for the first time, a trust dialog appears automatically, prompting you to make a choice:\n\nYour choice is saved in ~/.bob/trustedFolders.json, so you are only asked once per folder.\n\nWhen a folder is untrusted, Bob Shell runs in restricted safe mode to protect you. Safe mode disables the following features:\n\nThe .bob/settings.json file from the project is not loaded. Safe mode prevents loading of custom tools and other potentially dangerous configurations.\n\nAny .env files from the project are not loaded.\n\nYou cannot install, update, or uninstall extensions.\n\nYou are always prompted before any tool runs, even if you have auto-approval enabled globally.\n\nFiles are not automatically loaded into context from directories specified in local settings.\n\nBob Shell will not attempt to connect to any MCP servers.\n\nCustom commands from .toml files are not loaded, including both project-specific and global user commands.\n\nGranting trust to a folder unlocks the full functionality of Bob Shell for that workspace.\n\nYou can change trust decisions or view all your settings using these methods:\n\nRun the /permissions slash command from within Bob Shell. The interactive dialog appears, allowing you to change the trust level for the current folder.\n\nTo see a complete list of all your trusted and untrusted folder rules, inspect the contents of the ~/.bob/trustedFolders.json file in your home directory.\n\nBob Shell determines trust using the following order of operations:\n\nIDE trust signal: If you are using the IDE integration, Bob Shell first asks the IDE if the workspace is trusted. The IDE's response takes highest priority.\n\nLocal trust file: If the IDE is not connected, Bob Shell checks the ~/.bob/trustedFolders.json file.\n\nUnlike interactive mode, non-interactive sessions never display the trust dialog. Bob Shell operates silently based on pre-existing trust decisions.\n\nIn non-interactive sessions, trust decisions are determined automatically in this order:\n\nWhen a folder is untrusted in non-interactive mode, additional restrictions apply beyond those listed in \"Impact of untrusted folders\":\n\nFor secure automation and CI/CD pipelines, establish trust decisions before running non-interactive commands:\n\nSince non-interactive mode defaults to trusted for folders without explicit decisions, pre-configuring trust is essential for security-sensitive environments.\n\nIsolate Bob Shell operations in a secure sandbox environment to protect your host system.\n\nTroubleshooting Bob Shell\n\nFind solutions to issues you might encounter when using Bob Shell.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Trusted folders",
+      "id": ""
+    },
+    {
+      "level": "h1",
+      "text": "Trusted folders",
+      "id": "trusted-folders"
+    },
+    {
+      "level": "h2",
+      "text": "How trusted folders work",
+      "id": "how-trusted-folders-work"
+    },
+    {
+      "level": "h2",
+      "text": "Impact of untrusted folders",
+      "id": "impact-of-untrusted-folders"
+    },
+    {
+      "level": "h3",
+      "text": "Project settings are ignored",
+      "id": "project-settings-are-ignored"
+    },
+    {
+      "level": "h3",
+      "text": "Environment variables are ignored",
+      "id": "environment-variables-are-ignored"
+    },
+    {
+      "level": "h3",
+      "text": "Extension management is restricted",
+      "id": "extension-management-is-restricted"
+    },
+    {
+      "level": "h3",
+      "text": "Tool auto-approval is disabled",
+      "id": "tool-auto-approval-is-disabled"
+    },
+    {
+      "level": "h3",
+      "text": "Automatic memory loading is disabled",
+      "id": "automatic-memory-loading-is-disabled"
+    },
+    {
+      "level": "h3",
+      "text": "MCP servers do not connect",
+      "id": "mcp-servers-do-not-connect"
+    },
+    {
+      "level": "h3",
+      "text": "Custom commands are not loaded",
+      "id": "custom-commands-are-not-loaded"
+    },
+    {
+      "level": "h2",
+      "text": "Managing trust settings",
+      "id": "managing-trust-settings"
+    },
+    {
+      "level": "h3",
+      "text": "Change the current folder's trust",
+      "id": "change-the-current-folders-trust"
+    },
+    {
+      "level": "h3",
+      "text": "View all trust rules",
+      "id": "view-all-trust-rules"
+    },
+    {
+      "level": "h2",
+      "text": "Trust check process",
+      "id": "trust-check-process"
+    },
+    {
+      "level": "h2",
+      "text": "Non-interactive sessions",
+      "id": "non-interactive-sessions"
+    },
+    {
+      "level": "h3",
+      "text": "Untrusted folder restrictions",
+      "id": "untrusted-folder-restrictions"
+    },
+    {
+      "level": "h3",
+      "text": "Pre-configuration for automation",
+      "id": "pre-configuration-for-automation"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

@@ -1,0 +1,224 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+  "title": "Integrating with Bob IDE | Docs | IBM Bob",
+  "content": "FeedbackConnect Bob Shell directly to your code editor for a seamless development experience. This integration enhances Bob Shell's capabilities by providing real-time workspace awareness and enabling powerful features like in-editor diff viewing.\n\nCurrently, Bob IDE and compatible editors are supported. Additional editor support may be added in future releases.\n\nWithout IDE integration, Bob Shell only knows about files you explicitly reference. With integration enabled, Bob Shell automatically gains:\n\nThis contextual awareness allows Bob Shell to provide more relevant assistance without requiring you to manually reference files.\n\nWhen Bob Shell suggests code changes:\n\nThis workflow allows you to:\n\nChoose the installation method that works best for you:\n\nWhen you run Bob Shell inside Bob IDE's integrated terminal, it automatically detects the environment and offers to set up integration:\n\nSelecting \"Yes\" will:\n\nIf you dismissed the automatic prompt or need to reinstall, use the built-in command:\n\nTo verify your connection and see what context Bob Shell has access to:\n\nWhen Bob Shell suggests code modifications, you'll see them in your editor's diff viewer.\n\nYou have multiple ways to accept suggested changes:\n\nTo reject suggested changes:\n\nYou can edit the suggested code directly in the diff editor before accepting it. This allows you to:\n\nFor frequently repeated changes, select \"Yes, allow always\" in Bob Shell to auto-accept similar changes in the future.\n\nAccess Bob Shell features directly from Bob IDE's Command Palette (Cmd+Shift+P or Ctrl+Shift+P):\n\nWhen using Bob Shell with macOS Seatbelt sandboxing:\n\nWhen running Bob Shell in a Docker container:\n\nSolution: Run Bob Shell from within a supported IDE's integrated terminal\n\nSolution: Install the Bob Shell Companion extension manually from your IDE's marketplace\n\nYou can create custom modes to tailor Bob's behavior to specific tasks or workflows. Custom modes in Bob Shell work similarly to Bob IDE modes.\n\nControl which files Bob Shell can access by creating a `.bobignore` file in your project.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Integrating with Bob IDE",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Overview",
+      "id": "overview"
+    },
+    {
+      "level": "h2",
+      "text": "Getting started",
+      "id": "getting-started"
+    },
+    {
+      "level": "h2",
+      "text": "Benefits of IDE integration",
+      "id": "benefits-of-ide-integration"
+    },
+    {
+      "level": "h3",
+      "text": "Enhanced context awareness",
+      "id": "enhanced-context-awareness"
+    },
+    {
+      "level": "h3",
+      "text": "Seamless code modifications",
+      "id": "seamless-code-modifications"
+    },
+    {
+      "level": "h2",
+      "text": "Installation methods",
+      "id": "installation-methods"
+    },
+    {
+      "level": "h3",
+      "text": "Method 1: Automatic setup (recommended)",
+      "id": "method-1-automatic-setup-recommended"
+    },
+    {
+      "level": "h3",
+      "text": "Method 2: Command-line installation",
+      "id": "method-2-command-line-installation"
+    },
+    {
+      "level": "h2",
+      "text": "Managing the connection",
+      "id": "managing-the-connection"
+    },
+    {
+      "level": "h3",
+      "text": "Connection commands",
+      "id": "connection-commands"
+    },
+    {
+      "level": "h3",
+      "text": "Checking connection status",
+      "id": "checking-connection-status"
+    },
+    {
+      "level": "h2",
+      "text": "Working with code changes",
+      "id": "working-with-code-changes"
+    },
+    {
+      "level": "h3",
+      "text": "Accepting changes",
+      "id": "accepting-changes"
+    },
+    {
+      "level": "h3",
+      "text": "Rejecting changes",
+      "id": "rejecting-changes"
+    },
+    {
+      "level": "h3",
+      "text": "Modifying suggestions",
+      "id": "modifying-suggestions"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced usage",
+      "id": "advanced-usage"
+    },
+    {
+      "level": "h3",
+      "text": "Bob IDE commands",
+      "id": "bob-ide-commands"
+    },
+    {
+      "level": "h3",
+      "text": "Using with sandboxed environments",
+      "id": "using-with-sandboxed-environments"
+    },
+    {
+      "level": "h4",
+      "text": "macOS sandboxing",
+      "id": "macos-sandboxing"
+    },
+    {
+      "level": "h4",
+      "text": "Docker containers",
+      "id": "docker-containers"
+    },
+    {
+      "level": "h2",
+      "text": "Troubleshooting",
+      "id": "troubleshooting"
+    },
+    {
+      "level": "h3",
+      "text": "Common issues and solutions",
+      "id": "common-issues-and-solutions"
+    },
+    {
+      "level": "h3",
+      "text": "Error message reference",
+      "id": "error-message-reference"
+    },
+    {
+      "level": "h4",
+      "text": "Connection errors",
+      "id": "connection-errors"
+    },
+    {
+      "level": "h4",
+      "text": "Configuration errors",
+      "id": "configuration-errors"
+    },
+    {
+      "level": "h4",
+      "text": "General errors",
+      "id": "general-errors"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐\n│                 │     │                 │     │                 │\n│  Bob Shell       │────▶│  Bob IDE        │────▶│  Your codebase  │\n│  suggests       │     │  diff viewer    │     │  with changes   │\n│  changes        │     │  shows changes  │     │  applied        │\n│                 │     │                 │     │                 │\n└─────────────────┘     └─────────────────┘     └─────────────────┘",
+      "language": "unknown"
+    },
+    {
+      "code": "┌─────────────────────────────────────────────────────────────────────────────┐\n│ > Do you want to connect Bob IDE to Bob Shell?                               │\n│ If you select Yes, we'll install an extension that allows the CLI to ac ... │\n│                                                                             │\n│   1. Yes                                                                    │\n|   2. No                                                                     │\n|   3. No, don't ask again                                                    │\n└─────────────────────────────────────────────────────────────────────────────┘",
+      "language": "lua"
+    },
+    {
+      "code": "/ide install",
+      "language": "unknown"
+    },
+    {
+      "code": "/ide status",
+      "language": "unknown"
+    },
+    {
+      "code": "🟢 Connected to Bob IDE\nRecent files:\n- src/components/Header.tsx\n- src/utils/api.js\n- package.json",
+      "language": "markdown"
+    },
+    {
+      "code": "🔴 Disconnected: Failed to connect to IDE companion extension in [IDE Name]",
+      "language": "unknown"
+    },
+    {
+      "code": "🔴 Disconnected: IDE connection error. The connection was lost unexpectedly",
+      "language": "unknown"
+    },
+    {
+      "code": "🔴 Disconnected: Directory mismatch",
+      "language": "unknown"
+    },
+    {
+      "code": "🔴 Disconnected: To use this feature, please open a workspace folder",
+      "language": "elixir"
+    },
+    {
+      "code": "IDE integration is not supported in your current environment",
+      "language": "unknown"
+    },
+    {
+      "code": "No installer is available for IDE",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

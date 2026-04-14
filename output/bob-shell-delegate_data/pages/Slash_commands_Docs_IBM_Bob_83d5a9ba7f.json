@@ -1,0 +1,205 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/features/slash-commands",
+  "title": "Slash commands | Docs | IBM Bob",
+  "content": "FeedbackCreate custom slash commands to automate workflows and standardize team practices.\n\nTo get started, type / in Bob Shell to see all available commands, or create your own by adding a markdown file to .bob/commands/ or ~/.bob/commands/.\n\nSlash commands provide several key benefits:\n\nWhen you type / in Bob Shell, a menu appears showing all available commands. These commands come from two sources:\n\nCustom commands extend Bob's functionality by adding markdown files to specific directories:\n\nThe filename becomes the command name. For example:\n\nWhen creating commands through the UI, command names are automatically processed:\n\nExample: \"My Cool Command!\" becomes my-cool-command\n\nCreate a simple command by adding a markdown file:\n\nAdd metadata using frontmatter for enhanced functionality:\n\nBob Shell supports the same slash commands as Bob IDE. While Bob Shell does not provide a dedicated UI for managing commands, you can:\n\nType / in Bob Shell to see a unified menu containing the following types of commands:\n\nArgument hints provide instant help for slash commands, showing you what kind of information to provide when a command expects additional input.\n\nWhen you type / to bring up the command menu, commands that expect arguments will display a light gray hint next to them. This hint tells you what kind of argument the command is expecting.\n\nAfter selecting the command, it will be inserted into the chat input followed by a space. The hint is not inserted; it is only a visual guide to help you know what to type next. You must then manually type the argument after the command.\n\nYou can add argument hints to your custom commands using the argument-hint field in the frontmatter:\n\nThis will display as /api-endpoint <endpoint-name> <http-method> in the command menu.\n\nIf your commands aren't showing up in the menu:\n\nWhen a slash command isn't found, the LLM will see:\n\nThe slash menu includes mode-switching commands (like /mode code, /mode ask) that fundamentally change the AI's operational mode - they don't just inject text but switch the entire AI context. Custom modes you create also appear as slash commands (e.g., a mode with slug reviewer becomes /reviewer). These mode commands cannot be overridden by custom workflow commands.\n\nSlash commands work identically across both Bob Shell and Bob IDE. This means:\n\nCreate automatic snapshots of your project before applying changes.\n\nSwitch between IBM instances and teams using the /instance command.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Slash commands",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Why use slash commands?",
+      "id": "why-use-slash-commands"
+    },
+    {
+      "level": "h2",
+      "text": "How slash commands work",
+      "id": "how-slash-commands-work"
+    },
+    {
+      "level": "h2",
+      "text": "Creating custom commands",
+      "id": "creating-custom-commands"
+    },
+    {
+      "level": "h3",
+      "text": "Command name processing",
+      "id": "command-name-processing"
+    },
+    {
+      "level": "h3",
+      "text": "Basic command format",
+      "id": "basic-command-format"
+    },
+    {
+      "level": "h3",
+      "text": "Advanced command with frontmatter",
+      "id": "advanced-command-with-frontmatter"
+    },
+    {
+      "level": "h4",
+      "text": "Frontmatter fields",
+      "id": "frontmatter-fields"
+    },
+    {
+      "level": "h2",
+      "text": "Command management in Bob Shell",
+      "id": "command-management-in-bob-shell"
+    },
+    {
+      "level": "h2",
+      "text": "Using slash commands",
+      "id": "using-slash-commands"
+    },
+    {
+      "level": "h2",
+      "text": "Argument hints",
+      "id": "argument-hints"
+    },
+    {
+      "level": "h3",
+      "text": "Adding argument hints to custom commands",
+      "id": "adding-argument-hints-to-custom-commands"
+    },
+    {
+      "level": "h3",
+      "text": "Best practices for argument hints",
+      "id": "best-practices-for-argument-hints"
+    },
+    {
+      "level": "h3",
+      "text": "Common questions about arguments",
+      "id": "common-questions-about-arguments"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h3",
+      "text": "Command naming",
+      "id": "command-naming"
+    },
+    {
+      "level": "h3",
+      "text": "Command content",
+      "id": "command-content"
+    },
+    {
+      "level": "h3",
+      "text": "Organization",
+      "id": "organization"
+    },
+    {
+      "level": "h2",
+      "text": "Troubleshooting",
+      "id": "troubleshooting"
+    },
+    {
+      "level": "h3",
+      "text": "Commands not appearing",
+      "id": "commands-not-appearing"
+    },
+    {
+      "level": "h3",
+      "text": "Command not found",
+      "id": "command-not-found"
+    },
+    {
+      "level": "h3",
+      "text": "Command conflicts",
+      "id": "command-conflicts"
+    },
+    {
+      "level": "h2",
+      "text": "About mode commands",
+      "id": "about-mode-commands"
+    },
+    {
+      "level": "h2",
+      "text": "Cross-platform compatibility",
+      "id": "cross-platform-compatibility"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": ".bob/commands/\n├── review.md         → /review\n├── test-api.md       → /test-api\n└── deploy-check.md   → /deploy-check",
+      "language": "unknown"
+    },
+    {
+      "code": "Help me review this code for security issues and suggest improvements.",
+      "language": "unknown"
+    },
+    {
+      "code": "---\ndescription: Create a new API endpoint\nargument-hint: <endpoint-name> <http-method>\n---\nCreate a new API endpoint called $1 that handles $2 requests.\nInclude proper error handling and documentation.",
+      "language": "yaml"
+    },
+    {
+      "code": "/mode code     Switch to Code mode\n/mode ask      Switch to Ask mode\n/review        Review code for security issues\n/api-endpoint  <endpoint-name> <http-method>",
+      "language": "unknown"
+    },
+    {
+      "code": "---\ndescription: Create a new API endpoint\nargument-hint: <endpoint-name> <http-method>\n---\nCreate a new API endpoint called $1 that handles $2 requests.\nInclude proper error handling and documentation.",
+      "language": "yaml"
+    },
+    {
+      "code": "The slash command '/unknown-command' was not found. Please check the command name and try again.",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellSlash commandsSlash commandsFeedbackCreate custom slash commands to automate workflows and standardize team practices.Copy MarkdownFeedbackTo get started, type / in Bob Shell to see all available commands, or create your own by adding a markdown file to .bob/commands/ or ~/.bob/commands/. Why use slash commands? FeedbackSlash commands provide several key benefits: Feedback Workflow automation: Turn complex multi-step processes into single commands Team standardization: Share commands across your team for consistent practices Context preservation: Include project-specific context in every command Quick access: Fuzzy search and autocomplete for instant command discovery How slash commands work FeedbackWhen you type / in Bob Shell, a menu appears showing all available commands. These commands come from two sources: Command TypeSourcePurposeCustom workflow commands.bob/commands/ or ~/.bob/commands/User-created automation for specific tasksMode commandsBuilt-in and custom modesSwitch Bob's operational context Creating custom commands FeedbackCustom commands extend Bob's functionality by adding markdown files to specific directories: LocationScopePathProject-specificAvailable in current project only.bob/commands/ in your workspace rootGlobalAvailable in all projects~/.bob/commands/ in your home directory FeedbackThe filename becomes the command name. For example: .bob/commands/ ├── review.md → /review ├── test-api.md → /test-api └── deploy-check.md → /deploy-check Command name processing FeedbackWhen creating commands through the UI, command names are automatically processed: Feedback Converted to lowercase Spaces replaced with dashes Special characters removed Leading/trailing dashes removed FeedbackExample: \"My Cool Command!\" becomes my-cool-command Basic command format FeedbackCreate a simple command by adding a markdown file: Help me review this code for security issues and suggest improvements. Advanced command with frontmatter FeedbackAdd metadata using frontmatter for enhanced functionality: --- description: Create a new API endpoint argument-hint: <endpoint-name> <http-method> --- Create a new API endpoint called $1 that handles $2 requests. Include proper error handling and documentation. Frontmatter fields FieldPurposeExampledescriptionAppears in the command menu\"Create a new API endpoint\"argument-hintShows expected arguments\"<endpoint-name> <http-method>\" Command management in Bob Shell FeedbackBob Shell supports the same slash commands as Bob IDE. While Bob Shell does not provide a dedicated UI for managing commands, you can: Feedback Create command files manually in the .bob/commands/ directory in your project or ~/.bob/commands/ in your home directory Edit existing command files with any text editor Using slash commands FeedbackType / in Bob Shell to see a unified menu containing the following types of commands: Feedback Unified menu: Custom commands and mode-switching commands appear together Autocomplete: Start typing to filter commands (e.g., /sam shows sample-command-name) Fuzzy search: Find commands even with partial matches Description preview: See command descriptions in the menu Visual indicators: Mode commands are distinguished from custom commands with special icons /mode code Switch to Code mode /mode ask Switch to Ask mode /review Review code for security issues /api-endpoint <endpoint-name> <http-method> Argument hints FeedbackArgument hints provide instant help for slash commands, showing you what kind of information to provide when a command expects additional input. FeedbackWhen you type / to bring up the command menu, commands that expect arguments will display a light gray hint next to them. This hint tells you what kind of argument the command is expecting. FeedbackFor example: Feedback /mode <mode_slug> - The hint <mode_slug> indicates you should provide a mode name like code or debug /api-endpoint <endpoint-name> <http-method> - Shows you need both an endpoint name and HTTP method FeedbackAfter selecting the command, it will be inserted into the chat input followed by a space. The hint is not inserted; it is only a visual guide to help you know what to type next. You must then manually type the argument after the command. Adding argument hints to custom commands FeedbackYou can add argument hints to your custom commands using the argument-hint field in the frontmatter: --- description: Create a new API endpoint argument-hint: <endpoint-name> <http-method> --- Create a new API endpoint called $1 that handles $2 requests. Include proper error handling and documentation. FeedbackThis will display as /api-endpoint <endpoint-name> <http-method> in the command menu. Best practices for argument hints Feedback Be specific: Use descriptive placeholders like <file-path> instead of generic ones like <arg> Show multiple arguments: If your command needs multiple inputs, show them all: <source> <destination> Use consistent format: Always wrap placeholders in angle brackets: <placeholder> Keep it concise: Hints should be brief and clear Common questions about arguments QuestionAnswerWhat if I don't provide the argument?The command might not work as expected, or it might prompt you for more information. The hint is there to help you get it right the first time.Do all commands have hints?No, only commands that are designed to take arguments will have hints. Commands that work without additional input won't show hints.Can I use a command without replacing the hint?The hint text (like <mode_slug>) needs to be replaced with actual values. Leaving the hint text will likely cause the command to fail or behave unexpectedly. Best practices Command naming Feedback Use descriptive, action-oriented names Keep names concise but clear Use hyphens for multi-word commands Avoid generic names like help or test Note: Names are automatically slugified (lowercase, special characters removed) The .md extension is automatically added/removed as needed Command content Feedback Start with a clear directive Use structured formats (lists, sections) Include specific requirements Reference project conventions Keep commands focused on a single task Organization Feedback Group related commands in subdirectories Use consistent naming patterns Document complex commands Version control your commands Share team commands in the project repository Troubleshooting Commands not appearing FeedbackIf your commands aren't showing up in the menu: Feedback Check file location: Ensure custom command files are in .bob/commands/ or ~/.bob/commands/ Verify file extension: Custom commands must be .md files Command not found FeedbackWhen a slash command isn't found, the LLM will see: The slash command '/unknown-command' was not found. Please check the command name and try again. Command conflicts Feedback Custom project commands override global custom commands with the same name Use unique names to avoid conflicts When creating duplicate names through the UI, numbers are appended (e.g., new-command-1, new-command-2) About mode commands FeedbackThe slash menu includes mode-switching commands (like /mode code, /mode ask) that fundamentally change the AI's operational mode - they don't just inject text but switch the entire AI context. Custom modes you create also appear as slash commands (e.g., a mode with slug reviewer becomes /reviewer). These mode commands cannot be overridden by custom workflow commands. Cross-platform compatibility FeedbackSlash commands work identically across both Bob Shell and Bob IDE. This means: Feedback Commands created in one environment can be used in the other The same command syntax and behavior applies in both environments Team-shared commands work consistently regardless of which interface team members use How is this topic?GoodBadCheckpointingCreate automatic snapshots of your project before applying changes.Instance commandSwitch between IBM instances and teams using the /instance command.On this pageWhy use slash commands?How slash commands workCreating custom commandsCommand name processingBasic command formatAdvanced command with frontmatterFrontmatter fieldsCommand management in Bob ShellUsing slash commandsArgument hintsAdding argument hints to custom commandsBest practices for argument hintsCommon questions about argumentsBest practicesCommand namingCommand contentOrganizationTroubleshootingCommands not appearingCommand not foundCommand conflictsAbout mode commandsCross-platform compatibility",
+      "code": ".bob/commands/\n├── review.md         → /review\n├── test-api.md       → /test-api\n└── deploy-check.md   → /deploy-check"
+    },
+    {
+      "description": "FeedbackTo get started, type / in Bob Shell to see all available commands, or create your own by adding a markdown file to .bob/commands/ or ~/.bob/commands/. Why use slash commands? FeedbackSlash commands provide several key benefits: Feedback Workflow automation: Turn complex multi-step processes into single commands Team standardization: Share commands across your team for consistent practices Context preservation: Include project-specific context in every command Quick access: Fuzzy search and autocomplete for instant command discovery How slash commands work FeedbackWhen you type / in Bob Shell, a menu appears showing all available commands. These commands come from two sources: Command TypeSourcePurposeCustom workflow commands.bob/commands/ or ~/.bob/commands/User-created automation for specific tasksMode commandsBuilt-in and custom modesSwitch Bob's operational context Creating custom commands FeedbackCustom commands extend Bob's functionality by adding markdown files to specific directories: LocationScopePathProject-specificAvailable in current project only.bob/commands/ in your workspace rootGlobalAvailable in all projects~/.bob/commands/ in your home directory FeedbackThe filename becomes the command name. For example: .bob/commands/ ├── review.md → /review ├── test-api.md → /test-api └── deploy-check.md → /deploy-check Command name processing FeedbackWhen creating commands through the UI, command names are automatically processed: Feedback Converted to lowercase Spaces replaced with dashes Special characters removed Leading/trailing dashes removed FeedbackExample: \"My Cool Command!\" becomes my-cool-command Basic command format FeedbackCreate a simple command by adding a markdown file: Help me review this code for security issues and suggest improvements. Advanced command with frontmatter FeedbackAdd metadata using frontmatter for enhanced functionality: --- description: Create a new API endpoint argument-hint: <endpoint-name> <http-method> --- Create a new API endpoint called $1 that handles $2 requests. Include proper error handling and documentation. Frontmatter fields FieldPurposeExampledescriptionAppears in the command menu\"Create a new API endpoint\"argument-hintShows expected arguments\"<endpoint-name> <http-method>\" Command management in Bob Shell FeedbackBob Shell supports the same slash commands as Bob IDE. While Bob Shell does not provide a dedicated UI for managing commands, you can: Feedback Create command files manually in the .bob/commands/ directory in your project or ~/.bob/commands/ in your home directory Edit existing command files with any text editor Using slash commands FeedbackType / in Bob Shell to see a unified menu containing the following types of commands: Feedback Unified menu: Custom commands and mode-switching commands appear together Autocomplete: Start typing to filter commands (e.g., /sam shows sample-command-name) Fuzzy search: Find commands even with partial matches Description preview: See command descriptions in the menu Visual indicators: Mode commands are distinguished from custom commands with special icons /mode code Switch to Code mode /mode ask Switch to Ask mode /review Review code for security issues /api-endpoint <endpoint-name> <http-method> Argument hints FeedbackArgument hints provide instant help for slash commands, showing you what kind of information to provide when a command expects additional input. FeedbackWhen you type / to bring up the command menu, commands that expect arguments will display a light gray hint next to them. This hint tells you what kind of argument the command is expecting. FeedbackFor example: Feedback /mode <mode_slug> - The hint <mode_slug> indicates you should provide a mode name like code or debug /api-endpoint <endpoint-name> <http-method> - Shows you need both an endpoint name and HTTP method FeedbackAfter selecting the command, it will be inserted into the chat input followed by a space. The hint is not inserted; it is only a visual guide to help you know what to type next. You must then manually type the argument after the command. Adding argument hints to custom commands FeedbackYou can add argument hints to your custom commands using the argument-hint field in the frontmatter: --- description: Create a new API endpoint argument-hint: <endpoint-name> <http-method> --- Create a new API endpoint called $1 that handles $2 requests. Include proper error handling and documentation. FeedbackThis will display as /api-endpoint <endpoint-name> <http-method> in the command menu. Best practices for argument hints Feedback Be specific: Use descriptive placeholders like <file-path> instead of generic ones like <arg> Show multiple arguments: If your command needs multiple inputs, show them all: <source> <destination> Use consistent format: Always wrap placeholders in angle brackets: <placeholder> Keep it concise: Hints should be brief and clear Common questions about arguments QuestionAnswerWhat if I don't provide the argument?The command might not work as expected, or it might prompt you for more information. The hint is there to help you get it right the first time.Do all commands have hints?No, only commands that are designed to take arguments will have hints. Commands that work without additional input won't show hints.Can I use a command without replacing the hint?The hint text (like <mode_slug>) needs to be replaced with actual values. Leaving the hint text will likely cause the command to fail or behave unexpectedly. Best practices Command naming Feedback Use descriptive, action-oriented names Keep names concise but clear Use hyphens for multi-word commands Avoid generic names like help or test Note: Names are automatically slugified (lowercase, special characters removed) The .md extension is automatically added/removed as needed Command content Feedback Start with a clear directive Use structured formats (lists, sections) Include specific requirements Reference project conventions Keep commands focused on a single task Organization Feedback Group related commands in subdirectories Use consistent naming patterns Document complex commands Version control your commands Share team commands in the project repository Troubleshooting Commands not appearing FeedbackIf your commands aren't showing up in the menu: Feedback Check file location: Ensure custom command files are in .bob/commands/ or ~/.bob/commands/ Verify file extension: Custom commands must be .md files Command not found FeedbackWhen a slash command isn't found, the LLM will see: The slash command '/unknown-command' was not found. Please check the command name and try again. Command conflicts Feedback Custom project commands override global custom commands with the same name Use unique names to avoid conflicts When creating duplicate names through the UI, numbers are appended (e.g., new-command-1, new-command-2) About mode commands FeedbackThe slash menu includes mode-switching commands (like /mode code, /mode ask) that fundamentally change the AI's operational mode - they don't just inject text but switch the entire AI context. Custom modes you create also appear as slash commands (e.g., a mode with slug reviewer becomes /reviewer). These mode commands cannot be overridden by custom workflow commands. Cross-platform compatibility FeedbackSlash commands work identically across both Bob Shell and Bob IDE. This means: Feedback Commands created in one environment can be used in the other The same command syntax and behavior applies in both environments Team-shared commands work consistently regardless of which interface team members use",
+      "code": ".bob/commands/\n├── review.md         → /review\n├── test-api.md       → /test-api\n└── deploy-check.md   → /deploy-check"
+    },
+    {
+      "description": "The filename becomes the command name. For example:",
+      "code": ".bob/commands/\n├── review.md         → /review\n├── test-api.md       → /test-api\n└── deploy-check.md   → /deploy-check"
+    },
+    {
+      "description": "Example: \"My Cool Command!\" becomes my-cool-command",
+      "code": "Help me review this code for security issues and suggest improvements."
+    },
+    {
+      "description": "For example:",
+      "code": "---\ndescription: Create a new API endpoint\nargument-hint: <endpoint-name> <http-method>\n---\nCreate a new API endpoint called $1 that handles $2 requests.\nInclude proper error handling and documentation."
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

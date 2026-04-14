@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-04-13
+
+### Added
+
+- **Standalone CLI** (`ccdash-cli` package): A globally installable operator CLI that talks to a running CCDash server over HTTP, with no repo checkout required.
+  - Feature command group: `feature list`, `feature show`, `feature sessions`, `feature documents`
+  - Session command group: `session list`, `session show`, `session search`, `session drilldown`, `session family`
+  - Report command group: `report aar`, `report feature` (default markdown output)
+  - Target management: `target add`, `target remove`, `target list`, `target use`, `target login`, `target logout`, `target check`
+  - Diagnostics: `doctor`, `version`
+  - Bearer-token authentication via OS keyring or `CCDASH_TOKEN` env var
+  - Named target configuration stored in `~/.config/ccdash/config.toml`
+  - Standardized pagination (`--limit`, `--offset`) and output modes (`--json`, `--md`, `--output`)
+- Versioned client API (`/api/v1/`) with endpoints for instance, project, features, sessions, workflows, and reports
+- Shared contract types in `packages/ccdash_contracts/` consumed by both server and CLI
+- `VersionMismatchError` (exit code 5) for API compatibility detection
+- 85 tests covering client, config, import boundary, and all command groups
+
+### Docs
+
+- Added:
+  - `docs/guides/standalone-cli-guide.md` — comprehensive operator reference
+  - `docs/guides/cli-migration-guide.md` — migration from repo-local to standalone CLI
+- Updated:
+  - `README.md` — CLI section now covers both standalone and repo-local entry points
+  - `docs/guides/cli-user-guide.md` — cross-references standalone CLI guide
+
+---
+
+## 2026-04-12
+
+### Added
+
+- Transport-neutral agent intelligence queries are now documented as one shared capability exposed through three entry points:
+  - REST: `GET /api/agent/project-status`, `GET /api/agent/feature-forensics/{feature_id}`, `GET /api/agent/workflow-diagnostics`, and `POST /api/agent/reports/aar`
+  - CLI: `ccdash status project`, `ccdash feature report`, `ccdash workflow failures`, and `ccdash report aar`
+  - MCP: `ccdash_project_status`, `ccdash_feature_forensics`, `ccdash_workflow_failure_patterns`, and `ccdash_generate_aar`
+- MCP-specific documentation:
+  - `docs/guides/mcp-setup-guide.md`
+  - `docs/guides/mcp-troubleshooting.md`
+  - `backend/mcp/README.md`
+
+### Changed
+
+- Repo docs now describe the Phase 3/4 agent query stack as a transport-neutral application layer consumed by REST, CLI, and MCP.
+- README now shows how to use the CLI, how the shipped `.mcp.json` launches `python -m backend.mcp.server`, and how to validate the MCP surface with `backend/tests/test_mcp_server.py`.
+- README now links to a dedicated CLI user guide covering the four commands, project override, output modes, setup, and troubleshooting.
+- `CLAUDE.md` now includes the `backend/cli/`, `backend/mcp/`, and `/api/agent/*` surfaces in the architecture and command reference.
+
+### Docs
+
+- Updated:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `CLAUDE.md`
+- Added:
+  - `docs/guides/cli-user-guide.md`
+  - `docs/guides/mcp-setup-guide.md`
+  - `docs/guides/mcp-troubleshooting.md`
+  - `backend/mcp/README.md`
+
 ## 2026-04-06
 
 ### Changed

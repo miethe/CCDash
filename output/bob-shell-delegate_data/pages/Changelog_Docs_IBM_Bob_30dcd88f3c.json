@@ -1,0 +1,50 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/changelog",
+  "title": "Changelog | Docs | IBM Bob",
+  "content": "FeedbackLearn about version-specific updates for Bob Shell.\n\nTerminal-based AI assistance\n\nBring IBM Bob's AI capabilities directly to your command line. Get intelligent assistance for command-line tasks and terminal-based workflows. Access the same context awareness and reasoning from your development partner, Bob.Learn more →\n\nInteractive and non-interactive sessions\n\nChoose the right session type for your workflow. Use interactive sessions for conversational experiences with complex tasks. Use non-interactive sessions for automation and scripting scenarios. Invoke Bob Shell programmatically in automated workflows.Learn more →\n\nAccess purpose-built modes optimized for command-line scenarios. Code mode generates, modifies, and refactors code from the command line. Ask mode provides answers about your codebase and development questions. Plan mode helps design and plan implementations before running. Advanced mode provides extended capabilities including MCP tools.Learn more →\n\nAccomplish complex terminal-based tasks efficiently. Read, write, and manipulate files directly from the command line. Run shell commands with intelligent error handling and validation. Monitor and control running processes and system resources.Learn more →\n\nMCP (Model Context Protocol) integration\n\nExtend Bob Shell's capabilities with custom tools. Connect to databases and APIs from the terminal. Access specialized development and operations tools. Integrate with your organization's internal systems. Create custom automation workflows for DevOps tasks.Learn more →\n\nCustom modes and slash commands\n\nExtend functionality for your team's needs. Define custom modes for specialized workflows. Create reusable command shortcuts. Build team-specific automation patterns. Standardize development processes across your organization.Learn more →\n\nEditor terminal support\n\nRun Bob Shell inside terminal views of supported editors. Seamlessly integrate with your development environment.Learn more →\n\nBob Shell brings IBM Bob's AI capabilities to your command line.\n\nFrequently Asked Questions\n\nFind answers to common questions about IBM Bob and Bob Shell.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Changelog",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "1.0.1",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "New Features",
+      "id": ""
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot",
+    "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell"
+  ]
+}

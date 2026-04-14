@@ -58,6 +58,7 @@ try {
 
   run(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'], 'Upgrading pip in backend virtual environment');
   run(venvPython, ['-m', 'pip', 'install', '-r', 'backend/requirements.txt'], 'Installing backend dependencies');
+  run(venvPython, ['-m', 'pip', 'install', '-e', '.'], 'Installing CCDash package (editable)');
 
   console.log('[setup] complete');
   console.log('[setup] Next: run `npm run dev`');

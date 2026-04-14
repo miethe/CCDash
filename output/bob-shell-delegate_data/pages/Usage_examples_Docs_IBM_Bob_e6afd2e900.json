@@ -1,0 +1,99 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+  "title": "Usage examples | Docs | IBM Bob",
+  "content": "FeedbackPractical examples showing how to use Bob Shell for debugging, code improvement, file creation, documentation generation, and learning new concepts.\n\nWhen you encounter errors in your shell commands, Bob Shell can help diagnose and fix them:\n\nBob Shell can help you understand and improve existing code:\n\nUse Bob Shell to help you create new components or features:\n\nBob Shell can help you debug issues in your code:\n\nGenerate documentation for your code using Bob Shell:\n\nUse Bob Shell to learn about new technologies or concepts:\n\nStarting a non-interactive session\n\nNon-interactive session provide a method to use Bob Shell directly from the command line without entering an interactive session. Use for automation, scripting, and batch processing tasks.\n\nLearn how Bob Shell uses specialized tools to read files, edit code, run commands, and interact with your development environment from the command line.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Usage examples",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Fixing errors in shell commands",
+      "id": "fixing-errors-in-shell-commands"
+    },
+    {
+      "level": "h2",
+      "text": "Code explanation and improvement",
+      "id": "code-explanation-and-improvement"
+    },
+    {
+      "level": "h2",
+      "text": "Creating new files and features",
+      "id": "creating-new-files-and-features"
+    },
+    {
+      "level": "h2",
+      "text": "Debugging assistance",
+      "id": "debugging-assistance"
+    },
+    {
+      "level": "h2",
+      "text": "Documentation generation",
+      "id": "documentation-generation"
+    },
+    {
+      "level": "h2",
+      "text": "Learning new concepts",
+      "id": "learning-new-concepts"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "# Navigate to your project directory\ncd your-project/\n\n# Start Bob Shell\nbob\n\n# Switch to shell mode\n> !\n\n# Type in the command that's causing an error\n> make build\n\n# When you see an error message like 'No rule to make target `xxx', needed by `yyy'.'\n\n# Press ESC or enter '!' again to exit shell mode \n\n# Ask Bob Shell for help\n> Help me to fix the error",
+      "language": "markdown"
+    },
+    {
+      "code": "# Start Bob Shell in your project directory\nbob\n\n# Ask for an explanation of a specific file\n> Explain what @src/utils.js does and how it works\n\n# Request improvements to your code\n> Review @src/api.js and suggest improvements for error handling",
+      "language": "elixir"
+    },
+    {
+      "code": "# Start Bob Shell in your project directory\nbob\n\n# Ask for help creating a new component\n> Create a React component for a user profile page that displays name, email, and avatar\n\n# Generate a utility function\n> Write a utility function that formats dates in YYYY-MM-DD format",
+      "language": "markdown"
+    },
+    {
+      "code": "# Start Bob Shell in your project directory\nbob\n\n# Share error logs with Bob Shell\n> I'm getting this error when running my app: \"TypeError: Cannot read property 'map' of undefined\". Here's the relevant code: @src/components/List.js\n\n# Or pipe error output directly to Bob Shell\n# In your terminal (not in Bob Shell)\nnpm run start 2>&1 | bob -p \"Help me understand and fix this error\"",
+      "language": "elixir"
+    },
+    {
+      "code": "# Start Bob Shell in your project directory\nbob\n\n# Generate documentation for a specific file\n> Create JSDoc comments for all functions in @src/helpers.js\n\n# Generate a README for your project\n> Create a README.md file for my project based on the code in @src/index.js",
+      "language": "elixir"
+    },
+    {
+      "code": "# Start Bob Shell\nbob\n\n# Ask about a specific technology\n> Explain how React hooks work and give me examples of useState and useEffect\n\n# Learn about design patterns\n> Explain the Observer pattern and how I might implement it in JavaScript",
+      "language": "markdown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

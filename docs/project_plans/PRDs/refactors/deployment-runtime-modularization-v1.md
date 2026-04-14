@@ -9,7 +9,7 @@ title: "PRD: Deployment and Runtime Modularization V1"
 description: "Split CCDash into deployable runtime profiles and service boundaries suitable for local-first use and hosted/shared environments."
 summary: "Decouple API, workers, and local-watch behaviors so CCDash can be deployed reliably beyond the current single-process development model."
 created: 2026-03-11
-updated: 2026-03-11
+updated: 2026-04-08
 priority: high
 risk_level: high
 complexity: High
@@ -40,7 +40,7 @@ context_files:
   - deploy/observability/docker-compose.yml
   - scripts/dev.mjs
   - scripts/backend.mjs
-implementation_plan_ref: ""
+implementation_plan_ref: docs/project_plans/implementation_plans/refactors/deployment-runtime-modularization-v1.md
 ---
 
 # PRD: Deployment and Runtime Modularization V1

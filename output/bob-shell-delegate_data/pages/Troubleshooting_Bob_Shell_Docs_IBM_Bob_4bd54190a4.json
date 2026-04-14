@@ -1,0 +1,193 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot",
+  "title": "Troubleshooting Bob Shell | Docs | IBM Bob",
+  "content": "FeedbackFind solutions to issues you might encounter when using Bob Shell.\n\nError: Unable to verify certificate\n\nCause: You are on a corporate network with a firewall that intercepts and inspects SSL/TLS traffic. This requires a custom root CA certificate to be trusted by Node.js.\n\nSolution: Set the NODE_EXTRA_CA_CERTS environment variable to the absolute path of your corporate root CA certificate file:\n\nError: Bob Shell cannot connect to the IDE.\n\nCause: The Bob Shell Companion extension might not be installed or running, or Bob Shell might be running outside the workspace directory.\n\nError: Bob Shell cannot connect to the IDE when running inside a dev container.\n\nCause: The Bob Shell port is not forwarded from the dev container to the host machine.\n\nGet the Bob Shell port from the terminal inside the dev container:\n\nExample output: 42991\n\nOpen the Command Palette in your IDE and select Forward a Port.\n\nAdd the port shown in step 1 (for example, 42991).\n\nEnable IDE integration:\n\nOr check the connection status:\n\nError: 🔴 Disconnected: Failed to connect to IDE companion extension\n\nCause: The Bob Shell Companion extension is not installed, not enabled, or not running in your IDE.\n\nError: 🔴 Disconnected: IDE connection error. The connection was lost unexpectedly\n\nCause: The IDE connection was interrupted due to a network issue or IDE restart.\n\nError: 🔴 Disconnected: Directory mismatch\n\nCause: Bob Shell is running in a different directory than the workspace open in your IDE.\n\nError: 🔴 Disconnected: To use this feature, please open a workspace folder\n\nCause: No folder or workspace is open in your IDE.\n\nError: IDE integration is not supported in your current environment\n\nCause: Bob Shell is not running from within a supported IDE's integrated terminal.\n\nSolution: Run Bob Shell from within a supported IDE's integrated terminal.\n\nError: Bob Shell ignores files you want it to access, or accesses files you want it to ignore.\n\nCause: The .bobignore file might have conflicting patterns, incorrect pattern order, or be in the wrong location. Changes might not have taken effect yet.\n\nError: Bob Shell settings changes do not take effect.\n\nCause: The settings file might be in the wrong location, have invalid JSON syntax, or be overridden by higher-priority configuration sources. Changes might not have taken effect yet.\n\nCheck the settings file location:\n\nVerify the JSON syntax is valid (use a JSON validator).\n\nRemember the configuration precedence order:\n\nRestart Bob Shell after changing settings files.\n\nError: Custom instructions are not being applied to Bob Shell sessions.\n\nCause: Custom instruction files might be in the wrong location, have incorrect file extensions, or not be loaded into the current context.\n\nVerify files are in the correct location:\n\nCheck that files have the correct extensions (.md, .txt, or .xml).\n\nUse /memory refresh to reload all context files.\n\nUse /memory show to verify the current context.\n\nError: command not found: bob\n\nCause: Bob Shell is not correctly installed or not in your system's PATH.\n\nVerify Bob Shell is installed:\n\nIf not found, reinstall Bob Shell using the installation instructions.\n\nCheck that your shell's PATH includes the Bob Shell installation directory.\n\nError: Shell mode (! command) does not run commands.\n\nCause: You might not be typing ! at an empty prompt, lack necessary permissions, or the command itself might be invalid.\n\nError: Bob Shell responds slowly to requests.\n\nCause: Network connectivity issues, too many files loaded as context, or large binary files included in the context.\n\nError: Bob Shell consumes excessive memory.\n\nCause: Too many files loaded as context, large directories not excluded, or circular imports in memory files.\n\nTo see detailed logging information, start Bob Shell with the debug flag:\n\nOr set the debug flag in your settings:\n\nRun the following command to see your version of Bob Shell:\n\nNon-interactive session:\n\nCheck Bob Shell logs for error messages:\n\nControl which projects can use Bob Shell's full capabilities with trusted folder security.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Troubleshooting Bob Shell",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Authentication",
+      "id": "authentication"
+    },
+    {
+      "level": "h3",
+      "text": "Certificate errors",
+      "id": "certificate-errors"
+    },
+    {
+      "level": "h2",
+      "text": "IDE integration",
+      "id": "ide-integration"
+    },
+    {
+      "level": "h3",
+      "text": "Connection fails",
+      "id": "connection-fails"
+    },
+    {
+      "level": "h3",
+      "text": "Connection fails in dev container",
+      "id": "connection-fails-in-dev-container"
+    },
+    {
+      "level": "h3",
+      "text": "Failed to connect to IDE companion extension",
+      "id": "failed-to-connect-to-ide-companion-extension"
+    },
+    {
+      "level": "h3",
+      "text": "Connection lost unexpectedly",
+      "id": "connection-lost-unexpectedly"
+    },
+    {
+      "level": "h3",
+      "text": "Directory mismatch",
+      "id": "directory-mismatch"
+    },
+    {
+      "level": "h3",
+      "text": "No workspace folder open",
+      "id": "no-workspace-folder-open"
+    },
+    {
+      "level": "h3",
+      "text": "IDE integration not supported",
+      "id": "ide-integration-not-supported"
+    },
+    {
+      "level": "h2",
+      "text": "Configuration issues",
+      "id": "configuration-issues"
+    },
+    {
+      "level": "h3",
+      "text": ".bobignore not working",
+      "id": "bobignore-not-working"
+    },
+    {
+      "level": "h3",
+      "text": "Settings not applying",
+      "id": "settings-not-applying"
+    },
+    {
+      "level": "h3",
+      "text": "Custom instructions not loading",
+      "id": "custom-instructions-not-loading"
+    },
+    {
+      "level": "h2",
+      "text": "Command running issues",
+      "id": "command-running-issues"
+    },
+    {
+      "level": "h3",
+      "text": "Command not found",
+      "id": "command-not-found"
+    },
+    {
+      "level": "h3",
+      "text": "Shell mode not working",
+      "id": "shell-mode-not-working"
+    },
+    {
+      "level": "h2",
+      "text": "Performance issues",
+      "id": "performance-issues"
+    },
+    {
+      "level": "h3",
+      "text": "Slow response times",
+      "id": "slow-response-times"
+    },
+    {
+      "level": "h3",
+      "text": "High memory usage",
+      "id": "high-memory-usage"
+    },
+    {
+      "level": "h2",
+      "text": "Tips for debugging Bob Shell",
+      "id": "tips-for-debugging-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Enable debug mode",
+      "id": "enable-debug-mode"
+    },
+    {
+      "level": "h3",
+      "text": "Verify your version of Bob Shell",
+      "id": "verify-your-version-of-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Review logs",
+      "id": "review-logs"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "export NODE_EXTRA_CA_CERTS=/path/to/your/corporate-ca.crt",
+      "language": "unknown"
+    },
+    {
+      "code": "echo $BOB_SHELL_CLI_IDE_SERVER_PORT",
+      "language": "bash"
+    },
+    {
+      "code": "/ide enable",
+      "language": "unknown"
+    },
+    {
+      "code": "/ide status",
+      "language": "unknown"
+    },
+    {
+      "code": "bob --debug",
+      "language": "unknown"
+    },
+    {
+      "code": "{\n  \"general\": {\n    \"debug\": true\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "bob --version",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

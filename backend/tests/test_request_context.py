@@ -1,3 +1,4 @@
+import os
 import asyncio
 import tempfile
 import unittest
@@ -7,6 +8,9 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 from starlette.requests import Request
 
+from fastapi import HTTPException
+
+from backend.adapters.auth.bearer import RequestAuthenticationError, StaticBearerTokenIdentityProvider
 from backend.adapters.auth.local import LocalIdentityProvider, PermitAllAuthorizationPolicy
 from backend.adapters.jobs.local import InProcessJobScheduler
 from backend.adapters.integrations.local import NoopIntegrationClient
@@ -68,6 +72,57 @@ class LocalAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(decision.allowed)
+
+    async def test_bearer_identity_provider_accepts_valid_token_on_v1_api_path(self) -> None:
+        provider = StaticBearerTokenIdentityProvider()
+
+        with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+            principal = await provider.get_principal(
+                RequestMetadata(
+                    headers={"authorization": "Bearer secret-token"},
+                    method="GET",
+                    path="/api/v1/project/status",
+                    client_host="127.0.0.1",
+                ),
+                runtime_profile="api",
+            )
+
+        self.assertEqual(principal.auth_mode, "bearer")
+        self.assertTrue(principal.is_authenticated)
+
+    async def test_bearer_identity_provider_rejects_missing_token_on_v1_api_path(self) -> None:
+        provider = StaticBearerTokenIdentityProvider()
+
+        with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+            with self.assertRaises(RequestAuthenticationError) as ctx:
+                await provider.get_principal(
+                    RequestMetadata(
+                        headers={},
+                        method="GET",
+                        path="/api/v1/project/status",
+                        client_host="127.0.0.1",
+                    ),
+                    runtime_profile="api",
+                )
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_bearer_identity_provider_allows_unprotected_api_path_without_token(self) -> None:
+        provider = StaticBearerTokenIdentityProvider()
+
+        with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+            principal = await provider.get_principal(
+                RequestMetadata(
+                    headers={},
+                    method="GET",
+                    path="/api/health",
+                    client_host="127.0.0.1",
+                ),
+                runtime_profile="api",
+            )
+
+        self.assertEqual(principal.auth_mode, "anonymous")
+        self.assertFalse(principal.is_authenticated)
 
     async def test_workspace_registry_resolves_active_project_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +228,66 @@ class RequestContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.storage_scope.isolation_mode, "dedicated")
         self.assertEqual([binding.scope_type for binding in context.scope_bindings], ["workspace", "project"])
 
+    async def test_runtime_container_builds_request_context_in_api_mode_with_valid_bearer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("api"))
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=StaticBearerTokenIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+                    context = await container.build_request_context(
+                        RequestMetadata(
+                            headers={"authorization": "Bearer secret-token"},
+                            method="GET",
+                            path="/api/v1/project/status",
+                            client_host="127.0.0.1",
+                        )
+                    )
+            finally:
+                await db.close()
+
+        self.assertEqual(context.runtime_profile, "api")
+        self.assertEqual(context.principal.auth_mode, "bearer")
+
+    async def test_runtime_container_rejects_missing_bearer_for_v1_api_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ProjectManager(Path(tmpdir) / "projects.json")
+            db = await aiosqlite.connect(":memory:")
+            try:
+                container = RuntimeContainer(profile=get_runtime_profile("api"))
+                container.db = db
+                container.ports = CorePorts(
+                    identity_provider=StaticBearerTokenIdentityProvider(),
+                    authorization_policy=PermitAllAuthorizationPolicy(),
+                    workspace_registry=ProjectManagerWorkspaceRegistry(manager),
+                    storage=LocalStorageUnitOfWork(db),
+                    job_scheduler=InProcessJobScheduler(),
+                    integration_client=NoopIntegrationClient(),
+                )
+                with patch.dict(os.environ, {"CCDASH_API_BEARER_TOKEN": "secret-token"}):
+                    with self.assertRaises(RequestAuthenticationError) as ctx:
+                        await container.build_request_context(
+                            RequestMetadata(
+                                headers={},
+                                method="GET",
+                                path="/api/v1/project/status",
+                                client_host="127.0.0.1",
+                            )
+                        )
+            finally:
+                await db.close()
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
 
 class RequestContextRouteIntegrationTests(unittest.TestCase):
     def test_health_route_declares_request_context_dependency(self) -> None:
@@ -215,6 +330,37 @@ class RequestContextRouteIntegrationTests(unittest.TestCase):
 
         context = asyncio.run(_resolve())
         self.assertEqual(context.trace.request_id, "req-1")
+
+    def test_request_context_dependency_maps_authentication_errors_to_http_exceptions(self) -> None:
+        app = build_test_app()
+
+        async def _resolve() -> HTTPException:
+            request = Request(
+                {
+                    "type": "http",
+                    "app": app,
+                    "method": "GET",
+                    "path": "/api/v1/project/status",
+                    "headers": [],
+                    "client": ("127.0.0.1", 9000),
+                    "query_string": b"",
+                    "server": ("testserver", 80),
+                    "scheme": "http",
+                    "root_path": "",
+                    "http_version": "1.1",
+                }
+            )
+            with patch.object(
+                RuntimeContainer,
+                "build_request_context",
+                AsyncMock(side_effect=RequestAuthenticationError(401, "Bearer token required.")),
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    await get_request_context(request, app.state.runtime_container)
+                return ctx.exception
+
+        exc = asyncio.run(_resolve())
+        self.assertEqual(exc.status_code, 401)
 
     def test_projects_route_declares_core_ports_dependency(self) -> None:
         app = build_test_app()

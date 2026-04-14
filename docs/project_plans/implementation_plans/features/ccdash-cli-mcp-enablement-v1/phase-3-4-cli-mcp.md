@@ -1,721 +1,259 @@
 ---
 schema_version: "1.0"
 doc_type: phase_plan
-title: "Phase 3–4: CLI and MCP Implementation"
-description: "Implement Python CLI (Typer) and MCP server (FastMCP) for agent and operator access to CCDash intelligence."
-status: draft
+title: "Phase 3–4: CLI Completion and MCP Execution Plan"
+description: "Record Phase 3 completion and define the executable Phase 4 MCP plan against the current CCDash repo."
+status: in-progress
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-12"
 phase: "3-4"
-phase_title: "CLI MVP and MCP MVP"
+phase_title: "CLI MVP complete; MCP MVP pending"
 feature_slug: "ccdash-cli-mcp-enablement"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
 plan_ref: "docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md"
 entry_criteria:
   - Phase 1 (agent query services) complete and tested
-  - Phase 2 (REST endpoints) complete and tested (recommended but not strictly required)
+  - Phase 2 (REST composite endpoints) complete and tested
+  - Phase 3 (CLI MVP) complete and validated in-repo
   - Python 3.10+ and Typer/FastMCP SDK research complete (see SPIKE docs)
-  - SQLite with WAL mode and busy timeout configured
 exit_criteria:
-  - Phase 3: CLI installed as `ccdash` command, all 4 MVP commands working, tests passing, startup <500ms
-  - Phase 4: MCP server starts via `python -m backend.mcp.server`, all 4 tools callable, `.mcp.json` configured, Claude Code discovers tools
-  - Both phases: Zero business logic duplication with Phase 1 services
+  - Phase 4: MCP server starts via `python -m backend.mcp.server` and exposes all 4 MVP tools over stdio
+  - Phase 4: tool calls reuse existing Phase 1 query services with zero business-logic duplication
+  - Phase 4: `.mcp.json` points Claude Code at the stdio server and manual discovery succeeds
+  - Phase 4: automated coverage uses the SDK-supported `stdio_client` + `ClientSession` harness
 priority: high
 effort_estimate: 11-13
 effort_estimate_unit: story_points
-effort_estimate_breakdown: "Phase 3: 6–7 pts | Phase 4: 5–6 pts"
-duration_estimate: 10-14
+effort_estimate_breakdown: "Phase 3: completed (6–7 pts) | Phase 4: remaining (5–6 pts)"
+duration_estimate: 5-7
 duration_estimate_unit: days
 can_parallelize: true
-parallelization_note: "Phase 3 and 4 can proceed in parallel after Phase 1 is stable. They do not depend on each other."
+parallelization_note: "Phase 3 is complete. In Phase 4, test harness work and Claude Code config/docs can run in parallel after the MCP bootstrap and tools exist."
 ---
 
-# Phase 3–4: CLI and MCP Implementation
+# Phase 3–4: CLI Completion and MCP Execution Plan
 
 ## Phase Overview
 
-**Goal**: Expose Phase 1 agent query services via two delivery channels:
-- **Phase 3 (CLI)**: Local command-line interface for operators and scripts using Typer framework
-- **Phase 4 (MCP)**: Agent-facing tools for Claude Code using FastMCP stdio transport
+**Goal**: Expose the completed Phase 1 query services through two thin delivery adapters:
+- **Phase 3 (CLI)**: complete in the current repo and retained here as the baseline adapter pattern
+- **Phase 4 (MCP)**: the remaining execution scope; add a FastMCP stdio server for Claude Code and other MCP clients
 
-**Why Together**: Both phases have similar architecture (thin adapters around Phase 1 services) and can proceed in parallel once Phase 1 is stable.
+**Current Status**:
+- Phase 1: complete
+- Phase 2: complete
+- Phase 3: complete
+- Phase 4: not started
 
-**Key Invariant**: No business logic duplication. Both CLI and MCP delegate to Phase 1 query services.
+**Key Invariant**: CLI and MCP remain transport adapters only. All business logic continues to live in `backend/application/services/agent_queries/`.
 
 ---
 
-## PHASE 3: CLI Implementation
+## Validation Notes (2026-04-12)
+
+- Phase 3 is already implemented and complete in the current worktree; see `.claude/progress/ccdash-cli-mcp-enablement-v1/phase-3-progress.md`. Treat it as landed baseline, not open scope.
+- The repo already contains `backend/cli`, a repo-root `pyproject.toml`, and `scripts/setup.mjs`; Typer/Rich packaging work is done and must not be replanned as pending Phase 4 work.
+- `backend/cli/runtime.py` establishes the lightweight bootstrap pattern to reuse for MCP: `RuntimeContainer(profile=get_runtime_profile("test"))`, `RequestMetadata`, and `container.build_request_context(...)`.
+- The repo does **not** contain `backend/mcp/` or a committed `.mcp.json`; Phase 4 remains unstarted and is the next execution target.
+- `backend/requirements.txt` already includes `typer` and `rich` but does not yet include `mcp`.
+- Phase 4 must not use `RequestContext.from_environment()` or a `local` runtime profile. Reuse the existing lightweight container bootstrap pattern used by the CLI.
+- Phase 4 validation must not rely on speculative `mcp.test_client` guidance. Use the SDK-supported stdio harness: spawn the server with `stdio_client`, create a `ClientSession`, initialize it, then call `list_tools`/`call_tool`.
+
+---
+
+## Phase 3 Completion Snapshot
+
+Phase 3 is closed. Treat it as implementation baseline, not future work.
+
+### Delivered Surface
+
+- `backend/cli/` Typer application and command modules exist
+- lightweight CLI runtime bootstrap exists in `backend/cli/runtime.py`
+- repo-root `pyproject.toml` publishes the `ccdash` console script
+- `scripts/setup.mjs` installs the editable package
+- focused CLI test coverage exists in `backend/tests/test_cli_commands.py`
+
+### Verified Evidence
+
+- `backend/.venv/bin/python -m backend.cli --help` passed during Phase 3 validation
+- `backend/.venv/bin/ccdash --help` passed after editable install
+- `backend/.venv/bin/python -m pytest backend/tests/test_cli_commands.py -q` passed (`8 passed`)
+
+### Phase 3 Acceptance Criteria
+
+- [x] `python -m backend.cli --help` works
+- [x] `ccdash --help` works after editable install
+- [x] All 4 MVP commands exist and delegate to Phase 1 query services
+- [x] Human/JSON/Markdown output modes are covered
+- [x] CLI packaging/setup integration exists in-repo
+- [x] Phase 3 introduced no new business-logic duplication
+
+---
+
+## Phase 4: MCP Implementation
 
 ### Overview
 
-The CLI (`ccdash` command) is a local, operator-friendly interface for CCDash intelligence. It bootstraps its own database connection and CorePorts instance, requiring no running web server. Output supports human-readable (default), JSON (agents/scripts), and Markdown (reports) formats.
-
-**Core Commands** (MVP):
-- `ccdash status project` — display project status
-- `ccdash feature report <id>` — display feature forensics
-- `ccdash workflow failures` — display problematic workflows
-- `ccdash report aar --feature <id>` — generate markdown after-action review
-
----
-
-## Phase 3 Task Breakdown
-
-### P3-T1: Create CLI Package Structure and Typer App
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: Phase 1 complete
-
-**Description**:
-Set up the CLI package with Typer app structure and dependency injection.
-
-**Detailed Tasks**:
-
-1. Create `backend/cli/` directory structure:
-   ```
-   backend/cli/
-     __init__.py
-     __main__.py              # python -m backend.cli entry point
-     main.py                  # Root Typer app
-     runtime.py               # CLI bootstrap (CorePorts, DB)
-     output.py                # OutputMode enum, formatter selection
-     commands/
-       __init__.py
-       status.py              # ccdash status project
-       feature.py             # ccdash feature report <id>
-       workflow.py            # ccdash workflow failures
-       report.py              # ccdash report aar
-     formatters/
-       __init__.py
-       base.py                # OutputFormatter protocol
-       table.py               # TableFormatter (human-readable)
-       json.py                # JsonFormatter (--json)
-       markdown.py            # MarkdownFormatter (--md)
-   ```
-
-2. Create `backend/cli/__main__.py`:
-   ```python
-   from backend.cli.main import app
-
-   if __name__ == "__main__":
-       app()
-   ```
-
-3. Create `backend/cli/main.py` (Typer root app):
-   ```python
-   import typer
-   from enum import Enum
-
-   class OutputMode(str, Enum):
-       human = "human"
-       json = "json"
-       markdown = "markdown"
-
-   app = typer.Typer(help="CCDash CLI for project intelligence access")
-
-   # Global options callback
-   @app.callback()
-   def main(
-       output: OutputMode = typer.Option(
-           OutputMode.human,
-           "--output",
-           help="Output format: human, json, or markdown",
-       ),
-       project: str | None = typer.Option(
-           None,
-           "--project",
-           help="Override active project ID",
-       ),
-   ):
-       """CCDash command-line interface for agent and operator access."""
-       # Set globals for command handlers to access
-       import backend.cli.runtime as runtime
-       runtime.OUTPUT_MODE = output
-       runtime.PROJECT_OVERRIDE = project
-
-   # Register subcommand groups
-   app.add_typer(status_app, name="status", help="Show project and feature status")
-   app.add_typer(feature_app, name="feature", help="Feature-focused commands")
-   app.add_typer(workflow_app, name="workflow", help="Workflow diagnostics")
-   app.add_typer(report_app, name="report", help="Generate reports (AAR, summaries)")
-   ```
-
-4. Create `backend/cli/runtime.py` (CLI bootstrap):
-   ```python
-   import asyncio
-   from backend.application.ports import CorePorts
-   from backend.db import connection
-   from backend.runtime_ports import build_core_ports
-   from backend.runtime.profiles import get_runtime_profile
-   from backend.config import STORAGE_PROFILE
-
-   # Globals set by main() callback
-   OUTPUT_MODE = "human"
-   PROJECT_OVERRIDE: str | None = None
-
-   _ports: CorePorts | None = None
-
-   async def bootstrap_cli() -> CorePorts:
-       """Bootstrap CLI runtime: lightweight, no HTTP server."""
-       global _ports
-       if _ports is not None:
-           return _ports
-       db = await connection.get_connection()
-       profile = get_runtime_profile("local")  # or new "cli" profile
-       _ports = build_core_ports(
-           db,
-           runtime_profile=profile,
-           storage_profile=STORAGE_PROFILE,
-       )
-       return _ports
-
-   async def teardown_cli() -> None:
-       global _ports
-       _ports = None
-       await connection.close_connection()
-
-   def get_context() -> RequestContext:
-       """Get request context with optional project override."""
-       ctx = RequestContext.from_environment()
-       if PROJECT_OVERRIDE:
-           ctx.project.project_id = PROJECT_OVERRIDE
-       return ctx
-   ```
-
-5. Create `backend/cli/output.py`:
-   ```python
-   from enum import Enum
-   from backend.cli.formatters.base import OutputFormatter
-   from backend.cli.formatters.table import TableFormatter
-   from backend.cli.formatters.json import JsonFormatter
-   from backend.cli.formatters.markdown import MarkdownFormatter
-
-   class OutputMode(str, Enum):
-       human = "human"
-       json = "json"
-       markdown = "markdown"
-
-   def get_formatter(mode: OutputMode) -> OutputFormatter:
-       match mode:
-           case OutputMode.json:
-               return JsonFormatter()
-           case OutputMode.markdown:
-               return MarkdownFormatter()
-           case _:
-               return TableFormatter()
-   ```
-
-**Files to Create**:
-- `backend/cli/__init__.py`
-- `backend/cli/__main__.py`
-- `backend/cli/main.py`
-- `backend/cli/runtime.py`
-- `backend/cli/output.py`
-- `backend/cli/commands/__init__.py`
-- `backend/cli/formatters/__init__.py`
-
-**Acceptance Criteria**:
-- [ ] `python -m backend.cli --help` works
-- [ ] Typer app structure created with subcommand groups
-- [ ] Output mode global available to command handlers
-- [ ] Bootstrap functions (CLI runtime init/teardown) functional
-- [ ] No import errors
-
----
-
-### P3-T2: Implement Output Formatters
-
-**Effort**: 1 story point  
-**Duration**: 1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: P3-T1
-
-**Description**:
-Implement the three output formatter classes (human-readable table, JSON, Markdown).
-
-**Detailed Tasks**:
-
-1. Create `backend/cli/formatters/base.py`:
-   ```python
-   from typing import Protocol, Any
-
-   class OutputFormatter(Protocol):
-       """Protocol for output formatters."""
-       
-       def render(self, data: Any, *, title: str = "") -> str:
-           """Render data to a string for stdout."""
-           ...
-   ```
-
-2. Create `backend/cli/formatters/table.py`:
-   - Use Rich library (already in requirements for backend) for table rendering
-   - Render Pydantic models to human-readable tables and text
-   - Example: ProjectStatusDTO → "Project: my-project | Features: 5 done, 2 in-progress | Cost: $23.45"
-
-3. Create `backend/cli/formatters/json.py`:
-   ```python
-   import json
-   from pydantic import BaseModel
-
-   class JsonFormatter:
-       def render(self, data: Any, *, title: str = "") -> str:
-           if isinstance(data, BaseModel):
-               return json.dumps(data.model_dump(mode="json"), indent=2, default=str)
-           return json.dumps(data, indent=2, default=str)
-   ```
-
-4. Create `backend/cli/formatters/markdown.py`:
-   - Render Pydantic models to markdown (headers, tables, lists, code blocks)
-   - Example: AARReportDTO → markdown with # Scope, ## Timeline, etc.
-
-**Files to Create**:
-- `backend/cli/formatters/base.py`
-- `backend/cli/formatters/table.py`
-- `backend/cli/formatters/json.py`
-- `backend/cli/formatters/markdown.py`
-
-**Acceptance Criteria**:
-- [ ] All 3 formatters implement OutputFormatter protocol
-- [ ] JSON formatter produces valid JSON
-- [ ] Table formatter uses Rich for clean output
-- [ ] Markdown formatter produces valid markdown
-- [ ] Formatters handle nested objects (lists, dicts, Pydantic models)
-
----
-
-### P3-T3: Implement Core CLI Commands
-
-**Effort**: 3 story points  
-**Duration**: 2–3 days  
-**Assignee**: Backend Engineer  
-**Depends on**: P3-T1, P3-T2
-
-**Description**:
-Implement the four MVP commands: status, feature, workflow, report.
-
-**Detailed Tasks**:
-
-1. Create `backend/cli/commands/status.py`:
-   ```python
-   import typer
-   from backend.cli.runtime import bootstrap_cli, get_context
-   from backend.cli.output import get_formatter, OUTPUT_MODE
-   from backend.application.services.agent_queries import ProjectStatusQueryService
-
-   status_app = typer.Typer()
-
-   @status_app.command()
-   async def project(
-       json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-       md_output: bool = typer.Option(False, "--md", help="Output as Markdown"),
-   ):
-       """Show current project status summary."""
-       ports = await bootstrap_cli()
-       context = get_context()
-       service = ProjectStatusQueryService()
-       result = await service.get_status(context, ports)
-       
-       # Select formatter
-       if json_output:
-           formatter = get_formatter("json")
-       elif md_output:
-           formatter = get_formatter("markdown")
-       else:
-           formatter = get_formatter("human")
-       
-       print(formatter.render(result, title="Project Status"))
-   ```
-
-2. Create `backend/cli/commands/feature.py`:
-   ```python
-   # ccdash feature report <id>
-   ```
-
-3. Create `backend/cli/commands/workflow.py`:
-   ```python
-   # ccdash workflow failures
-   ```
-
-4. Create `backend/cli/commands/report.py`:
-   ```python
-   # ccdash report aar --feature <id>
-   ```
-
-5. Each command:
-   - Calls one Phase 1 query service
-   - Supports human/JSON/Markdown output modes
-   - Exits 0 on success, non-zero on error
-   - Writes error messages to stderr
-
-**Files to Create**:
-- `backend/cli/commands/status.py`
-- `backend/cli/commands/feature.py`
-- `backend/cli/commands/workflow.py`
-- `backend/cli/commands/report.py`
-
-**Acceptance Criteria**:
-- [ ] All 4 commands exist and are invocable
-- [ ] Each command outputs valid data in all 3 formats (human/JSON/MD)
-- [ ] Commands exit 0 on success, non-zero on error
-- [ ] Error messages are user-friendly
-- [ ] JSON output is valid (pipe to jq)
-- [ ] Markdown output is valid markdown
-
----
-
-### P3-T4: Write CliRunner Tests for All Commands
-
-**Effort**: 1 story point  
-**Duration**: 1 day  
-**Assignee**: Backend Engineer (Test-Focused)  
-**Depends on**: P3-T3
-
-**Description**:
-Write comprehensive CliRunner tests for all 4 MVP commands using Typer's test utilities.
-
-**Detailed Tasks**:
-
-1. Create `backend/tests/cli/test_commands_status.py`:
-   - Test `ccdash status project` with human/JSON/Markdown output
-   - Test with missing/stale database
-   - Test with empty project
-
-2. Create similar test modules for feature, workflow, report commands
-
-3. Use pytest fixtures for:
-   - CLI test database
-   - Pre-seeded test data
-   - CliRunner instance
-
-4. Test matrix per command:
-   - Happy path (complete data)
-   - Partial availability (status: partial returned)
-   - Error case (feature not found, etc.)
-   - Output format validation (JSON parseable, etc.)
-
-**Files to Create**:
-- `backend/tests/cli/__init__.py`
-- `backend/tests/cli/conftest.py` (fixtures)
-- `backend/tests/cli/test_commands_status.py`
-- `backend/tests/cli/test_commands_feature.py`
-- `backend/tests/cli/test_commands_workflow.py`
-- `backend/tests/cli/test_commands_report.py`
-
-**Acceptance Criteria**:
-- [ ] All CliRunner tests pass
-- [ ] Each command tested in all 3 output modes
-- [ ] Error cases handled gracefully
-- [ ] No unhandled exceptions
-- [ ] JSON output validates with jq
-
----
-
-### P3-T5: Create Entry Point and Integration with npm run setup
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer + DevOps  
-**Depends on**: P3-T1 through P3-T4
-
-**Description**:
-Package the CLI as a pip entry point and integrate with `npm run setup`.
-
-**Detailed Tasks**:
-
-1. Add to `pyproject.toml` (or `setup.py`):
-   ```toml
-   [project.scripts]
-   ccdash = "backend.cli.main:app"
-   ```
-
-2. Modify `npm run setup` script:
-   ```bash
-   npm run setup:python
-   cd backend && pip install -e .
-   cd ..
-   ```
-
-3. Create optional shell wrapper in `bin/ccdash` for convenience:
-   ```bash
-   #!/usr/bin/env bash
-   SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-   exec "$SCRIPT_DIR/backend/.venv/bin/python" -m backend.cli "$@"
-   ```
-
-4. Update README.md with CLI usage guide:
-   - `ccdash --help` overview
-   - Quick start example
-   - Output format options
-   - Common workflows
-
-**Files to Create/Modify**:
-- `pyproject.toml` (add [project.scripts])
-- `npm run setup` script (extend)
-- `bin/ccdash` (optional convenience wrapper)
-- `README.md` (add CLI section)
-
-**Acceptance Criteria**:
-- [ ] `pip install -e .` installs `ccdash` command
-- [ ] `ccdash --help` works after install
-- [ ] `npm run setup` includes the install step
-- [ ] Shell wrapper (if created) works as fallback
-- [ ] README documents CLI usage
-
----
-
-### P3-T6: Verify Startup Performance and Integration
-
-**Effort**: 1 story point  
-**Duration**: 1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: P3-T5
-
-**Description**:
-Benchmark CLI startup time and verify it works alongside the running web server (concurrent SQLite access).
-
-**Detailed Tasks**:
-
-1. Benchmark startup time:
-   ```bash
-   time ccdash status project --json > /dev/null
-   ```
-   - Target: <500 ms from invocation to first output
-   - Run on development machine with SQLite
-   - If over budget, profile and optimize (lazy imports, deferred DB init)
-
-2. Test concurrent access:
-   - Run `npm run dev:backend` (FastAPI web server)
-   - In another terminal: `ccdash status project`
-   - Verify both succeed without lock timeouts
-   - Repeat 5 times to ensure stability
-
-3. Create performance notes in CLI README or dev docs
-
-**Files to Modify**:
-- `README.md` (add performance notes)
-
-**Acceptance Criteria**:
-- [ ] CLI startup <500 ms measured with `time` command
-- [ ] CLI and web server can read simultaneously without locks
-- [ ] No SQLite "database is locked" errors in repeated runs
-- [ ] Performance notes documented
-
----
-
-## PHASE 4: MCP Implementation
-
-### Overview
-
-The MCP server exposes CCDash intelligence as tools for coding agents like Claude Code. It uses the FastMCP framework with stdio transport as primary and optional Streamable HTTP as secondary. The server bootstraps its own CorePorts instance and has no dependency on the web server running.
-
-**Core Tools** (MVP):
-- `ccdash_project_status` — get project status
-- `ccdash_feature_forensics` — get feature forensics
-- `ccdash_workflow_failure_patterns` — identify problematic workflows
-- `ccdash_generate_aar` — generate after-action review
+Phase 4 adds a stdio-launched MCP server that exposes the same CCDash intelligence already available through REST and CLI. The server must bootstrap CCDash runtime state without spinning up HTTP, background jobs, or sync/watcher behavior.
+
+**Core Tools**:
+- `ccdash_project_status`
+- `ccdash_feature_forensics`
+- `ccdash_workflow_failure_patterns`
+- `ccdash_generate_aar`
+
+**Non-Negotiable Bootstrap Pattern**:
+
+```python
+from backend.application.context import RequestMetadata
+from backend.runtime.container import RuntimeContainer
+from backend.runtime.profiles import get_runtime_profile
+
+MCP_PROFILE = get_runtime_profile("test")
+
+container = RuntimeContainer(profile=MCP_PROFILE)
+...
+context = await container.build_request_context(
+    RequestMetadata(
+        headers=headers,
+        method="MCP",
+        path=f"mcp://ccdash/{tool_name}",
+    )
+)
+```
+
+That is the repo-aligned pattern. Do not substitute `local` profile startup or `RequestContext.from_environment()`.
 
 ---
 
 ## Phase 4 Task Breakdown
 
-### P4-T1: Add MCP Dependency and Create Package Structure
+### P4-T1: Add MCP Dependency and Bootstrap Package Skeleton
 
 **Effort**: 1 story point  
 **Duration**: 0.5–1 day  
 **Assignee**: Backend Engineer  
-**Depends on**: Phase 1 complete
+**Depends on**: Phase 1-3 complete
 
 **Description**:
-Add FastMCP to dependencies and create the MCP package structure.
+Add the MCP SDK dependency and create the initial package structure with the same lightweight runtime bootstrap shape already used by the CLI.
 
 **Detailed Tasks**:
 
-1. Update `backend/requirements.txt`:
-   ```
+1. Update `backend/requirements.txt` with a pinned v1-line MCP SDK dependency:
+   ```text
    mcp>=1.8,<2
    ```
-
-2. Create `backend/mcp/` directory structure:
-   ```
+2. Create the package skeleton:
+   ```text
    backend/mcp/
      __init__.py
-     __main__.py              # python -m backend.mcp.server entry point
-     server.py                # FastMCP instance + stdio bootstrap
-     bootstrap.py             # Lazy CorePorts initialization
-     context.py               # MCP RequestContext builder
+     __main__.py
+     server.py
+     bootstrap.py
      tools/
-       __init__.py            # register_tools() aggregator
-       project.py             # ccdash_project_status
-       features.py            # ccdash_feature_forensics
-       workflows.py           # ccdash_workflow_failure_patterns
-       reports.py             # ccdash_generate_aar
+       __init__.py
+       project.py
+       features.py
+       workflows.py
+       reports.py
    ```
+3. Implement `backend/mcp/bootstrap.py` by mirroring the existing CLI bootstrap pattern:
+   - use `RuntimeContainer(profile=get_runtime_profile("test"))`
+   - create ports through `build_core_ports(...)`
+   - cache the container for the server lifetime
+   - expose helpers for request-context construction and shutdown
+4. Build request context with `RequestMetadata` headers via `container.build_request_context(...)`; do not use `RequestContext.from_environment()` or a local runtime profile.
 
-3. Create `backend/mcp/__main__.py`:
-   ```python
-   from backend.mcp.server import mcp
+**Implementation Sketch**:
 
-   if __name__ == "__main__":
-       mcp.run(transport="stdio")
-   ```
+```python
+from backend.application.context import RequestContext, RequestMetadata
+from backend.application.ports import CorePorts
+from backend.db import connection
+from backend.runtime.container import RuntimeContainer
+from backend.runtime.profiles import get_runtime_profile
+from backend.runtime_ports import build_core_ports
 
-4. Create `backend/mcp/bootstrap.py` (lazy CorePorts init):
-   ```python
-   import asyncio
-   from backend.application.ports import CorePorts
-   from backend.db import connection
-   from backend.runtime_ports import build_core_ports
-   from backend.runtime.profiles import get_runtime_profile
-   from backend.config import STORAGE_PROFILE
+MCP_PROFILE = get_runtime_profile("test")
+_container: RuntimeContainer | None = None
 
-   _ports: CorePorts | None = None
+async def bootstrap_mcp() -> RuntimeContainer:
+    ...
 
-   async def get_ports() -> CorePorts:
-       """Get or initialize CorePorts (lazy, per-tool-call)."""
-       global _ports
-       if _ports is None:
-           db = await connection.get_connection()
-           profile = get_runtime_profile("local")
-           _ports = build_core_ports(
-               db,
-               runtime_profile=profile,
-               storage_profile=STORAGE_PROFILE,
-           )
-       return _ports
-   ```
-
-5. Create `backend/mcp/context.py`:
-   ```python
-   from backend.application.context import RequestContext
-
-   def build_mcp_context(project_id: str | None = None) -> RequestContext:
-       """Build RequestContext for MCP tool calls."""
-       ctx = RequestContext.from_environment()
-       if project_id:
-           ctx.project.project_id = project_id
-       return ctx
-   ```
-
-**Files to Create**:
-- `backend/mcp/__init__.py`
-- `backend/mcp/__main__.py`
-- `backend/mcp/bootstrap.py`
-- `backend/mcp/context.py`
-- `backend/mcp/tools/__init__.py`
-
-**Files to Modify**:
-- `backend/requirements.txt` (add mcp>=1.8,<2)
+async def get_app_request(
+    *,
+    tool_name: str,
+    project_id: str | None = None,
+) -> tuple[RequestContext, CorePorts]:
+    headers: dict[str, str] = {}
+    if project_id:
+        headers["x-ccdash-project-id"] = project_id
+    context = await container.build_request_context(
+        RequestMetadata(
+            headers=headers,
+            method="MCP",
+            path=f"mcp://ccdash/{tool_name}",
+        )
+    )
+    return context, container.require_ports()
+```
 
 **Acceptance Criteria**:
-- [ ] `pip install -r requirements.txt` installs mcp successfully
-- [ ] `python -m backend.mcp.server --help` works (or shows expected startup message)
-- [ ] Package imports without errors
+- [ ] `backend/requirements.txt` includes `mcp>=1.8,<2`
+- [ ] `backend/mcp/` imports without errors
+- [ ] MCP bootstrap uses the existing test runtime profile via `RuntimeContainer(profile=get_runtime_profile("test"))`
+- [ ] MCP bootstrap uses `RequestMetadata` plus `container.build_request_context(...)`
+- [ ] No use of `RequestContext.from_environment()` or `get_runtime_profile("local")`
 
 ---
 
-### P4-T2: Implement FastMCP Server and Core Tools
+### P4-T2: Implement FastMCP Server and Four Thin Tool Adapters
 
-**Effort**: 3 story points  
-**Duration**: 2–3 days  
+**Effort**: 2 story points  
+**Duration**: 1.5–2 days  
 **Assignee**: Backend Engineer  
 **Depends on**: P4-T1
 
 **Description**:
-Implement the FastMCP server and all 4 core tools.
+Create the FastMCP server entry point and register the four MVP tools as thin wrappers over existing Phase 1 query services.
 
 **Detailed Tasks**:
 
-1. Create `backend/mcp/server.py`:
-   ```python
-   from mcp.server.fastmcp import FastMCP
-   from backend.mcp.tools import register_tools
+1. Create `backend/mcp/server.py` with a single FastMCP instance.
+2. Expose stdio startup through `backend/mcp/__main__.py` so `python -m backend.mcp.server` remains the launch command used by the plan/PRD.
+3. Implement each tool in `backend/mcp/tools/`:
+   - bootstrap request context through `backend/mcp/bootstrap.py`
+   - instantiate the corresponding Phase 1 query service
+   - return a stable response envelope
+4. Keep tool docstrings/descriptions agent-facing and concrete.
+5. Centralize repeated response-envelope and error-path shaping if duplication appears.
 
-   mcp = FastMCP(
-       "CCDash Intelligence",
-       log_level="WARNING",
-   )
+**Required Response Envelope**:
 
-   # Register all tools
-   register_tools(mcp)
-
-   # Optional: register resources (Phase 5)
-   # register_resources(mcp)
-   ```
-
-2. Create `backend/mcp/tools/project.py`:
-   ```python
-   @mcp.tool(description="Get current project status with feature counts, session activity, and cost trends.")
-   async def ccdash_project_status(
-       project_id: str | None = None,
-   ) -> dict:
-       """Get project status for planning and status checks."""
-       ports = await get_ports()
-       ctx = build_mcp_context(project_id)
-       service = ProjectStatusQueryService()
-       result = await service.get_status(ctx, ports)
-       return {
-           "status": result.status,
-           "data": result.model_dump(),
-           "meta": {
-               "project_id": result.project_id,
-               "generated_at": result.generated_at.isoformat(),
-               "data_freshness": result.data_freshness.isoformat(),
-           },
-       }
-   ```
-
-3. Create `backend/mcp/tools/features.py`:
-   ```python
-   @mcp.tool(description="Get detailed feature development history including sessions, costs, and failure patterns.")
-   async def ccdash_feature_forensics(feature_id: str) -> dict:
-       """Get feature forensics for analysis and planning."""
-       # Similar pattern to project_status
-   ```
-
-4. Create `backend/mcp/tools/workflows.py`:
-   ```python
-   @mcp.tool(description="Identify problematic workflows with high failure rates or low effectiveness.")
-   async def ccdash_workflow_failure_patterns(
-       feature_id: str | None = None,
-   ) -> dict:
-       """Get workflow diagnostics and failure patterns."""
-       # Similar pattern
-   ```
-
-5. Create `backend/mcp/tools/reports.py`:
-   ```python
-   @mcp.tool(description="Generate an after-action review with scope, timeline, metrics, and lessons learned.")
-   async def ccdash_generate_aar(feature_id: str) -> dict:
-       """Generate an AAR report for a feature."""
-       # Similar pattern
-   ```
-
-6. Create `backend/mcp/tools/__init__.py`:
-   ```python
-   def register_tools(mcp) -> None:
-       """Register all MCP tools."""
-       from . import project, features, workflows, reports
-       # Tools are auto-registered via @mcp.tool() decorators
-   ```
-
-**Files to Create**:
-- `backend/mcp/server.py`
-- `backend/mcp/tools/project.py`
-- `backend/mcp/tools/features.py`
-- `backend/mcp/tools/workflows.py`
-- `backend/mcp/tools/reports.py`
+```python
+{
+    "status": result.status,
+    "data": result.model_dump(mode="json"),
+    "meta": {
+        "project_id": ...,
+        "generated_at": ...,
+        "data_freshness": ...,
+        "source_refs": ...,
+    },
+}
+```
 
 **Acceptance Criteria**:
-- [ ] All 4 tools defined with @mcp.tool() decorator
-- [ ] Tools have descriptive docstrings (agent-facing UX)
-- [ ] Each tool returns response envelope: {status, data, meta}
-- [ ] No unhandled exceptions (all error handling via status: error)
-- [ ] Tools callable via mcp.test_client()
+- [ ] `python -m backend.mcp.server` launches the stdio server without import/runtime errors
+- [ ] All 4 tools are registered on one FastMCP instance
+- [ ] Each tool delegates to exactly one Phase 1 query service path
+- [ ] Tool descriptions are suitable for Claude Code discovery
+- [ ] Response envelopes are consistent across tools
 
 ---
 
-### P4-T3: Write MCP Tool Tests
+### P4-T3: Add SDK-Supported Stdio Client Harness Tests
 
 **Effort**: 1 story point  
 **Duration**: 1 day  
@@ -723,52 +261,50 @@ Implement the FastMCP server and all 4 core tools.
 **Depends on**: P4-T2
 
 **Description**:
-Write unit tests for all 4 MCP tools using mcp.test_client() in-memory transport.
+Validate the real stdio transport using the supported MCP client/session flow instead of an in-memory helper.
 
 **Detailed Tasks**:
 
-1. Create `backend/tests/mcp/test_tools_project.py`:
-   ```python
-   import pytest
-   from mcp.test_client import test_client
+1. Add `backend/tests/test_mcp_server.py` (or a small `backend/tests/mcp/` suite) that:
+   - launches the module with `StdioServerParameters`
+   - opens a stdio client connection with `stdio_client`
+   - initializes a `ClientSession`
+   - asserts `list_tools()` includes the four MVP tools
+   - calls each tool and validates the response envelope
+2. Cover three path types:
+   - happy path
+   - partial availability (`status: partial`)
+   - user-facing error path (`status: error` or equivalent envelope)
+3. Prefer patching the shared bootstrap/service seams rather than bypassing transport entirely.
 
-   @pytest.mark.asyncio
-   async def test_ccdash_project_status():
-       """Test project_status tool returns valid response."""
-       async with test_client(mcp_server=mcp) as client:
-           result = await client.call_tool("ccdash_project_status", {})
-           assert result is not None
-           data = json.loads(result[0].text)
-           assert "status" in data
-           assert "data" in data
-           assert "meta" in data
-   ```
+**Harness Pattern**:
 
-2. Create similar test modules for features, workflows, reports tools
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
-3. Test scenarios:
-   - Happy path: valid params, complete data
-   - Partial: subsystem unavailable, status: partial
-   - Error: feature not found, status: error
-   - Optional params: None, empty list, etc.
+server = StdioServerParameters(
+    command=python_executable,
+    args=["-m", "backend.mcp.server"],
+    cwd=repo_root,
+)
 
-**Files to Create**:
-- `backend/tests/mcp/__init__.py`
-- `backend/tests/mcp/conftest.py` (fixtures)
-- `backend/tests/mcp/test_tools_project.py`
-- `backend/tests/mcp/test_tools_features.py`
-- `backend/tests/mcp/test_tools_workflows.py`
-- `backend/tests/mcp/test_tools_reports.py`
+async with stdio_client(server) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        tools = await session.list_tools()
+        result = await session.call_tool("ccdash_project_status", {})
+```
 
 **Acceptance Criteria**:
-- [ ] All mcp.test_client() tests pass
-- [ ] Each tool tested for happy path and error cases
-- [ ] Response envelope valid (status, data, meta fields present)
-- [ ] No unhandled exceptions
+- [ ] Automated tests use `stdio_client` + `ClientSession`
+- [ ] `initialize`, `list_tools`, and `call_tool` are all exercised
+- [ ] Each MVP tool has coverage for success and at least one non-success path
+- [ ] Tests validate the same transport that Claude Code will use
 
 ---
 
-### P4-T4: Create .mcp.json Configuration for Claude Code
+### P4-T4: Add `.mcp.json` Workspace Configuration
 
 **Effort**: 1 story point  
 **Duration**: 0.5 day  
@@ -776,11 +312,11 @@ Write unit tests for all 4 MCP tools using mcp.test_client() in-memory transport
 **Depends on**: P4-T2
 
 **Description**:
-Create `.mcp.json` configuration file for Claude Code discovery.
+Commit the workspace MCP configuration that points Claude Code at the stdio server.
 
 **Detailed Tasks**:
 
-1. Create `.mcp.json` at repository root:
+1. Create a repo-root `.mcp.json`:
    ```json
    {
      "mcpServers": {
@@ -798,245 +334,164 @@ Create `.mcp.json` configuration file for Claude Code discovery.
      }
    }
    ```
-
-2. Add to `.gitignore` (if needed):
-   - Nothing; `.mcp.json` should be committed
-
-3. Create user documentation:
-   - How Claude Code discovers MCP servers
-   - How to enable in Claude Code (open settings, add .mcp.json path)
-   - Troubleshooting (server not starting, tools not discovered)
-
-**Files to Create**:
-- `.mcp.json` (at repo root)
-- `docs/guides/mcp-setup-guide.md` (user guide)
+2. Keep the launch command aligned with the PRD and plan.
+3. Verify the config works with the actual server startup path used in tests/manual validation.
 
 **Acceptance Criteria**:
 - [ ] `.mcp.json` exists at repo root
-- [ ] Claude Code can read and parse `.mcp.json`
-- [ ] Stdio command line correct (python -m backend.mcp.server)
-- [ ] Environment variables passed correctly
+- [ ] Config points to `python -m backend.mcp.server`
+- [ ] Workspace env is sufficient for local CCDash startup
+- [ ] Config stays aligned with the automated stdio harness
 
 ---
 
-### P4-T5: Manual Testing with Claude Code and Documentation
+### P4-T5: Manual Claude Code Validation and Phase Closeout
 
 **Effort**: 1 story point  
-**Duration**: 1 day  
-**Assignee**: Backend Engineer + Architecture Reviewer  
-**Depends on**: P4-T4
+**Duration**: 0.5–1 day  
+**Assignee**: Backend Engineer + Reviewer  
+**Depends on**: P4-T3, P4-T4
 
 **Description**:
-Manually test MCP server with Claude Code and write developer documentation.
+Run the end-to-end Claude Code verification path and close Phase 4 only after both automated and manual discovery work.
 
 **Detailed Tasks**:
 
-1. Manual testing:
-   - Open CCDash repo in Claude Code
-   - Verify `.mcp.json` is recognized
-   - Verify MCP server process launches
-   - Call each tool from Claude Code chat
-   - Verify responses are correct and complete
-
-2. Create `backend/mcp/README.md`:
-   - Overview of MCP server
-   - How to add a new tool (template, conventions)
-   - Tool design guidelines (docstrings, response format)
-   - Testing expectations
-
-3. Create troubleshooting guide:
-   - "Server not starting"
-   - "Tools not discovered"
-   - "Tool calls timeout"
-   - "Permission denied"
-
-**Files to Create**:
-- `backend/mcp/README.md`
-- `docs/guides/mcp-troubleshooting.md`
+1. Open the workspace with `.mcp.json` present.
+2. Confirm Claude Code discovers the `ccdash` MCP server and the four tools.
+3. Invoke each tool manually at least once.
+4. Record any discrepancies between automated stdio tests and manual agent UX.
+5. Update progress artifacts with final validation evidence before marking complete.
 
 **Acceptance Criteria**:
-- [ ] Manual E2E test with Claude Code successful (tools callable, responses valid)
-- [ ] README provides guidance for future tool development
-- [ ] Troubleshooting guide covers common issues
-- [ ] No critical issues found in testing
+- [ ] Claude Code discovers the server from `.mcp.json`
+- [ ] All 4 tools are callable manually
+- [ ] Manual results are consistent with automated stdio harness tests
+- [ ] Phase 4 progress artifact contains final evidence and closeout notes
+
+---
+
+## Phase 4 Execution Sequence
+
+### Required Order
+
+1. **P4-T1**: add the MCP dependency and bootstrap skeleton on the existing test-profile runtime path
+2. **P4-T2**: wire the FastMCP server and four thin tool adapters
+3. **P4-T3** and **P4-T4**: add stdio transport coverage and workspace config in parallel after the server boots
+4. **P4-T5**: run manual Claude Code discovery and close out the phase only after automated and manual validation agree
+
+### Critical Path
+
+`P4-T1 → P4-T2 → P4-T3 → P4-T5`
+
+### Parallel Work Window
+
+After `P4-T2`, the `.mcp.json` work and most automated test work can proceed independently.
 
 ---
 
 ## Quality Gates
 
-### Phase 3 Quality Gate (CLI)
+### Phase 3 Quality Gate (Closed)
 
-All of the following must be true:
+- [x] CLI installed as `ccdash`
+- [x] All 4 MVP commands work
+- [x] Focused CLI tests pass
+- [x] Setup/install path exists in-repo
+- [x] No business logic duplication beyond Phase 1
 
-1. **`python -m backend.cli --help` works**
-2. **All 4 MVP commands exist and exit 0 with valid output**
-3. **Each command works in all 3 output modes** (human/JSON/Markdown)
-4. **JSON output is valid** (pipe to jq)
-5. **CLI startup <500 ms** (measured with time command)
-6. **CliRunner tests passing** (all commands, all modes)
-7. **`ccdash` command available** after `npm run setup`
-8. **CLI + web server coexist** without SQLite lock errors
+### Phase 4 Quality Gate (Open)
 
-### Phase 4 Quality Gate (MCP)
-
-All of the following must be true:
-
-1. **`python -m backend.mcp.server` starts without error**
-2. **`.mcp.json` exists and is valid**
-3. **All 4 core tools callable via mcp.test_client()**
-4. **All tools return valid response envelope** (status, data, meta)
-5. **All tools handle errors gracefully** (no unhandled exceptions)
-6. **mcp.test_client() tests passing** (all tools, all scenarios)
-7. **Claude Code discovers tools** (manual verification)
-8. **Claude Code can call tools successfully** (manual verification)
+- [ ] `backend/requirements.txt` includes the pinned MCP SDK dependency and `backend/mcp/` imports cleanly
+- [ ] `python -m backend.mcp.server` starts successfully over stdio with the existing test runtime profile
+- [ ] All 4 tools are registered and callable
+- [ ] Bootstrap reuses `RuntimeContainer(profile=get_runtime_profile("test"))`, `RequestMetadata`, and `container.build_request_context(...)`
+- [ ] Automated coverage uses `stdio_client` + `ClientSession`
+- [ ] `.mcp.json` is committed and points to the same stdio server launch command validated in tests
+- [ ] Claude Code discovers and successfully invokes the tools manually
 
 ---
 
 ## Files Summary
 
-### Phase 3 Files
+### Phase 3 Existing Files (Already In Repo)
 
-**New files created**:
 - `backend/cli/__init__.py`
 - `backend/cli/__main__.py`
 - `backend/cli/main.py`
 - `backend/cli/runtime.py`
 - `backend/cli/output.py`
-- `backend/cli/commands/__init__.py`
 - `backend/cli/commands/status.py`
 - `backend/cli/commands/feature.py`
 - `backend/cli/commands/workflow.py`
 - `backend/cli/commands/report.py`
-- `backend/cli/formatters/__init__.py`
 - `backend/cli/formatters/base.py`
-- `backend/cli/formatters/table.py`
 - `backend/cli/formatters/json.py`
 - `backend/cli/formatters/markdown.py`
-- `backend/tests/cli/__init__.py`
-- `backend/tests/cli/conftest.py`
-- `backend/tests/cli/test_commands_status.py`
-- `backend/tests/cli/test_commands_feature.py`
-- `backend/tests/cli/test_commands_workflow.py`
-- `backend/tests/cli/test_commands_report.py`
-- `bin/ccdash` (optional convenience wrapper)
+- `backend/cli/formatters/table.py`
+- `backend/tests/test_cli_commands.py`
+- `pyproject.toml`
+- `scripts/setup.mjs`
 
-**Files modified**:
-- `pyproject.toml` (add [project.scripts] entry)
-- `npm run setup` script (extend with pip install -e .)
-- `README.md` (add CLI section)
+### Phase 4 Planned Files
 
-**Phase 3 total**: ~1800 lines (commands + formatters + tests)
-
-### Phase 4 Files
-
-**New files created**:
 - `backend/mcp/__init__.py`
 - `backend/mcp/__main__.py`
 - `backend/mcp/server.py`
 - `backend/mcp/bootstrap.py`
-- `backend/mcp/context.py`
 - `backend/mcp/tools/__init__.py`
 - `backend/mcp/tools/project.py`
 - `backend/mcp/tools/features.py`
 - `backend/mcp/tools/workflows.py`
 - `backend/mcp/tools/reports.py`
-- `backend/tests/mcp/__init__.py`
-- `backend/tests/mcp/conftest.py`
-- `backend/tests/mcp/test_tools_project.py`
-- `backend/tests/mcp/test_tools_features.py`
-- `backend/tests/mcp/test_tools_workflows.py`
-- `backend/tests/mcp/test_tools_reports.py`
-- `.mcp.json` (at repo root)
-- `docs/guides/mcp-setup-guide.md`
-- `docs/guides/mcp-troubleshooting.md`
-- `backend/mcp/README.md`
-
-**Files modified**:
-- `backend/requirements.txt` (add mcp>=1.8,<2)
-
-**Phase 4 total**: ~1500 lines (tools + tests + docs)
-
----
-
-## Dependencies & Sequencing
-
-### Phase 3 and 4 Can Proceed in Parallel
-
-- **Phase 3** depends only on Phase 1 (query services)
-- **Phase 4** depends only on Phase 1 (query services)
-- Phases 3 and 4 have no dependencies on each other
-- Both can start immediately after Phase 1 is stable
-
-### Recommended Sequencing (Optimal)
-
-1. **Phase 1**: Complete and quality gate
-2. **Phase 2**: Complete (recommended validation gate)
-3. **Phase 3 + Phase 4 in parallel**: Both can proceed after Phase 1
-
-### Minimal Sequencing (If Timeline Tight)
-
-1. **Phase 1**: Complete and quality gate
-2. **Phase 3 + Phase 4 in parallel**: Skip Phase 2 (not required for Phase 3/4, only for REST API users)
+- `backend/tests/test_mcp_server.py` or `backend/tests/mcp/*`
+- `.mcp.json`
+- `backend/requirements.txt`
 
 ---
 
 ## Effort Breakdown
 
-### Phase 3: CLI
+### Phase 3
 
-| Task | Effort | Duration |
-|------|--------|----------|
-| P3-T1: CLI structure | 1 pt | 0.5–1 d |
-| P3-T2: Output formatters | 1 pt | 1 d |
-| P3-T3: Core commands | 3 pts | 2–3 d |
-| P3-T4: CliRunner tests | 1 pt | 1 d |
-| P3-T5: Entry point + npm setup | 1 pt | 0.5–1 d |
-| P3-T6: Performance + integration | 1 pt | 1 d |
-| **Phase 3 Total** | **6–7 pts** | **5–7 d** |
+| Task | Status | Effort |
+|------|--------|--------|
+| CLI package/app/bootstrap | complete | 1 pt |
+| Output formatters | complete | 1 pt |
+| Four MVP commands | complete | 3 pts |
+| CLI tests | complete | 1 pt |
+| Packaging/setup integration | complete | 1 pt |
+| Validation | complete | 1 pt |
+| **Phase 3 Total** | **complete** | **6–7 pts** |
 
-### Phase 4: MCP
+### Phase 4
 
-| Task | Effort | Duration |
-|------|--------|----------|
-| P4-T1: Package + structure | 1 pt | 0.5–1 d |
-| P4-T2: FastMCP server + tools | 3 pts | 2–3 d |
-| P4-T3: Tool tests | 1 pt | 1 d |
-| P4-T4: .mcp.json config | 1 pt | 0.5 d |
-| P4-T5: Manual testing + docs | 1 pt | 1 d |
-| **Phase 4 Total** | **5–6 pts** | **5–7 d** |
-
-### Combined (if parallel)
-
-**Total Effort**: 11–13 story points  
-**Total Duration**: 5–7 days (in parallel) vs 10–14 days (sequential)
+| Task | Status | Effort |
+|------|--------|--------|
+| P4-T1 dependency + bootstrap skeleton | pending | 1 pt |
+| P4-T2 FastMCP server + tools | pending | 2 pts |
+| P4-T3 stdio harness tests | pending | 1 pt |
+| P4-T4 `.mcp.json` config | pending | 1 pt |
+| P4-T5 manual Claude Code validation | pending | 1 pt |
+| **Phase 4 Total** | **pending** | **5–6 pts** |
 
 ---
 
-## Success Metrics
+## Ready-to-Execute Checklist
 
-- [ ] All CLI commands pass CliRunner tests
-- [ ] CLI startup <500 ms
-- [ ] All MCP tools pass mcp.test_client() tests
-- [ ] No business logic duplication with Phase 1
-- [ ] CLI and web server coexist without locks
-- [ ] Claude Code discovers and calls MCP tools successfully
-- [ ] All JSON output valid (jq parsing succeeds)
-- [ ] All markdown output valid (markdown parsers accept)
+Phase 4 is ready to begin when the implementer follows these repo-specific constraints:
 
----
-
-## Next Steps
-
-After Phase 3–4 complete:
-
-- **Phase 5** (deferred): Streamable HTTP MCP transport, extended tool catalog, MCP resources, portfolio analysis
-- **Phase 6** (deferred): Web UI convergence (routers call agent_queries services)
-- **Ongoing**: User feedback, tool refinement, additional commands/tools based on agent usage patterns
+- [x] Treat Phase 3 as complete and reuse its bootstrap/packaging decisions
+- [x] Use the existing test runtime profile via `RuntimeContainer(profile=get_runtime_profile("test"))`
+- [x] Build request context with `RequestMetadata` and `container.build_request_context(...)`
+- [x] Validate via `stdio_client` + `ClientSession`
+- [x] Keep `.mcp.json` aligned with the tested stdio command
+- [x] Avoid introducing a new local-profile/runtime path just for MCP
 
 ---
 
-## Document Version
+## Document Metadata
 
-- Version: 1.0
-- Created: 2026-04-02
-- Status: Draft (ready for Phase 3–4 kickoff)
+- **Version**: 1.1
+- **Last Updated**: 2026-04-12
+- **Status**: In Progress (Phase 3 complete; Phase 4 ready for execution)

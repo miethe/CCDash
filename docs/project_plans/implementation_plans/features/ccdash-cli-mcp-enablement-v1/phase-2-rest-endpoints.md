@@ -2,25 +2,25 @@
 schema_version: "1.0"
 doc_type: phase_plan
 title: "Phase 2: REST Composite Endpoints"
-description: "Expose agent query services over HTTP via /api/agent/* endpoints to validate contracts before CLI and MCP implementation."
-status: draft
+description: "Expose Phase 1 agent query services over /api/agent/* routes using current CCDash router, DI, registration, and test conventions."
+status: in-progress
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-11"
 phase: 2
 phase_title: "REST Composite Endpoints"
 feature_slug: "ccdash-cli-mcp-enablement"
 prd_ref: "docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md"
 plan_ref: "docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1.md"
 entry_criteria:
-  - Phase 1 (agent query services) complete and tested
-  - Phase 1 architecture review approved
-  - FastAPI application running and routing structure understood
+  - Phase 1 is complete in-repo; use ../../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md as the frozen contract/evidence artifact
+  - Router wiring must follow backend/request_scope.py and backend/runtime/bootstrap.py
+  - Router tests must follow existing top-level async unittest modules under backend/tests/
 exit_criteria:
-  - All 4 REST endpoints implemented at /api/agent/* paths
-  - All endpoints appear in OpenAPI schema with examples
-  - FastAPI TestClient tests pass for all endpoints
-  - No duplicate service calls per request
-  - Contract is final (no changes needed to Phase 1 DTOs)
+  - All 4 REST endpoints are implemented at /api/agent/* paths
+  - Router registration matches backend/runtime/bootstrap.py include_router style
+  - Handlers use backend/request_scope.py dependencies and resolve_application_request(...)
+  - Top-level async router tests pass for happy-path and error/partial cases
+  - No Phase 1 DTO changes are required after REST validation
 priority: high
 effort_estimate: 4-5
 effort_estimate_unit: story_points
@@ -30,414 +30,204 @@ duration_estimate_unit: days
 
 # Phase 2: REST Composite Endpoints
 
-## Phase Overview
+## Execution Baseline
 
-**Goal**: Expose the Phase 1 agent query services over REST endpoints at `/api/agent/*` as a validation gate. These endpoints are the canonical HTTP interface for agent-consumable intelligence and provide working examples for CLI and MCP implementations.
+- Phase 1 is already complete. Treat [Phase 1 progress](../../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-1-progress.md) as the frozen service contract and completion evidence.
+- Phase 2 tracking lives in [phase-2-progress.md](../../../../../.claude/progress/ccdash-cli-mcp-enablement-v1/phase-2-progress.md).
+- This phase validates the HTTP adapter only. Do not reopen Phase 1 service design unless a real contract defect is discovered.
 
-**Why Phase 2 First**: Testing contracts via REST before CLI and MCP ensures the service interfaces are well-designed and complete. Discovering issues here prevents rework in later phases.
+## Repo Patterns To Mirror
 
-**Key Invariant**: Each endpoint calls exactly one query service, no more, no less. No inline logic, no double-fetching.
+- Router prefix lives in the router object: use `APIRouter(prefix="/api/agent", tags=["agent"])`.
+- Dependency wiring comes from [backend/request_scope.py](../../../../../backend/request_scope.py): `get_request_context` and `get_core_ports`.
+- When a handler needs the shared wrapper, call `resolve_application_request(request_context, core_ports, core_ports.storage.db, ...)` as existing routers do.
+- Register the router by importing the concrete router symbol into [backend/runtime/bootstrap.py](../../../../../backend/runtime/bootstrap.py) and including it inside `_register_routers()`.
+- Follow current router module conventions: create module-scope service instances instead of instantiating services inside every handler when reuse is straightforward.
+- Follow current test conventions: add a top-level async unittest module under `backend/tests/` and call router handlers directly with patched collaborators. Do not introduce `backend/tests/routers/` or `FastAPI TestClient` as the primary pattern for this phase.
 
----
+## Scope
+
+Implement these HTTP surfaces only:
+
+1. `GET /api/agent/project-status`
+2. `GET /api/agent/feature-forensics/{feature_id}`
+3. `GET /api/agent/workflow-diagnostics`
+4. `POST /api/agent/reports/aar`
 
 ## Task Breakdown
 
-### P2-T1: Create agent.py Router and Dependency Injection
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: Phase 1 complete
-
-**Description**:
-Create the `backend/routers/agent.py` module and register it with the FastAPI app.
-
-**Detailed Tasks**:
-
-1. Create `backend/routers/agent.py`:
-   ```python
-   from fastapi import APIRouter, Depends, HTTPException
-   from backend.application.context import RequestContext
-   from backend.application.ports import CorePorts
-   from backend.application.services.common import resolve_application_request
-   from backend.application.services.agent_queries import (
-       ProjectStatusQueryService,
-       FeatureForensicsQueryService,
-       WorkflowDiagnosticsQueryService,
-       ReportingQueryService,
-   )
-
-   router = APIRouter(prefix="/agent", tags=["agent"])
-
-   async def get_context_and_ports(
-       request: Request,
-   ) -> tuple[RequestContext, CorePorts]:
-       """Dependency for injecting context and ports into handlers."""
-       context = await resolve_application_request(request)
-       ports = request.app.state.container.core_ports  # from RuntimeContainer
-       return context, ports
-   ```
-
-2. Register router in `backend/runtime/bootstrap.py`:
-   ```python
-   from backend.routers import agent
-   
-   # In build_runtime_app() function, add:
-   app.include_router(agent.router)
-   ```
-
-3. Ensure HTTP status codes and error handling:
-   - 200 OK for successful queries
-   - 404 Not Found for unknown feature_id
-   - 422 Unprocessable Entity for invalid parameters
-   - 500 Internal Server Error only for true service errors (not for "status: partial")
-
-**Files to Create/Modify**:
-- `backend/routers/agent.py` (new, ~50 lines of structure)
-- `backend/runtime/bootstrap.py` (modify to import and register router)
-
-**Acceptance Criteria**:
-- [ ] Router module created and imports all query services
-- [ ] Router registered with FastAPI app
-- [ ] Dependency injection works (can call handlers without errors)
-- [ ] OpenAPI schema reflects agent prefix
-
----
-
-### P2-T2: Implement /api/agent/project-status Endpoint
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: P2-T1
-
-**Description**:
-Implement the GET endpoint for project status.
-
-**Detailed Tasks**:
-
-1. Add to `backend/routers/agent.py`:
-   ```python
-   @router.get(
-       "/project-status",
-       response_model=ProjectStatusDTO,
-       summary="Get current project status",
-       description="Returns a comprehensive project status including feature counts, "
-                   "recent session activity, cost trends, and sync freshness.",
-       example={"status": "ok", "project_id": "my-project", ...},
-   )
-   async def get_project_status(
-       context: RequestContext = Depends(get_context),
-       ports: CorePorts = Depends(get_ports),
-       project_id: str | None = None,
-   ) -> ProjectStatusDTO:
-       """Get high-level project status and metrics."""
-       service = ProjectStatusQueryService()
-       return await service.get_status(context, ports, project_id_override=project_id)
-   ```
-
-2. Query parameter:
-   - `project_id` (optional): Override active project
-
-3. Response:
-   - HTTP 200 with `ProjectStatusDTO` JSON body (including `status: ok` or `status: partial`)
-   - HTTP 200 with `status: error` if project ID invalid
-
-**Files to Modify**:
-- `backend/routers/agent.py`
-
-**Test File**:
-- `backend/tests/routers/test_agent_router.py` (add test_get_project_status)
-
-**Acceptance Criteria**:
-- [ ] Endpoint accessible at GET `/api/agent/project-status`
-- [ ] Returns ProjectStatusDTO with all fields
-- [ ] Optional project_id query param works
-- [ ] OpenAPI schema includes endpoint with description
-- [ ] FastAPI TestClient test passes
-
----
-
-### P2-T3: Implement /api/agent/feature-forensics/{feature_id} Endpoint
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: P2-T1
-
-**Description**:
-Implement the GET endpoint for feature forensics by feature ID.
-
-**Detailed Tasks**:
-
-1. Add to `backend/routers/agent.py`:
-   ```python
-   @router.get(
-       "/feature-forensics/{feature_id}",
-       response_model=FeatureForensicsDTO,
-       summary="Get feature development forensics",
-       description="Returns comprehensive history and metrics for a feature "
-                   "including linked sessions, documents, iteration count, and cost.",
-   )
-   async def get_feature_forensics(
-       feature_id: str,
-       context: RequestContext = Depends(get_context),
-       ports: CorePorts = Depends(get_ports),
-   ) -> FeatureForensicsDTO:
-       """Get detailed forensics for a specific feature."""
-       service = FeatureForensicsQueryService()
-       result = await service.get_forensics(context, ports, feature_id)
-       if result.status == "error":
-           raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
-       return result
-   ```
-
-2. Path parameter:
-   - `feature_id` (required): The feature to analyze
-
-3. Response:
-   - HTTP 200 with `FeatureForensicsDTO`
-   - HTTP 404 if feature not found (check `status: error`)
-
-**Files to Modify**:
-- `backend/routers/agent.py`
-
-**Test File**:
-- `backend/tests/routers/test_agent_router.py` (add test_get_feature_forensics)
-
-**Acceptance Criteria**:
-- [ ] Endpoint accessible at GET `/api/agent/feature-forensics/{feature_id}`
-- [ ] Returns FeatureForensicsDTO with all fields
-- [ ] Returns HTTP 404 for unknown feature
-- [ ] Path parameter validation works
-- [ ] OpenAPI schema includes endpoint with example
-
----
-
-### P2-T4: Implement /api/agent/workflow-diagnostics and /api/agent/reports/aar Endpoints
-
-**Effort**: 1 story point  
-**Duration**: 0.5–1 day  
-**Assignee**: Backend Engineer  
-**Depends on**: P2-T1
-
-**Description**:
-Implement the two remaining endpoints for workflow diagnostics and AAR reporting.
-
-**Detailed Tasks**:
-
-1. Add workflow diagnostics GET endpoint:
-   ```python
-   @router.get(
-       "/workflow-diagnostics",
-       response_model=WorkflowDiagnosticsDTO,
-       summary="Analyze workflow effectiveness",
-       description="Returns per-workflow effectiveness scores, session counts, "
-                   "success/failure mix, and failure patterns.",
-   )
-   async def get_workflow_diagnostics(
-       context: RequestContext = Depends(get_context),
-       ports: CorePorts = Depends(get_ports),
-       feature_id: str | None = None,
-   ) -> WorkflowDiagnosticsDTO:
-       """Get workflow diagnostics and effectiveness analysis."""
-       service = WorkflowDiagnosticsQueryService()
-       return await service.get_diagnostics(context, ports, feature_id=feature_id)
-   ```
-
-2. Add AAR report POST endpoint:
-   ```python
-   @router.post(
-       "/reports/aar",
-       response_model=AARReportDTO,
-       summary="Generate after-action review",
-       description="Generate a structured after-action review for a feature "
-                   "with scope, timeline, metrics, and lessons learned.",
-   )
-   async def generate_aar_report(
-       request_body: AARReportRequest,  # feature_id, project_id (optional)
-       context: RequestContext = Depends(get_context),
-       ports: CorePorts = Depends(get_ports),
-   ) -> AARReportDTO:
-       """Generate an after-action review for a feature."""
-       service = ReportingQueryService()
-       return await service.generate_aar(context, ports, request_body.feature_id)
-   ```
-
-3. Define request model:
-   ```python
-   class AARReportRequest(BaseModel):
-       feature_id: str
-       project_id: str | None = None
-   ```
-
-4. Response codes:
-   - HTTP 200 for successful AAR generation
-   - HTTP 404 if feature not found
-
-**Files to Modify**:
-- `backend/routers/agent.py`
-
-**Test File**:
-- `backend/tests/routers/test_agent_router.py` (add tests for both endpoints)
-
-**Acceptance Criteria**:
-- [ ] GET `/api/agent/workflow-diagnostics` returns WorkflowDiagnosticsDTO
-- [ ] POST `/api/agent/reports/aar` with valid feature_id returns AARReportDTO
-- [ ] Both endpoints appear in OpenAPI schema
-- [ ] Query/body parameters documented
-- [ ] FastAPI TestClient tests pass
-
----
-
-### P2-T5: Integration Tests and OpenAPI Documentation
-
-**Effort**: 1 story point  
-**Duration**: 1 day  
-**Assignee**: Backend Engineer (Test-Focused)  
-**Depends on**: P2-T2, P2-T3, P2-T4
-
-**Description**:
-Write comprehensive tests for all agent endpoints and verify OpenAPI documentation.
-
-**Detailed Tasks**:
-
-1. Create `backend/tests/routers/test_agent_router.py`:
-   - Test all 4 endpoints with FastAPI TestClient
-   - Verify response codes (200, 404, 422)
-   - Verify response structure (status, data, fields)
-   - Verify error handling (stale sync, missing data)
-   - Test optional parameters (project_id override, feature_id filter)
-
-2. Test scenarios per endpoint:
-   - **Happy path**: Valid request, complete data returned
-   - **Partial availability**: Subsystem unavailable, status: partial returned
-   - **Invalid input**: Bad feature_id, missing required params
-   - **Empty project**: No sessions, features, workflows
-
-3. Verify OpenAPI documentation:
-   - Navigate to `/docs` in running app
-   - Verify all `/api/agent/*` endpoints visible
-   - Verify request/response schemas populated
-   - Verify example values shown
-   - Test "Try it out" functionality in Swagger UI
-
-4. Create example curl commands in docstring or separate guide:
-   ```bash
-   curl http://localhost:8000/api/agent/project-status
-   curl http://localhost:8000/api/agent/feature-forensics/feature-123
-   curl http://localhost:8000/api/agent/workflow-diagnostics
-   curl -X POST http://localhost:8000/api/agent/reports/aar \
-     -H "Content-Type: application/json" \
-     -d '{"feature_id": "feature-123"}'
-   ```
-
-**Files to Create**:
-- `backend/tests/routers/test_agent_router.py` (~400 lines)
-
-**Acceptance Criteria**:
-- [ ] All FastAPI TestClient tests pass
-- [ ] Each endpoint tested for happy path and error cases
-- [ ] OpenAPI schema includes all endpoints with descriptions
-- [ ] Example curl commands work
-- [ ] Response schemas match Phase 1 DTOs exactly
-
----
-
-### P2-T6: Verify No Business Logic Duplication
-
-**Effort**: 0.5 story points (part of code review, not separate task)  
-**Duration**: 0.5 day  
-**Assignee**: Code Reviewer  
-**Depends on**: All P2 tasks
-
-**Description**:
-Code review checkpoint to verify router handlers are thin adapters only.
-
-**Checklist**:
-- [ ] Each endpoint handler is 5–10 lines (instantiate service, call method, return)
-- [ ] No complex logic in router (filtering, aggregation, etc.)
-- [ ] No database queries in router (all via services)
-- [ ] No duplicate service calls per endpoint
-- [ ] Service called exactly once per request
-- [ ] All error handling delegated to service (returns status: error or status: partial)
-
----
-
-## Quality Gate
-
-All of the following must be true to declare Phase 2 complete:
-
-1. **All 4 endpoints implemented** (project-status, feature-forensics, workflow-diagnostics, reports/aar)
-2. **All endpoints registered** with FastAPI and visible in OpenAPI schema (`/docs`)
-3. **No inline query logic** in router handlers (verified by code review)
-4. **Each endpoint calls exactly one service** (verified by request/response logs)
-5. **All FastAPI TestClient tests passing**
-6. **Example curl commands work**
-7. **Response structure matches Phase 1 DTOs** (no schema changes needed)
-8. **No HTTP handler throws unhandled exception** (all errors returned as structured DTO with status: error)
-
----
-
-## Files Summary
-
-**New files created**:
-- `backend/routers/agent.py` (~150 lines)
-- `backend/tests/routers/test_agent_router.py` (~400 lines)
-
-**Files modified**:
-- `backend/runtime/bootstrap.py` (add import and router registration, ~5 lines)
-
-**Total new code**: ~555 lines
-
----
-
-## Dependencies
-
-### External
-- FastAPI (already in requirements)
-- Pydantic (already in requirements)
-
-### Internal
-- `backend.application.services.agent_queries.*` (Phase 1)
-- `backend.application.context.RequestContext`
-- `backend.application.ports.CorePorts`
-- `backend.runtime.container.RuntimeContainer`
-
-### Sequencing
-Phase 2 depends on Phase 1 completion. Can proceed immediately after Phase 1 quality gate passes.
-
----
-
-## Effort Breakdown
-
-| Task | Effort | Duration |
-|------|--------|----------|
-| P2-T1: Router structure | 1 pt | 0.5–1 d |
-| P2-T2: project-status endpoint | 1 pt | 0.5–1 d |
-| P2-T3: feature-forensics endpoint | 1 pt | 0.5–1 d |
-| P2-T4: workflow-diagnostics + aar endpoints | 1 pt | 0.5–1 d |
-| P2-T5: Integration tests + OpenAPI verification | 1 pt | 1 d |
-| P2-T6: Code review | 0.5 pt | 0.5 d |
-| **Total** | **4–5 pts** | **2–3 d** |
-
----
-
-## Success Metrics
-
-- [ ] All REST endpoint tests passing
-- [ ] OpenAPI schema complete and example-rich
-- [ ] No duplicate service calls per request
-- [ ] Response latency <100 ms (p95) on local SQLite
-- [ ] All curl examples functional
-
----
-
-## Next Phase
-
-After Phase 2 is complete:
-- **Phase 3**: Implement CLI using the same query services (can reference REST contract as example)
-- **Phase 4**: Implement MCP tools using the same query services (can reference REST contract as example)
-- Both Phase 3 and 4 can proceed in parallel after Phase 1 is stable
-
-Phase 2 serves as the contract validation gate. If service contracts change during Phase 3/4, update REST endpoints first, then update CLI/MCP in parallel.
+### P2-T1: Router Scaffold, DI, and Registration
+
+**Depends on**: Phase 1 complete  
+**Goal**: Create the router module in the same style as existing backend routers.
+
+Implementation target:
+
+```python
+from fastapi import APIRouter, Depends, Query
+
+from backend.application.context import RequestContext
+from backend.application.ports import CorePorts
+from backend.application.services import resolve_application_request
+from backend.application.services.agent_queries import (
+    FeatureForensicsQueryService,
+    ProjectStatusQueryService,
+    ReportingQueryService,
+    WorkflowDiagnosticsQueryService,
+)
+from backend.request_scope import get_core_ports, get_request_context
+
+
+agent_router = APIRouter(prefix="/api/agent", tags=["agent"])
+project_status_query_service = ProjectStatusQueryService()
+feature_forensics_query_service = FeatureForensicsQueryService()
+workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
+reporting_query_service = ReportingQueryService()
+
+
+async def _resolve_app_request(
+    request_context: RequestContext,
+    core_ports: CorePorts,
+    *,
+    requested_project_id: str | None = None,
+):
+    return await resolve_application_request(
+        request_context,
+        core_ports,
+        core_ports.storage.db,
+        requested_project_id=requested_project_id,
+    )
+```
+
+Registration target in `backend/runtime/bootstrap.py`:
+
+```python
+from backend.routers.agent import agent_router
+
+
+def _register_routers(app: FastAPI) -> None:
+    ...
+    app.include_router(agent_router)
+```
+
+Acceptance criteria:
+
+- [ ] Router prefix is `/api/agent`
+- [ ] DI uses `get_request_context` and `get_core_ports`
+- [ ] Shared request wrapper uses `resolve_application_request(...)`
+- [ ] Router registration matches existing explicit import/include style
+- [ ] Query services are created at module scope
+
+### P2-T2: Read Endpoints for Project Status and Feature Forensics
+
+**Depends on**: P2-T1  
+**Goal**: Add the two GET handlers that validate Phase 1 read contracts.
+
+Implementation notes:
+
+- Use `response_model=...` on each route.
+- Use `Query(..., description=...)` for documented optional params.
+- Add concise handler docstrings; avoid route-decorator `example=` usage unless a repo precedent appears during implementation.
+- Return the Phase 1 DTO directly when the service already encodes `ok`/`partial`/`error`.
+- If HTTP translation is still required for a true not-found case, keep it minimal and consistent.
+
+Suggested handler shape:
+
+```python
+@agent_router.get("/project-status", response_model=ProjectStatusDTO)
+async def get_project_status(
+    project_id: str | None = Query(default=None, description="Optional project override."),
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> ProjectStatusDTO:
+    """Return the current project status snapshot for agent consumers."""
+    app_request = await _resolve_app_request(
+        request_context,
+        core_ports,
+        requested_project_id=project_id,
+    )
+    return await project_status_query_service.get_status(
+        app_request.context,
+        app_request.ports,
+        project_id_override=project_id,
+    )
+```
+
+Acceptance criteria:
+
+- [ ] `GET /api/agent/project-status` delegates once to `ProjectStatusQueryService`
+- [ ] `GET /api/agent/feature-forensics/{feature_id}` delegates once to `FeatureForensicsQueryService`
+- [ ] Optional params are documented with `Query`
+- [ ] No inline aggregation, repository calls, or duplicate service invocations
+
+### P2-T3: Read Endpoints for Workflow Diagnostics and AAR
+
+**Depends on**: P2-T1  
+**Goal**: Add the remaining GET/POST handlers while keeping request schema honest about current service capabilities.
+
+Implementation notes:
+
+- `WorkflowDiagnosticsQueryService` stays a straight read adapter with an optional `feature_id` filter.
+- `ReportingQueryService.generate_aar(...)` currently accepts `feature_id` only. If `project_id` is included in the POST body for forward compatibility, mark it as reserved/ignored in the request model description and do not pass it through in Phase 2.
+
+Suggested request model:
+
+```python
+class AARReportRequest(BaseModel):
+    feature_id: str
+    project_id: str | None = Field(
+        default=None,
+        description="Reserved for future project-scoped AAR generation. Ignored in Phase 2.",
+    )
+```
+
+Acceptance criteria:
+
+- [ ] `GET /api/agent/workflow-diagnostics` delegates once to `WorkflowDiagnosticsQueryService`
+- [ ] `POST /api/agent/reports/aar` delegates once to `ReportingQueryService.generate_aar(...)`
+- [ ] `project_id` is either omitted or explicitly documented as reserved/ignored
+- [ ] Response models stay aligned with Phase 1 DTOs
+
+### P2-T4: Router Test Coverage and Contract Verification
+
+**Depends on**: P2-T2, P2-T3  
+**Goal**: Validate the router using the repo’s existing test style and close the contract gate.
+
+Test strategy:
+
+- Create `backend/tests/test_agent_router.py`.
+- Use `unittest.IsolatedAsyncioTestCase`.
+- Import the router module directly and call handler functions with patched query services/collaborators.
+- Cover happy-path, partial-response, invalid input, and not-found translation cases as appropriate.
+- Verify the router stays thin: each handler resolves request scope once and delegates to one query service once.
+
+Acceptance criteria:
+
+- [ ] New top-level async unittest module exists at `backend/tests/test_agent_router.py`
+- [ ] No `FastAPI TestClient` dependency is introduced as the main Phase 2 test strategy
+- [ ] OpenAPI visibility is verified after router registration
+- [ ] Phase 1 DTO shapes remain unchanged after endpoint validation
+
+## Delivery Checklist
+
+- [ ] `backend/routers/agent.py`
+- [ ] `backend/runtime/bootstrap.py`
+- [ ] `backend/tests/test_agent_router.py`
+- [ ] Focused test command documented and runnable
+- [ ] Phase 2 progress artifact updated as tasks complete
+
+## Suggested Validation Commands
+
+```bash
+backend/.venv/bin/python -m pytest backend/tests/test_agent_router.py -q
+backend/.venv/bin/python -m pytest backend/tests/test_execution_router.py backend/tests/test_test_visualizer_router.py backend/tests/test_agent_router.py -q
+```
+
+## Definition of Done
+
+Phase 2 is complete only when:
+
+1. All four `/api/agent/*` handlers are implemented and registered.
+2. The router follows `backend/request_scope.py` and `backend/runtime/bootstrap.py` conventions exactly.
+3. Tests pass using the repo’s top-level async router-test style.
+4. No Phase 1 DTO contract changes are needed after REST validation.

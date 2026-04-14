@@ -1,0 +1,255 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/memory-import",
+  "title": "Memory files | Docs | IBM Bob",
+  "content": "FeedbackBreak down large AGENTS.md files into smaller, reusable components using a simple import syntax.\n\nUse the @ symbol followed by the path to the file you want to import:\n\nFiles can import other files, creating a hierarchical structure:\n\nWhere header.md might contain:\n\nThis creates a tree structure of imports:\n\nThe memory import processor includes several safety mechanisms to prevent common issues:\n\nThe processor automatically detects and prevents circular imports. If file-a.md imports file-b.md and file-b.md tries to import file-a.md, the processor detects this circular reference and prevents it.\n\nExample circular import:\n\nThe validateImportPath function ensures that imports are only allowed from specified directories, preventing access to sensitive files outside the allowed scope.\n\nTo prevent infinite recursion, the processor has a configurable maximum import depth (default: 5 levels). Imports can be nested up to 5 levels deep.\n\nThe processor handles common errors gracefully:\n\nIf a referenced file doesn't exist, the import will fail with an error comment in the output:\n\nPermission issues or other file system errors are handled with appropriate error messages:\n\nThe import processor uses the marked library to detect code blocks and inline code spans, ensuring that @ imports inside code regions are ignored:\n\nProcesses import statements in AGENTS.md content.\n\nReturns: Object containing processed content and import tree\n\nValidates import paths to ensure they are safe and within allowed directories.\n\nReturns: Whether the import path is valid\n\nFinds the project root by searching for a .git directory upwards from the given start directory.\n\nReturns: The project root directory (or the start directory if no .git is found)\n\nEnable debug mode to see detailed logging of the import process:\n\nThis outputs detailed information about:\n\nControl which files Bob Shell can access by creating a `.bobignore` file in your project.\n\nLearn about the telemetry data Bob Shell can collect, how it's used to improve the product, and how to enable or disable data collection.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Memory files",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Overview",
+      "id": "overview"
+    },
+    {
+      "level": "h2",
+      "text": "Why use memory imports",
+      "id": "why-use-memory-imports"
+    },
+    {
+      "level": "h2",
+      "text": "Basic usage",
+      "id": "basic-usage"
+    },
+    {
+      "level": "h3",
+      "text": "Import syntax",
+      "id": "import-syntax"
+    },
+    {
+      "level": "h3",
+      "text": "Supported path formats",
+      "id": "supported-path-formats"
+    },
+    {
+      "level": "h2",
+      "text": "Working with imports",
+      "id": "working-with-imports"
+    },
+    {
+      "level": "h3",
+      "text": "Basic import example",
+      "id": "basic-import-example"
+    },
+    {
+      "level": "h3",
+      "text": "Nested imports",
+      "id": "nested-imports"
+    },
+    {
+      "level": "h2",
+      "text": "Safety features",
+      "id": "safety-features"
+    },
+    {
+      "level": "h3",
+      "text": "Circular import detection",
+      "id": "circular-import-detection"
+    },
+    {
+      "level": "h3",
+      "text": "File access security",
+      "id": "file-access-security"
+    },
+    {
+      "level": "h3",
+      "text": "Maximum import depth",
+      "id": "maximum-import-depth"
+    },
+    {
+      "level": "h2",
+      "text": "Error handling",
+      "id": "error-handling"
+    },
+    {
+      "level": "h3",
+      "text": "Missing files",
+      "id": "missing-files"
+    },
+    {
+      "level": "h3",
+      "text": "File access errors",
+      "id": "file-access-errors"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced features",
+      "id": "advanced-features"
+    },
+    {
+      "level": "h3",
+      "text": "Code region detection",
+      "id": "code-region-detection"
+    },
+    {
+      "level": "h2",
+      "text": "Comparison with /memory command",
+      "id": "comparison-with-memory-command"
+    },
+    {
+      "level": "h2",
+      "text": "API reference",
+      "id": "api-reference"
+    },
+    {
+      "level": "h3",
+      "text": "Core functions",
+      "id": "core-functions"
+    },
+    {
+      "level": "h4",
+      "text": "processImports()",
+      "id": "processimports"
+    },
+    {
+      "level": "h4",
+      "text": "validateImportPath()",
+      "id": "validateimportpath"
+    },
+    {
+      "level": "h4",
+      "text": "findProjectRoot()",
+      "id": "findprojectroot"
+    },
+    {
+      "level": "h3",
+      "text": "Interface definitions",
+      "id": "interface-definitions"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h3",
+      "text": "Organization strategies",
+      "id": "organization-strategies"
+    },
+    {
+      "level": "h3",
+      "text": "Performance considerations",
+      "id": "performance-considerations"
+    },
+    {
+      "level": "h2",
+      "text": "Troubleshooting",
+      "id": "troubleshooting"
+    },
+    {
+      "level": "h3",
+      "text": "Common issues",
+      "id": "common-issues"
+    },
+    {
+      "level": "h3",
+      "text": "Debugging techniques",
+      "id": "debugging-techniques"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "# Main AGENTS.md file\n\nThis is the main content.\n\n@./components/instructions.md\n\nMore content here.\n\n@./shared/configuration.md",
+      "language": "markdown"
+    },
+    {
+      "code": "# My AGENTS.md\n\nWelcome to my project!\n\n@./getting-started.md\n\n## Features\n\n@./features/overview.md",
+      "language": "markdown"
+    },
+    {
+      "code": "# main.md\n\n@./header.md\n@./content.md\n@./footer.md",
+      "language": "markdown"
+    },
+    {
+      "code": "# Project Header\n\n@./shared/title.md",
+      "language": "markdown"
+    },
+    {
+      "code": "main.md\n ├── header.md\n │    └── shared/title.md\n ├── content.md\n └── footer.md",
+      "language": "unknown"
+    },
+    {
+      "code": "file-a.md\n    ↓\nfile-b.md\n    ↓\nfile-a.md (circular - blocked)",
+      "language": "unknown"
+    },
+    {
+      "code": "<!-- Error importing ./non-existent-file.md: File not found -->",
+      "language": "perl"
+    },
+    {
+      "code": "<!-- Error importing ./protected-file.md: Permission denied -->",
+      "language": "perl"
+    },
+    {
+      "code": "# My document\n\nThis is a real import:\n@./real-import.md\n\n```markdown\n# Code example\nThis is not a real import:\n@./fake-import.md",
+      "language": "markdown"
+    },
+    {
+      "code": "### Import tree visualization\n\nThe processor generates an import tree that shows the hierarchy of imported files. This tree preserves the order of imports and shows the complete import chain for debugging purposes.\n\n**Example import tree:**\n\n```text\nMemory Files\n └── project: AGENTS.md\n      ├── components/instructions.md\n      │    └── components/common/header.md\n      └── shared/configuration.md\n           └── shared/settings/defaults.md",
+      "language": "markdown"
+    },
+    {
+      "code": "async function processImports(\n  content: string,\n  basePath: string,\n  debugMode?: boolean,\n  importState?: ImportState\n): Promise<ProcessImportsResult>",
+      "language": "javascript"
+    },
+    {
+      "code": "function validateImportPath(\n  importPath: string,\n  basePath: string,\n  allowedDirectories: string[]\n): boolean",
+      "language": "typescript"
+    },
+    {
+      "code": "async function findProjectRoot(startDir: string): Promise<string>",
+      "language": "javascript"
+    },
+    {
+      "code": "interface ProcessImportsResult {\n  content: string;      // The processed content with imports resolved\n  importTree: MemoryFile; // Tree structure showing the import hierarchy\n}\n\ninterface MemoryFile {\n  path: string;         // The file path\n  imports?: MemoryFile[]; // Direct imports, in the order they were imported\n}",
+      "language": "typescript"
+    },
+    {
+      "code": "const result = await processImports(content, basePath, true);",
+      "language": "javascript"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

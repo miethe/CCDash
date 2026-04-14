@@ -1,0 +1,120 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/features/checkpointing",
+  "title": "Checkpointing | Docs | IBM Bob",
+  "content": "FeedbackCreate automatic snapshots of your project before applying changes.\n\nWhen you approve a file-modifying operation (such as write_file or replace), Bob Shell automatically:\n\nCreates a Git snapshot in a shadow repository (~/.bob/history/<project_hash>)\n\nNote: This shadow repository is separate from your project's Git repository and won't interfere with your normal Git workflow.\n\nSaves your conversation history up to that point\n\nRecords the tool call that was about to run\n\nThis three-part checkpoint allows you to:\n\nAll checkpoint data is stored locally on your machine:\n\nCheckpointing is disabled by default. You can enable it in two ways:\n\nTo enable checkpointing for all sessions:\n\nTo see all saved checkpoints for your current project:\n\nBob Shell will display a list of checkpoint files with names that include:\n\nExample: 2025-06-22T10-00-00_000Z-my-file.txt-write_file\n\nTo restore your project to a specific checkpoint:\n\nBob Shell supports the Model Context Protocol (MCP), allowing you to extend Bob's capabilities by connecting to external services and tools. This guide explains how to configure and use MCP servers with Bob Shell.\n\nCreate custom slash commands to automate workflows and standardize team practices.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Checkpointing",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Why use checkpointing?",
+      "id": "why-use-checkpointing"
+    },
+    {
+      "level": "h2",
+      "text": "How checkpointing works",
+      "id": "how-checkpointing-works"
+    },
+    {
+      "level": "h2",
+      "text": "Enabling checkpointing",
+      "id": "enabling-checkpointing"
+    },
+    {
+      "level": "h3",
+      "text": "Settings file (persistent)",
+      "id": "settings-file-persistent"
+    },
+    {
+      "level": "h2",
+      "text": "Managing checkpoints",
+      "id": "managing-checkpoints"
+    },
+    {
+      "level": "h3",
+      "text": "Viewing available checkpoints",
+      "id": "viewing-available-checkpoints"
+    },
+    {
+      "level": "h3",
+      "text": "Restoring a checkpoint",
+      "id": "restoring-a-checkpoint"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h2",
+      "text": "Limitations",
+      "id": "limitations"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "{\n  \"general\": {\n    \"checkpointing\": {\n      \"enabled\": true\n    }\n  }\n}",
+      "language": "json"
+    },
+    {
+      "code": "/restore <checkpoint_file>",
+      "language": "typescript"
+    },
+    {
+      "code": "/restore 2025-06-22T10-00-00_000Z-my-file.txt-write_file",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellCheckpointingCheckpointingFeedbackCreate automatic snapshots of your project before applying changes.Copy MarkdownWhy use checkpointing? Feedback Safety net: Experiment with code changes without fear of breaking your project Easy rollback: Restore your project to a previous state with a single command Conversation preservation: Return to the exact conversation context when a change was made Non-intrusive: Works alongside your existing Git workflow without interference How checkpointing works FeedbackWhen you approve a file-modifying operation (such as write_file or replace), Bob Shell automatically: Feedback Creates a Git snapshot in a shadow repository (~/.bob/history/<project_hash>) Note: This shadow repository is separate from your project's Git repository and won't interfere with your normal Git workflow. Saves your conversation history up to that point Records the tool call that was about to run FeedbackThis three-part checkpoint allows you to: Feedback Revert all files to their previous state Resume the conversation from where you were Review and potentially re-run the original tool call FeedbackAll checkpoint data is stored locally on your machine: Feedback Git snapshots in ~/.bob/history/<project_hash> Conversation history and tool calls in ~/.bob/tmp/<project_hash>/checkpoints Enabling checkpointing FeedbackCheckpointing is disabled by default. You can enable it in two ways: Settings file (persistent) FeedbackTo enable checkpointing for all sessions: Feedback Edit your settings.json file Add the following configuration: { \"general\": { \"checkpointing\": { \"enabled\": true } } } Managing checkpoints Viewing available checkpoints FeedbackTo see all saved checkpoints for your current project: /restore FeedbackBob Shell will display a list of checkpoint files with names that include: Feedback Timestamp Modified file name Tool that was used FeedbackExample: 2025-06-22T10-00-00_000Z-my-file.txt-write_file Restoring a checkpoint FeedbackTo restore your project to a specific checkpoint: /restore <checkpoint_file> FeedbackFor example: /restore 2025-06-22T10-00-00_000Z-my-file.txt-write_file FeedbackThis will: Feedback Revert your files to their previous state Restore the conversation history Re-propose the original tool call Best practices Feedback Enable for critical work: Always use checkpointing when working on important code Test before relying: Try the restore functionality on a non-critical project first Regular commits: Continue making regular Git commits for meaningful changes Checkpoint cleanup: Periodically remove old checkpoints you no longer need Combine with version control: Use checkpointing alongside your normal Git workflow for maximum safety Limitations Feedback Checkpointing only tracks files that are already under version control or have been modified by Bob Shell External changes made outside of Bob Shell won't be included in checkpoints Very large projects may experience slightly slower checkpoint creation times How is this topic?GoodBadMCPBob Shell supports the Model Context Protocol (MCP), allowing you to extend Bob's capabilities by connecting to external services and tools. This guide explains how to configure and use MCP servers with Bob Shell.Slash commandsCreate custom slash commands to automate workflows and standardize team practices.On this pageWhy use checkpointing?How checkpointing worksEnabling checkpointingSettings file (persistent)Managing checkpointsViewing available checkpointsRestoring a checkpointBest practicesLimitations",
+      "code": "{\n  \"general\": {\n    \"checkpointing\": {\n      \"enabled\": true\n    }\n  }\n}"
+    },
+    {
+      "description": "Why use checkpointing? Feedback Safety net: Experiment with code changes without fear of breaking your project Easy rollback: Restore your project to a previous state with a single command Conversation preservation: Return to the exact conversation context when a change was made Non-intrusive: Works alongside your existing Git workflow without interference How checkpointing works FeedbackWhen you approve a file-modifying operation (such as write_file or replace), Bob Shell automatically: Feedback Creates a Git snapshot in a shadow repository (~/.bob/history/<project_hash>) Note: This shadow repository is separate from your project's Git repository and won't interfere with your normal Git workflow. Saves your conversation history up to that point Records the tool call that was about to run FeedbackThis three-part checkpoint allows you to: Feedback Revert all files to their previous state Resume the conversation from where you were Review and potentially re-run the original tool call FeedbackAll checkpoint data is stored locally on your machine: Feedback Git snapshots in ~/.bob/history/<project_hash> Conversation history and tool calls in ~/.bob/tmp/<project_hash>/checkpoints Enabling checkpointing FeedbackCheckpointing is disabled by default. You can enable it in two ways: Settings file (persistent) FeedbackTo enable checkpointing for all sessions: Feedback Edit your settings.json file Add the following configuration: { \"general\": { \"checkpointing\": { \"enabled\": true } } } Managing checkpoints Viewing available checkpoints FeedbackTo see all saved checkpoints for your current project: /restore FeedbackBob Shell will display a list of checkpoint files with names that include: Feedback Timestamp Modified file name Tool that was used FeedbackExample: 2025-06-22T10-00-00_000Z-my-file.txt-write_file Restoring a checkpoint FeedbackTo restore your project to a specific checkpoint: /restore <checkpoint_file> FeedbackFor example: /restore 2025-06-22T10-00-00_000Z-my-file.txt-write_file FeedbackThis will: Feedback Revert your files to their previous state Restore the conversation history Re-propose the original tool call Best practices Feedback Enable for critical work: Always use checkpointing when working on important code Test before relying: Try the restore functionality on a non-critical project first Regular commits: Continue making regular Git commits for meaningful changes Checkpoint cleanup: Periodically remove old checkpoints you no longer need Combine with version control: Use checkpointing alongside your normal Git workflow for maximum safety Limitations Feedback Checkpointing only tracks files that are already under version control or have been modified by Bob Shell External changes made outside of Bob Shell won't be included in checkpoints Very large projects may experience slightly slower checkpoint creation times",
+      "code": "{\n  \"general\": {\n    \"checkpointing\": {\n      \"enabled\": true\n    }\n  }\n}"
+    },
+    {
+      "description": "Example: 2025-06-22T10-00-00_000Z-my-file.txt-write_file",
+      "code": "/restore <checkpoint_file>"
+    },
+    {
+      "description": "For example:",
+      "code": "/restore 2025-06-22T10-00-00_000Z-my-file.txt-write_file"
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot",
+    "https://bob.ibm.com/docs/shell/configuration/mcp/mcp-bobshell"
+  ]
+}

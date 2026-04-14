@@ -1,0 +1,148 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+  "title": "Ignoring files | Docs | IBM Bob",
+  "content": "FeedbackControl which files Bob Shell can access by creating a `.bobignore` file in your project.\n\nWhen you add paths to your .bobignore file, Bob Shell tools that respect this file will automatically exclude matching files and directories from their operations. For example, when using the read_many_files command, any paths in your .bobignore file will be skipped.\n\nChanges to your .bobignore file require restarting your Bob Shell session to take effect.\n\nThe .bobignore file follows the same pattern syntax as .gitignore:\n\nHere are some common patterns you might want to add to your .bobignore file:\n\nTo exclude entire directories and their contents:\n\nWildcards let you match multiple files with similar patterns:\n\nYou can override exclusions for specific files:\n\nYou can create sophisticated exclusion rules by combining patterns:\n\nIf Bob Shell seems to be ignoring files you want it to access, or accessing files you want it to ignore:\n\nIntegrating with Bob IDE\n\nConnect Bob Shell directly to your code editor for a seamless development experience. This integration enhances Bob Shell's capabilities by providing real-time workspace awareness and enabling powerful features like in-editor diff viewing.\n\nBreak down large AGENTS.md files into smaller, reusable components using a simple import syntax.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Ignoring files",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Overview",
+      "id": "overview"
+    },
+    {
+      "level": "h2",
+      "text": "Why use .bobignore?",
+      "id": "why-use-bobignore"
+    },
+    {
+      "level": "h2",
+      "text": "How .bobignore works",
+      "id": "how-bobignore-works"
+    },
+    {
+      "level": "h2",
+      "text": "Pattern syntax",
+      "id": "pattern-syntax"
+    },
+    {
+      "level": "h2",
+      "text": "Getting started",
+      "id": "getting-started"
+    },
+    {
+      "level": "h3",
+      "text": "Creating a .bobignore file",
+      "id": "creating-a-bobignore-file"
+    },
+    {
+      "level": "h3",
+      "text": "Common exclusion patterns",
+      "id": "common-exclusion-patterns"
+    },
+    {
+      "level": "h2",
+      "text": "Pattern examples",
+      "id": "pattern-examples"
+    },
+    {
+      "level": "h3",
+      "text": "Excluding specific directories",
+      "id": "excluding-specific-directories"
+    },
+    {
+      "level": "h3",
+      "text": "Using wildcards",
+      "id": "using-wildcards"
+    },
+    {
+      "level": "h3",
+      "text": "Using negation",
+      "id": "using-negation"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced usage",
+      "id": "advanced-usage"
+    },
+    {
+      "level": "h3",
+      "text": "Combining patterns",
+      "id": "combining-patterns"
+    },
+    {
+      "level": "h3",
+      "text": "Debugging your .bobignore file",
+      "id": "debugging-your-bobignore-file"
+    },
+    {
+      "level": "h2",
+      "text": "Best practices",
+      "id": "best-practices"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐\n│                 │     │                 │     │                 │\n│  Your project   │────▶│  .bobignore     │────▶│  Files Bob Shell │\n│  files          │     │  filter         │     │  can access     │\n│                 │     │                 │     │                 │\n└─────────────────┘     └─────────────────┘     └─────────────────┘",
+      "language": "unknown"
+    },
+    {
+      "code": "# From your project root\ntouch .bobignore\necho \"# Files to ignore\" > .bobignore\necho \"secrets/\" >> .bobignore",
+      "language": "sql"
+    },
+    {
+      "code": "# Sensitive information\n.env\nsecrets/\n*password*\n*credential*\n*apikey*\n\n# Large directories\nnode_modules/\n.git/\ndist/\nbuild/\n\n# Binary and media files\n*.zip\n*.tar.gz\n*.mp4\n*.jpg\n*.png\n\n# Log files\n*.log\nlogs/",
+      "language": "markdown"
+    },
+    {
+      "code": "# Exclude the packages directory and all its contents\n/packages/\n\n# Exclude all node_modules directories anywhere in the project\n**/node_modules/\n\n# Exclude the dist directory but only at the root level\n/dist/",
+      "language": "markdown"
+    },
+    {
+      "code": "# Exclude all markdown files\n*.md\n\n# Exclude all JavaScript files in the src directory\n/src/**/*.js\n\n# Exclude all files with \"test\" in their name\n*test*",
+      "language": "markdown"
+    },
+    {
+      "code": "# Exclude all markdown files\n*.md\n\n# But include README.md\n!README.md\n\n# And include all markdown files in the docs directory\n!docs/*.md",
+      "language": "markdown"
+    },
+    {
+      "code": "# Exclude all JavaScript files\n*.js\n\n# But include all files in the src directory\n!src/**/*.js\n\n# Except for test files in the src directory\nsrc/**/*.test.js",
+      "language": "markdown"
+    }
+  ],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

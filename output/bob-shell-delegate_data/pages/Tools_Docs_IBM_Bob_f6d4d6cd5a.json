@@ -1,0 +1,84 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/core-concepts/tools",
+  "title": "Tools | Docs | IBM Bob",
+  "content": "FeedbackLearn how Bob Shell uses specialized tools to read files, edit code, run commands, and interact with your development environment from the command line.\n\nWhen you describe what you want to accomplish in natural language, Bob Shell will:\n\nBob Shell's tools are organized into categories based on their primary function. Understanding these categories helps you know what Bob Shell can do and how it accomplishes tasks.\n\nAccess file content and understand code structure without making changes.\n\nWhen Bob Shell uses read tools: When you ask Bob Shell to review code, find specific patterns, or understand project structure.\n\nCreate new files or modify existing code with precision.\n\nWhen Bob Shell uses write tools: When you ask Bob Shell to create files, implement features, fix bugs, or refactor code.\n\nRun commands and perform system operations in your terminal.\n\nWhen Bob Shell uses command tools: When you ask Bob Shell to run commands, install packages, run scripts, or complete system operations.\n\nExtend Bob Shell's capabilities through Model Context Protocol servers.\n\nWhen Bob Shell uses MCP tools: When you've configured MCP servers and need to access their specialized capabilities.\n\nSwitch between different Bob Shell modes for specialized tasks.\n\nWhen Bob Shell uses mode tools: When the current task would benefit from a different mode's specialized capabilities.\n\nGather additional information needed to complete tasks.\n\nPractical examples showing how to use Bob Shell for debugging, code improvement, file creation, documentation generation, and learning new concepts.\n\nYou can configure Bob Shell to match your workflow preferences.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Tools",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "Tool workflow",
+      "id": "tool-workflow"
+    },
+    {
+      "level": "h2",
+      "text": "Tool categories",
+      "id": "tool-categories"
+    },
+    {
+      "level": "h3",
+      "text": "Read tools",
+      "id": "read-tools"
+    },
+    {
+      "level": "h3",
+      "text": "Write tools",
+      "id": "write-tools"
+    },
+    {
+      "level": "h3",
+      "text": "Command tools",
+      "id": "command-tools"
+    },
+    {
+      "level": "h3",
+      "text": "MCP tools",
+      "id": "mcp-tools"
+    },
+    {
+      "level": "h3",
+      "text": "Mode tools",
+      "id": "mode-tools"
+    },
+    {
+      "level": "h3",
+      "text": "Question tools",
+      "id": "question-tools"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [],
+  "patterns": [],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}

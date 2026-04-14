@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: prd
 doc_subtype: enhancement_prd
-status: in-progress
+status: completed
 category: enhancements
 title: "PRD: Project Path Sources and GitHub Integration V1"
 description: "Add per-path source selectors, GitHub-backed project paths, and a dedicated Integrations settings area for SkillMeat and GitHub."

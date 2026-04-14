@@ -1,0 +1,153 @@
+{
+  "url": "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+  "title": "Starting a non-interactive session | Docs | IBM Bob",
+  "content": "FeedbackNon-interactive session provide a method to use Bob Shell directly from the command line without entering an interactive session. Use for automation, scripting, and batch processing tasks.\n\nOpen a new terminal window.\n\nNavigate to the main directory of your project.\n\nRun the bob -p command to start Bob Shell in your terminal.\n\nBefore starting a non-interactive session for the first time, you must accept the license agreement. You can do this by either:\n\nUse the bob -p command to get Bob to address your prompt:\n\nYou can pipe text content to Bob Shell:\n\nRedirect the output to save results:\n\nUse the @ symbol to reference files in your project:\n\nBy default, Bob Shell only uses non-destructive tools (like reading files) in non-interactive session. To enable writing and updating files, add the --yolo flag:\n\nEven with the --yolo flag enabled, Bob Shell will not write or update files outside the directory where it was started.\n\nThe output contains both Bob Shell's answer and its thinking steps. For easier processing, add instructions to format the output:\n\nNon-interactive session works best for:\n\nStarting an interactive session\n\nInteractive sessions provide a conversational interface to Bob directly in your terminal, allowing real-time assistance with your development tasks.\n\nPractical examples showing how to use Bob Shell for debugging, code improvement, file creation, documentation generation, and learning new concepts.",
+  "headings": [
+    {
+      "level": "h1",
+      "text": "Starting a non-interactive session",
+      "id": ""
+    },
+    {
+      "level": "h2",
+      "text": "To start a non-interactive session:",
+      "id": "to-start-a-non-interactive-session"
+    },
+    {
+      "level": "h2",
+      "text": "Basic usage",
+      "id": "basic-usage"
+    },
+    {
+      "level": "h3",
+      "text": "Providing prompts to Bob Shell",
+      "id": "providing-prompts-to-bob-shell"
+    },
+    {
+      "level": "h3",
+      "text": "Pipe content as input",
+      "id": "pipe-content-as-input"
+    },
+    {
+      "level": "h3",
+      "text": "Save results to a file",
+      "id": "save-results-to-a-file"
+    },
+    {
+      "level": "h3",
+      "text": "Reference project files",
+      "id": "reference-project-files"
+    },
+    {
+      "level": "h2",
+      "text": "Advanced options",
+      "id": "advanced-options"
+    },
+    {
+      "level": "h3",
+      "text": "Enable file modifications",
+      "id": "enable-file-modifications"
+    },
+    {
+      "level": "h3",
+      "text": "Format output for processing",
+      "id": "format-output-for-processing"
+    },
+    {
+      "level": "h2",
+      "text": "When to use non-interactive session",
+      "id": "when-to-use-non-interactive-session"
+    },
+    {
+      "level": "h2",
+      "text": "Tips for effective use",
+      "id": "tips-for-effective-use"
+    },
+    {
+      "level": "h3",
+      "text": "On this page",
+      "id": "toc-title"
+    }
+  ],
+  "code_samples": [
+    {
+      "code": "bob -p \"Explain this project\"",
+      "language": "unknown"
+    },
+    {
+      "code": "bob -p \"Explain this project\"",
+      "language": "unknown"
+    },
+    {
+      "code": "cat buildError.txt | bob -p \"Explain this build error\"",
+      "language": "unknown"
+    },
+    {
+      "code": "bob -p \"Review @bigFile.java\" > review.md",
+      "language": "elixir"
+    },
+    {
+      "code": "bob -p \"Summarize the functionality in @src/main.js\"",
+      "language": "elixir"
+    },
+    {
+      "code": "bob -p \"Fix bugs in @app.js\" --yolo",
+      "language": "elixir"
+    },
+    {
+      "code": "bob -p \"What Java version is this application using? Check @pom.xml. Enclose the answer in markdown tags\" > analysis.md",
+      "language": "elixir"
+    },
+    {
+      "code": "cat prompt.txt | bob",
+      "language": "unknown"
+    }
+  ],
+  "patterns": [
+    {
+      "description": "IBM BobPricingDocsEnterpriseThemeLanguageDownloadSearch⌘KShellWelcome to Bob ShellChangelogFrequently Asked QuestionsGetting startedInstallingUninstallingStarting an interactive sessionStarting a non-interactive sessionUsage examplesCore conceptsToolsConfigurationConfiguringKeyboard shortcutsCustom rulesCustom modesIntegrating with Bob IDEIgnoring filesMemory filesTelemetry dataMCPFeaturesCheckpointingSlash commandsInstance commandSecuritySecurity guidelinesSandboxingTrusted foldersTroubleshootingTroubleshooting Bob ShellStarting a non-interactive sessionStarting a non-interactive sessionFeedbackNon-interactive session provide a method to use Bob Shell directly from the command line without entering an interactive session. Use for automation, scripting, and batch processing tasks.Copy MarkdownTo start a non-interactive session: FeedbackOpen a new terminal window.FeedbackNavigate to the main directory of your project.FeedbackRun the bob -p command to start Bob Shell in your terminal.Note:FeedbackBefore starting a non-interactive session for the first time, you must accept the license agreement. You can do this by either:Feedback Running the following command in your terminal: bob --accept-license -p \"Explain this project\" Starting Bob Shell with an interactive session first to review and accept the license. FeedbackFor example:bob -p \"Explain this project\" Basic usage Providing prompts to Bob Shell FeedbackUse the bob -p command to get Bob to address your prompt: bob -p \"Explain this project\" Pipe content as input FeedbackYou can pipe text content to Bob Shell: cat buildError.txt | bob -p \"Explain this build error\" Save results to a file FeedbackRedirect the output to save results: bob -p \"Review @bigFile.java\" > review.md Reference project files FeedbackUse the @ symbol to reference files in your project: bob -p \"Summarize the functionality in @src/main.js\" Advanced options Enable file modifications FeedbackBy default, Bob Shell only uses non-destructive tools (like reading files) in non-interactive session. To enable writing and updating files, add the --yolo flag: bob -p \"Fix bugs in @app.js\" --yolo FeedbackEven with the --yolo flag enabled, Bob Shell will not write or update files outside the directory where it was started. Format output for processing FeedbackThe output contains both Bob Shell's answer and its thinking steps. For easier processing, add instructions to format the output: bob -p \"What Java version is this application using? Check @pom.xml. Enclose the answer in markdown tags\" > analysis.md When to use non-interactive session FeedbackNon-interactive session works best for: Feedback Integrating Bob Shell into automation scripts Processing multiple files with a single command Getting quick insights without starting an interactive session Generating documentation from code Tips for effective use Feedback For complex tasks that might require multiple tool uses, interactive session usually works better. When processing large files or projects, be specific about which files to analyze. Use structured output instructions (like \"Format the output as JSON\") for easier parsing in scripts. Consider creating shell aliases or scripts for frequently used Bob Shell commands. For multi-line prompts, save them to a file and pipe to Bob Shell: cat prompt.txt | bobHow is this topic?GoodBadStarting an interactive sessionInteractive sessions provide a conversational interface to Bob directly in your terminal, allowing real-time assistance with your development tasks.Usage examplesPractical examples showing how to use Bob Shell for debugging, code improvement, file creation, documentation generation, and learning new concepts.On this pageTo start a non-interactive session:Basic usageProviding prompts to Bob ShellPipe content as inputSave results to a fileReference project filesAdvanced optionsEnable file modificationsFormat output for processingWhen to use non-interactive sessionTips for effective use",
+      "code": "bob -p \"Explain this project\""
+    },
+    {
+      "description": "To start a non-interactive session: FeedbackOpen a new terminal window.FeedbackNavigate to the main directory of your project.FeedbackRun the bob -p command to start Bob Shell in your terminal.Note:FeedbackBefore starting a non-interactive session for the first time, you must accept the license agreement. You can do this by either:Feedback Running the following command in your terminal: bob --accept-license -p \"Explain this project\" Starting Bob Shell with an interactive session first to review and accept the license. FeedbackFor example:bob -p \"Explain this project\" Basic usage Providing prompts to Bob Shell FeedbackUse the bob -p command to get Bob to address your prompt: bob -p \"Explain this project\" Pipe content as input FeedbackYou can pipe text content to Bob Shell: cat buildError.txt | bob -p \"Explain this build error\" Save results to a file FeedbackRedirect the output to save results: bob -p \"Review @bigFile.java\" > review.md Reference project files FeedbackUse the @ symbol to reference files in your project: bob -p \"Summarize the functionality in @src/main.js\" Advanced options Enable file modifications FeedbackBy default, Bob Shell only uses non-destructive tools (like reading files) in non-interactive session. To enable writing and updating files, add the --yolo flag: bob -p \"Fix bugs in @app.js\" --yolo FeedbackEven with the --yolo flag enabled, Bob Shell will not write or update files outside the directory where it was started. Format output for processing FeedbackThe output contains both Bob Shell's answer and its thinking steps. For easier processing, add instructions to format the output: bob -p \"What Java version is this application using? Check @pom.xml. Enclose the answer in markdown tags\" > analysis.md When to use non-interactive session FeedbackNon-interactive session works best for: Feedback Integrating Bob Shell into automation scripts Processing multiple files with a single command Getting quick insights without starting an interactive session Generating documentation from code Tips for effective use Feedback For complex tasks that might require multiple tool uses, interactive session usually works better. When processing large files or projects, be specific about which files to analyze. Use structured output instructions (like \"Format the output as JSON\") for easier parsing in scripts. Consider creating shell aliases or scripts for frequently used Bob Shell commands. For multi-line prompts, save them to a file and pipe to Bob Shell: cat prompt.txt | bob",
+      "code": "bob -p \"Explain this project\""
+    },
+    {
+      "description": "FeedbackOpen a new terminal window.FeedbackNavigate to the main directory of your project.FeedbackRun the bob -p command to start Bob Shell in your terminal.Note:FeedbackBefore starting a non-interactive session for the first time, you must accept the license agreement. You can do this by either:Feedback Running the following command in your terminal: bob --accept-license -p \"Explain this project\" Starting Bob Shell with an interactive session first to review and accept the license. FeedbackFor example:bob -p \"Explain this project\"",
+      "code": "bob -p \"Explain this project\""
+    },
+    {
+      "description": "FeedbackRun the bob -p command to start Bob Shell in your terminal.Note:FeedbackBefore starting a non-interactive session for the first time, you must accept the license agreement. You can do this by either:Feedback Running the following command in your terminal: bob --accept-license -p \"Explain this project\" Starting Bob Shell with an interactive session first to review and accept the license. FeedbackFor example:bob -p \"Explain this project\"",
+      "code": "bob -p \"Explain this project\""
+    },
+    {
+      "description": "For example:",
+      "code": "bob -p \"Explain this project\""
+    }
+  ],
+  "links": [
+    "https://bob.ibm.com/docs/shell/changelog",
+    "https://bob.ibm.com/docs/shell/faq",
+    "https://bob.ibm.com/docs/shell/getting-started/install-and-setup",
+    "https://bob.ibm.com/docs/shell/getting-started/uninstalling-bobshell",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/start-bobshell-non-interactive",
+    "https://bob.ibm.com/docs/shell/getting-started/bobshell-examples",
+    "https://bob.ibm.com/docs/shell/core-concepts/tools",
+    "https://bob.ibm.com/docs/shell/configuration/configuring",
+    "https://bob.ibm.com/docs/shell/configuration/keyboard-shortcuts",
+    "https://bob.ibm.com/docs/shell/configuration/bobshell-custom-rules",
+    "https://bob.ibm.com/docs/shell/configuration/custom-modes-bobshell",
+    "https://bob.ibm.com/docs/shell/configuration/ide-integration",
+    "https://bob.ibm.com/docs/shell/configuration/ignoring-files",
+    "https://bob.ibm.com/docs/shell/configuration/memory-import",
+    "https://bob.ibm.com/docs/shell/configuration/telemetry-data-shell",
+    "https://bob.ibm.com/docs/shell/features/checkpointing",
+    "https://bob.ibm.com/docs/shell/features/slash-commands",
+    "https://bob.ibm.com/docs/shell/features/instance-command",
+    "https://bob.ibm.com/docs/shell/security/bob-security-guidance",
+    "https://bob.ibm.com/docs/shell/security/sandboxing",
+    "https://bob.ibm.com/docs/shell/security/trusted-folders",
+    "https://bob.ibm.com/docs/shell/troubleshooting/troubleshoot"
+  ]
+}
