@@ -3,9 +3,9 @@ schema_version: "1.0"
 doc_type: prd
 title: "CCDash Standalone Global CLI"
 description: "Ship CCDash as a true globally installed CLI that connects to local or remote CCDash instances over HTTP, defaults to local development workflows, and exposes broad read-only insights across projects, features, sessions, workflows, and reports."
-status: draft
+status: completed
 created: "2026-04-12"
-updated: "2026-04-12"
+updated: "2026-04-14"
 feature_slug: "ccdash-standalone-global-cli"
 feature_version: "v1"
 prd_ref: null

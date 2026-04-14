@@ -32,6 +32,7 @@ venv/
 ENV/
 env/
 .pytest_cache/
+.venv*/**
 
 examples/*
 # Database
@@ -39,4 +40,5 @@ examples/*
 *.db-shm
 *.db-wal
 data/
+build/
 

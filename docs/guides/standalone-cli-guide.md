@@ -17,6 +17,9 @@ The recommended installation method uses `pipx`, which isolates the CLI in its o
 pipx install ccdash-cli
 ```
 
+This command installs from PyPI. It only works after `ccdash-cli` and its dependency
+`ccdash-contracts` have been published.
+
 Verify installation:
 
 ```bash
@@ -50,6 +53,34 @@ pipx upgrade ccdash-cli
 # Or with pip:
 pip install --upgrade ccdash-cli
 ```
+
+### Local package smoke test before publishing
+
+If you are validating the standalone CLI from a repo checkout before publishing to PyPI,
+use a fresh virtual environment and install both local packages directly:
+
+```bash
+python3 -m venv .venv-standalone-cli
+source .venv-standalone-cli/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install ./packages/ccdash_contracts ./packages/ccdash_cli
+```
+
+Then run the same smoke checks:
+
+```bash
+ccdash --version
+ccdash target show
+ccdash doctor
+```
+
+If you want editable installs while iterating on the package:
+
+```bash
+python -m pip install -e ./packages/ccdash_contracts -e ./packages/ccdash_cli
+```
+
+Use `pipx install ccdash-cli` only once the package artifacts exist on PyPI.
 
 ## Architecture
 

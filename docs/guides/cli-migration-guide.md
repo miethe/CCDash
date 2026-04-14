@@ -18,6 +18,16 @@ Install the standalone CLI:
 pipx install ccdash-cli
 ```
 
+That command installs from PyPI. Before the package is published, use a clean local
+virtual environment instead:
+
+```bash
+python3 -m venv .venv-standalone-cli
+source .venv-standalone-cli/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install ./packages/ccdash_contracts ./packages/ccdash_cli
+```
+
 Verify the installation:
 
 ```bash
@@ -32,7 +42,7 @@ The `doctor` command checks connectivity to the CCDash server and reports its st
 
 | Aspect | Repo-Local | Standalone |
 |--------|-----------|-----------|
-| Installation | Part of `npm run setup` | `pipx install ccdash-cli` |
+| Installation | Part of `npm run setup` | `pipx install ccdash-cli` after publish, or install `./packages/ccdash_contracts` and `./packages/ccdash_cli` into a fresh venv for local validation |
 | Location | `backend/.venv/bin/ccdash` | `ccdash` (in PATH) |
 | Works from | Inside CCDash repo only | Any directory |
 | Backend access | In-process, direct import | HTTP to localhost:8000 |

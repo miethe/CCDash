@@ -192,7 +192,7 @@ REST returns the shared DTOs directly, CLI renders the same data as human/json/m
 
 CCDash provides two CLI entry points:
 
-**Standalone CLI** (recommended for operators): Install globally with `pipx install ccdash-cli` and use from any terminal. Talks to a running CCDash server over HTTP. See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md).
+**Standalone CLI** (recommended for operators): Install globally with `pipx install ccdash-cli` once the package is published to PyPI, and use from any terminal. For pre-publish local validation, install `./packages/ccdash_contracts` and `./packages/ccdash_cli` into a fresh virtual environment. Talks to a running CCDash server over HTTP. See [`docs/guides/standalone-cli-guide.md`](docs/guides/standalone-cli-guide.md).
 
 ```bash
 ccdash --version

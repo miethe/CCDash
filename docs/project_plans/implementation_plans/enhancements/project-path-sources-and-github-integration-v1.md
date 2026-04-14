@@ -3,7 +3,7 @@ schema_name: ccdash_document
 schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: Project Path Sources and GitHub Integration V1'
 description: Implement typed path references, managed GitHub repo workspaces, and

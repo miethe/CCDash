@@ -8,9 +8,9 @@ prd_ref: /docs/project_plans/PRDs/features/ccdash-cli-mcp-enablement-v1.md
 plan_ref: /docs/project_plans/implementation_plans/features/ccdash-cli-mcp-enablement-v1/phase-3-4-cli-mcp.md
 phase: 4
 title: "MCP MVP"
-status: "in-progress"
+status: "completed"
 started: "2026-04-12"
-completed: null
+completed: "2026-04-14"
 commit_refs: []
 pr_refs: []
 

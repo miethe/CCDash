@@ -12,10 +12,22 @@ Recommended:
 pipx install ccdash-cli
 ```
 
+This installs from PyPI and only works after `ccdash-cli` and `ccdash-contracts` are
+published.
+
 Alternative:
 
 ```bash
 pip install ccdash-cli
+```
+
+For local testing from a repo checkout before publish:
+
+```bash
+python3 -m venv .venv-standalone-cli
+source .venv-standalone-cli/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install ./packages/ccdash_contracts ./packages/ccdash_cli
 ```
 
 Verify the install:

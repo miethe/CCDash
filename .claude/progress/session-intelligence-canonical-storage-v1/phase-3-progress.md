@@ -8,7 +8,7 @@ prd_ref: /docs/project_plans/PRDs/enhancements/session-intelligence-canonical-st
 plan_ref: /docs/project_plans/implementation_plans/enhancements/session-intelligence-canonical-storage-v1.md
 phase: 3
 title: "Intelligence Fact Pipelines"
-status: "in_progress"
+status: "completed"
 started: "2026-04-02"
 completed: "2026-04-02"
 commit_refs: ["c3beac2", "62136d0"]

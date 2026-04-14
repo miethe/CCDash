@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: "Implementation Plan: Session Intelligence Canonical Storage V1"
 description: "Turn the existing session_messages groundwork into an enterprise-ready canonical transcript and intelligence platform for semantic search, DX sentiment, code churn, scope drift, and approval-gated SkillMeat memory drafts."

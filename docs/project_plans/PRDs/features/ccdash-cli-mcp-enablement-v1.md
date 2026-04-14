@@ -3,9 +3,9 @@ schema_version: "1.0"
 doc_type: prd
 title: "CCDash CLI and MCP Enablement"
 description: "Expose CCDash project intelligence through a Python CLI, an MCP server for coding agents, and new composite REST endpoints — all backed by a shared transport-neutral agent query layer."
-status: draft
+status: completed
 created: "2026-04-02"
-updated: "2026-04-02"
+updated: "2026-04-14"
 feature_slug: "ccdash-cli-mcp-enablement"
 feature_version: "v1"
 prd_ref: null
