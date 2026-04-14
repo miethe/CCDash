@@ -5,7 +5,7 @@ import typer
 
 from ccdash_cli.runtime import state as app_state
 from ccdash_cli.formatters import OutputMode, get_formatter, resolve_output_mode
-from ccdash_cli.runtime.client import CCDashClient, CCDashClientError
+from ccdash_cli.runtime.client import build_client, CCDashClientError
 from ccdash_cli.runtime.config import resolve_target
 
 report_app = typer.Typer(help="Reports and narrative output.")
@@ -22,7 +22,7 @@ def aar(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.post("/api/v1/reports/aar", params={"feature_id": feature_id})
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
@@ -57,7 +57,7 @@ def feature(
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
     try:
-        with CCDashClient(target.url, token=target.token) as client:
+        with build_client(target) as client:
             body = client.get(f"/api/v1/features/{feature_id}")
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)

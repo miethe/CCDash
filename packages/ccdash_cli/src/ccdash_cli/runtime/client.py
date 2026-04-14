@@ -33,6 +33,8 @@ __all__ = [
     "VersionMismatchError",
     # Client
     "CCDashClient",
+    # Factory
+    "build_client",
 ]
 
 _LOG = logging.getLogger(__name__)
@@ -442,3 +444,25 @@ class CCDashClient:
             raise ServerError(message)
 
         return body
+
+
+# ---------------------------------------------------------------------------
+# Convenience factory
+# ---------------------------------------------------------------------------
+
+
+def build_client(target: Any) -> "CCDashClient":
+    """Construct a :class:`CCDashClient` wired to *target* and the active timeout.
+
+    Reads ``app_state.TIMEOUT_SECONDS`` so every command gets the timeout
+    resolved by the root ``@app.callback()`` without repeating the lookup.
+
+    Args:
+        target: A :class:`~ccdash_cli.runtime.config.TargetConfig` instance.
+
+    Returns:
+        A configured :class:`CCDashClient`.
+    """
+    from ccdash_cli.runtime import state as app_state  # deferred to avoid circular import
+
+    return CCDashClient(target.url, token=target.token, timeout=app_state.TIMEOUT_SECONDS)

@@ -14,6 +14,7 @@ from ccdash_cli.commands.target import target_app
 from ccdash_cli.commands.workflow import workflow_app
 from ccdash_cli.formatters import OutputMode
 from ccdash_cli.runtime import state as app_state
+from ccdash_cli.runtime.state import resolve_timeout
 
 app = typer.Typer(
     help="CCDash CLI — project intelligence from any terminal.",
@@ -47,6 +48,11 @@ def _print_version_and_exit(value: bool) -> None:
 def _global_options(
     target: str | None = typer.Option(None, "--target", help="Named target from config."),
     output: OutputMode | None = typer.Option(None, "--output", help="Default output format."),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        help="HTTP request timeout in seconds (overrides CCDASH_TIMEOUT env var).",
+    ),
     version: bool = typer.Option(
         False,
         "--version",
@@ -61,6 +67,9 @@ def _global_options(
         app_state.TARGET_FLAG = target
     if output is not None:
         app_state.OUTPUT_MODE = output
+    resolved_secs, resolved_src = resolve_timeout(timeout)
+    app_state.TIMEOUT_SECONDS = resolved_secs
+    app_state.TIMEOUT_SOURCE = resolved_src
 
 
 @app.command()

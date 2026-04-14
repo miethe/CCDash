@@ -3,7 +3,7 @@
 Covers the feature, session, and report command groups using
 typer.testing.CliRunner and unittest.mock to stub out the HTTP layer.
 
-Each command module imports CCDashClient directly, so the patch target is
+Each command module imports build_client, so the patch target is
 the module-level name rather than the runtime.client module.
 """
 from __future__ import annotations
@@ -212,7 +212,7 @@ def _invoke(*args: str, **kwargs: Any):
     """Invoke the CLI app under both the resolve_target and CCDashClient patches.
 
     ``_patch_modules`` should be the list of module paths to patch for
-    ``CCDashClient`` (e.g. ``["ccdash_cli.commands.feature.CCDashClient"]``).
+    ``CCDashClient`` (e.g. ``["ccdash_cli.commands.feature.build_client"]``).
     ``client`` is the mock to inject.
 
     Keyword-only:
@@ -294,7 +294,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -308,7 +308,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--status", "active", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0
         # Verify that status was in the params passed to get()
@@ -322,7 +322,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "list", "--status", "active,completed", "--status", "planned", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0
         _, kw = client.get.call_args
@@ -334,7 +334,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "show", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -350,7 +350,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "show", "NONEXISTENT",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 1
 
@@ -362,7 +362,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "sessions", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -378,7 +378,7 @@ class TestFeatureCommands:
         result = _invoke(
             "feature", "documents", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -400,7 +400,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "list", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -413,7 +413,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "list", "--feature", "FEAT-123", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0
         assert client.get.called
@@ -426,7 +426,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "show", "sess-1", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -442,7 +442,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "show", "NONEXISTENT",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 1
 
@@ -452,7 +452,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "search", "test query", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -467,7 +467,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "drilldown", "sess-1", "--concern", "sentiment", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -481,7 +481,7 @@ class TestSessionCommands:
         result = _invoke(
             "session", "family", "sess-1", "--json",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         assert result.exit_code == 0, result.output
         parsed = json.loads(result.output)
@@ -504,7 +504,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "aar", "--feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         assert client.post.called
@@ -517,7 +517,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "aar", "--feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         # Markdown formatter produces output; JSON output would be parseable as JSON.
@@ -535,7 +535,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         assert client.get.called
@@ -548,7 +548,7 @@ class TestReportCommands:
         result = _invoke(
             "report", "feature", "FEAT-123",
             client=client,
-            modules=["ccdash_cli.commands.report.CCDashClient"],
+            modules=["ccdash_cli.commands.report.build_client"],
         )
         assert result.exit_code == 0, result.output
         try:
@@ -568,9 +568,9 @@ class TestErrorHandling:
     """Shared error handling behaviour across command groups."""
 
     @pytest.mark.parametrize("cmd_args,module", [
-        (["feature", "list"], "ccdash_cli.commands.feature.CCDashClient"),
-        (["session", "list"], "ccdash_cli.commands.session.CCDashClient"),
-        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.CCDashClient"),
+        (["feature", "list"], "ccdash_cli.commands.feature.build_client"),
+        (["session", "list"], "ccdash_cli.commands.session.build_client"),
+        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.build_client"),
     ])
     def test_connection_failure_exits_code_4(self, cmd_args, module):
         """Any command should exit 4 when a ConnectionError is raised."""
@@ -591,9 +591,9 @@ class TestErrorHandling:
         )
 
     @pytest.mark.parametrize("cmd_args,module", [
-        (["feature", "list"], "ccdash_cli.commands.feature.CCDashClient"),
-        (["session", "list"], "ccdash_cli.commands.session.CCDashClient"),
-        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.CCDashClient"),
+        (["feature", "list"], "ccdash_cli.commands.feature.build_client"),
+        (["session", "list"], "ccdash_cli.commands.session.build_client"),
+        (["report", "aar", "--feature", "FEAT-1"], "ccdash_cli.commands.report.build_client"),
     ])
     def test_auth_failure_exits_code_2(self, cmd_args, module):
         """Any command should exit 2 when an AuthenticationError is raised."""
@@ -623,7 +623,7 @@ class TestErrorHandling:
         result = _invoke(
             "feature", "list",
             client=client,
-            modules=["ccdash_cli.commands.feature.CCDashClient"],
+            modules=["ccdash_cli.commands.feature.build_client"],
         )
         # With mix_stderr=False, stderr is available separately; with default
         # CliRunner, error output lands in result.output or result.stderr.
@@ -640,7 +640,7 @@ class TestErrorHandling:
         result = _invoke(
             "session", "list",
             client=client,
-            modules=["ccdash_cli.commands.session.CCDashClient"],
+            modules=["ccdash_cli.commands.session.build_client"],
         )
         error_output = (result.stderr if hasattr(result, "stderr") and result.stderr else result.output)
         assert "Error" in error_output or "error" in error_output
