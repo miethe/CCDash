@@ -31,6 +31,8 @@ _telemetry_export_latency_hist: Any | None = None
 _telemetry_export_queue_depth_gauge: Any | None = None
 _telemetry_export_errors_counter: Any | None = None
 _telemetry_export_disabled_gauge: Any | None = None
+_agent_query_cache_hit_counter: Any | None = None
+_agent_query_cache_miss_counter: Any | None = None
 
 _prom_enabled = False
 _prom_ingestion_counter: Any | None = None
@@ -77,6 +79,7 @@ def initialize(app: FastAPI | None = None) -> None:
     global _telemetry_export_events_counter, _telemetry_export_latency_hist
     global _telemetry_export_queue_depth_gauge, _telemetry_export_errors_counter
     global _telemetry_export_disabled_gauge
+    global _agent_query_cache_hit_counter, _agent_query_cache_miss_counter
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
     global _prom_tool_calls_counter, _prom_tool_duration_hist, _prom_tokens_counter, _prom_cost_counter
@@ -183,6 +186,16 @@ def initialize(app: FastAPI | None = None) -> None:
         "ccdash_telemetry_export_errors_total",
         unit="1",
         description="Telemetry export errors by class",
+    )
+    _agent_query_cache_hit_counter = meter.create_counter(
+        "agent_query.cache.hit",
+        unit="1",
+        description="Agent-query cache hit count",
+    )
+    _agent_query_cache_miss_counter = meter.create_counter(
+        "agent_query.cache.miss",
+        unit="1",
+        description="Agent-query cache miss count",
     )
     _telemetry_export_queue_depth_gauge = meter.create_observable_gauge(
         "ccdash_telemetry_export_queue_depth",
@@ -460,6 +473,24 @@ def set_telemetry_export_disabled(disabled: bool) -> None:
     _telemetry_export_disabled_state = 1 if disabled else 0
     if _prom_enabled and _prom_telemetry_export_disabled_gauge is not None:
         _prom_telemetry_export_disabled_gauge.set(_telemetry_export_disabled_state)
+
+
+def record_cache_hit(endpoint: str) -> None:
+    """Increment the agent-query cache hit counter for the given endpoint."""
+    try:
+        if _enabled and _agent_query_cache_hit_counter is not None:
+            _agent_query_cache_hit_counter.add(1, {"endpoint": endpoint or "unknown"})
+    except Exception:  # never let observability break a request
+        logger.debug("cache.hit counter unavailable", exc_info=True)
+
+
+def record_cache_miss(endpoint: str) -> None:
+    """Increment the agent-query cache miss counter for the given endpoint."""
+    try:
+        if _enabled and _agent_query_cache_miss_counter is not None:
+            _agent_query_cache_miss_counter.add(1, {"endpoint": endpoint or "unknown"})
+    except Exception:  # never let observability break a request
+        logger.debug("cache.miss counter unavailable", exc_info=True)
 
 
 def _observe_telemetry_queue_depth(observation_type: Any):

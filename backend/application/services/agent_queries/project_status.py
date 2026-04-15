@@ -12,6 +12,7 @@ from backend.application.services.session_intelligence import SessionIntelligenc
 from backend.services.workflow_registry import list_workflow_registry
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
+from .cache import memoized_query
 from .models import CostSummary, ProjectStatusDTO, SessionSummary, WorkflowSummary
 
 
@@ -79,9 +80,20 @@ def _workflow_summary_from_row(row: dict[str, Any]) -> WorkflowSummary:
     )
 
 
+def _project_status_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    project_id_override: str | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"project_id_override": project_id_override}
+
+
 class ProjectStatusQueryService:
     """Aggregate project health for agent-facing transports."""
 
+    @memoized_query("project_status", param_extractor=_project_status_params)
     async def get_status(
         self,
         context: RequestContext,

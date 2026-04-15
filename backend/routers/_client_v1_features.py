@@ -78,6 +78,8 @@ async def _get_forensics(
     feature_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> tuple[FeatureForensicsDTO, str]:
     """Return ``(forensics_dto, feature_slug)``.
 
@@ -88,6 +90,7 @@ async def _get_forensics(
         app_request.context,
         app_request.ports,
         feature_id,
+        bypass_cache=bypass_cache,
     )
     if forensics.status == "error":
         raise HTTPException(
@@ -110,7 +113,15 @@ async def list_features_v1(
     request_context: RequestContext,
     core_ports: CorePorts,
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
-    """Return a paginated list of features for the active project."""
+    """Return a paginated list of features for the active project.
+
+    TODO(CACHE-007+): This handler is not decorated with @memoized_query because
+    it has no service-layer method to attach the decorator to — the query logic
+    lives inline here.  Caching it cleanly requires extracting a dedicated
+    FeatureListQueryService (analogous to FeatureForensicsQueryService), which is
+    scope beyond CACHE-006.  Raise a follow-up task to extract the service and
+    apply memoization in the same pass.
+    """
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 
@@ -162,6 +173,8 @@ async def get_feature_detail_v1(
     feature_id: str,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[FeatureForensicsDTO]:
     """Return full forensic detail for a single feature.
 
@@ -171,7 +184,7 @@ async def get_feature_detail_v1(
     — they cannot disagree. Linkage is eventually-consistent (populated by the
     background sync engine).
     """
-    forensics, _ = await _get_forensics(feature_id, request_context, core_ports)
+    forensics, _ = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
     return ClientV1Envelope(
         data=forensics,
         meta=build_client_v1_meta(instance_id=_instance_id()),
@@ -189,6 +202,8 @@ async def get_feature_sessions_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    bypass_cache: bool = False,
 ) -> ClientV1Envelope[FeatureSessionsDTO]:
     """Return sessions linked to a feature, paginated.
 
@@ -200,7 +215,7 @@ async def get_feature_sessions_v1(
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 
-    forensics, feature_slug = await _get_forensics(feature_id, request_context, core_ports)
+    forensics, feature_slug = await _get_forensics(feature_id, request_context, core_ports, bypass_cache=bypass_cache)
 
     all_sessions = forensics.linked_sessions
     page = all_sessions[effective_offset : effective_offset + effective_limit]

@@ -29,6 +29,7 @@ reporting_query_service = ReportingQueryService()
 
 class AARReportRequest(BaseModel):
     feature_id: str = Field(description="Feature id to generate an after-action report for.")
+    bypass_cache: bool = Field(default=False, description="Bypass the server-side query cache and fetch fresh data.")
 
 
 async def _resolve_app_request(
@@ -48,6 +49,7 @@ async def _resolve_app_request(
 @agent_router.get("/project-status", response_model=ProjectStatusDTO)
 async def get_project_status(
     project_id: str | None = Query(default=None, description="Optional project override."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ProjectStatusDTO:
@@ -61,12 +63,14 @@ async def get_project_status(
         app_request.context,
         app_request.ports,
         project_id_override=project_id,
+        bypass_cache=bypass_cache,
     )
 
 
 @agent_router.get("/feature-forensics/{feature_id}", response_model=FeatureForensicsDTO)
 async def get_feature_forensics(
     feature_id: str = Path(..., description="Feature id to inspect."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> FeatureForensicsDTO:
@@ -76,12 +80,14 @@ async def get_feature_forensics(
         app_request.context,
         app_request.ports,
         feature_id,
+        bypass_cache=bypass_cache,
     )
 
 
 @agent_router.get("/workflow-diagnostics", response_model=WorkflowDiagnosticsDTO)
 async def get_workflow_diagnostics(
     feature_id: str | None = Query(default=None, description="Optional feature filter."),
+    bypass_cache: bool = Query(default=False, description="Bypass the server-side query cache and fetch fresh data."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> WorkflowDiagnosticsDTO:
@@ -91,6 +97,7 @@ async def get_workflow_diagnostics(
         app_request.context,
         app_request.ports,
         feature_id=feature_id,
+        bypass_cache=bypass_cache,
     )
 
 
@@ -106,4 +113,5 @@ async def generate_aar_report(
         app_request.context,
         app_request.ports,
         req.feature_id,
+        bypass_cache=req.bypass_cache,
     )

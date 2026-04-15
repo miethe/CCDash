@@ -1,5 +1,13 @@
 """Transport-neutral agent query service contracts and helpers."""
 
+from backend.application.services.agent_queries import cache
+from backend.application.services.agent_queries.cache import (
+    _query_cache,
+    clear_cache,
+    compute_cache_key,
+    get_cache,
+    get_data_version_fingerprint,
+)
 from backend.application.services.agent_queries._filters import (
     AgentQueryProjectScope,
     collect_source_refs,
@@ -34,6 +42,14 @@ from backend.application.services.agent_queries.reporting import ReportingQueryS
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
 
 __all__ = [
+    # Cache module and helpers (CACHE-003)
+    "cache",
+    "_query_cache",
+    "clear_cache",
+    "compute_cache_key",
+    "get_cache",
+    "get_data_version_fingerprint",
+    # DTOs and shared contracts
     "AARReportDTO",
     "AgentQueryEnvelope",
     "AgentQueryProjectScope",

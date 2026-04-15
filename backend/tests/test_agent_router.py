@@ -42,6 +42,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             ) as service_mock:
                 result = await agent_router.get_project_status(
                     project_id="project-1",
+                    bypass_cache=False,
                     request_context=request_context,
                     core_ports=core_ports,
                 )
@@ -56,6 +57,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             project_id_override="project-1",
+            bypass_cache=False,
         )
 
     async def test_get_feature_forensics_delegates_once_and_returns_dto_unchanged(self) -> None:
@@ -72,13 +74,16 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             ) as service_mock:
                 result = await agent_router.get_feature_forensics(
                     feature_id="feature-1",
+                    bypass_cache=False,
                     request_context=request_context,
                     core_ports=core_ports,
                 )
 
         self.assertIs(result, dto)
         resolve_mock.assert_awaited_once_with(request_context, core_ports)
-        service_mock.assert_awaited_once_with(app_request.context, app_request.ports, "feature-1")
+        service_mock.assert_awaited_once_with(
+            app_request.context, app_request.ports, "feature-1", bypass_cache=False
+        )
 
     async def test_get_workflow_diagnostics_delegates_once_and_returns_dto_unchanged(self) -> None:
         request_context = object()
@@ -94,6 +99,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             ) as service_mock:
                 result = await agent_router.get_workflow_diagnostics(
                     feature_id="feature-2",
+                    bypass_cache=False,
                     request_context=request_context,
                     core_ports=core_ports,
                 )
@@ -104,6 +110,7 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
             app_request.context,
             app_request.ports,
             feature_id="feature-2",
+            bypass_cache=False,
         )
 
     async def test_generate_aar_report_delegates_once_and_only_forwards_feature_id(self) -> None:
@@ -125,10 +132,12 @@ class AgentRouterTests(unittest.IsolatedAsyncioTestCase):
                     core_ports=core_ports,
                 )
 
-        self.assertEqual(req.model_dump(), {"feature_id": "feature-3"})
+        self.assertEqual(req.model_dump(), {"feature_id": "feature-3", "bypass_cache": False})
         self.assertIs(result, dto)
         resolve_mock.assert_awaited_once_with(request_context, core_ports)
-        service_mock.assert_awaited_once_with(app_request.context, app_request.ports, "feature-3")
+        service_mock.assert_awaited_once_with(
+            app_request.context, app_request.ports, "feature-3", bypass_cache=False
+        )
 
     async def test_http_exception_from_request_resolution_is_propagated(self) -> None:
         request_context = object()

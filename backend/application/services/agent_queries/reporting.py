@@ -15,6 +15,7 @@ from backend.application.services.agent_queries.feature_forensics import (
 from backend.services.workflow_effectiveness import detect_failure_patterns, get_workflow_effectiveness
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
+from .cache import memoized_query
 from .models import AARReportDTO, Bottleneck, KeyMetrics, TimelineData, TurningPoint, WorkflowObservation
 
 
@@ -46,9 +47,20 @@ def _timeline_data(session_rows: list[dict[str, Any]]) -> TimelineData:
     return TimelineData(started_at=start_value, ended_at=end_value, duration_days=round(duration_days, 2))
 
 
+def _aar_report_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    feature_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"feature_id": feature_id}
+
+
 class ReportingQueryService:
     """Generate deterministic feature after-action reports."""
 
+    @memoized_query("aar_report", param_extractor=_aar_report_params)
     async def generate_aar(
         self,
         context: RequestContext,

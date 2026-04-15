@@ -2,176 +2,229 @@
 schema_version: 2
 doc_type: progress
 type: progress
-prd: "ccdash-query-caching-and-cli-ergonomics"
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
+prd: ccdash-query-caching-and-cli-ergonomics
+feature_slug: ccdash-query-caching-and-cli-ergonomics
 phase: 3
-title: "Cache Foundation"
-status: pending
-created: 2026-04-14
-updated: 2026-04-14
+title: Cache Foundation
+status: completed
+created: '2026-04-14'
+updated: '2026-04-14'
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 commit_refs: []
 pr_refs: []
-owners: ["backend-architect"]
-contributors: ["python-backend-engineer"]
+owners:
+- backend-architect
+contributors:
+- python-backend-engineer
 execution_model: batch-parallel
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 11
-completed_tasks: 0
+completed_tasks: 11
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "CACHE-001"
-    description: "Verify four target endpoints and async patterns in agent_queries/ and routers/agent.py — document signatures and cache key strategy"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "low"
-    assigned_model: "haiku"
-    model_effort: "low"
-
-  - id: "CACHE-002"
-    description: "Add cachetools>=5.3.0 to backend/requirements.txt (OQ-2 resolved: not present, needed for TTLCache)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "CACHE-003"
-    description: "Create backend/application/services/agent_queries/cache.py with get_data_version_fingerprint() and compute_cache_key() — includes graceful degradation on fingerprint failure"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: ["CACHE-002"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "CACHE-004"
-    description: "Implement @memoized_query async decorator in cache.py — checks key, returns cached or awaits + caches result, increments OTel counters"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: ["CACHE-003"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "CACHE-005"
-    description: "Add CCDASH_QUERY_CACHE_TTL_SECONDS (default 60) and CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS (default 300) to backend/config.py"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "CACHE-006"
-    description: "Apply @memoized_query decorator to all four target endpoints (project status, feature forensics/AAR, workflow failures, feature list)"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["CACHE-004", "CACHE-005"]
-    estimated_effort: "2 pts"
-    priority: "high"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "CACHE-007"
-    description: "Implement cache bypass: ?bypass_cache=true in routers/agent.py (REST) and --no-cache flag in CLI commands; wire flag to query param"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["CACHE-006"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "CACHE-008"
-    description: "Add agent_query.cache.hit and agent_query.cache.miss OTel counters to backend/observability/otel.py; wire into @memoized_query"
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: ["CACHE-004"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "CACHE-009"
-    description: "Integration test: cache invalidation on sync write — call, cache hit, write new data, sync, call again → cache miss with fresh result"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["CACHE-006"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "CACHE-010"
-    description: "Integration test: TTL expiry — call (miss), call within TTL (hit), wait for TTL, call again (miss). Use short TTL (2 s) for test."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["CACHE-006"]
-    estimated_effort: "1 pt"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "CACHE-011"
-    description: "Graceful degradation test: simulate fingerprint query failure, verify error logged, live query executes, no exception bubbles"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["CACHE-004"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
+- id: CACHE-001
+  description: "Verify four target endpoints and async patterns in agent_queries/\
+    \ and routers/agent.py \u2014 document signatures and cache key strategy"
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: low
+  assigned_model: haiku
+  model_effort: low
+- id: CACHE-002
+  description: 'Add cachetools>=5.3.0 to backend/requirements.txt (OQ-2 resolved:
+    not present, needed for TTLCache)'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
+- id: CACHE-003
+  description: "Create backend/application/services/agent_queries/cache.py with get_data_version_fingerprint()\
+    \ and compute_cache_key() \u2014 includes graceful degradation on fingerprint\
+    \ failure"
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - CACHE-002
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: medium
+- id: CACHE-004
+  description: "Implement @memoized_query async decorator in cache.py \u2014 checks\
+    \ key, returns cached or awaits + caches result, increments OTel counters"
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - CACHE-003
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: medium
+- id: CACHE-005
+  description: Add CCDASH_QUERY_CACHE_TTL_SECONDS (default 60) and CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS
+    (default 300) to backend/config.py
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
+- id: CACHE-006
+  description: Apply @memoized_query decorator to all four target endpoints (project
+    status, feature forensics/AAR, workflow failures, feature list)
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - CACHE-004
+  - CACHE-005
+  estimated_effort: 2 pts
+  priority: high
+  assigned_model: sonnet
+  model_effort: medium
+- id: CACHE-007
+  description: 'Implement cache bypass: ?bypass_cache=true in routers/agent.py (REST)
+    and --no-cache flag in CLI commands; wire flag to query param'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - CACHE-006
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: CACHE-008
+  description: Add agent_query.cache.hit and agent_query.cache.miss OTel counters
+    to backend/observability/otel.py; wire into @memoized_query
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies:
+  - CACHE-004
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: medium
+- id: CACHE-009
+  description: "Integration test: cache invalidation on sync write \u2014 call, cache\
+    \ hit, write new data, sync, call again \u2192 cache miss with fresh result"
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - CACHE-006
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: medium
+- id: CACHE-010
+  description: "Integration test: TTL expiry \u2014 call (miss), call within TTL (hit),\
+    \ wait for TTL, call again (miss). Use short TTL (2 s) for test."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - CACHE-006
+  estimated_effort: 1 pt
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
+- id: CACHE-011
+  description: 'Graceful degradation test: simulate fingerprint query failure, verify
+    error logged, live query executes, no exception bubbles'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - CACHE-004
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
 parallelization:
-  batch_1: ["CACHE-001", "CACHE-002", "CACHE-005"]
-  batch_2: ["CACHE-003"]
-  batch_3: ["CACHE-004", "CACHE-008"]
-  batch_4: ["CACHE-006", "CACHE-011"]
-  batch_5: ["CACHE-007", "CACHE-009", "CACHE-010"]
-  critical_path: ["CACHE-002", "CACHE-003", "CACHE-004", "CACHE-006", "CACHE-007"]
-  estimated_total_time: "2-2.5 days"
-
+  batch_1:
+  - CACHE-001
+  - CACHE-002
+  - CACHE-005
+  batch_2:
+  - CACHE-003
+  batch_3:
+  - CACHE-004
+  - CACHE-008
+  batch_4:
+  - CACHE-006
+  - CACHE-011
+  batch_5:
+  - CACHE-007
+  - CACHE-009
+  - CACHE-010
+  critical_path:
+  - CACHE-002
+  - CACHE-003
+  - CACHE-004
+  - CACHE-006
+  - CACHE-007
+  estimated_total_time: 2-2.5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-3.1", description: "Cache utility module complete and tested", status: "pending" }
-  - { id: "SC-3.2", description: "Decorator wraps all four target endpoints", status: "pending" }
-  - { id: "SC-3.3", description: "OTel counters emit correctly (hit/miss)", status: "pending" }
-  - { id: "SC-3.4", description: "Cache invalidation works on data update (fingerprint)", status: "pending" }
-  - { id: "SC-3.5", description: "TTL expiry tested", status: "pending" }
-  - { id: "SC-3.6", description: "Graceful degradation on fingerprint failure", status: "pending" }
-  - { id: "SC-3.7", description: "bypass_cache flag/param works (REST + CLI)", status: "pending" }
-  - { id: "SC-3.8", description: "CCDASH_QUERY_CACHE_TTL_SECONDS config respected; TTL=0 disables cache", status: "pending" }
-  - { id: "SC-3.9", description: "All cache-related tests pass", status: "pending" }
-
+- id: SC-3.1
+  description: Cache utility module complete and tested
+  status: pending
+- id: SC-3.2
+  description: Decorator wraps all four target endpoints
+  status: pending
+- id: SC-3.3
+  description: OTel counters emit correctly (hit/miss)
+  status: pending
+- id: SC-3.4
+  description: Cache invalidation works on data update (fingerprint)
+  status: pending
+- id: SC-3.5
+  description: TTL expiry tested
+  status: pending
+- id: SC-3.6
+  description: Graceful degradation on fingerprint failure
+  status: pending
+- id: SC-3.7
+  description: bypass_cache flag/param works (REST + CLI)
+  status: pending
+- id: SC-3.8
+  description: CCDASH_QUERY_CACHE_TTL_SECONDS config respected; TTL=0 disables cache
+  status: pending
+- id: SC-3.9
+  description: All cache-related tests pass
+  status: pending
 files_modified:
-  - "backend/application/services/agent_queries/cache.py"
-  - "backend/application/services/agent_queries/__init__.py"
-  - "backend/requirements.txt"
-  - "backend/config.py"
-  - "backend/observability/otel.py"
-  - "backend/routers/agent.py"
-  - "packages/ccdash_cli/src/ccdash_cli/"
-  - "backend/tests/"
+- backend/application/services/agent_queries/cache.py
+- backend/application/services/agent_queries/__init__.py
+- backend/requirements.txt
+- backend/config.py
+- backend/observability/otel.py
+- backend/routers/agent.py
+- packages/ccdash_cli/src/ccdash_cli/
+- backend/tests/
+progress: 100
 ---
 
 # CCDash Query Caching and CLI Ergonomics - Phase 3: Cache Foundation

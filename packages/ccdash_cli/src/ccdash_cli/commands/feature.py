@@ -81,6 +81,7 @@ def feature_list(
 @feature_app.command("show")
 def feature_show(
     feature_id: str = typer.Argument(..., help="Feature ID to inspect."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the server-side query cache and fetch fresh data."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -88,9 +89,13 @@ def feature_show(
     """Show full forensic detail for a feature."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
+    params: dict = {}
+    if no_cache:
+        params["bypass_cache"] = "true"
+
     try:
         with build_client(target) as client:
-            body = client.get(f"/api/v1/features/{feature_id}")
+            body = client.get(f"/api/v1/features/{feature_id}", params=params or None)
     except CCDashClientError as exc:
         typer.echo(f"Error: {exc.message}", err=True)
         raise typer.Exit(code=exc.exit_code) from exc
@@ -127,6 +132,7 @@ def feature_sessions(
     feature_id: str = typer.Argument(..., help="Feature ID."),
     limit: int = typer.Option(50, "--limit", help="Maximum results to return."),
     offset: int = typer.Option(0, "--offset", help="Pagination offset."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the server-side query cache and fetch fresh data."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -134,7 +140,9 @@ def feature_sessions(
     """List sessions linked to a feature."""
     target = resolve_target(target_flag=app_state.TARGET_FLAG)
 
-    params = {"limit": limit, "offset": offset}
+    params: dict = {"limit": limit, "offset": offset}
+    if no_cache:
+        params["bypass_cache"] = "true"
 
     try:
         with build_client(target) as client:

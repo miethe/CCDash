@@ -10,6 +10,7 @@ from backend.application.services.session_intelligence import SessionIntelligenc
 from backend.application.services.sessions import SessionTranscriptService
 
 from ._filters import collect_source_refs, derive_data_freshness, resolve_project_scope
+from .cache import memoized_query
 from .models import DocumentRef, FeatureForensicsDTO, SessionRef, TaskRef, TelemetryAvailability
 
 
@@ -175,9 +176,20 @@ async def _enrich_session_refs(
     return refs, sorted(set(rework_signals)), sorted(set(failure_patterns))
 
 
+def _feature_forensics_params(
+    self: Any,
+    context: RequestContext,
+    ports: CorePorts,
+    feature_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    return {"feature_id": feature_id}
+
+
 class FeatureForensicsQueryService:
     """Assemble feature execution history from linked entities."""
 
+    @memoized_query("feature_forensics", param_extractor=_feature_forensics_params)
     async def get_forensics(
         self,
         context: RequestContext,

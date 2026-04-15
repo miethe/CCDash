@@ -248,6 +248,13 @@ CCDASH_LIVE_REPLAY_BUFFER_SIZE = _env_int("CCDASH_LIVE_REPLAY_BUFFER_SIZE", 200)
 CCDASH_LIVE_HEARTBEAT_SECONDS = _env_int("CCDASH_LIVE_HEARTBEAT_SECONDS", 15)
 CCDASH_LIVE_MAX_PENDING_EVENTS = _env_int("CCDASH_LIVE_MAX_PENDING_EVENTS", 100)
 
+# Agent query cache settings
+# Controls how long memoized agent query service results are cached.
+# Set to 0 to disable caching entirely.
+CCDASH_QUERY_CACHE_TTL_SECONDS = _env_int("CCDASH_QUERY_CACHE_TTL_SECONDS", 60)
+# Reserved for background cache refresh scheduling (not active in phase 3).
+CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = _env_int("CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 300)
+
 # Server settings
 HOST = os.getenv("CCDASH_HOST", "0.0.0.0")
 PORT = int(os.getenv("CCDASH_PORT", "8000"))
