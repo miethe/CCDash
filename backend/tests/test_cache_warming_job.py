@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -434,6 +435,57 @@ class TestWorkerProbeTelemetry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry_probe["details"]["queueDepth"], 7)
         self.assertEqual(telemetry_probe["details"]["eventsPushed24h"], 19)
 
+    async def test_worker_probe_snapshot_preserves_disabled_telemetry_markers(self):
+        project = _make_project()
+        telemetry_job = SimpleNamespace(
+            execute=AsyncMock(
+                return_value=SimpleNamespace(
+                    success=False,
+                    outcome="not_configured",
+                    batch_size=0,
+                    duration_ms=7,
+                )
+            ),
+            coordinator=SimpleNamespace(
+                status=AsyncMock(
+                    return_value=SimpleNamespace(
+                        queueStats=SimpleNamespace(pending=0),
+                        lastPushTimestamp=None,
+                        eventsPushed24h=0,
+                        configured=False,
+                        envLocked=True,
+                        persistedEnabled=False,
+                    )
+                )
+            ),
+        )
+        adapter = _make_adapter(project, telemetry_exporter_job=telemetry_job)
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
+            mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 0
+            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
+            mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 1
+
+            task = adapter._start_telemetry_export_task()
+            assert task is not None
+            adapter.state.telemetry_export_task = task
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        snapshot = adapter.status_snapshot()
+        telemetry_probe = snapshot["workerProbe"]["jobs"]["telemetryExports"]
+
+        self.assertEqual(telemetry_probe["state"], "succeeded")
+        self.assertEqual(telemetry_probe["lastOutcome"], "not_configured")
+        self.assertEqual(telemetry_probe["details"]["queueDepth"], 0)
+        self.assertFalse(telemetry_probe["details"]["configured"])
+        self.assertTrue(telemetry_probe["details"]["envLocked"])
+        self.assertFalse(telemetry_probe["details"]["persistedEnabled"])
+
 
 class TestWorkerProbeApp(unittest.TestCase):
     def test_detail_route_embeds_worker_probe_extension(self):
@@ -482,6 +534,62 @@ class TestWorkerProbeApp(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.json()["ready"]["ready"])
+
+    def test_detail_route_surfaces_stale_worker_probe_backlog_and_freshness(self):
+        project = _make_project()
+        adapter = _make_adapter(project)
+        telemetry_observation = adapter.state.job_observations["telemetryExports"]
+        telemetry_observation.state = "failed"
+        telemetry_observation.interval_seconds = 60
+        telemetry_observation.backlog_count = 9
+        telemetry_observation.checkpoint_at = "2026-04-15T10:00:00Z"
+        telemetry_observation.last_success_at = "2026-04-15T09:30:00Z"
+        telemetry_observation.last_failure_at = "2026-04-15T11:55:00Z"
+        telemetry_observation.last_outcome = "not_configured"
+        telemetry_observation.last_error = "telemetry_export_failed"
+        telemetry_observation.details.update(
+            {
+                "queueDepth": 9,
+                "configured": False,
+                "envLocked": True,
+                "persistedEnabled": False,
+            }
+        )
+
+        with patch(
+            "backend.adapters.jobs.runtime._utc_now",
+            return_value=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        ):
+            worker_probe = adapter.status_snapshot()["workerProbe"]
+
+        container = MagicMock()
+        container.runtime_status.return_value = {
+            "profile": "worker",
+            "probeContract": {
+                "schemaVersion": "ops-201-v1",
+                "runtimeProfile": "worker",
+                "live": {"state": "live", "status": "pass"},
+                "ready": {"state": "degraded", "status": "warn", "ready": True, "reasons": []},
+                "detail": {"state": "degraded", "status": "warn", "activities": {"jobsEnabled": True}},
+            },
+            "workerProbe": worker_probe,
+        }
+
+        client = TestClient(build_worker_probe_app(container))
+        response = client.get("/detailz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        telemetry_probe = payload["detail"]["worker"]["jobs"]["telemetryExports"]
+        self.assertEqual(telemetry_probe["state"], "failed")
+        self.assertEqual(telemetry_probe["backlogCount"], 9)
+        self.assertEqual(telemetry_probe["checkpointFreshnessSeconds"], 7200)
+        self.assertEqual(telemetry_probe["lastSuccessFreshnessSeconds"], 9000)
+        self.assertEqual(telemetry_probe["lastOutcome"], "not_configured")
+        self.assertFalse(telemetry_probe["details"]["configured"])
+        self.assertTrue(telemetry_probe["details"]["envLocked"])
+        self.assertEqual(payload["detail"]["worker"]["summary"]["backlogCounts"]["telemetryExports"], 9)
+        self.assertEqual(payload["detail"]["worker"]["summary"]["maxCheckpointFreshnessSeconds"], 7200)
 
 
 # ---------------------------------------------------------------------------

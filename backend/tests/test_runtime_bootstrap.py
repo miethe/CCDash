@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from backend.application.ports.core import ProjectBinding
@@ -19,7 +20,7 @@ from backend.db.repositories.postgres.identity_access import PostgresPrincipalRe
 from backend.runtime.bootstrap_api import build_api_app
 from backend.runtime.bootstrap_local import build_local_app
 from backend.runtime.bootstrap_test import build_test_app
-from backend.runtime.bootstrap_worker import build_worker_runtime
+from backend.runtime.bootstrap_worker import build_worker_probe_app, build_worker_runtime
 from backend.runtime.profiles import get_runtime_profile, iter_runtime_profiles
 from backend.runtime.storage_contract import (
     build_storage_profile_validation_matrix,
@@ -571,6 +572,41 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(check_states["storage_pairing"], "pass")
         self.assertEqual(check_states["auth_contract"], "fail")
 
+    def test_ready_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "pending"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/ready")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "not_ready")
+        self.assertEqual(payload["status"], "fail")
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["degraded"])
+        self.assertIn("migration_governance", payload["requiredReadinessChecks"])
+        self.assertIn("schema_migrations", payload["requiredReadinessChecks"])
+        self.assertEqual(payload["reasonCodes"], ["schema_migrations"])
+        self.assertIn(
+            {
+                "code": "schema_migrations",
+                "category": "migration",
+                "severity": "fail",
+                "summary": "Schema migrations are not applied.",
+            },
+            payload["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["checks"]}
+        self.assertEqual(check_states["migration_governance"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "fail")
+        self.assertEqual(check_states["auth_contract"], "pass")
+
     def test_detail_probe_endpoint_surfaces_degraded_runtime_storage_and_database_state(self) -> None:
         app = build_local_app()
         app.state.runtime_container.storage_profile = _local_storage_profile()
@@ -601,6 +637,69 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(check_categories["storage_pairing"], "storage")
         self.assertEqual(check_categories["schema_migrations"], "migration")
         self.assertEqual(check_categories["watcher_runtime"], "runtime")
+
+    def test_detail_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "pending"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["ready"]["state"], "not_ready")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertFalse(payload["ready"]["ready"])
+        self.assertFalse(payload["ready"]["degraded"])
+        self.assertEqual(payload["ready"]["reasonCodes"], ["schema_migrations"])
+        self.assertEqual(payload["detail"]["state"], "not_ready")
+        self.assertEqual(payload["detail"]["status"], "fail")
+        self.assertEqual(payload["detail"]["database"]["status"], "connected")
+        self.assertEqual(payload["detail"]["database"]["migrationStatus"], "pending")
+        self.assertEqual(payload["detail"]["database"]["migrationGovernanceStatus"], "verified")
+        check_states = {check["code"]: check["status"] for check in payload["detail"]["checks"]}
+        self.assertEqual(check_states["migration_governance"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "fail")
+        self.assertEqual(check_states["auth_contract"], "pass")
+
+    def test_worker_probe_ready_endpoint_returns_503_for_missing_project_binding(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id="project-1"),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "worker")
+        self.assertEqual(payload["ready"]["state"], "not_ready")
+        self.assertEqual(payload["ready"]["status"], "fail")
+        self.assertFalse(payload["ready"]["ready"])
+        self.assertIn(
+            {
+                "code": "worker_binding",
+                "category": "worker",
+                "severity": "fail",
+                "summary": "Worker project binding is unresolved.",
+            },
+            payload["ready"]["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["ready"]["checks"]}
+        self.assertEqual(check_states["worker_binding"], "fail")
 
 
 class StorageAdapterCompositionTests(unittest.TestCase):
