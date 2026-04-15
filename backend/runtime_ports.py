@@ -14,12 +14,16 @@ from backend.adapters.jobs import InProcessJobScheduler
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend.adapters.workspaces import ProjectManagerWorkspaceRegistry
 from backend.application.ports import CorePorts, StorageUnitOfWork
-from backend.db.migration_governance import resolve_storage_composition_contract
+from backend.db.migration_governance import (
+    build_migration_governance_metadata,
+    resolve_storage_composition_contract,
+)
 from backend.project_manager import ProjectManager, project_manager
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
     get_runtime_storage_contract,
     get_storage_capability_contract,
+    serialize_probe_cadence,
     validate_runtime_storage_pairing,
 )
 
@@ -63,13 +67,23 @@ def build_runtime_metadata(
     runtime_contract = get_runtime_storage_contract(runtime_profile)
     storage_contract = get_storage_capability_contract(storage_profile)
     storage_composition = resolve_storage_composition_contract(storage_profile)
+    governance_metadata = build_migration_governance_metadata(storage_profile)
+    runtime_capabilities = {
+        "watch": runtime_profile.capabilities.watch,
+        "sync": runtime_profile.capabilities.sync,
+        "jobs": runtime_profile.capabilities.jobs,
+        "auth": runtime_profile.capabilities.auth,
+        "integrations": runtime_profile.capabilities.integrations,
+    }
     return {
         "profile": runtime_profile.name,
+        "runtimeDescription": runtime_profile.description,
         "watchEnabled": runtime_profile.capabilities.watch,
         "syncEnabled": runtime_profile.capabilities.sync,
         "jobsEnabled": runtime_profile.capabilities.jobs,
         "authEnabled": runtime_profile.capabilities.auth,
         "integrationsEnabled": runtime_profile.capabilities.integrations,
+        "runtimeCapabilities": runtime_capabilities,
         "recommendedStorageProfile": runtime_profile.recommended_storage_profile,
         "allowedStorageProfiles": runtime_contract.allowed_storage_profiles,
         "supportedStorageProfiles": runtime_contract.allowed_storage_profiles,
@@ -77,6 +91,8 @@ def build_runtime_metadata(
         "runtimeJobBehavior": runtime_contract.job_behavior,
         "runtimeAuthBehavior": runtime_contract.auth_behavior,
         "runtimeIntegrationBehavior": runtime_contract.integration_behavior,
+        "requiredReadinessChecks": runtime_contract.readiness_checks,
+        "probeCadence": serialize_probe_cadence(runtime_contract),
         "storageMode": storage_contract.mode,
         "storageProfile": storage_profile.profile,
         "storageBackend": storage_profile.db_backend,
@@ -90,6 +106,9 @@ def build_runtime_metadata(
         "storageSchema": storage_profile.schema_name,
         "canonicalSessionStore": storage_profile.canonical_session_store,
         "requiredStorageGuarantees": storage_contract.required_guarantees,
+        "migrationGovernanceStatus": governance_metadata["migrationGovernanceStatus"],
+        "supportedStorageCompositions": governance_metadata["supportedStorageCompositions"],
+        "supportedBackendDifferenceCategories": governance_metadata["supportedBackendDifferenceCategories"],
     }
 
 

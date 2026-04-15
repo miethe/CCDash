@@ -32,6 +32,8 @@ from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.runtime.storage_contract import (
     build_storage_profile_validation_matrix,
+    default_runtime_activity_snapshot,
+    get_runtime_storage_contract,
     get_storage_capability_contract,
     validate_runtime_storage_pairing,
 )
@@ -310,6 +312,9 @@ class RuntimeContainer:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
         status = self._runtime_metadata()
+        activity_status = default_runtime_activity_snapshot(self.profile)
+        if self.job_adapter is not None:
+            activity_status.update(self.job_adapter.status_snapshot())
         storage_probe = self.ports or build_core_ports(
             object(),
             runtime_profile=self.profile,
@@ -339,9 +344,336 @@ class RuntimeContainer:
                 "syncProvisioned": self.sync is not None,
             }
         )
-        if self.job_adapter is not None:
-            status.update(self.job_adapter.status_snapshot())
+        status.update(activity_status)
+        probe_contract = self._build_probe_contract(status)
+        status.update(
+            {
+                "probeContract": probe_contract,
+                "probeSchemaVersion": str(probe_contract["schemaVersion"]),
+                "probeLiveState": str(probe_contract["live"]["state"]),
+                "probeReadyState": str(probe_contract["ready"]["state"]),
+                "probeReadyStatus": str(probe_contract["ready"]["status"]),
+                "probeDetailStatus": str(probe_contract["detail"]["status"]),
+                "probeReady": bool(probe_contract["ready"]["ready"]),
+                "probeDegraded": bool(probe_contract["ready"]["degraded"]),
+                "degradedReasons": list(probe_contract["ready"]["reasons"]),
+                "degradedReasonCodes": [
+                    str(reason["code"]) for reason in probe_contract["ready"]["reasons"]
+                ],
+            }
+        )
         return status
+
+    def _build_probe_contract(self, status: dict[str, Any]) -> dict[str, Any]:
+        runtime_contract = get_runtime_storage_contract(self.profile)
+        db_connected = bool(connection._connection)
+        migration_status = str(status.get("migrationStatus", "unknown"))
+        auth_configured = bool(config.resolve_api_bearer_token())
+        worker_binding_config = config.resolve_worker_binding_config()
+        watcher_state = str(status.get("watcher", "unknown"))
+        startup_sync_state = str(status.get("startupSync", "idle"))
+        required_checks = set(runtime_contract.readiness_checks)
+
+        checks = [
+            self._probe_check(
+                code="db_connection",
+                category="database",
+                status="pass" if db_connected else "fail",
+                required="db_connection" in required_checks,
+                summary="Database connection is established."
+                if db_connected
+                else "Database connection is not established.",
+                detail=(
+                    "The runtime container has an active database connection."
+                    if db_connected
+                    else "Readiness requires a live database connection before traffic or jobs can rely on state."
+                ),
+                data={"db": "connected" if db_connected else "disconnected"},
+            ),
+            self._probe_check(
+                code="storage_pairing",
+                category="storage",
+                status="pass",
+                required="storage_pairing" in required_checks,
+                summary="Runtime and storage profiles are compatible.",
+                detail=(
+                    f"runtime_profile={self.profile.name} storage_profile={self.storage_profile.profile} "
+                    f"storage_mode={status.get('storageMode', '')} composition={status.get('storageComposition', '')}"
+                ),
+                data={
+                    "runtimeProfile": self.profile.name,
+                    "storageProfile": self.storage_profile.profile,
+                    "storageMode": status.get("storageMode"),
+                    "storageComposition": status.get("storageComposition"),
+                },
+            ),
+            self._probe_check(
+                code="migration_governance",
+                category="migration",
+                status="pass",
+                required="migration_governance" in required_checks,
+                summary="Migration governance matrix is verified.",
+                detail=(
+                    f"Supported compositions: {', '.join(status.get('supportedStorageCompositions', ()))}. "
+                    f"Tracked backend differences: {', '.join(status.get('supportedBackendDifferenceCategories', ()))}."
+                ),
+                data={
+                    "migrationGovernanceStatus": status.get("migrationGovernanceStatus"),
+                    "supportedStorageCompositions": list(status.get("supportedStorageCompositions", ())),
+                    "supportedBackendDifferenceCategories": list(
+                        status.get("supportedBackendDifferenceCategories", ())
+                    ),
+                },
+            ),
+            self._probe_check(
+                code="schema_migrations",
+                category="migration",
+                status="pass" if migration_status == "applied" else "fail",
+                required="schema_migrations" in required_checks,
+                summary="Schema migrations are applied."
+                if migration_status == "applied"
+                else "Schema migrations are not applied.",
+                detail=(
+                    f"migration_status={migration_status}"
+                    if migration_status == "applied"
+                    else "Runtime startup must complete migrations before the runtime should be treated as ready."
+                ),
+                data={"migrationStatus": migration_status},
+            ),
+            self._probe_check(
+                code="auth_contract",
+                category="auth",
+                status=(
+                    "not_applicable"
+                    if not self.profile.capabilities.auth
+                    else "pass" if auth_configured else "fail"
+                ),
+                required="auth_contract" in required_checks,
+                summary=(
+                    "Request authentication is not required for this runtime."
+                    if not self.profile.capabilities.auth
+                    else "Hosted auth contract is configured."
+                    if auth_configured
+                    else "Hosted auth contract is missing its bearer token."
+                ),
+                detail=(
+                    "This runtime does not serve authenticated HTTP traffic."
+                    if not self.profile.capabilities.auth
+                    else f"{config.CCDASH_API_BEARER_TOKEN_ENV} must be set before the API runtime is ready."
+                ),
+                data={
+                    "authEnabled": self.profile.capabilities.auth,
+                    "configured": auth_configured,
+                },
+            ),
+            self._probe_check(
+                code="worker_binding",
+                category="worker",
+                status=(
+                    "not_applicable"
+                    if self.profile.name != "worker"
+                    else "pass" if self.project_binding is not None else "fail"
+                ),
+                required="worker_binding" in required_checks,
+                summary=(
+                    "Worker project binding is not required for this runtime."
+                    if self.profile.name != "worker"
+                    else "Worker project binding is resolved."
+                    if self.project_binding is not None
+                    else "Worker project binding is unresolved."
+                ),
+                detail=(
+                    "Only the worker runtime requires an explicit project binding."
+                    if self.profile.name != "worker"
+                    else (
+                        f"configured={worker_binding_config.configured} "
+                        f"requested_project_id={worker_binding_config.project_id or 'n/a'}"
+                    )
+                ),
+                data={
+                    "bindingRequired": self.profile.name == "worker",
+                    "configured": worker_binding_config.configured,
+                    "requestedProjectId": worker_binding_config.project_id or None,
+                    "resolvedProjectId": (
+                        self.project_binding.project.id if self.project_binding is not None else None
+                    ),
+                },
+            ),
+            self._probe_check(
+                code="watcher_runtime",
+                category="runtime",
+                status=(
+                    "not_applicable"
+                    if not self.profile.capabilities.watch
+                    else "pass" if watcher_state == "running" else "warn"
+                ),
+                required="watcher_runtime" in required_checks,
+                summary=(
+                    "Watcher is not expected for this runtime."
+                    if not self.profile.capabilities.watch
+                    else "Watcher is active."
+                    if watcher_state == "running"
+                    else "Watcher-capable runtime is serving without an active watcher."
+                ),
+                detail=(
+                    "Watcher activity is a local-only degradation signal."
+                    if self.profile.capabilities.watch
+                    else "This runtime intentionally avoids watcher ownership."
+                ),
+                data={"watchEnabled": self.profile.capabilities.watch, "watcher": watcher_state},
+            ),
+            self._probe_check(
+                code="startup_sync",
+                category="runtime",
+                status=(
+                    "not_applicable"
+                    if not self.profile.capabilities.sync
+                    else "warn" if startup_sync_state == "running" else "pass"
+                ),
+                required="startup_sync" in required_checks,
+                summary=(
+                    "Startup sync is not expected for this runtime."
+                    if not self.profile.capabilities.sync
+                    else "Startup sync is still catching up."
+                    if startup_sync_state == "running"
+                    else "Startup sync is idle."
+                ),
+                detail=(
+                    "A running startup sync indicates the runtime is live but still reconciling background state."
+                    if self.profile.capabilities.sync
+                    else "This runtime does not own startup sync work."
+                ),
+                data={
+                    "syncEnabled": self.profile.capabilities.sync,
+                    "startupSync": startup_sync_state,
+                    "syncProvisioned": bool(status.get("syncProvisioned", False)),
+                },
+            ),
+        ]
+
+        failed_checks = [check for check in checks if check["status"] == "fail" and check["required"]]
+        warning_checks = [check for check in checks if check["status"] == "warn"]
+        reasons = [self._probe_reason(check) for check in checks if check["status"] in {"fail", "warn"}]
+
+        if failed_checks:
+            ready_state = "not_ready"
+            ready_status = "fail"
+            ready = False
+            degraded = False
+            ready_summary = f"Runtime profile '{self.profile.name}' is live but not ready."
+        elif warning_checks:
+            ready_state = "degraded"
+            ready_status = "warn"
+            ready = True
+            degraded = True
+            ready_summary = f"Runtime profile '{self.profile.name}' is ready with degraded signals."
+        else:
+            ready_state = "ready"
+            ready_status = "pass"
+            ready = True
+            degraded = False
+            ready_summary = f"Runtime profile '{self.profile.name}' is ready."
+
+        return {
+            "schemaVersion": "ops-201-v1",
+            "runtimeProfile": self.profile.name,
+            "live": {
+                "state": "live",
+                "status": "pass",
+                "summary": f"Runtime profile '{self.profile.name}' is responding.",
+            },
+            "ready": {
+                "state": ready_state,
+                "status": ready_status,
+                "ready": ready,
+                "degraded": degraded,
+                "summary": ready_summary,
+                "reasons": reasons,
+                "checks": checks,
+            },
+            "detail": {
+                "state": ready_state,
+                "status": ready_status,
+                "summary": ready_summary,
+                "recommendedCadence": dict(status.get("probeCadence", {})),
+                "requiredReadinessChecks": list(status.get("requiredReadinessChecks", ())),
+                "runtime": {
+                    "profile": status.get("profile"),
+                    "description": status.get("runtimeDescription"),
+                    "capabilities": dict(status.get("runtimeCapabilities", {})),
+                    "allowedStorageProfiles": list(status.get("allowedStorageProfiles", ())),
+                    "recommendedStorageProfile": status.get("recommendedStorageProfile"),
+                    "syncBehavior": status.get("runtimeSyncBehavior"),
+                    "jobBehavior": status.get("runtimeJobBehavior"),
+                    "authBehavior": status.get("runtimeAuthBehavior"),
+                    "integrationBehavior": status.get("runtimeIntegrationBehavior"),
+                },
+                "storage": {
+                    "mode": status.get("storageMode"),
+                    "profile": status.get("storageProfile"),
+                    "backend": status.get("storageBackend"),
+                    "composition": status.get("storageComposition"),
+                    "canonicalStore": status.get("storageCanonicalStore"),
+                    "filesystemRole": status.get("storageFilesystemRole"),
+                    "filesystemSourceOfTruth": bool(status.get("filesystemSourceOfTruth", False)),
+                    "sharedPostgresEnabled": bool(status.get("sharedPostgresEnabled", False)),
+                    "isolationMode": status.get("storageIsolationMode"),
+                    "supportedIsolationModes": list(status.get("supportedStorageIsolationModes", ())),
+                    "requiredGuarantees": list(status.get("requiredStorageGuarantees", ())),
+                },
+                "database": {
+                    "status": "connected" if db_connected else "disconnected",
+                    "migrationStatus": migration_status,
+                    "migrationGovernanceStatus": status.get("migrationGovernanceStatus"),
+                },
+                "binding": {
+                    "projectId": self.project_binding.project.id if self.project_binding is not None else None,
+                    "projectName": self.project_binding.project.name if self.project_binding is not None else None,
+                    "projectBindingSource": status.get("projectBindingSource"),
+                    "projectBindingRequestedId": status.get("projectBindingRequestedId"),
+                    "projectBindingLocked": bool(status.get("projectBindingLocked", False)),
+                },
+                "activities": {
+                    "watcher": watcher_state,
+                    "startupSync": startup_sync_state,
+                    "analyticsSnapshots": str(status.get("analyticsSnapshots", "idle")),
+                    "telemetryExports": str(status.get("telemetryExports", "idle")),
+                    "cacheWarming": str(status.get("cacheWarming", "idle")),
+                    "jobsEnabled": bool(status.get("jobsEnabled", False)),
+                    "syncProvisioned": bool(status.get("syncProvisioned", False)),
+                },
+                "checks": checks,
+            },
+        }
+
+    def _probe_check(
+        self,
+        *,
+        code: str,
+        category: str,
+        status: str,
+        required: bool,
+        summary: str,
+        detail: str,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "code": code,
+            "category": category,
+            "status": status,
+            "required": required,
+            "summary": summary,
+            "detail": detail,
+            "data": data or {},
+        }
+
+    def _probe_reason(self, check: dict[str, Any]) -> dict[str, str]:
+        return {
+            "code": str(check["code"]),
+            "category": str(check["category"]),
+            "severity": str(check["status"]),
+            "summary": str(check["summary"]),
+        }
 
     def _header(self, metadata: RequestMetadata, key: str) -> str | None:
         value = metadata.headers.get(key.lower())
