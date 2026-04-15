@@ -4,8 +4,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.application.context import RequestContext
 from backend import config
@@ -64,69 +65,227 @@ def build_runtime_app(profile: RuntimeProfile | RuntimeProfileName) -> FastAPI:
 
     _register_routers(app)
 
+    @app.get("/api/health/live")
+    def health_live(
+        _: Request,
+        _request_context: RequestContext = Depends(get_request_context),
+    ) -> JSONResponse:
+        runtime_status = container.runtime_status()
+        return JSONResponse(
+            _build_live_probe_payload(runtime_status),
+            status_code=status.HTTP_200_OK,
+        )
+
+    @app.get("/api/health/ready")
+    def health_ready(
+        _: Request,
+        _request_context: RequestContext = Depends(get_request_context),
+    ) -> JSONResponse:
+        runtime_status = container.runtime_status()
+        return JSONResponse(
+            _build_ready_probe_payload(runtime_status),
+            status_code=_probe_response_status_code(runtime_status),
+        )
+
+    @app.get("/api/health/detail")
+    def health_detail(
+        _: Request,
+        _request_context: RequestContext = Depends(get_request_context),
+    ) -> JSONResponse:
+        runtime_status = container.runtime_status()
+        return JSONResponse(
+            _build_detail_probe_payload(runtime_status),
+            status_code=_probe_response_status_code(runtime_status),
+        )
+
     @app.get("/api/health")
     def health(
         _: Request,
         _request_context: RequestContext = Depends(get_request_context),
     ) -> dict[str, Any]:
         runtime_status = container.runtime_status()
-        return {
-            "status": "ok",
-            "db": "connected" if connection._connection else "disconnected",
-            "watcher": str(runtime_status.get("watcher", "unknown")),
-            "profile": str(runtime_status.get("profile", runtime_profile.name)),
-            "startupSync": str(runtime_status.get("startupSync", "idle")),
-            "analyticsSnapshots": str(runtime_status.get("analyticsSnapshots", "idle")),
-            "storageMode": str(runtime_status.get("storageMode", "")),
-            "storageProfile": str(runtime_status.get("storageProfile", "")),
-            "storageBackend": str(runtime_status.get("storageBackend", "")),
-            "storageComposition": str(runtime_status.get("storageComposition", "")),
-            "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
-            "supportedStorageProfiles": list(runtime_status.get("supportedStorageProfiles", ())),
-            "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
-            "storageFilesystemRole": str(runtime_status.get("storageFilesystemRole", "")),
-            "sharedPostgresEnabled": bool(runtime_status.get("sharedPostgresEnabled", False)),
-            "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
-            "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
-            "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
-            "auditStore": str(runtime_status.get("auditStore", "")),
-            "auditWriteSupported": bool(runtime_status.get("auditWriteSupported", False)),
-            "auditWriteAuthoritative": bool(runtime_status.get("auditWriteAuthoritative", False)),
-            "auditWriteStatus": str(runtime_status.get("auditWriteStatus", "")),
-            "auditWriteNotes": str(runtime_status.get("auditWriteNotes", "")),
-            "sessionEmbeddingWriteSupported": bool(runtime_status.get("sessionEmbeddingWriteSupported", False)),
-            "sessionEmbeddingWriteAuthoritative": bool(runtime_status.get("sessionEmbeddingWriteAuthoritative", False)),
-            "sessionEmbeddingWriteStatus": str(runtime_status.get("sessionEmbeddingWriteStatus", "")),
-            "sessionEmbeddingWriteNotes": str(runtime_status.get("sessionEmbeddingWriteNotes", "")),
-            "sessionIntelligenceProfile": str(runtime_status.get("sessionIntelligenceProfile", "")),
-            "sessionIntelligenceAnalyticsLevel": str(runtime_status.get("sessionIntelligenceAnalyticsLevel", "")),
-            "sessionIntelligenceBackfillStrategy": str(runtime_status.get("sessionIntelligenceBackfillStrategy", "")),
-            "sessionIntelligenceMemoryDraftFlow": str(runtime_status.get("sessionIntelligenceMemoryDraftFlow", "")),
-            "sessionIntelligenceIsolationBoundary": str(runtime_status.get("sessionIntelligenceIsolationBoundary", "")),
-            "storageSchema": str(runtime_status.get("storageSchema", "")),
-            "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
-            "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
-            "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
-            "syncProvisioned": bool(runtime_status.get("syncProvisioned", False)),
-            "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
-            "authEnabled": bool(runtime_status.get("authEnabled", False)),
-            "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
-            "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
-            "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
-            "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
-            "runtimeAuthBehavior": str(runtime_status.get("runtimeAuthBehavior", "")),
-            "runtimeIntegrationBehavior": str(runtime_status.get("runtimeIntegrationBehavior", "")),
-            "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
-            "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
-            "storageProfileValidationMatrix": _serialize_storage_profile_validation_matrix(
-                runtime_status.get("storageProfileValidationMatrix", ())
-            ),
-            "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
-            "migrationStatus": str(runtime_status.get("migrationStatus", "")),
-            "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
-        }
+        return _build_health_payload(runtime_status, runtime_profile)
 
     return app
+
+
+def _build_health_payload(
+    runtime_status: dict[str, Any],
+    runtime_profile: RuntimeProfile,
+) -> dict[str, Any]:
+    probe_contract = _require_probe_contract(runtime_status)
+    return {
+        "status": "ok",
+        "db": "connected" if connection._connection else "disconnected",
+        "watcher": str(runtime_status.get("watcher", "unknown")),
+        "profile": str(runtime_status.get("profile", runtime_profile.name)),
+        "startupSync": str(runtime_status.get("startupSync", "idle")),
+        "analyticsSnapshots": str(runtime_status.get("analyticsSnapshots", "idle")),
+        "storageMode": str(runtime_status.get("storageMode", "")),
+        "storageProfile": str(runtime_status.get("storageProfile", "")),
+        "storageBackend": str(runtime_status.get("storageBackend", "")),
+        "storageComposition": str(runtime_status.get("storageComposition", "")),
+        "recommendedStorageProfile": str(runtime_status.get("recommendedStorageProfile", "")),
+        "supportedStorageProfiles": list(runtime_status.get("supportedStorageProfiles", ())),
+        "filesystemSourceOfTruth": bool(runtime_status.get("filesystemSourceOfTruth", False)),
+        "storageFilesystemRole": str(runtime_status.get("storageFilesystemRole", "")),
+        "sharedPostgresEnabled": bool(runtime_status.get("sharedPostgresEnabled", False)),
+        "storageIsolationMode": str(runtime_status.get("storageIsolationMode", "")),
+        "supportedStorageIsolationModes": list(runtime_status.get("supportedStorageIsolationModes", ())),
+        "storageCanonicalStore": str(runtime_status.get("storageCanonicalStore", "")),
+        "auditStore": str(runtime_status.get("auditStore", "")),
+        "auditWriteSupported": bool(runtime_status.get("auditWriteSupported", False)),
+        "auditWriteAuthoritative": bool(runtime_status.get("auditWriteAuthoritative", False)),
+        "auditWriteStatus": str(runtime_status.get("auditWriteStatus", "")),
+        "auditWriteNotes": str(runtime_status.get("auditWriteNotes", "")),
+        "sessionEmbeddingWriteSupported": bool(runtime_status.get("sessionEmbeddingWriteSupported", False)),
+        "sessionEmbeddingWriteAuthoritative": bool(
+            runtime_status.get("sessionEmbeddingWriteAuthoritative", False)
+        ),
+        "sessionEmbeddingWriteStatus": str(runtime_status.get("sessionEmbeddingWriteStatus", "")),
+        "sessionEmbeddingWriteNotes": str(runtime_status.get("sessionEmbeddingWriteNotes", "")),
+        "sessionIntelligenceProfile": str(runtime_status.get("sessionIntelligenceProfile", "")),
+        "sessionIntelligenceAnalyticsLevel": str(
+            runtime_status.get("sessionIntelligenceAnalyticsLevel", "")
+        ),
+        "sessionIntelligenceBackfillStrategy": str(
+            runtime_status.get("sessionIntelligenceBackfillStrategy", "")
+        ),
+        "sessionIntelligenceMemoryDraftFlow": str(
+            runtime_status.get("sessionIntelligenceMemoryDraftFlow", "")
+        ),
+        "sessionIntelligenceIsolationBoundary": str(
+            runtime_status.get("sessionIntelligenceIsolationBoundary", "")
+        ),
+        "storageSchema": str(runtime_status.get("storageSchema", "")),
+        "canonicalSessionStore": str(runtime_status.get("canonicalSessionStore", "")),
+        "watchEnabled": bool(runtime_status.get("watchEnabled", False)),
+        "syncEnabled": bool(runtime_status.get("syncEnabled", False)),
+        "syncProvisioned": bool(runtime_status.get("syncProvisioned", False)),
+        "jobsEnabled": bool(runtime_status.get("jobsEnabled", False)),
+        "authEnabled": bool(runtime_status.get("authEnabled", False)),
+        "integrationsEnabled": bool(runtime_status.get("integrationsEnabled", False)),
+        "allowedStorageProfiles": list(runtime_status.get("allowedStorageProfiles", ())),
+        "runtimeSyncBehavior": str(runtime_status.get("runtimeSyncBehavior", "")),
+        "runtimeJobBehavior": str(runtime_status.get("runtimeJobBehavior", "")),
+        "runtimeAuthBehavior": str(runtime_status.get("runtimeAuthBehavior", "")),
+        "runtimeIntegrationBehavior": str(runtime_status.get("runtimeIntegrationBehavior", "")),
+        "telemetryExports": str(runtime_status.get("telemetryExports", "idle")),
+        "requiredStorageGuarantees": list(runtime_status.get("requiredStorageGuarantees", ())),
+        "storageProfileValidationMatrix": _serialize_storage_profile_validation_matrix(
+            runtime_status.get("storageProfileValidationMatrix", ())
+        ),
+        "migrationGovernanceStatus": str(runtime_status.get("migrationGovernanceStatus", "")),
+        "migrationStatus": str(runtime_status.get("migrationStatus", "")),
+        "supportedStorageCompositions": [contract.composition for contract in SUPPORTED_STORAGE_COMPOSITIONS],
+        "probeContract": probe_contract,
+        "probeSchemaVersion": str(probe_contract["schemaVersion"]),
+        "probeLiveState": str(probe_contract["live"]["state"]),
+        "probeLiveStatus": str(probe_contract["live"]["status"]),
+        "probeReadyState": str(probe_contract["ready"]["state"]),
+        "probeReadyStatus": str(probe_contract["ready"]["status"]),
+        "probeDetailStatus": str(probe_contract["detail"]["status"]),
+        "probeReady": bool(probe_contract["ready"]["ready"]),
+        "probeDegraded": bool(probe_contract["ready"]["degraded"]),
+        "degradedReasons": list(probe_contract["ready"]["reasons"]),
+        "degradedReasonCodes": [
+            str(reason["code"]) for reason in probe_contract["ready"]["reasons"]
+        ],
+    }
+
+
+def _build_live_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    probe_contract = _require_probe_contract(runtime_status)
+    live = _probe_contract_section(probe_contract, "live")
+    detail = _probe_contract_section(probe_contract, "detail")
+    return {
+        "schemaVersion": str(probe_contract["schemaVersion"]),
+        "runtimeProfile": str(probe_contract["runtimeProfile"]),
+        "state": str(live["state"]),
+        "status": str(live["status"]),
+        "summary": str(live["summary"]),
+        "recommendedCadence": dict(detail.get("recommendedCadence", {})),
+    }
+
+
+def _build_ready_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    probe_contract = _require_probe_contract(runtime_status)
+    ready = _probe_contract_section(probe_contract, "ready")
+    detail = _probe_contract_section(probe_contract, "detail")
+    reasons = list(ready.get("reasons", ()))
+    return {
+        "schemaVersion": str(probe_contract["schemaVersion"]),
+        "runtimeProfile": str(probe_contract["runtimeProfile"]),
+        "state": str(ready["state"]),
+        "status": str(ready["status"]),
+        "ready": bool(ready["ready"]),
+        "degraded": bool(ready["degraded"]),
+        "summary": str(ready["summary"]),
+        "recommendedCadence": dict(detail.get("recommendedCadence", {})),
+        "requiredReadinessChecks": list(detail.get("requiredReadinessChecks", ())),
+        "reasonCodes": [str(reason["code"]) for reason in reasons],
+        "reasons": reasons,
+        "checks": list(ready.get("checks", ())),
+    }
+
+
+def _build_detail_probe_payload(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    probe_contract = _require_probe_contract(runtime_status)
+    live = _probe_contract_section(probe_contract, "live")
+    ready = _probe_contract_section(probe_contract, "ready")
+    detail = _probe_contract_section(probe_contract, "detail")
+    reasons = list(ready.get("reasons", ()))
+    return {
+        "schemaVersion": str(probe_contract["schemaVersion"]),
+        "runtimeProfile": str(probe_contract["runtimeProfile"]),
+        "live": dict(live),
+        "ready": {
+            "state": str(ready["state"]),
+            "status": str(ready["status"]),
+            "ready": bool(ready["ready"]),
+            "degraded": bool(ready["degraded"]),
+            "summary": str(ready["summary"]),
+            "reasonCodes": [str(reason["code"]) for reason in reasons],
+            "reasons": reasons,
+        },
+        "detail": {
+            "state": str(detail["state"]),
+            "status": str(detail["status"]),
+            "summary": str(detail["summary"]),
+            "recommendedCadence": dict(detail.get("recommendedCadence", {})),
+            "requiredReadinessChecks": list(detail.get("requiredReadinessChecks", ())),
+            "runtime": dict(detail.get("runtime", {})),
+            "storage": dict(detail.get("storage", {})),
+            "database": dict(detail.get("database", {})),
+            "binding": dict(detail.get("binding", {})),
+            "activities": dict(detail.get("activities", {})),
+            "checks": list(detail.get("checks", ())),
+        },
+    }
+
+
+def _probe_response_status_code(runtime_status: dict[str, Any]) -> int:
+    probe_contract = _require_probe_contract(runtime_status)
+    ready = _probe_contract_section(probe_contract, "ready")
+    return (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if str(ready["status"]) == "fail"
+        else status.HTTP_200_OK
+    )
+
+
+def _require_probe_contract(runtime_status: dict[str, Any]) -> dict[str, Any]:
+    probe_contract = runtime_status.get("probeContract")
+    if not isinstance(probe_contract, dict):
+        raise RuntimeError("Runtime status is missing probeContract metadata.")
+    return probe_contract
+
+
+def _probe_contract_section(probe_contract: dict[str, Any], section: str) -> dict[str, Any]:
+    value = probe_contract.get(section)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Probe contract section '{section}' is unavailable.")
+    return value
 
 
 def _serialize_storage_profile_validation_matrix(entries: object) -> list[dict[str, Any]]:

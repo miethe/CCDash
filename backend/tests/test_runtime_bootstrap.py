@@ -1,4 +1,5 @@
 import asyncio
+import json
 import types
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from backend.application.ports.core import ProjectBinding
 from backend.adapters.auth import LocalIdentityProvider, StaticBearerTokenIdentityProvider
 from backend.adapters.storage import EnterpriseStorageUnitOfWork, LocalStorageUnitOfWork
 from backend import config
+from backend.db import connection
 from backend.main import app as local_entrypoint_app
 from backend.db.migration_governance import SUPPORTED_STORAGE_COMPOSITIONS
 from backend.db.repositories.identity_access import LocalPrincipalRepository
@@ -107,6 +109,12 @@ def _local_storage_profile() -> config.StorageProfileConfig:
 def _health_payload(app: object) -> dict[str, object]:
     health_route = next(route for route in app.routes if getattr(route, "path", None) == "/api/health")
     return health_route.endpoint(types.SimpleNamespace(), None)
+
+
+def _probe_payload(app: object, path: str) -> tuple[int, dict[str, object]]:
+    probe_route = next(route for route in app.routes if getattr(route, "path", None) == path)
+    response = probe_route.endpoint(types.SimpleNamespace(), None)
+    return response.status_code, json.loads(response.body.decode("utf-8"))
 
 
 def _expected_health_validation_matrix() -> list[dict[str, object]]:
@@ -483,6 +491,116 @@ class RuntimeProfileTests(unittest.TestCase):
                 ).required_guarantees
             ),
         )
+
+    def test_health_endpoint_preserves_legacy_fields_and_exposes_probe_contract(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            payload = _health_payload(app)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["db"], "connected")
+        self.assertEqual(payload["profile"], "api")
+        self.assertEqual(payload["storageComposition"], "enterprise-postgres")
+        self.assertEqual(payload["probeSchemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["probeLiveState"], "live")
+        self.assertEqual(payload["probeLiveStatus"], "pass")
+        self.assertEqual(payload["probeReadyState"], "ready")
+        self.assertEqual(payload["probeReadyStatus"], "pass")
+        self.assertEqual(payload["probeDetailStatus"], "pass")
+        self.assertTrue(payload["probeReady"])
+        self.assertFalse(payload["probeDegraded"])
+        self.assertEqual(payload["degradedReasonCodes"], [])
+        self.assertEqual(payload["probeContract"]["ready"]["state"], "ready")
+
+    def test_live_probe_endpoint_reports_process_liveness_when_readiness_fails(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/live")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "live")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["recommendedCadence"], {"liveSeconds": 15, "readySeconds": 20, "detailSeconds": 60})
+
+    def test_ready_probe_endpoint_returns_503_for_missing_auth_contract(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value=None),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/ready")
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "api")
+        self.assertEqual(payload["state"], "not_ready")
+        self.assertEqual(payload["status"], "fail")
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["degraded"])
+        self.assertIn("auth_contract", payload["requiredReadinessChecks"])
+        self.assertIn("auth_contract", payload["reasonCodes"])
+        self.assertIn(
+            {
+                "code": "auth_contract",
+                "category": "auth",
+                "severity": "fail",
+                "summary": "Hosted auth contract is missing its bearer token.",
+            },
+            payload["reasons"],
+        )
+        check_states = {check["code"]: check["status"] for check in payload["checks"]}
+        self.assertEqual(check_states["db_connection"], "pass")
+        self.assertEqual(check_states["schema_migrations"], "pass")
+        self.assertEqual(check_states["storage_pairing"], "pass")
+        self.assertEqual(check_states["auth_contract"], "fail")
+
+    def test_detail_probe_endpoint_surfaces_degraded_runtime_storage_and_database_state(self) -> None:
+        app = build_local_app()
+        app.state.runtime_container.storage_profile = _local_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with patch.object(connection, "_connection", object()):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "local")
+        self.assertEqual(payload["live"]["state"], "live")
+        self.assertEqual(payload["ready"]["state"], "degraded")
+        self.assertEqual(payload["ready"]["status"], "warn")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertTrue(payload["ready"]["degraded"])
+        self.assertIn("watcher_runtime", payload["ready"]["reasonCodes"])
+        self.assertEqual(payload["detail"]["runtime"]["profile"], "local")
+        self.assertEqual(payload["detail"]["runtime"]["recommendedStorageProfile"], "local")
+        self.assertEqual(payload["detail"]["storage"]["backend"], "sqlite")
+        self.assertEqual(payload["detail"]["storage"]["composition"], "local-sqlite")
+        self.assertEqual(payload["detail"]["database"]["status"], "connected")
+        self.assertEqual(payload["detail"]["database"]["migrationStatus"], "applied")
+        self.assertEqual(payload["detail"]["activities"]["watcher"], "stopped")
+        self.assertEqual(payload["detail"]["activities"]["startupSync"], "idle")
+        check_categories = {check["code"]: check["category"] for check in payload["detail"]["checks"]}
+        self.assertEqual(check_categories["db_connection"], "database")
+        self.assertEqual(check_categories["storage_pairing"], "storage")
+        self.assertEqual(check_categories["schema_migrations"], "migration")
+        self.assertEqual(check_categories["watcher_runtime"], "runtime")
 
 
 class StorageAdapterCompositionTests(unittest.TestCase):
