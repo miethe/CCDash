@@ -24,6 +24,7 @@ class RuntimeJobState:
     sync_task: asyncio.Task[None] | None = None
     analytics_snapshot_task: asyncio.Task[None] | None = None
     telemetry_export_task: asyncio.Task[None] | None = None
+    cache_warming_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
 
 
@@ -104,6 +105,9 @@ class RuntimeJobAdapter:
             telemetry_task = self._start_telemetry_export_task()
             if telemetry_task is not None:
                 self.state.telemetry_export_task = telemetry_task
+            cache_warming_task = self._start_cache_warming_task()
+            if cache_warming_task is not None:
+                self.state.cache_warming_task = cache_warming_task
 
         return self.state
 
@@ -132,6 +136,14 @@ class RuntimeJobAdapter:
                 pass
             self.state.telemetry_export_task = None
 
+        if self.state.cache_warming_task is not None:
+            self.state.cache_warming_task.cancel()
+            try:
+                await self.state.cache_warming_task
+            except asyncio.CancelledError:
+                pass
+            self.state.cache_warming_task = None
+
         if self.state.watcher_started:
             await file_watcher.stop()
             self.state.watcher_started = False
@@ -145,6 +157,9 @@ class RuntimeJobAdapter:
             else "idle",
             "telemetryExports": "running"
             if self.state.telemetry_export_task is not None and not self.state.telemetry_export_task.done()
+            else "idle",
+            "cacheWarming": "running"
+            if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
             else "idle",
             "jobsEnabled": self.profile.capabilities.jobs,
         }
@@ -246,6 +261,123 @@ class RuntimeJobAdapter:
         return self.ports.job_scheduler.schedule(
             _run_periodic_analytics_snapshots(),
             name=f"ccdash:{self.profile.name}:analytics-snapshots",
+        )
+
+    def _start_cache_warming_task(self) -> asyncio.Task[None] | None:
+        """Periodically warm the two heaviest memoized query caches.
+
+        Targets: ``ProjectStatusQueryService.get_status`` and
+        ``WorkflowDiagnosticsQueryService.get_diagnostics`` — the two service
+        methods decorated with ``@memoized_query`` that aggregate the most DB
+        reads.  (The "feature list" mentioned in the plan is not memoized; the
+        next heaviest memoized pair is project-status + workflow-diagnostics.)
+
+        A synthetic ``RequestContext`` is constructed from the active-project
+        workspace registry entry.  If no active project is found the iteration
+        is skipped silently.  All service errors are caught and logged; the loop
+        continues regardless.
+        """
+        interval_seconds = max(0, int(getattr(config, "CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 0)))
+        if interval_seconds <= 0:
+            return None
+
+        workspace_registry = self.ports.workspace_registry
+        bound_project = self.project_binding.project if self.project_binding is not None else None
+
+        async def _run_periodic_cache_warming() -> None:
+            # Import here to avoid circular-import issues at module load time.
+            from backend.application.context import (  # noqa: PLC0415
+                Principal,
+                ProjectScope,
+                RequestContext,
+                TraceContext,
+                TenancyContext,
+            )
+            from backend.application.services.agent_queries.project_status import (  # noqa: PLC0415
+                ProjectStatusQueryService,
+            )
+            from backend.application.services.agent_queries.workflow_intelligence import (  # noqa: PLC0415
+                WorkflowDiagnosticsQueryService,
+            )
+
+            _project_status_svc = ProjectStatusQueryService()
+            _workflow_svc = WorkflowDiagnosticsQueryService()
+
+            _warming_principal = Principal(
+                subject="cache-warmer",
+                display_name="Cache Warming Job",
+                auth_mode="system",
+                is_authenticated=True,
+            )
+            _warming_trace = TraceContext(
+                request_id="cache-warmer",
+                correlation_id="cache-warmer",
+                path="/internal/cache-warm",
+                method="INTERNAL",
+            )
+
+            while True:
+                await asyncio.sleep(interval_seconds)
+                current_project = bound_project or workspace_registry.get_active_project()
+                if not current_project:
+                    logger.debug("Cache warming: no active project — skipping this iteration")
+                    continue
+
+                _, project_scope = workspace_registry.resolve_scope(current_project.id)
+                if project_scope is None:
+                    logger.debug(
+                        "Cache warming: resolve_scope returned None for project '%s' — skipping",
+                        current_project.id,
+                    )
+                    continue
+
+                context = RequestContext(
+                    principal=_warming_principal,
+                    workspace=None,
+                    project=project_scope,
+                    runtime_profile="worker",
+                    trace=_warming_trace,
+                    tenancy=TenancyContext(project_id=current_project.id),
+                )
+
+                # Warm project status
+                try:
+                    await _project_status_svc.get_status(context, self.ports)
+                    logger.debug(
+                        "Cache warming: project_status warmed for project '%s'",
+                        current_project.id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Cache warming: project_status failed for project '%s'",
+                        current_project.id,
+                    )
+
+                # Warm workflow diagnostics (no feature filter — global scope)
+                try:
+                    await _workflow_svc.get_diagnostics(context, self.ports)
+                    logger.debug(
+                        "Cache warming: workflow_diagnostics warmed for project '%s'",
+                        current_project.id,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Cache warming: workflow_diagnostics failed for project '%s'",
+                        current_project.id,
+                    )
+
+        logger.info(
+            "Started periodic cache warming (profile=%s interval=%ss targets=project_status,workflow_diagnostics)",
+            self.profile.name,
+            interval_seconds,
+        )
+        return self.ports.job_scheduler.schedule(
+            _run_periodic_cache_warming(),
+            name=f"ccdash:{self.profile.name}:cache-warming",
         )
 
     def _start_telemetry_export_task(self) -> asyncio.Task[None] | None:

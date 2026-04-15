@@ -2,106 +2,136 @@
 schema_version: 2
 doc_type: progress
 type: progress
-prd: "ccdash-query-caching-and-cli-ergonomics"
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
+prd: ccdash-query-caching-and-cli-ergonomics
+feature_slug: ccdash-query-caching-and-cli-ergonomics
 phase: 4
-title: "Background Materialization"
-status: pending
-created: 2026-04-14
-updated: 2026-04-14
+title: Background Materialization
+status: completed
+created: '2026-04-14'
+updated: '2026-04-14'
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 commit_refs: []
 pr_refs: []
-owners: ["python-backend-engineer"]
+owners:
+- python-backend-engineer
 contributors: []
 execution_model: sequential
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "BG-001"
-    description: "Inspect backend/adapters/jobs/ — understand job registration pattern, scheduling API, error handling conventions"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "haiku"
-    model_effort: "low"
-
-  - id: "BG-002"
-    description: "Create cache_warming_job() in backend/adapters/jobs/: loop project IDs, call two heaviest endpoints (project status, feature list), configurable interval, disabled if interval=0"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BG-001", "CACHE-006"]
-    estimated_effort: "1.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "BG-003"
-    description: "Register cache_warming_job() in backend/adapters/jobs/ registry; wire CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS config; disable if interval=0"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BG-002"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "BG-004"
-    description: "Integration test: HTTP request latency unaffected while background job runs; cache warm after job completes"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BG-002", "BG-003"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "BG-005"
-    description: "Test: CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=0 disables job; cache still works on-demand"
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["BG-003"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
+- id: BG-001
+  description: "Inspect backend/adapters/jobs/ \u2014 understand job registration\
+    \ pattern, scheduling API, error handling conventions"
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: haiku
+  model_effort: low
+- id: BG-002
+  description: 'Create cache_warming_job() in backend/adapters/jobs/: loop project
+    IDs, call two heaviest endpoints (project status, feature list), configurable
+    interval, disabled if interval=0'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BG-001
+  - CACHE-006
+  estimated_effort: 1.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: medium
+- id: BG-003
+  description: Register cache_warming_job() in backend/adapters/jobs/ registry; wire
+    CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS config; disable if interval=0
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BG-002
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: BG-004
+  description: 'Integration test: HTTP request latency unaffected while background
+    job runs; cache warm after job completes'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BG-002
+  - BG-003
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: BG-005
+  description: 'Test: CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=0 disables job;
+    cache still works on-demand'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - BG-003
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
 parallelization:
-  batch_1: ["BG-001"]
-  batch_2: ["BG-002"]
-  batch_3: ["BG-003"]
-  batch_4: ["BG-004", "BG-005"]
-  critical_path: ["BG-001", "BG-002", "BG-003", "BG-004"]
-  estimated_total_time: "1-1.5 days"
-
+  batch_1:
+  - BG-001
+  batch_2:
+  - BG-002
+  batch_3:
+  - BG-003
+  batch_4:
+  - BG-004
+  - BG-005
+  critical_path:
+  - BG-001
+  - BG-002
+  - BG-003
+  - BG-004
+  estimated_total_time: 1-1.5 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-4.1", description: "Cache materialization job created and registered", status: "pending" }
-  - { id: "SC-4.2", description: "Job runs at configurable interval (default 300 s)", status: "pending" }
-  - { id: "SC-4.3", description: "Job can be disabled (interval=0)", status: "pending" }
-  - { id: "SC-4.4", description: "HTTP requests not blocked by background job", status: "pending" }
-  - { id: "SC-4.5", description: "Job errors logged but do not crash worker", status: "pending" }
-  - { id: "SC-4.6", description: "All background job tests pass", status: "pending" }
-
+- id: SC-4.1
+  description: Cache materialization job created and registered
+  status: pending
+- id: SC-4.2
+  description: Job runs at configurable interval (default 300 s)
+  status: pending
+- id: SC-4.3
+  description: Job can be disabled (interval=0)
+  status: pending
+- id: SC-4.4
+  description: HTTP requests not blocked by background job
+  status: pending
+- id: SC-4.5
+  description: Job errors logged but do not crash worker
+  status: pending
+- id: SC-4.6
+  description: All background job tests pass
+  status: pending
 files_modified:
-  - "backend/adapters/jobs/"
-  - "backend/tests/"
+- backend/adapters/jobs/
+- backend/tests/
+progress: 100
 ---
 
 # CCDash Query Caching and CLI Ergonomics - Phase 4: Background Materialization
