@@ -17,12 +17,15 @@ from __future__ import annotations
 import asyncio
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.adapters.jobs.runtime import RuntimeJobAdapter
 from backend.application.context import (
     ProjectScope,
 )
+from backend.runtime.bootstrap_worker import build_worker_probe_app
+from fastapi.testclient import TestClient
 
 
 # ---------------------------------------------------------------------------
@@ -97,14 +100,14 @@ def _make_profile(jobs: bool = True) -> MagicMock:
     return profile
 
 
-def _make_adapter(project, jobs: bool = True) -> RuntimeJobAdapter:
+def _make_adapter(project, jobs: bool = True, telemetry_exporter_job=None) -> RuntimeJobAdapter:
     ports = _make_ports(project)
     return RuntimeJobAdapter(
         profile=_make_profile(jobs=jobs),
         ports=ports,
         sync_engine=None,
         project_binding=None,
-        telemetry_exporter_job=None,
+        telemetry_exporter_job=telemetry_exporter_job,
     )
 
 
@@ -186,12 +189,29 @@ class TestCacheWarmingJobRuns(unittest.IsolatedAsyncioTestCase):
             except asyncio.CancelledError:
                 pass
 
-        return status_mock.call_count, workflow_mock.call_count
+        return adapter, status_mock.call_count, workflow_mock.call_count
 
     async def test_warming_invokes_both_services_at_least_once(self):
-        status_calls, workflow_calls = await self._run_one_warming_cycle(interval=1)
+        _, status_calls, workflow_calls = await self._run_one_warming_cycle(interval=1)
         self.assertGreaterEqual(status_calls, 1, "project_status should be called at least once")
         self.assertGreaterEqual(workflow_calls, 1, "workflow_diagnostics should be called at least once")
+
+    async def test_worker_probe_snapshot_tracks_cache_warming_markers(self):
+        adapter, _, _ = await self._run_one_warming_cycle(interval=1)
+
+        snapshot = adapter.status_snapshot()
+        worker_probe = snapshot["workerProbe"]
+        cache_warming = worker_probe["jobs"]["cacheWarming"]
+
+        self.assertEqual(worker_probe["schemaVersion"], "ops-203-v1")
+        self.assertEqual(cache_warming["state"], "succeeded")
+        self.assertEqual(cache_warming["backlogCount"], 0)
+        self.assertIsNotNone(cache_warming["checkpointAt"])
+        self.assertIsNotNone(cache_warming["lastSuccessAt"])
+        self.assertEqual(
+            cache_warming["details"]["targets"],
+            ["project_status", "workflow_diagnostics"],
+        )
 
     async def test_service_error_does_not_crash_task(self):
         """An exception in get_status must not crash the warming task."""
@@ -361,6 +381,107 @@ class TestCacheWarmingStop(unittest.IsolatedAsyncioTestCase):
             await adapter.stop()
             self.assertIsNone(adapter.state.cache_warming_task)
             self.assertTrue(task.done())
+
+
+class TestWorkerProbeTelemetry(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_probe_snapshot_tracks_telemetry_backlog_and_checkpoint(self):
+        project = _make_project()
+        telemetry_job = SimpleNamespace(
+            execute=AsyncMock(
+                return_value=SimpleNamespace(
+                    success=True,
+                    outcome="success",
+                    batch_size=3,
+                    duration_ms=42,
+                )
+            ),
+            coordinator=SimpleNamespace(
+                status=AsyncMock(
+                    return_value=SimpleNamespace(
+                        queueStats=SimpleNamespace(pending=7),
+                        lastPushTimestamp="2026-04-15T12:00:00Z",
+                        eventsPushed24h=19,
+                        configured=True,
+                        envLocked=False,
+                        persistedEnabled=True,
+                    )
+                )
+            ),
+        )
+        adapter = _make_adapter(project, telemetry_exporter_job=telemetry_job)
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg:
+            mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 0
+            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
+            mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 1
+
+            task = adapter._start_telemetry_export_task()
+            assert task is not None
+            adapter.state.telemetry_export_task = task
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        snapshot = adapter.status_snapshot()
+        telemetry_probe = snapshot["workerProbe"]["jobs"]["telemetryExports"]
+
+        self.assertEqual(telemetry_probe["state"], "succeeded")
+        self.assertEqual(telemetry_probe["backlogCount"], 7)
+        self.assertEqual(telemetry_probe["checkpointAt"], "2026-04-15T12:00:00Z")
+        self.assertEqual(telemetry_probe["details"]["queueDepth"], 7)
+        self.assertEqual(telemetry_probe["details"]["eventsPushed24h"], 19)
+
+
+class TestWorkerProbeApp(unittest.TestCase):
+    def test_detail_route_embeds_worker_probe_extension(self):
+        container = MagicMock()
+        container.runtime_status.return_value = {
+            "profile": "worker",
+            "probeContract": {
+                "schemaVersion": "ops-201-v1",
+                "runtimeProfile": "worker",
+                "live": {"state": "live", "status": "pass"},
+                "ready": {"state": "degraded", "status": "warn", "ready": True},
+                "detail": {"state": "degraded", "status": "warn", "activities": {"jobsEnabled": True}},
+            },
+            "workerProbe": {
+                "schemaVersion": "ops-203-v1",
+                "jobs": {"telemetryExports": {"backlogCount": 4}},
+                "summary": {"backlogCounts": {"telemetryExports": 4}},
+            },
+        }
+
+        client = TestClient(build_worker_probe_app(container))
+        response = client.get("/detailz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["detail"]["worker"]["schemaVersion"], "ops-203-v1")
+        self.assertEqual(payload["detail"]["worker"]["summary"]["backlogCounts"]["telemetryExports"], 4)
+
+    def test_ready_route_returns_503_when_worker_is_not_ready(self):
+        container = MagicMock()
+        container.runtime_status.return_value = {
+            "profile": "worker",
+            "probeContract": {
+                "schemaVersion": "ops-201-v1",
+                "runtimeProfile": "worker",
+                "live": {"state": "live", "status": "pass"},
+                "ready": {"state": "not_ready", "status": "fail", "ready": False, "reasons": []},
+                "detail": {"state": "not_ready", "status": "fail"},
+            },
+            "workerProbe": {"schemaVersion": "ops-203-v1", "jobs": {}, "summary": {}},
+        }
+
+        client = TestClient(build_worker_probe_app(container))
+        response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.json()["ready"]["ready"])
 
 
 # ---------------------------------------------------------------------------

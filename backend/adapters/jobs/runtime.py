@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,49 @@ from backend.services.test_config import effective_test_flags, resolve_test_sour
 logger = logging.getLogger("ccdash.runtime.jobs")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _freshness_seconds(value: object) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((_utc_now() - parsed).total_seconds()))
+
+
+@dataclass(slots=True)
+class RuntimeJobObservation:
+    state: str = "idle"
+    interval_seconds: int | None = None
+    backlog_count: int | None = None
+    backlog_unit: str | None = None
+    checkpoint_at: str | None = None
+    last_started_at: str | None = None
+    last_finished_at: str | None = None
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    last_outcome: str | None = None
+    last_duration_ms: int | None = None
+    last_error: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class RuntimeJobState:
     sync_task: asyncio.Task[None] | None = None
@@ -26,6 +71,7 @@ class RuntimeJobState:
     telemetry_export_task: asyncio.Task[None] | None = None
     cache_warming_task: asyncio.Task[None] | None = None
     watcher_started: bool = False
+    job_observations: dict[str, RuntimeJobObservation] = field(default_factory=dict)
 
 
 class RuntimeJobAdapter:
@@ -46,6 +92,14 @@ class RuntimeJobAdapter:
         self.project_binding = project_binding
         self.telemetry_exporter_job = telemetry_exporter_job
         self.state = RuntimeJobState()
+        self.state.job_observations.update(
+            {
+                "startupSync": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
+                "analyticsSnapshots": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
+                "telemetryExports": RuntimeJobObservation(backlog_count=0, backlog_unit="events"),
+                "cacheWarming": RuntimeJobObservation(backlog_count=0, backlog_unit="runs"),
+            }
+        )
 
     async def start(self) -> RuntimeJobState:
         workspace_registry = self.ports.workspace_registry
@@ -74,7 +128,7 @@ class RuntimeJobAdapter:
 
         if active_project and self.profile.capabilities.sync and self.sync is not None:
             self.state.sync_task = self.ports.job_scheduler.schedule(
-                self._run_startup_sync_pipeline(
+                self._run_startup_sync_job(
                     active_project=active_project,
                     sessions_dir=sessions_dir,
                     docs_dir=docs_dir,
@@ -148,8 +202,8 @@ class RuntimeJobAdapter:
             await file_watcher.stop()
             self.state.watcher_started = False
 
-    def status_snapshot(self) -> dict[str, str | bool]:
-        return {
+    def status_snapshot(self) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
             "watcher": "running" if self.state.watcher_started else "stopped",
             "startupSync": "running" if self.state.sync_task is not None and not self.state.sync_task.done() else "idle",
             "analyticsSnapshots": "running"
@@ -162,6 +216,185 @@ class RuntimeJobAdapter:
             if self.state.cache_warming_task is not None and not self.state.cache_warming_task.done()
             else "idle",
             "jobsEnabled": self.profile.capabilities.jobs,
+        }
+        if self.profile.name == "worker":
+            worker_jobs = self._worker_probe_jobs()
+            snapshot["workerProbe"] = {
+                "schemaVersion": "ops-203-v1",
+                "jobs": worker_jobs,
+                "summary": self._worker_probe_summary(worker_jobs),
+            }
+        return snapshot
+
+    async def _run_startup_sync_job(
+        self,
+        *,
+        active_project: Any,
+        sessions_dir: Path,
+        docs_dir: Path,
+        progress_dir: Path,
+        test_sources: list[Any],
+        test_results_dir: Path | None,
+        test_flags: Any,
+    ) -> None:
+        started = self._mark_job_started("startupSync", backlog_count=1)
+        try:
+            await self._run_startup_sync_pipeline(
+                active_project=active_project,
+                sessions_dir=sessions_dir,
+                docs_dir=docs_dir,
+                progress_dir=progress_dir,
+                test_sources=test_sources,
+                test_results_dir=test_results_dir,
+                test_flags=test_flags,
+            )
+        except asyncio.CancelledError:
+            self._mark_job_cancelled("startupSync", started, backlog_count=0)
+            raise
+        except Exception as exc:
+            self._mark_job_failure("startupSync", started, exc, backlog_count=0)
+            raise
+        else:
+            self._mark_job_success(
+                "startupSync",
+                started,
+                backlog_count=0,
+                details={
+                    "projectId": str(getattr(active_project, "id", "") or ""),
+                    "projectName": str(getattr(active_project, "name", "") or ""),
+                },
+            )
+
+    def _mark_job_started(self, job_name: str, *, backlog_count: int | None = None) -> float:
+        observation = self.state.job_observations[job_name]
+        observation.state = "running"
+        observation.last_started_at = _isoformat(_utc_now())
+        observation.last_error = None
+        observation.last_outcome = "running"
+        if backlog_count is not None:
+            observation.backlog_count = max(0, int(backlog_count))
+        return time.monotonic()
+
+    def _mark_job_success(
+        self,
+        job_name: str,
+        started: float,
+        *,
+        outcome: str = "success",
+        backlog_count: int | None = None,
+        checkpoint_at: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        observation = self.state.job_observations[job_name]
+        finished_at = _isoformat(_utc_now())
+        observation.state = "succeeded"
+        observation.last_finished_at = finished_at
+        observation.last_success_at = finished_at
+        observation.last_outcome = outcome
+        observation.last_duration_ms = int((time.monotonic() - started) * 1000)
+        observation.last_error = None
+        if backlog_count is not None:
+            observation.backlog_count = max(0, int(backlog_count))
+        observation.checkpoint_at = checkpoint_at or observation.last_success_at
+        if details:
+            observation.details.update(details)
+
+    def _mark_job_failure(
+        self,
+        job_name: str,
+        started: float,
+        exc: Exception,
+        *,
+        outcome: str = "failed",
+        backlog_count: int | None = None,
+        checkpoint_at: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        observation = self.state.job_observations[job_name]
+        finished_at = _isoformat(_utc_now())
+        observation.state = "failed"
+        observation.last_finished_at = finished_at
+        observation.last_failure_at = finished_at
+        observation.last_outcome = outcome
+        observation.last_duration_ms = int((time.monotonic() - started) * 1000)
+        observation.last_error = str(exc) or exc.__class__.__name__
+        if backlog_count is not None:
+            observation.backlog_count = max(0, int(backlog_count))
+        if checkpoint_at is not None:
+            observation.checkpoint_at = checkpoint_at
+        if details:
+            observation.details.update(details)
+
+    def _mark_job_cancelled(self, job_name: str, started: float, *, backlog_count: int | None = None) -> None:
+        observation = self.state.job_observations[job_name]
+        observation.last_finished_at = _isoformat(_utc_now())
+        observation.last_outcome = "cancelled"
+        observation.last_duration_ms = int((time.monotonic() - started) * 1000)
+        if observation.last_success_at is not None:
+            observation.state = "succeeded"
+        elif observation.last_failure_at is not None:
+            observation.state = "failed"
+        else:
+            observation.state = "idle"
+        if backlog_count is not None:
+            observation.backlog_count = max(0, int(backlog_count))
+
+    def _snapshot_job_state(self, job_name: str, task: asyncio.Task[None] | None) -> str:
+        if task is not None and not task.done():
+            return "running"
+        return self.state.job_observations[job_name].state
+
+    def _worker_probe_jobs(self) -> dict[str, Any]:
+        tasks = {
+            "startupSync": self.state.sync_task,
+            "analyticsSnapshots": self.state.analytics_snapshot_task,
+            "telemetryExports": self.state.telemetry_export_task,
+            "cacheWarming": self.state.cache_warming_task,
+        }
+        jobs: dict[str, Any] = {}
+        for job_name, observation in self.state.job_observations.items():
+            checkpoint_at = observation.checkpoint_at or observation.last_success_at
+            jobs[job_name] = {
+                "state": self._snapshot_job_state(job_name, tasks.get(job_name)),
+                "intervalSeconds": observation.interval_seconds,
+                "backlogCount": observation.backlog_count,
+                "backlogUnit": observation.backlog_unit,
+                "checkpointAt": checkpoint_at,
+                "checkpointFreshnessSeconds": _freshness_seconds(checkpoint_at),
+                "lastStartedAt": observation.last_started_at,
+                "lastFinishedAt": observation.last_finished_at,
+                "lastSuccessAt": observation.last_success_at,
+                "lastSuccessFreshnessSeconds": _freshness_seconds(observation.last_success_at),
+                "lastFailureAt": observation.last_failure_at,
+                "lastOutcome": observation.last_outcome,
+                "lastDurationMs": observation.last_duration_ms,
+                "lastError": observation.last_error,
+                "details": dict(observation.details),
+            }
+        return jobs
+
+    def _worker_probe_summary(self, jobs: dict[str, Any]) -> dict[str, Any]:
+        active_jobs = [name for name, payload in jobs.items() if payload.get("state") == "running"]
+        backlog = {
+            name: int(payload["backlogCount"])
+            for name, payload in jobs.items()
+            if isinstance(payload.get("backlogCount"), int)
+        }
+        freshness_values = [
+            int(value)
+            for value in (payload.get("checkpointFreshnessSeconds") for payload in jobs.values())
+            if isinstance(value, int)
+        ]
+        last_success_markers = {
+            name: payload.get("lastSuccessAt")
+            for name, payload in jobs.items()
+            if payload.get("lastSuccessAt")
+        }
+        return {
+            "activeJobs": active_jobs,
+            "backlogCounts": backlog,
+            "lastSuccessMarkers": last_success_markers,
+            "maxCheckpointFreshnessSeconds": max(freshness_values) if freshness_values else None,
         }
 
     async def _run_startup_sync_pipeline(
@@ -231,6 +464,7 @@ class RuntimeJobAdapter:
         analytics_interval = max(0, int(getattr(config, "ANALYTICS_SNAPSHOT_INTERVAL_SECONDS", 0)))
         if analytics_interval <= 0:
             return None
+        self.state.job_observations["analyticsSnapshots"].interval_seconds = analytics_interval
         workspace_registry = self.ports.workspace_registry
         bound_project = self.project_binding.project if self.project_binding is not None else None
 
@@ -240,14 +474,29 @@ class RuntimeJobAdapter:
                 current_project = bound_project or workspace_registry.get_active_project()
                 if not current_project:
                     continue
+                started = self._mark_job_started("analyticsSnapshots", backlog_count=1)
                 try:
                     await self.sync.capture_analytics_snapshot(
                         current_project.id,
                         trigger="periodic_timer",
                     )
+                    self._mark_job_success(
+                        "analyticsSnapshots",
+                        started,
+                        backlog_count=0,
+                        details={"projectId": current_project.id, "trigger": "periodic_timer"},
+                    )
                 except asyncio.CancelledError:
+                    self._mark_job_cancelled("analyticsSnapshots", started, backlog_count=0)
                     raise
                 except Exception:
+                    self._mark_job_failure(
+                        "analyticsSnapshots",
+                        started,
+                        RuntimeError(f"analytics_snapshot_failed:{current_project.id}"),
+                        backlog_count=0,
+                        details={"projectId": current_project.id, "trigger": "periodic_timer"},
+                    )
                     logger.exception(
                         "Periodic analytics snapshot failed for project '%s'",
                         current_project.id,
@@ -280,6 +529,7 @@ class RuntimeJobAdapter:
         interval_seconds = max(0, int(getattr(config, "CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS", 0)))
         if interval_seconds <= 0:
             return None
+        self.state.job_observations["cacheWarming"].interval_seconds = interval_seconds
 
         workspace_registry = self.ports.workspace_registry
         bound_project = self.project_binding.project if self.project_binding is not None else None
@@ -329,6 +579,7 @@ class RuntimeJobAdapter:
                         current_project.id,
                     )
                     continue
+                started = self._mark_job_started("cacheWarming", backlog_count=1)
 
                 context = RequestContext(
                     principal=_warming_principal,
@@ -338,6 +589,7 @@ class RuntimeJobAdapter:
                     trace=_warming_trace,
                     tenancy=TenancyContext(project_id=current_project.id),
                 )
+                iteration_failed = False
 
                 # Warm project status
                 try:
@@ -349,6 +601,7 @@ class RuntimeJobAdapter:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    iteration_failed = True
                     logger.exception(
                         "Cache warming: project_status failed for project '%s'",
                         current_project.id,
@@ -362,11 +615,35 @@ class RuntimeJobAdapter:
                         current_project.id,
                     )
                 except asyncio.CancelledError:
+                    self._mark_job_cancelled("cacheWarming", started, backlog_count=0)
                     raise
                 except Exception:
+                    iteration_failed = True
                     logger.exception(
                         "Cache warming: workflow_diagnostics failed for project '%s'",
                         current_project.id,
+                    )
+
+                if iteration_failed:
+                    self._mark_job_failure(
+                        "cacheWarming",
+                        started,
+                        RuntimeError(f"cache_warming_failed:{current_project.id}"),
+                        backlog_count=0,
+                        details={
+                            "projectId": current_project.id,
+                            "targets": ["project_status", "workflow_diagnostics"],
+                        },
+                    )
+                else:
+                    self._mark_job_success(
+                        "cacheWarming",
+                        started,
+                        backlog_count=0,
+                        details={
+                            "projectId": current_project.id,
+                            "targets": ["project_status", "workflow_diagnostics"],
+                        },
                     )
 
         logger.info(
@@ -383,14 +660,42 @@ class RuntimeJobAdapter:
         if self.profile.name != "worker" or self.telemetry_exporter_job is None:
             return None
         interval_seconds = max(60, int(getattr(config, "CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS", 0)))
+        self.state.job_observations["telemetryExports"].interval_seconds = interval_seconds
 
         async def _run_periodic_telemetry_exports() -> None:
             while True:
+                started = self._mark_job_started("telemetryExports")
                 try:
-                    await self.telemetry_exporter_job.execute()
+                    result = await self.telemetry_exporter_job.execute()
+                    status = await self.telemetry_exporter_job.coordinator.status()
+                    queue_stats = getattr(status, "queueStats", None)
+                    backlog_count = int(getattr(queue_stats, "pending", 0) or 0)
+                    checkpoint_at = str(getattr(status, "lastPushTimestamp", "") or "") or None
+                    self._mark_job_success(
+                        "telemetryExports",
+                        started,
+                        outcome=str(getattr(result, "outcome", "success") or "success"),
+                        backlog_count=backlog_count,
+                        checkpoint_at=checkpoint_at,
+                        details={
+                            "batchSize": int(getattr(result, "batch_size", 0) or 0),
+                            "durationMs": int(getattr(result, "duration_ms", 0) or 0),
+                            "queueDepth": backlog_count,
+                            "eventsPushed24h": int(getattr(status, "eventsPushed24h", 0) or 0),
+                            "configured": bool(getattr(status, "configured", False)),
+                            "envLocked": bool(getattr(status, "envLocked", False)),
+                            "persistedEnabled": bool(getattr(status, "persistedEnabled", False)),
+                        },
+                    )
                 except asyncio.CancelledError:
+                    self._mark_job_cancelled("telemetryExports", started)
                     raise
                 except Exception:
+                    self._mark_job_failure(
+                        "telemetryExports",
+                        started,
+                        RuntimeError("telemetry_export_failed"),
+                    )
                     logger.exception("Periodic telemetry export failed")
                 await asyncio.sleep(interval_seconds)
 
