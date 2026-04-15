@@ -163,7 +163,14 @@ async def get_feature_detail_v1(
     request_context: RequestContext,
     core_ports: CorePorts,
 ) -> ClientV1Envelope[FeatureForensicsDTO]:
-    """Return full forensic detail for a single feature."""
+    """Return full forensic detail for a single feature.
+
+    The ``data.linked_sessions`` field in the response is the authoritative
+    session list. This endpoint and ``GET /v1/features/{id}/sessions`` both
+    source that list from the same ``FeatureForensicsDTO`` via ``_get_forensics()``
+    — they cannot disagree. Linkage is eventually-consistent (populated by the
+    background sync engine).
+    """
     forensics, _ = await _get_forensics(feature_id, request_context, core_ports)
     return ClientV1Envelope(
         data=forensics,
@@ -183,7 +190,13 @@ async def get_feature_sessions_v1(
     request_context: RequestContext,
     core_ports: CorePorts,
 ) -> ClientV1Envelope[FeatureSessionsDTO]:
-    """Return sessions linked to a feature."""
+    """Return sessions linked to a feature, paginated.
+
+    Session data is drawn from ``forensics.linked_sessions`` — the same field
+    served by ``GET /v1/features/{id}`` — so both endpoints are always in sync.
+    ``data.total`` reflects the full linked-session count; ``data.sessions``
+    contains the requested page slice.
+    """
     effective_limit = _clamp_limit(limit)
     effective_offset = max(0, offset)
 

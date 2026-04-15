@@ -184,6 +184,19 @@ class FeatureForensicsQueryService:
         ports: CorePorts,
         feature_id: str,
     ) -> FeatureForensicsDTO:
+        """Assemble and return the full forensic DTO for a feature.
+
+        ``linked_sessions`` in the returned DTO is the single authoritative
+        session list for a feature.  Both ``GET /v1/features/{id}`` and
+        ``GET /v1/features/{id}/sessions`` consume this same field via
+        ``_get_forensics()`` in the router — the two endpoints are structurally
+        incapable of disagreeing on the session array.
+
+        Session linkage is eventually-consistent: links are written by the
+        background filesystem sync job (``sync_engine._build_feature_session_links``)
+        and read back via ``entity_links.get_links_for("feature", id, "related")``.
+        A freshly-imported session may not appear until the next sync cycle.
+        """
         scope = resolve_project_scope(context, ports)
         if scope is None:
             return FeatureForensicsDTO(

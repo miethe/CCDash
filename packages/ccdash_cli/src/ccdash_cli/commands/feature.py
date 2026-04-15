@@ -110,7 +110,16 @@ def feature_show(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(get_formatter(mode).render(body.get("data", {}), title=f"Feature {feature_id}"))
+    data = body.get("data", {})
+    typer.echo(get_formatter(mode).render(data, title=f"Feature {feature_id}"))
+
+    if mode not in (OutputMode.json, OutputMode.markdown):
+        n_sessions = len(data.get("linked_sessions", []))
+        typer.secho(
+            f"Sessions: {n_sessions} linked"
+            f" — run 'ccdash feature sessions {feature_id}' for paginated details.",
+            dim=True,
+        )
 
 
 @feature_app.command("sessions")

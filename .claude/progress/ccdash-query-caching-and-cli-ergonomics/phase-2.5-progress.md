@@ -2,109 +2,145 @@
 schema_version: 2
 doc_type: progress
 type: progress
-prd: "ccdash-query-caching-and-cli-ergonomics"
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
-phase: "2.5"
-title: "Feature-Show linked_sessions Reconciliation"
-status: pending
-created: 2026-04-14
-updated: 2026-04-14
+prd: ccdash-query-caching-and-cli-ergonomics
+feature_slug: ccdash-query-caching-and-cli-ergonomics
+phase: '2.5'
+title: Feature-Show linked_sessions Reconciliation
+status: completed
+created: '2026-04-14'
+updated: '2026-04-14'
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 commit_refs: []
 pr_refs: []
-owners: ["python-backend-engineer"]
-contributors: ["backend-architect"]
+owners:
+- python-backend-engineer
+contributors:
+- backend-architect
 execution_model: batch-parallel
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "REC-001"
-    description: "Investigate linked_sessions disagreement: feature_show returns [] while feature sessions <id> returns 70+ sessions for same feature. Inspect backend/routers/agent.py feature-show and feature sessions endpoints. Determine if intentional filter or bug. Document findings."
-    status: "pending"
-    assigned_to: ["backend-architect"]
-    dependencies: []
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "medium"
-
-  - id: "REC-002"
-    description: "Reconcile endpoints to agree: if bug, update inline array construction to match endpoint; if filter, document rationale explicitly. Both feature_show.linked_sessions and feature sessions must return identical arrays for the same feature."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["REC-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "REC-003"
-    description: "Add hint to feature-show response DTO: one-line note 'sessions: N available — run ccdash feature sessions <id> for details'. Displayed in CLI or MCP output. Nudges operators toward authoritative endpoint."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["REC-002"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "REC-004"
-    description: "Eventual-consistency documentation: if session linkage is eventually-consistent (background job), add docs/guides/ entry explaining timing. If synchronous, note in DTO docstring. Update cli-timeout-debugging.md to mention if applicable."
-    status: "pending"
-    assigned_to: ["documentation-writer"]
-    dependencies: ["REC-001"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "haiku"
-    model_effort: "low"
-
-  - id: "REC-005"
-    description: "Add integration test: load a feature with sessions; call both feature_show and feature sessions; assert linked_sessions arrays are equal. CI regression guard to prevent future endpoint divergence."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["REC-003"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
+- id: REC-001
+  description: 'Investigate linked_sessions disagreement: feature_show returns []
+    while feature sessions <id> returns 70+ sessions for same feature. Inspect backend/routers/agent.py
+    feature-show and feature sessions endpoints. Determine if intentional filter or
+    bug. Document findings.'
+  status: completed
+  assigned_to:
+  - backend-architect
+  dependencies: []
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: medium
+- id: REC-002
+  description: 'Reconcile endpoints to agree: if bug, update inline array construction
+    to match endpoint; if filter, document rationale explicitly. Both feature_show.linked_sessions
+    and feature sessions must return identical arrays for the same feature.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - REC-001
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: REC-003
+  description: "Add hint to feature-show response DTO: one-line note 'sessions: N\
+    \ available \u2014 run ccdash feature sessions <id> for details'. Displayed in\
+    \ CLI or MCP output. Nudges operators toward authoritative endpoint."
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - REC-002
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
+- id: REC-004
+  description: 'Eventual-consistency documentation: if session linkage is eventually-consistent
+    (background job), add docs/guides/ entry explaining timing. If synchronous, note
+    in DTO docstring. Update cli-timeout-debugging.md to mention if applicable.'
+  status: completed
+  assigned_to:
+  - documentation-writer
+  dependencies:
+  - REC-001
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: haiku
+  model_effort: low
+- id: REC-005
+  description: 'Add integration test: load a feature with sessions; call both feature_show
+    and feature sessions; assert linked_sessions arrays are equal. CI regression guard
+    to prevent future endpoint divergence.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - REC-003
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
 parallelization:
-  batch_1: ["REC-001"]
-  batch_2: ["REC-002", "REC-004"]
-  batch_3: ["REC-003"]
-  batch_4: ["REC-005"]
-  critical_path: ["REC-001", "REC-002", "REC-003", "REC-005"]
-  estimated_total_time: "0.5-0.75 days"
-
+  batch_1:
+  - REC-001
+  batch_2:
+  - REC-002
+  - REC-004
+  batch_3:
+  - REC-003
+  batch_4:
+  - REC-005
+  critical_path:
+  - REC-001
+  - REC-002
+  - REC-003
+  - REC-005
+  estimated_total_time: 0.5-0.75 days
 blockers: []
-
 success_criteria:
-  - { id: "SC-2.5.1", description: "Root cause of linked_sessions disagreement investigated and documented", status: "pending" }
-  - { id: "SC-2.5.2", description: "Inline array reconciled to match endpoint (or documented as filtered subset)", status: "pending" }
-  - { id: "SC-2.5.3", description: "Hint added to feature-show DTO output directing callers to authoritative endpoint", status: "pending" }
-  - { id: "SC-2.5.4", description: "Integration test asserts endpoint agreement on every CI pass", status: "pending" }
-  - { id: "SC-2.5.5", description: "Eventual-consistency behavior documented if applicable", status: "pending" }
-  - { id: "SC-2.5.6", description: "All tests pass", status: "pending" }
-
+- id: SC-2.5.1
+  description: Root cause of linked_sessions disagreement investigated and documented
+  status: pending
+- id: SC-2.5.2
+  description: Inline array reconciled to match endpoint (or documented as filtered
+    subset)
+  status: pending
+- id: SC-2.5.3
+  description: Hint added to feature-show DTO output directing callers to authoritative
+    endpoint
+  status: pending
+- id: SC-2.5.4
+  description: Integration test asserts endpoint agreement on every CI pass
+  status: pending
+- id: SC-2.5.5
+  description: Eventual-consistency behavior documented if applicable
+  status: pending
+- id: SC-2.5.6
+  description: All tests pass
+  status: pending
 files_modified:
-  - "backend/routers/agent.py"
-  - "backend/application/services/agent_queries/models.py"
-  - "backend/application/services/agent_queries/feature_forensics.py"
-  - "backend/tests/"
-  - "docs/guides/"
+- backend/routers/agent.py
+- backend/application/services/agent_queries/models.py
+- backend/application/services/agent_queries/feature_forensics.py
+- backend/tests/
+- docs/guides/
+progress: 100
 ---
 
 # CCDash Query Caching and CLI Ergonomics - Phase 2.5: Feature-Show linked_sessions Reconciliation
