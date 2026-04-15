@@ -37,6 +37,7 @@ def build_client_v1_paginated_meta(
     total: int = 0,
     limit: int = 50,
     offset: int = 0,
+    truncated: bool = False,
 ) -> ClientV1PaginatedMeta:
     """Populate paginated metadata using the shared contract type."""
     return ClientV1PaginatedMeta(
@@ -48,6 +49,7 @@ def build_client_v1_paginated_meta(
         total=total,
         limit=limit,
         offset=offset,
+        truncated=truncated,
     )
 
 

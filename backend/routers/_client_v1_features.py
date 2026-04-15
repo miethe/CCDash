@@ -112,6 +112,8 @@ async def list_features_v1(
     offset: int,
     request_context: RequestContext,
     core_ports: CorePorts,
+    *,
+    q: str | None = None,
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
     """Return a paginated list of features for the active project.
 
@@ -138,8 +140,9 @@ async def list_features_v1(
     except Exception:
         logger.debug("Could not resolve project scope for list_features_v1")
 
-    rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit)
-    total = await feature_repo.count(project_id)
+    keyword = q.strip() if q else None
+    rows = await feature_repo.list_paginated(project_id, effective_offset, effective_limit, keyword=keyword)
+    total = await feature_repo.count(project_id, keyword=keyword)
 
     # Apply optional in-memory filters (status and category are low-cardinality
     # and not yet supported at the repository layer).
@@ -151,6 +154,8 @@ async def list_features_v1(
         rows = [r for r in rows if str(r.get("category", "")).lower() == category_lower]
 
     items = [_row_to_feature_summary(row) for row in rows]
+    has_more = (effective_offset + len(items)) < total
+    truncated = len(items) >= effective_limit and has_more
 
     return ClientV1PaginatedEnvelope(
         data=items,
@@ -159,7 +164,8 @@ async def list_features_v1(
             total=total,
             offset=effective_offset,
             limit=effective_limit,
-            has_more=(effective_offset + len(items)) < total,
+            has_more=has_more,
+            truncated=truncated,
         ),
     )
 

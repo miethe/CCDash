@@ -23,8 +23,9 @@ def _expand_csv_values(values: list[str] | None) -> list[str]:
 def feature_list(
     status: Optional[List[str]] = typer.Option(None, "--status", help="Filter by status (repeatable or comma-separated)."),
     category: Optional[str] = typer.Option(None, "--category", help="Filter by category."),
-    limit: int = typer.Option(50, "--limit", help="Maximum results to return."),
+    limit: int = typer.Option(200, "--limit", help="Maximum results to return."),
     offset: int = typer.Option(0, "--offset", help="Pagination offset."),
+    q: Optional[str] = typer.Option(None, "--q", help="Keyword filter: case-insensitive substring match on feature name and ID."),
     output: OutputMode | None = typer.Option(None, "--output", help="Output format."),
     json_output: bool = typer.Option(False, "--json", help="Shortcut for --output json."),
     markdown_output: bool = typer.Option(False, "--md", help="Shortcut for --output markdown."),
@@ -39,6 +40,8 @@ def feature_list(
         params["status"] = expanded_statuses
     if category:
         params["category"] = category
+    if q:
+        params["q"] = q
 
     try:
         with build_client(target) as client:
@@ -70,12 +73,18 @@ def feature_list(
     if mode == OutputMode.human and meta:
         total = meta.get("total", len(data))
         has_more = meta.get("has_more", False)
+        truncated = meta.get("truncated", False)
         end = offset + len(data) if isinstance(data, list) else offset
         start = offset + 1 if data else 0
         summary = f"Showing {start}-{end} of {total} features"
         if has_more:
             summary += " (more available)"
         typer.echo(summary)
+        if truncated:
+            typer.secho(
+                f"Showing {limit} of {total} features. Use --limit {total} to see all.",
+                dim=True,
+            )
 
 
 @feature_app.command("show")

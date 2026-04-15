@@ -72,7 +72,34 @@ class SqliteFeatureRepository:
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
 
-    async def list_paginated(self, project_id: str | None, offset: int, limit: int) -> list[dict]:
+    async def list_paginated(
+        self,
+        project_id: str | None,
+        offset: int,
+        limit: int,
+        *,
+        keyword: str | None = None,
+    ) -> list[dict]:
+        # SQLite LIKE is case-insensitive for ASCII by default; LOWER() ensures
+        # consistent behaviour across all character sets.
+        if keyword:
+            pattern = f"%{keyword.lower()}%"
+            if project_id:
+                async with self.db.execute(
+                    "SELECT * FROM features WHERE project_id = ?"
+                    " AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)"
+                    " ORDER BY name LIMIT ? OFFSET ?",
+                    (project_id, pattern, pattern, limit, offset),
+                ) as cur:
+                    return [dict(r) for r in await cur.fetchall()]
+            async with self.db.execute(
+                "SELECT * FROM features"
+                " WHERE LOWER(name) LIKE ? OR LOWER(id) LIKE ?"
+                " ORDER BY name LIMIT ? OFFSET ?",
+                (pattern, pattern, limit, offset),
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+
         if project_id:
             async with self.db.execute(
                 "SELECT * FROM features WHERE project_id = ? ORDER BY name LIMIT ? OFFSET ?",
@@ -85,7 +112,24 @@ class SqliteFeatureRepository:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def count(self, project_id: str | None = None) -> int:
+    async def count(self, project_id: str | None = None, *, keyword: str | None = None) -> int:
+        if keyword:
+            pattern = f"%{keyword.lower()}%"
+            if project_id:
+                async with self.db.execute(
+                    "SELECT COUNT(*) FROM features WHERE project_id = ?"
+                    " AND (LOWER(name) LIKE ? OR LOWER(id) LIKE ?)",
+                    (project_id, pattern, pattern),
+                ) as cur:
+                    row = await cur.fetchone()
+                    return int(row[0]) if row else 0
+            async with self.db.execute(
+                "SELECT COUNT(*) FROM features WHERE LOWER(name) LIKE ? OR LOWER(id) LIKE ?",
+                (pattern, pattern),
+            ) as cur:
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+
         if project_id:
             async with self.db.execute(
                 "SELECT COUNT(*) FROM features WHERE project_id = ?",

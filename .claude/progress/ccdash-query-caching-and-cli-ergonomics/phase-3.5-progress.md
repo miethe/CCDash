@@ -2,131 +2,176 @@
 schema_version: 2
 doc_type: progress
 type: progress
-prd: "ccdash-query-caching-and-cli-ergonomics"
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
-phase: "3.5"
-title: "Feature List Pagination and Keyword Filtering"
-status: pending
-created: 2026-04-14
-updated: 2026-04-14
+prd: ccdash-query-caching-and-cli-ergonomics
+feature_slug: ccdash-query-caching-and-cli-ergonomics
+phase: '3.5'
+title: Feature List Pagination and Keyword Filtering
+status: completed
+created: '2026-04-14'
+updated: '2026-04-14'
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 commit_refs: []
 pr_refs: []
-owners: ["python-backend-engineer"]
-contributors: ["backend-architect"]
+owners:
+- python-backend-engineer
+contributors:
+- backend-architect
 execution_model: batch-parallel
 started: null
 completed: null
 overall_progress: 0
-completion_estimate: "on-track"
+completion_estimate: on-track
 total_tasks: 7
-completed_tasks: 0
+completed_tasks: 7
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
-
 model_usage:
-  primary: "sonnet"
+  primary: sonnet
   external: []
-
 tasks:
-  - id: "PAGINATE-001"
-    description: "Update feature list endpoint default limit from 50 to 200 in backend/routers/agent.py or backend/application/services/agent_queries/feature_list.py. Verify no performance regression on local target with 200 features."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: []
-    estimated_effort: "0.5 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "PAGINATE-002"
-    description: "Add truncated: bool (true if results exceed limit) and total: int (total count of all matching features) fields to feature-list response DTO in backend/application/services/agent_queries/models.py. Computed by comparing len(results) to limit and fetching total count."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["PAGINATE-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "PAGINATE-003"
-    description: "Add CLI truncation hint display in packages/ccdash_cli/ feature-list formatter. When truncated: true, display: 'Showing 200 of {total} features. Use --limit {total} to see all.' or similar user-friendly message."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["PAGINATE-002"]
-    estimated_effort: "0.5 pts"
-    priority: "low"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "FILTER-001"
-    description: "Add --q <keyword> CLI flag to feature list command in packages/ccdash_cli/ and ?q=keyword REST query param to backend/routers/agent.py. Wire keyword parameter through to service layer."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["PAGINATE-001"]
-    estimated_effort: "0.75 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "FILTER-002"
-    description: "Implement keyword filter in backend/repositories/features.py. Accept optional keyword parameter; filter using case-insensitive substring match on feature name and slug: WHERE name ILIKE '%keyword%' OR slug ILIKE '%keyword%'. Filter applied at DB query layer, not post-fetch."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["FILTER-001"]
-    estimated_effort: "1 pt"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "FILTER-003"
-    description: "Integration test: call feature list --q 'repo' and verify only features with 'repo' in name/slug are returned. Test with multiple keywords on test data. Verify case-insensitivity."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["FILTER-002"]
-    estimated_effort: "0.75 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
-  - id: "PAGINATE-004"
-    description: "Integration test for pagination and truncation: (1) call feature list (default 200), verify truncated and total fields correct; (2) with 213 features, truncated: true, total: 213; (3) verify CLI formatter displays hint."
-    status: "pending"
-    assigned_to: ["python-backend-engineer"]
-    dependencies: ["PAGINATE-003"]
-    estimated_effort: "0.75 pts"
-    priority: "medium"
-    assigned_model: "sonnet"
-    model_effort: "low"
-
+- id: PAGINATE-001
+  description: Update feature list endpoint default limit from 50 to 200 in backend/routers/agent.py
+    or backend/application/services/agent_queries/feature_list.py. Verify no performance
+    regression on local target with 200 features.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies: []
+  estimated_effort: 0.5 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: PAGINATE-002
+  description: 'Add truncated: bool (true if results exceed limit) and total: int
+    (total count of all matching features) fields to feature-list response DTO in
+    backend/application/services/agent_queries/models.py. Computed by comparing len(results)
+    to limit and fetching total count.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - PAGINATE-001
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: PAGINATE-003
+  description: 'Add CLI truncation hint display in packages/ccdash_cli/ feature-list
+    formatter. When truncated: true, display: ''Showing 200 of {total} features. Use
+    --limit {total} to see all.'' or similar user-friendly message.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - PAGINATE-002
+  estimated_effort: 0.5 pts
+  priority: low
+  assigned_model: sonnet
+  model_effort: low
+- id: FILTER-001
+  description: Add --q <keyword> CLI flag to feature list command in packages/ccdash_cli/
+    and ?q=keyword REST query param to backend/routers/agent.py. Wire keyword parameter
+    through to service layer.
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - PAGINATE-001
+  estimated_effort: 0.75 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: FILTER-002
+  description: 'Implement keyword filter in backend/repositories/features.py. Accept
+    optional keyword parameter; filter using case-insensitive substring match on feature
+    name and slug: WHERE name ILIKE ''%keyword%'' OR slug ILIKE ''%keyword%''. Filter
+    applied at DB query layer, not post-fetch.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - FILTER-001
+  estimated_effort: 1 pt
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: FILTER-003
+  description: 'Integration test: call feature list --q ''repo'' and verify only features
+    with ''repo'' in name/slug are returned. Test with multiple keywords on test data.
+    Verify case-insensitivity.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - FILTER-002
+  estimated_effort: 0.75 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
+- id: PAGINATE-004
+  description: 'Integration test for pagination and truncation: (1) call feature list
+    (default 200), verify truncated and total fields correct; (2) with 213 features,
+    truncated: true, total: 213; (3) verify CLI formatter displays hint.'
+  status: completed
+  assigned_to:
+  - python-backend-engineer
+  dependencies:
+  - PAGINATE-003
+  estimated_effort: 0.75 pts
+  priority: medium
+  assigned_model: sonnet
+  model_effort: low
 parallelization:
-  batch_1: ["PAGINATE-001"]
-  batch_2: ["PAGINATE-002", "FILTER-001"]
-  batch_3: ["PAGINATE-003", "FILTER-002"]
-  batch_4: ["FILTER-003", "PAGINATE-004"]
-  critical_path: ["PAGINATE-001", "PAGINATE-002", "PAGINATE-003", "PAGINATE-004"]
-  estimated_total_time: "0.75-1 day"
-
+  batch_1:
+  - PAGINATE-001
+  batch_2:
+  - PAGINATE-002
+  - FILTER-001
+  batch_3:
+  - PAGINATE-003
+  - FILTER-002
+  batch_4:
+  - FILTER-003
+  - PAGINATE-004
+  critical_path:
+  - PAGINATE-001
+  - PAGINATE-002
+  - PAGINATE-003
+  - PAGINATE-004
+  estimated_total_time: 0.75-1 day
 blockers: []
-
 success_criteria:
-  - { id: "SC-3.5.1", description: "Feature-list default limit is 200", status: "pending" }
-  - { id: "SC-3.5.2", description: "truncated and total fields present in response DTO", status: "pending" }
-  - { id: "SC-3.5.3", description: "CLI truncation hint displays correctly when truncated: true", status: "pending" }
-  - { id: "SC-3.5.4", description: "Keyword filter works via CLI (--q) and REST (?q=)", status: "pending" }
-  - { id: "SC-3.5.5", description: "Filter applied at repository layer, not client-side", status: "pending" }
-  - { id: "SC-3.5.6", description: "Filter is case-insensitive substring match on name and slug", status: "pending" }
-  - { id: "SC-3.5.7", description: "Integration tests for pagination and filtering pass", status: "pending" }
-
+- id: SC-3.5.1
+  description: Feature-list default limit is 200
+  status: pending
+- id: SC-3.5.2
+  description: truncated and total fields present in response DTO
+  status: pending
+- id: SC-3.5.3
+  description: 'CLI truncation hint displays correctly when truncated: true'
+  status: pending
+- id: SC-3.5.4
+  description: Keyword filter works via CLI (--q) and REST (?q=)
+  status: pending
+- id: SC-3.5.5
+  description: Filter applied at repository layer, not client-side
+  status: pending
+- id: SC-3.5.6
+  description: Filter is case-insensitive substring match on name and slug
+  status: pending
+- id: SC-3.5.7
+  description: Integration tests for pagination and filtering pass
+  status: pending
 files_modified:
-  - "backend/routers/agent.py"
-  - "backend/application/services/agent_queries/models.py"
-  - "backend/application/services/agent_queries/feature_list.py"
-  - "backend/repositories/features.py"
-  - "packages/ccdash_cli/src/ccdash_cli/"
-  - "backend/tests/"
+- backend/routers/agent.py
+- backend/application/services/agent_queries/models.py
+- backend/application/services/agent_queries/feature_list.py
+- backend/repositories/features.py
+- packages/ccdash_cli/src/ccdash_cli/
+- backend/tests/
+progress: 100
 ---
 
 # CCDash Query Caching and CLI Ergonomics - Phase 3.5: Feature List Pagination and Keyword Filtering

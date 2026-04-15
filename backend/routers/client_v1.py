@@ -139,13 +139,14 @@ async def workflow_failures(
 async def features_list(
     status: list[str] | None = Query(default=None, description="Filter by status (repeatable)."),
     category: str | None = Query(default=None, description="Filter by category."),
-    limit: int = Query(default=50, ge=1, le=200, description="Page size."),
+    limit: int = Query(default=200, ge=1, le=200, description="Page size."),
     offset: int = Query(default=0, ge=0, description="Page offset."),
+    q: str | None = Query(default=None, description="Keyword substring filter on feature name and slug (case-insensitive)."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ClientV1PaginatedEnvelope[FeatureSummaryDTO]:
     """Return a paginated list of features."""
-    return await list_features_v1(status, category, limit, offset, request_context, core_ports)
+    return await list_features_v1(status, category, limit, offset, request_context, core_ports, q=q)
 
 
 @client_v1_router.get("/features/{feature_id}")

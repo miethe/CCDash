@@ -27,6 +27,7 @@ class ClientV1PaginatedMeta(ClientV1Meta):
     total: int = 0
     limit: int = 50
     offset: int = 0
+    truncated: bool = False
 
 
 class ClientV1PaginatedEnvelope(BaseModel, Generic[T]):
