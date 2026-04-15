@@ -288,7 +288,6 @@ class RuntimeJobAdapter:
             # Import here to avoid circular-import issues at module load time.
             from backend.application.context import (  # noqa: PLC0415
                 Principal,
-                ProjectScope,
                 RequestContext,
                 TraceContext,
                 TenancyContext,

@@ -336,7 +336,6 @@ class CacheInvalidationOnNewSessionTests(unittest.IsolatedAsyncioTestCase):
 
         # Patch get_by_id at the storage level for the second call
         spy_sessions_repo = types.SimpleNamespace(get_by_id=spy_get_by_id)
-        original_sessions = self._ports.storage._sessions_repo if hasattr(self._ports.storage, "_sessions_repo") else None
 
         # Replace the sessions data dict reference so sessions() method uses spy
         # We override the sessions() method on the storage instance directly
@@ -454,14 +453,13 @@ class CacheInvalidationOnFeatureUpdateTests(unittest.IsolatedAsyncioTestCase):
         first = await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
         self.assertEqual(first.feature_id, self._feature_id)
 
-        call_count = 0
         spy_sessions_repo = types.SimpleNamespace(
             get_by_id=AsyncMock(side_effect=lambda sid: self._sessions_data.get(sid))
         )
 
         # Verify second call is a hit by checking spy not called
         self._ports.storage.sessions = lambda: spy_sessions_repo
-        second = await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
+        await _call_forensics(self._service, self._ctx, self._ports, self._feature_id)
         self.assertEqual(spy_sessions_repo.get_by_id.await_count, 0, "Second call must be a cache hit")
 
         # Reset sessions() to normal before the bump

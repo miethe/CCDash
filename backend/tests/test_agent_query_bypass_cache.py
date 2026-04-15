@@ -15,7 +15,6 @@ from __future__ import annotations
 import types
 import unittest
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
@@ -251,7 +250,7 @@ class FeatureForensicsHandlerBypassCacheTests(unittest.IsolatedAsyncioTestCase):
 
 
 try:
-    import pytest
+    import pytest  # noqa: F401
     from typer.testing import CliRunner
     from ccdash_cli.main import app
     from ccdash_cli.runtime.config import TargetConfig

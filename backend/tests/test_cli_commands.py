@@ -163,3 +163,64 @@ class CliCommandsTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 2)
         self.assertIn("Feature 'missing-feature' was not found in project 'project-1'.", result.output)
+
+
+class _ForensicsPayload(_CliPayload):
+    """FeatureForensicsDTO stand-in that carries sessions_note."""
+
+    sessions_note: str = (
+        "Session linkage is eventually-consistent (populated by the background sync engine). "
+        "For the canonical session list use GET /v1/features/{id}/sessions."
+    )
+
+
+class CliSessionsHintTests(unittest.TestCase):
+    """TEST-002.5 criterion 2 — CLI/MCP hint for eventual-consistency invariant.
+
+    ``FeatureForensicsDTO.sessions_note`` must be surfaced in both CLI and MCP
+    output so consumers know that ``linked_sessions`` is eventually-consistent
+    and ``GET /v1/features/{id}/sessions`` is the canonical view.
+    """
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def test_feature_report_human_output_includes_sessions_note(self) -> None:
+        """Human-mode feature report must emit the sessions_note hint."""
+        payload = _ForensicsPayload(
+            status="ok",
+            project_id="project-1",
+            feature_id="feature-hint-1",
+            summary="Hint test feature",
+            source_refs=["feature-hint-1"],
+        )
+
+        with patch(
+            "backend.cli.commands.feature.runtime.execute_query",
+            new=AsyncMock(return_value=(payload, "project-1", True)),
+        ):
+            result = self.runner.invoke(app, ["feature", "report", "feature-hint-1"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("eventually-consistent", result.output)
+
+    def test_feature_report_json_output_includes_sessions_note(self) -> None:
+        """JSON-mode feature report must include sessions_note in the serialised object."""
+        payload = _ForensicsPayload(
+            status="ok",
+            project_id="project-1",
+            feature_id="feature-hint-2",
+            summary="Hint test feature json",
+            source_refs=["feature-hint-2"],
+        )
+
+        with patch(
+            "backend.cli.commands.feature.runtime.execute_query",
+            new=AsyncMock(return_value=(payload, "project-1", True)),
+        ):
+            result = self.runner.invoke(app, ["feature", "report", "feature-hint-2", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        output = json.loads(result.output)
+        self.assertIn("sessions_note", output)
+        self.assertIn("eventually-consistent", output["sessions_note"])

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from backend.application.context import Principal, ProjectScope, RequestContext, TraceContext
 from backend.application.ports import AuthorizationDecision, CorePorts
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.application.services.agent_queries.models import FeatureForensicsDTO, TelemetryAvailability
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +238,145 @@ class FeatureForensicsAliasTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.telemetry_available.sessions)
         self.assertFalse(result.telemetry_available.documents)
         self.assertFalse(result.telemetry_available.tasks)
+
+    # -------------------------------------------------------------------
+    # Criterion 1: DTO round-trip deserialization exposes alias fields
+    # -------------------------------------------------------------------
+
+    def test_dto_deserializes_alias_fields_at_top_level(self) -> None:
+        """FeatureForensicsDTO instantiation exposes name, status, telemetry_available at top level."""
+        dto = FeatureForensicsDTO(
+            status="ok",
+            feature_id="feat-x",
+            name="My Feature",
+            feature_status="active",
+            telemetry_available=TelemetryAvailability(tasks=True, documents=False, sessions=True),
+            source_refs=["feat-x"],
+        )
+        self.assertEqual(dto.name, "My Feature")
+        self.assertEqual(dto.status, "ok")
+        self.assertIsInstance(dto.telemetry_available, TelemetryAvailability)
+
+    # -------------------------------------------------------------------
+    # Criterion 3: feature_status parity with feature row status
+    # -------------------------------------------------------------------
+
+    async def test_feature_status_parity_with_row(self) -> None:
+        """dto.feature_status matches the status field from the feature row exactly."""
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "feature-parity",
+                    "name": "Parity Feature",
+                    "status": "completed",
+                    "updated_at": "2026-04-14T10:00:00+00:00",
+                }
+            )
+        )
+        ports = _ports(features=features_repo)
+
+        with patch(
+            "backend.application.services.agent_queries.feature_forensics.SessionIntelligenceReadService.list_sessions",
+            new=AsyncMock(return_value=types.SimpleNamespace(items=[])),
+        ):
+            result = await FeatureForensicsQueryService().get_forensics(_context(), ports, "feature-parity")
+
+        self.assertEqual(result.feature_status, "completed")
+        self.assertEqual(result.name, "Parity Feature")
+
+    # -------------------------------------------------------------------
+    # Criterion 4: backward-compat nested access alongside alias fields
+    # -------------------------------------------------------------------
+
+    async def test_nested_linked_sessions_accessible_alongside_alias_fields(self) -> None:
+        """dto.linked_sessions[0].session_id is accessible while alias fields remain correct."""
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "feature-nested",
+                    "name": "Nested Feature",
+                    "status": "in_progress",
+                    "updated_at": "2026-04-14T10:00:00+00:00",
+                }
+            )
+        )
+        sessions_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "session-nested",
+                    "status": "completed",
+                    "started_at": "2026-04-14T09:00:00+00:00",
+                    "ended_at": "2026-04-14T09:30:00+00:00",
+                    "total_cost": 0.5,
+                    "observed_tokens": 50,
+                }
+            )
+        )
+        links_repo = types.SimpleNamespace(
+            get_links_for=AsyncMock(
+                return_value=[
+                    {"source_type": "feature", "source_id": "feature-nested", "target_type": "session", "target_id": "session-nested"}
+                ]
+            )
+        )
+        ports = _ports(features=features_repo, sessions=sessions_repo, links=links_repo)
+
+        with patch(
+            "backend.application.services.agent_queries.feature_forensics.SessionTranscriptService.list_session_logs",
+            new=AsyncMock(return_value=[]),
+        ):
+            result = await FeatureForensicsQueryService().get_forensics(_context(), ports, "feature-nested")
+
+        # Alias fields accessible
+        self.assertEqual(result.name, "Nested Feature")
+        self.assertEqual(result.feature_status, "in_progress")
+        # Nested access backward compat
+        self.assertEqual(len(result.linked_sessions), 1)
+        self.assertEqual(result.linked_sessions[0].session_id, "session-nested")
+
+    # -------------------------------------------------------------------
+    # Criterion 5: telemetry_available type and exact boolean threshold
+    # -------------------------------------------------------------------
+
+    def test_telemetry_available_is_typed_model(self) -> None:
+        """telemetry_available field is a TelemetryAvailability instance, not a plain bool."""
+        dto = FeatureForensicsDTO(
+            status="ok",
+            feature_id="feat-type",
+            telemetry_available=TelemetryAvailability(tasks=True, documents=True, sessions=False),
+            source_refs=[],
+        )
+        self.assertIsInstance(dto.telemetry_available, TelemetryAvailability)
+        self.assertTrue(dto.telemetry_available.tasks)
+        self.assertTrue(dto.telemetry_available.documents)
+        self.assertFalse(dto.telemetry_available.sessions)
+
+    async def test_telemetry_available_true_at_exactly_one_item(self) -> None:
+        """telemetry_available.tasks is True when exactly one task exists (len > 0 threshold)."""
+        features_repo = types.SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value={
+                    "id": "feature-threshold",
+                    "name": "Threshold Feature",
+                    "status": "active",
+                    "updated_at": "2026-04-14T10:00:00+00:00",
+                }
+            )
+        )
+        tasks_repo = types.SimpleNamespace(
+            list_by_feature=AsyncMock(
+                return_value=[{"id": "task-only", "title": "Solo Task", "status": "done", "updated_at": "2026-04-14T09:00:00+00:00"}]
+            )
+        )
+        ports = _ports(features=features_repo, tasks=tasks_repo)
+
+        with patch(
+            "backend.application.services.agent_queries.feature_forensics.SessionIntelligenceReadService.list_sessions",
+            new=AsyncMock(return_value=types.SimpleNamespace(items=[])),
+        ):
+            result = await FeatureForensicsQueryService().get_forensics(_context(), ports, "feature-threshold")
+
+        # Exactly one task → True; no sessions or docs → False
+        self.assertTrue(result.telemetry_available.tasks)
+        self.assertFalse(result.telemetry_available.sessions)
+        self.assertFalse(result.telemetry_available.documents)

@@ -9,7 +9,7 @@ Coverage:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from backend.application.services.agent_queries.cache import (
     _query_cache,
@@ -164,6 +164,25 @@ class GetDataVersionFingerprintTests(unittest.IsolatedAsyncioTestCase):
         result = await get_data_version_fingerprint(context, ports, project_id=None)
 
         self.assertIsNone(result)
+
+    async def test_returns_pipe_fingerprint_via_asyncpg_with_data(self) -> None:
+        """asyncpg path returns a valid fingerprint when fetchrow returns a row with data.
+
+        Covers line 129: ``str(row["m"] or "")`` when row is not None and has a value.
+        """
+        # db is not aiosqlite.Connection → asyncpg path taken
+        row = {"m": "2026-04-14T10:00:00"}
+        db = MagicMock()
+        db.fetchrow = AsyncMock(return_value=row)
+
+        context = MagicMock()
+        ports = self._make_ports(db)
+
+        result = await get_data_version_fingerprint(context, ports, project_id=None)
+
+        self.assertIsNotNone(result)
+        self.assertIn("|", result)  # type: ignore[arg-type]
+        self.assertIn("2026-04-14T10:00:00", result)  # type: ignore[operator]
 
     # ── degradation: ports.storage.db attribute raises ───────────────────
 

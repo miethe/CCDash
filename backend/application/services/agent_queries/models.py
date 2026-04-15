@@ -178,6 +178,10 @@ class FeatureForensicsDTO(AgentQueryEnvelope):
     failure_patterns: list[str] = Field(default_factory=list)
     representative_sessions: list[SessionRef] = Field(default_factory=list)
     summary_narrative: str = ""
+    sessions_note: str = (
+        "Session linkage is eventually-consistent (populated by the background sync engine). "
+        "For the canonical session list use GET /v1/features/{id}/sessions."
+    )
 
 
 class WorkflowDiagnosticsDTO(AgentQueryEnvelope):

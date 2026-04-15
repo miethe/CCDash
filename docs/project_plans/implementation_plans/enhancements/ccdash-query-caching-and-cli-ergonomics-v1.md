@@ -1,26 +1,33 @@
 ---
-title: "Implementation Plan: CCDash Query Caching and CLI Ergonomics"
+title: 'Implementation Plan: CCDash Query Caching and CLI Ergonomics'
 schema_version: 2
 doc_type: implementation_plan
-status: draft
-created: 2026-04-14
-updated: 2026-04-14 (findings folded: Pass 2/3 CLI usage, phases expanded to 6)
-feature_slug: "ccdash-query-caching-and-cli-ergonomics"
-feature_version: "v1"
+status: in-progress
+created: '2026-04-14'
+updated: '2026-04-15'
+feature_slug: ccdash-query-caching-and-cli-ergonomics
+feature_version: v1
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-query-caching-and-cli-ergonomics-v1.md
 plan_ref: null
-scope: "Add CLI timeout configuration, in-process query caching with TTL, DTO alias fields with telemetry indicators, feature-list pagination/filtering, and linked_sessions reconciliation for five targeted enhancements to CCDash CLI/MCP ergonomics"
-effort_estimate: "36-44 story points (expanded from 28-34 with new findings)"
-architecture_summary: "Six-phase plan: (1) CLI timeout plumbing in RuntimeClient; (2) DTO alias fields + telemetry_available on FeatureForensicsDTO; (2.5) linked_sessions reconciliation; (3) cache foundation with TTL memoization in agent_queries layer; (3.5) feature-list pagination/filtering; (4) background materialization via runtime job adapter; (5) comprehensive testing, observability, documentation, and skill updates"
+scope: Add CLI timeout configuration, in-process query caching with TTL, DTO alias
+  fields with telemetry indicators, feature-list pagination/filtering, and linked_sessions
+  reconciliation for five targeted enhancements to CCDash CLI/MCP ergonomics
+effort_estimate: 36-44 story points (expanded from 28-34 with new findings)
+architecture_summary: 'Six-phase plan: (1) CLI timeout plumbing in RuntimeClient;
+  (2) DTO alias fields + telemetry_available on FeatureForensicsDTO; (2.5) linked_sessions
+  reconciliation; (3) cache foundation with TTL memoization in agent_queries layer;
+  (3.5) feature-list pagination/filtering; (4) background materialization via runtime
+  job adapter; (5) comprehensive testing, observability, documentation, and skill
+  updates'
 related_documents:
-  - docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
+- docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
 references:
   user_docs: []
   context:
-    - CLAUDE.md (env vars, CLI flags)
+  - CLAUDE.md (env vars, CLI flags)
   specs: []
   related_prds:
-    - docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
+  - docs/project_plans/PRDs/enhancements/agentic-sdlc-intelligence-foundation-v1.md
 spike_ref: null
 adr_refs: []
 deferred_items_spec_refs: []
@@ -34,28 +41,65 @@ owner: null
 contributors: []
 priority: medium
 risk_level: low
-category: "product-planning"
-tags: [implementation, planning, cli, caching, ergonomics, phases]
+category: product-planning
+tags:
+- implementation
+- planning
+- cli
+- caching
+- ergonomics
+- phases
 milestone: null
-commit_refs: []
+commit_refs:
+- 04eb8f6
 pr_refs: []
 files_affected:
-  - packages/ccdash_cli/src/ccdash_cli/runtime/client.py
-  - packages/ccdash_cli/src/ccdash_cli/ (feature list, report commands)
-  - backend/application/services/agent_queries/models.py
-  - backend/application/services/agent_queries/__init__.py
-  - backend/application/services/agent_queries/feature_forensics.py
-  - backend/application/services/agent_queries/feature_list.py
-  - backend/application/services/agent_queries/cache.py (new file)
-  - backend/config.py
-  - backend/requirements.txt
-  - backend/observability/otel.py
-  - backend/adapters/jobs/ (new cache materialization job)
-  - backend/repositories/features.py (keyword filter)
-  - backend/routers/agent.py
-  - backend/cli/
-  - backend/mcp/server.py
-  - backend/tests/ (new regression + integration tests)
+- packages/ccdash_cli/src/ccdash_cli/runtime/client.py
+- packages/ccdash_cli/src/ccdash_cli/runtime/state.py
+- packages/ccdash_cli/src/ccdash_cli/main.py
+- packages/ccdash_cli/src/ccdash_cli/commands/doctor.py
+- packages/ccdash_cli/src/ccdash_cli/commands/target.py
+- packages/ccdash_cli/src/ccdash_cli/commands/feature.py
+- packages/ccdash_cli/tests/test_timeout.py
+- packages/ccdash_cli/tests/test_commands.py
+- backend/application/services/agent_queries/models.py
+- backend/application/services/agent_queries/cache.py
+- backend/application/services/agent_queries/feature_forensics.py
+- backend/application/services/agent_queries/feature_list.py
+- backend/application/services/agent_queries/project_status.py
+- backend/application/services/agent_queries/workflow_diagnostics.py
+- backend/application/services/agent_queries/reporting.py
+- backend/application/services/agent_queries/shared.py
+- backend/adapters/jobs/cache_warming.py
+- backend/adapters/jobs/runtime.py
+- backend/config.py
+- backend/requirements.txt
+- backend/observability/otel.py
+- backend/repositories/features.py
+- backend/routers/agent.py
+- backend/routers/features.py
+- backend/cli/
+- backend/mcp/server.py
+- backend/tests/test_agent_query_cache.py
+- backend/tests/test_agent_query_cache_ttl.py
+- backend/tests/test_agent_query_cache_invalidation.py
+- backend/tests/test_agent_query_bypass_cache.py
+- backend/tests/test_agent_query_memoized_query.py
+- backend/tests/test_cache_warming_job.py
+- backend/tests/test_features_list_filter.py
+- backend/tests/test_feature_forensics_aliases.py
+- backend/tests/test_feature_forensics_endpoint_agreement.py
+- backend/tests/test_agent_queries_feature_forensics.py
+- backend/tests/test_cli_commands.py
+- CHANGELOG.md
+- CLAUDE.md
+- docs/guides/query-cache-tuning-guide.md
+- docs/guides/cli-timeout-debugging.md
+- .claude/skills/ccdash/SKILL.md
+- .claude/skills/ccdash/recipes/task-attribution.md
+- .claude/skills/ccdash/recipes/feature-retrospective.md
+- .claude/skills/ccdash/recipes/unreachable-server.md
+- .claude/worknotes/ccdash-query-caching-and-cli-ergonomics/feature-guide.md
 ---
 
 # Implementation Plan: CCDash Query Caching and CLI Ergonomics

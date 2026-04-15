@@ -307,6 +307,116 @@ class MemoizedQueryDecoratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"ok": True})
 
 
+class EmitHelperOtelSuccessTests(unittest.IsolatedAsyncioTestCase):
+    """Cover lines 339-341 and 347-349: _emit_hit/_emit_miss when OTel is importable.
+
+    The otel module's record_cache_hit/miss are importable and callable in the
+    test env (they are no-ops when telemetry is disabled).  We call _emit_hit
+    and _emit_miss directly with a live OTel module present so the ``try`` body
+    executes rather than the ``except`` branch.
+    """
+
+    async def test_emit_hit_succeeds_when_otel_importable(self) -> None:
+        """_emit_hit must not raise when record_cache_hit is importable."""
+        from backend.application.services.agent_queries.cache import _emit_hit
+        # Should not raise; covers line 339 (record_cache_hit(endpoint))
+        _emit_hit("project_status")
+
+    async def test_emit_miss_succeeds_when_otel_importable(self) -> None:
+        """_emit_miss must not raise when record_cache_miss is importable."""
+        from backend.application.services.agent_queries.cache import _emit_miss
+        # Should not raise; covers line 347 (record_cache_miss(endpoint))
+        _emit_miss("feature_forensics")
+
+    async def test_decorator_hit_counter_fires_when_otel_available(self) -> None:
+        """A cache hit on a decorated function must invoke record_cache_hit.
+
+        This exercises the _emit_hit success path (lines 338-341) under the
+        decorator rather than calling _emit_hit directly.
+        """
+        from backend.application.services.agent_queries.cache import clear_cache
+
+        clear_cache()
+        call_count = 0
+
+        @memoized_query("otel_hit_ep")
+        async def my_service(context, ports):
+            nonlocal call_count
+            call_count += 1
+            return {"v": call_count}
+
+        ctx = _make_context()
+        ports = _make_ports()
+
+        hit_calls: list[str] = []
+
+        def _spy_hit(ep: str) -> None:
+            hit_calls.append(ep)
+
+        with patch("backend.observability.otel.record_cache_hit", side_effect=_spy_hit):
+            with patch(_FP_PATCH, new=AsyncMock(return_value="fp-otel-hit")):
+                await my_service(ctx, ports)  # miss
+                await my_service(ctx, ports)  # hit
+
+        self.assertEqual(call_count, 1, "underlying fn called once (miss then hit)")
+        self.assertGreaterEqual(
+            len(hit_calls), 1,
+            "record_cache_hit must be called at least once for the cache hit",
+        )
+        clear_cache()
+
+
+class NoCacheContextPortsMissingTests(unittest.IsolatedAsyncioTestCase):
+    """Cover line 303: debug log when context/ports cannot be resolved from call args.
+
+    This happens when the decorated function is called with positional arguments
+    that don't include context/ports (rare but valid for bare functions with no
+    context parameter).
+    """
+
+    def setUp(self) -> None:
+        clear_cache()
+
+    def tearDown(self) -> None:
+        clear_cache()
+
+    async def test_no_context_ports_emits_debug_and_bypasses_cache(self) -> None:
+        """Decorator must log DEBUG and bypass cache when context/ports are absent.
+
+        Covers line 303: the ``else`` branch of the ``if context is not None and
+        ports is not None`` guard inside the decorator wrapper.
+        """
+        call_count = 0
+
+        # A function with no context/ports params so the decorator cannot resolve them.
+        # The param inspection falls back: _context_pos=0 but positional args is empty.
+        @memoized_query("no_ctx_ep")
+        async def bare_service():
+            nonlocal call_count
+            call_count += 1
+            return {"n": call_count}
+
+        _logger_name = "backend.application.services.agent_queries.cache"
+
+        with self.assertLogs(_logger_name, level="DEBUG") as log_ctx:
+            result = await bare_service()
+
+        self.assertEqual(result, {"n": 1}, "must still return the live result")
+        self.assertEqual(call_count, 1)
+
+        debug_lines = [r for r in log_ctx.output if "DEBUG" in r and "no_ctx_ep" in r]
+        self.assertTrue(
+            debug_lines,
+            "expected a DEBUG log mentioning the endpoint name when context/ports are missing",
+        )
+
+        # A second call must also be a live call (cache never written)
+        with self.assertLogs(_logger_name, level="DEBUG"):
+            result2 = await bare_service()
+        self.assertEqual(result2, {"n": 2}, "second call must also be live (cache not populated)")
+        self.assertEqual(call_count, 2)
+
+
 class GracefulDegradationTests(unittest.IsolatedAsyncioTestCase):
     """CACHE-011: fingerprint failure path must never surface to the caller.
 

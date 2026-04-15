@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import typer
 
-from ccdash_cli.runtime import state as app_state
 from ccdash_cli.runtime.client import build_client, CCDashClientError, ConnectionError
 from ccdash_cli.runtime.config import resolve_target
 

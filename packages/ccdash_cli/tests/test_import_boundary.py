@@ -11,12 +11,7 @@ def test_backend_not_importable():
     This validates the package boundary: the standalone CLI depends only on
     ccdash_contracts, httpx, typer, etc. — never on the backend runtime.
     """
-    result = subprocess.run(
-        [sys.executable, "-c", "import ccdash_cli; import backend"],
-        capture_output=True,
-        text=True,
-    )
-    # If backend is importable, this is a boundary violation
+    # If backend is importable, this is a boundary violation.
     # (In a clean install environment, backend wouldn't be present.
     # In the dev environment, it might be — so we check the import
     # graph of ccdash_cli instead.)

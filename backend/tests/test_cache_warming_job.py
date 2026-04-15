@@ -6,6 +6,8 @@ Tests cover:
   do not propagate out of the asyncio Task.
 - BG-005: ``CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS=0`` disables the job
   (``_start_cache_warming_task`` returns None and no Task is created).
+- TEST-004-C2: The warming task does not block concurrent coroutines (non-blocking).
+- TEST-004-C5: The query cache contains entries after a warming cycle completes.
 
 All tests are hermetic — they monkeypatch config, stub out service calls, and
 use an in-process asyncio event loop via ``asyncio.run`` / ``IsolatedAsyncioTestCase``.
@@ -13,17 +15,13 @@ use an in-process asyncio event loop via ``asyncio.run`` / ``IsolatedAsyncioTest
 from __future__ import annotations
 
 import asyncio
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.adapters.jobs.runtime import RuntimeJobAdapter, RuntimeJobState
+from backend.adapters.jobs.runtime import RuntimeJobAdapter
 from backend.application.context import (
-    Principal,
     ProjectScope,
-    TenancyContext,
-    TraceContext,
 )
 
 
@@ -363,6 +361,182 @@ class TestCacheWarmingStop(unittest.IsolatedAsyncioTestCase):
             await adapter.stop()
             self.assertIsNone(adapter.state.cache_warming_task)
             self.assertTrue(task.done())
+
+
+# ---------------------------------------------------------------------------
+# TEST-004-C2: warming task must not block concurrent coroutines (criterion 2)
+# ---------------------------------------------------------------------------
+
+class TestCacheWarmingNonBlocking(unittest.IsolatedAsyncioTestCase):
+    """The warming loop must not starve the event loop between iterations.
+
+    We run the warming task alongside a lightweight probe coroutine that
+    increments a counter during the same interval.  If the warming loop were
+    blocking (e.g. calling time.sleep instead of asyncio.sleep) the probe
+    would not advance.
+    """
+
+    async def test_warming_does_not_starve_concurrent_coroutines(self):
+        project = _make_project()
+        adapter = _make_adapter(project)
+
+        # Probe: a tight async loop counting how many times it gets the event
+        # loop back during the test window.
+        probe_ticks: list[int] = [0]
+
+        async def _probe() -> None:
+            while True:
+                await asyncio.sleep(0)  # yield to event loop
+                probe_ticks[0] += 1
+
+        status_mock = AsyncMock(return_value=MagicMock())
+        workflow_mock = AsyncMock(return_value=MagicMock())
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
+             patch(
+                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
+                 status_mock,
+             ), \
+             patch(
+                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
+                 workflow_mock,
+             ):
+            mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
+            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
+            mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
+
+            warming_task = adapter._start_cache_warming_task()
+            assert warming_task is not None
+            probe_task = asyncio.ensure_future(_probe())
+
+            # Run for slightly more than one interval
+            await asyncio.sleep(1.3)
+
+            probe_task.cancel()
+            warming_task.cancel()
+            for t in (probe_task, warming_task):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+        # The probe should have received the event loop many times; a blocking
+        # warming loop would leave probe_ticks[0] at 0 or 1.
+        self.assertGreater(
+            probe_ticks[0],
+            5,
+            f"Probe only ticked {probe_ticks[0]} times — warming may be blocking the event loop",
+        )
+
+
+# ---------------------------------------------------------------------------
+# TEST-004-C5: cache entries present after the memoized_query decorator runs
+# ---------------------------------------------------------------------------
+
+class TestCacheWarmAfterRun(unittest.IsolatedAsyncioTestCase):
+    """Criterion 5: the module-level TTLCache must contain entries after a
+    ``@memoized_query``-decorated service method executes with a valid
+    fingerprint.
+
+    The warming job calls the *decorated* ``get_status`` / ``get_diagnostics``
+    methods.  If those decorated calls succeed and the decorator receives a
+    non-None fingerprint it writes the result to ``_query_cache``.  This test
+    verifies that end-to-end path by:
+
+    1. Calling a ``@memoized_query``-decorated function directly with a
+       fingerprint-returning stub (no real DB needed).
+    2. Asserting ``_query_cache`` is non-empty afterwards.
+
+    A companion sub-test verifies that the warming job calls the services
+    (and therefore exercises the decorated path) at least once per interval,
+    ensuring the two halves of criterion 5 are both covered.
+    """
+
+    async def test_memoized_query_decorator_populates_cache(self):
+        """The @memoized_query decorator must write to _query_cache on a cache miss."""
+        from backend.application.services.agent_queries.cache import (
+            clear_cache,
+            get_cache,
+            memoized_query,
+        )
+        import backend.application.services.agent_queries.cache as _cache_mod
+
+        clear_cache()
+
+        sentinel = object()
+
+        # Build a minimal decorated function inline so the test does not depend
+        # on the real service implementations.
+        @memoized_query("test_endpoint_c5")
+        async def _fake_service(context, ports):
+            return sentinel
+
+        # Stub out the fingerprint so the decorator sees a valid, stable token.
+        with patch.object(
+            _cache_mod,
+            "get_data_version_fingerprint",
+            AsyncMock(return_value="stable-fp-c5"),
+        ), patch.object(_cache_mod, "config") as cfg_mock:
+            cfg_mock.CCDASH_QUERY_CACHE_TTL_SECONDS = 60
+
+            fake_context = MagicMock()
+            fake_context.project.project_id = "proj-c5"
+            fake_ports = MagicMock()
+
+            result = await _fake_service(fake_context, fake_ports)
+
+        self.assertIs(result, sentinel, "decorated function must return the underlying result")
+
+        cache = get_cache()
+        self.assertGreater(
+            len(cache),
+            0,
+            "TTLCache must contain at least one entry after a decorated call with a valid fingerprint",
+        )
+
+        clear_cache()
+
+    async def test_warming_job_invokes_services_enabling_cache_population(self):
+        """The warming task must invoke both services at least once per interval,
+        which is the necessary condition for cache population (C5 integration half)."""
+        project = _make_project()
+        adapter = _make_adapter(project)
+
+        call_log: list[str] = []
+
+        async def _record_status(self, context, ports):
+            call_log.append("status")
+            return MagicMock()
+
+        async def _record_workflow(self, context, ports):
+            call_log.append("workflow")
+            return MagicMock()
+
+        with patch("backend.adapters.jobs.runtime.config") as mock_cfg, \
+             patch(
+                 "backend.application.services.agent_queries.project_status.ProjectStatusQueryService.get_status",
+                 _record_status,
+             ), \
+             patch(
+                 "backend.application.services.agent_queries.workflow_intelligence.WorkflowDiagnosticsQueryService.get_diagnostics",
+                 _record_workflow,
+             ):
+            mock_cfg.CCDASH_QUERY_CACHE_REFRESH_INTERVAL_SECONDS = 1
+            mock_cfg.ANALYTICS_SNAPSHOT_INTERVAL_SECONDS = 0
+            mock_cfg.CCDASH_TELEMETRY_EXPORT_INTERVAL_SECONDS = 0
+
+            task = adapter._start_cache_warming_task()
+            assert task is not None
+
+            await asyncio.sleep(1.4)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        self.assertIn("status", call_log, "project_status must be called by the warming job")
+        self.assertIn("workflow", call_log, "workflow_diagnostics must be called by the warming job")
 
 
 if __name__ == "__main__":
