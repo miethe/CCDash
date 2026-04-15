@@ -295,7 +295,30 @@ export const SessionIntelligencePanel: React.FC<SessionIntelligencePanelProps> =
   const resolvedCapability = useMemo(() => {
     if (searchPayload?.capability) return searchPayload.capability;
     if (!hasData) return null;
+    const probeReadyState = String(runtimeStatus?.probeReadyState || '').trim().toLowerCase();
     const storageProfile = String(runtimeStatus?.storageProfile || 'unknown').trim().toLowerCase() || 'unknown';
+    if (probeReadyState) {
+      const authoritative = probeReadyState === 'ready' && runtimeStatus?.probeDegraded !== true;
+      const degradedReasonCodes = runtimeStatus?.degradedReasonCodes || [];
+      const detail = probeReadyState === 'ready'
+        ? 'Canonical transcript intelligence is available for this workspace.'
+        : probeReadyState === 'degraded'
+          ? degradedReasonCodes.length > 0
+            ? `Transcript intelligence is available in degraded mode. Reasons: ${degradedReasonCodes.join(', ')}.`
+            : 'Transcript intelligence is available in degraded mode.'
+          : probeReadyState === 'not_ready'
+            ? degradedReasonCodes.length > 0
+              ? `Transcript intelligence is not ready yet. Reasons: ${degradedReasonCodes.join(', ')}.`
+              : 'Transcript intelligence is not ready yet.'
+            : 'Transcript intelligence availability is unknown.';
+      return {
+        supported: probeReadyState !== 'not_ready',
+        authoritative,
+        storageProfile,
+        searchMode: authoritative ? 'canonical' : 'lexical',
+        detail,
+      };
+    }
     return {
       supported: true,
       authoritative: storageProfile === 'enterprise',
@@ -305,7 +328,7 @@ export const SessionIntelligencePanel: React.FC<SessionIntelligencePanelProps> =
         ? 'Canonical transcript intelligence is available for this workspace.'
         : 'Transcript intelligence is available in a non-authoritative fallback mode.',
     };
-  }, [hasData, runtimeStatus?.storageProfile, searchPayload?.capability]);
+  }, [hasData, runtimeStatus?.probeDegraded, runtimeStatus?.probeReadyState, runtimeStatus?.storageProfile, searchPayload?.capability]);
   const availability = useMemo(
     () => describeIntelligenceAvailability(runtimeStatus, resolvedCapability),
     [runtimeStatus, resolvedCapability],

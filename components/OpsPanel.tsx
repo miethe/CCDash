@@ -26,7 +26,7 @@ import {
 } from '../types';
 import { normalizeSkillMeatConfig } from '../services/agenticIntelligence';
 import { createApiClient } from '../services/apiClient';
-import { normalizeRuntimeStatus, type RuntimeStatus } from '../services/runtimeProfile';
+import { normalizeRuntimeStatus, type RuntimeProbeReason, type RuntimeStatus } from '../services/runtimeProfile';
 import { isOpsLiveUpdatesEnabled, projectOpsTopic, useLiveInvalidation } from '../services/live';
 import {
   generateSessionMemoryDrafts,
@@ -78,6 +78,22 @@ function formatBoolean(value: boolean | null): string {
 
 function formatList(values: string[]): string {
   return values.length > 0 ? values.join(', ') : 'n/a';
+}
+
+function formatProbeReason(reason: RuntimeProbeReason): string {
+  const parts = [reason.code];
+  if (reason.category && reason.category !== 'unknown') parts.push(reason.category);
+  if (reason.severity && reason.severity !== 'unknown') parts.push(reason.severity);
+  return parts.join(' • ');
+}
+
+function formatProbeReasonCodes(codes: string[]): string {
+  return formatList(codes);
+}
+
+function summarizeProbeReasons(reasons: RuntimeProbeReason[]): string {
+  if (reasons.length === 0) return 'n/a';
+  return reasons.slice(0, 3).map(formatProbeReason).join(', ');
 }
 
 function opKindLabel(kind: string): string {
@@ -1067,7 +1083,10 @@ export const OpsPanel: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Backend Health</p>
-              <p className="text-slate-100 mt-1">{runtimeHealth?.health || 'unknown'}</p>
+              <p className="text-slate-100 mt-1">{runtimeHealth?.probeReadyState || runtimeHealth?.health || 'unknown'}</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                status {runtimeHealth?.probeReadyStatus || runtimeHealth?.health || 'unknown'} • schema {runtimeHealth?.schemaVersion || 'legacy'}
+              </p>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">DB</p>
@@ -1126,7 +1145,12 @@ export const OpsPanel: React.FC = () => {
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
               <p className="text-slate-500 text-xs uppercase tracking-wide">Sync + Watch Health</p>
-              <p className="text-slate-100 mt-1">watcher: {status?.watcher || runtimeHealth?.watcher || 'unknown'}</p>
+              <p className="text-slate-100 mt-1">
+                live {runtimeHealth?.probeContract?.live?.state || 'unknown'} • ready {runtimeHealth?.probeContract?.ready?.state || runtimeHealth?.probeReadyState || 'unknown'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                reasons {summarizeProbeReasons(runtimeHealth?.probeContract?.ready?.reasons || runtimeHealth?.degradedReasons || [])}
+              </p>
               <p className="mt-1 text-[11px] text-slate-400">
                 startup sync {runtimeHealth?.startupSync || 'unknown'} • analytics {runtimeHealth?.analyticsSnapshots || 'unknown'}
               </p>
@@ -1137,7 +1161,7 @@ export const OpsPanel: React.FC = () => {
                 jobs enabled: {formatBoolean(runtimeHealth?.jobsEnabled ?? null)}
               </p>
               <p className="mt-1 text-[11px] text-slate-400">
-                telemetry exports {runtimeHealth?.telemetryExports || 'unknown'}
+                telemetry exports {runtimeHealth?.telemetryExports || 'unknown'} • degraded {formatBoolean(runtimeHealth?.probeDegraded ?? null)}
               </p>
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
@@ -1146,7 +1170,7 @@ export const OpsPanel: React.FC = () => {
                 filesystem source of truth: {formatBoolean(runtimeHealth?.filesystemSourceOfTruth ?? null)}
               </p>
               <p className="mt-1 text-[11px] text-slate-400">
-                shared postgres {formatBoolean(runtimeHealth?.sharedPostgresEnabled ?? null)}
+                shared postgres {formatBoolean(runtimeHealth?.sharedPostgresEnabled ?? null)} • reason codes {formatProbeReasonCodes(runtimeHealth?.degradedReasonCodes || [])}
               </p>
             </div>
           </div>
