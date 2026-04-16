@@ -13,12 +13,15 @@ created: '2026-04-16'
 updated: '2026-04-16'
 started: '2026-04-16'
 completed: null
-commit_refs: []
+commit_refs:
+- 3b454d4
+- 8cd1219
+- 03501bb
 pr_refs: []
-overall_progress: 0
-completion_estimate: on-track
+overall_progress: 100
+completion_estimate: implementation landed; phase closure still depends on repo-wide typecheck cleanup
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -30,7 +33,7 @@ contributors:
 tasks:
 - id: PCP-101
   description: Define normalized planning node, edge, phase batch, and mismatch contracts shared across backend and frontend.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -39,7 +42,7 @@ tasks:
   priority: high
 - id: PCP-102
   description: Extend document/progress parsing or aggregation to derive linked planning relationships across design spec, PRD, implementation plan, progress, context, tracker, and reports.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -48,7 +51,7 @@ tasks:
   priority: high
 - id: PCP-103
   description: Decide and implement how raw status, effective status, mismatch state, and existing `inferred_complete` compatibility behavior coexist without collapsing provenance.
-  status: pending
+  status: completed
   assigned_to:
   - backend-architect
   - python-backend-engineer
@@ -58,7 +61,7 @@ tasks:
   priority: high
 - id: PCP-104
   description: Add service logic that computes raw status, effective status, mismatch state, and evidence for planning entities and phases.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - backend-architect
@@ -68,7 +71,7 @@ tasks:
   priority: high
 - id: PCP-105
   description: Derive phase task batches, ownership, file-scope hints, parallelization groups, and readiness state from progress frontmatter.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   dependencies:
@@ -93,16 +96,19 @@ parallelization:
   - PCP-105
   estimated_total_time: 12 pts / 4-5 days
 blockers: []
+notes:
+- Implementation work for PCP-101 through PCP-105 is complete and covered by passing targeted pytest suites plus `npm run build`.
+- `npm run lint` is not defined in this repo, `backend/.venv` does not include `ruff`, and `npm run typecheck` still fails in pre-existing example/test files plus `lib/sessionTranscriptLive.ts(11,87)`.
 success_criteria:
 - id: SC-1.1
   description: CCDash can compute a planning graph and phase-batch model from current source artifacts.
-  status: pending
+  status: completed
 - id: SC-1.2
   description: Effective status, raw status, and mismatch/provenance state are represented explicitly with evidence.
-  status: pending
+  status: completed
 - id: SC-1.3
   description: The derived model extends, rather than duplicates, current feature execution and dependency logic.
-  status: pending
+  status: completed
 files_modified:
 - docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
 - .claude/progress/ccdash-planning-control-plane-v1/phase-1-progress.md
@@ -139,4 +145,4 @@ Task("python-backend-engineer", "Execute PCP-105: Derive phase task batches, own
 
 ## Notes
 
-Phase opened on 2026-04-16. No implementation tasks have been started yet; launch Batch 1 first and keep downstream work aligned to the dependency graph above.
+Phase opened on 2026-04-16. PCP-101 through PCP-105 are now implemented; keep the phase open until the repo-wide typecheck gap is resolved or explicitly waived.
