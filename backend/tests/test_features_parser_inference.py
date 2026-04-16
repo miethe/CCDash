@@ -156,6 +156,148 @@ PRD body
             self.assertEqual(_frontmatter_status(plan_file), "completed")
             self.assertEqual(_frontmatter_status(prd_file), "inferred_complete")
 
+    def test_feature_planning_status_preserves_raw_status_when_progress_derives_effective_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (docs_dir / "PRDs" / "features").mkdir(parents=True, exist_ok=True)
+            (progress_dir / "feature-status-v1").mkdir(parents=True, exist_ok=True)
+
+            (docs_dir / "implementation_plans" / "features" / "feature-status-v1.md").write_text(
+                """---
+title: "Implementation Plan: Status Feature"
+status: draft
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (docs_dir / "PRDs" / "features" / "feature-status-v1.md").write_text(
+                """---
+title: "PRD: Status Feature"
+status: draft
+---
+PRD body
+""",
+                encoding="utf-8",
+            )
+            (progress_dir / "feature-status-v1" / "phase-1-progress.md").write_text(
+                """---
+title: "Phase 1 Progress"
+status: completed
+phase: 1
+total_tasks: 2
+completed_tasks: 2
+tasks:
+  - id: STATUS-1
+    description: "Ship parser facts"
+    status: completed
+  - id: STATUS-2
+    description: "Keep compatibility"
+    status: completed
+---
+Progress body
+""",
+                encoding="utf-8",
+            )
+
+            feature = scan_features(docs_dir, progress_dir)[0]
+
+            self.assertEqual(feature.status, "done")
+            self.assertIsNotNone(feature.planningStatus)
+            assert feature.planningStatus is not None
+            self.assertEqual(feature.planningStatus.rawStatus, "draft")
+            self.assertEqual(feature.planningStatus.effectiveStatus, "done")
+            self.assertEqual(feature.planningStatus.provenance.source, "derived")
+            self.assertEqual(feature.planningStatus.mismatchState.state, "derived")
+            self.assertTrue(
+                any(
+                    evidence.sourceType == "progress"
+                    for evidence in feature.planningStatus.provenance.evidence
+                )
+            )
+
+    def test_progress_phase_batches_are_retained_with_phase_planning_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            docs_dir = root / "docs" / "project_plans"
+            progress_dir = root / ".claude" / "progress"
+            (docs_dir / "implementation_plans" / "features").mkdir(parents=True, exist_ok=True)
+            (progress_dir / "batch-feature-v1").mkdir(parents=True, exist_ok=True)
+
+            (docs_dir / "implementation_plans" / "features" / "batch-feature-v1.md").write_text(
+                """---
+title: "Implementation Plan: Batch Feature"
+status: in-progress
+---
+Plan body
+""",
+                encoding="utf-8",
+            )
+            (progress_dir / "batch-feature-v1" / "phase-1-progress.md").write_text(
+                """---
+title: "Phase 1 Progress"
+status: in-progress
+phase: 1
+files_modified:
+  - backend/parsers/features.py
+tasks:
+  - id: PCP-101
+    description: "Define planning graph contract"
+    status: completed
+    assigned_to: [backend-architect]
+    deliverables:
+      - backend/models.py
+  - id: PCP-102
+    description: "Derive artifact relationships"
+    status: in-progress
+    assigned_to: [python-backend-engineer]
+    dependencies: [PCP-101]
+    deliverables:
+      - backend/parsers/features.py
+  - id: PCP-103
+    description: "Preserve raw status provenance"
+    status: blocked
+    assigned_to: [python-backend-engineer]
+    dependencies: [PCP-102]
+parallelization:
+  batch_1: [PCP-101]
+  batch_2: [PCP-102, PCP-103]
+blockers:
+  - "Need shared contract finalized"
+---
+Progress body
+""",
+                encoding="utf-8",
+            )
+
+            feature = scan_features(docs_dir, progress_dir)[0]
+            phase = feature.phases[0]
+
+            self.assertEqual(phase.id, "batch-feature-v1:phase:1")
+            self.assertIsNotNone(phase.planningStatus)
+            assert phase.planningStatus is not None
+            self.assertEqual(phase.planningStatus.rawStatus, "in-progress")
+            self.assertEqual(phase.planningStatus.effectiveStatus, "in-progress")
+            self.assertEqual([batch.batchId for batch in phase.phaseBatches], ["batch_1", "batch_2"])
+
+            batch_1 = phase.phaseBatches[0]
+            batch_2 = phase.phaseBatches[1]
+
+            self.assertEqual(batch_1.featureSlug, "batch-feature-v1")
+            self.assertEqual(batch_1.phase, "1")
+            self.assertEqual(batch_1.readinessState, "blocked")
+            self.assertIn("backend/models.py", batch_1.fileScopeHints)
+            self.assertIn("backend/parsers/features.py", batch_1.fileScopeHints)
+            self.assertIn("backend-architect", batch_1.assignedAgents)
+
+            self.assertEqual(batch_2.readinessState, "blocked")
+            self.assertIn("PCP-103", batch_2.readiness.blockingTaskIds)
+            self.assertIn("python-backend-engineer", batch_2.assignedAgents)
+            self.assertTrue(batch_2.readiness.evidence)
+
     def test_invalid_prd_frontmatter_skips_inferred_write_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

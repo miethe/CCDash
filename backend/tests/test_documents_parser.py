@@ -44,6 +44,55 @@ Body
             self.assertIn("feature-a-v1", doc.featureCandidates)
             self.assertIn("REQ-20260101-feature-a-1", doc.metadata.requestLogIds)
 
+    def test_parse_progress_document_retains_parallelization_and_source_document_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            progress_dir = root / ".claude" / "progress" / "feature-b"
+            progress_dir.mkdir(parents=True, exist_ok=True)
+            path = progress_dir / "phase-2-progress.md"
+            path.write_text(
+                """---
+title: Feature B Phase 2
+status: completed
+phase: 2
+source_documents:
+  - docs/project_plans/implementation_plans/features/feature-b-v1.md
+parallelization:
+  batch_1: [B-201]
+  batch_2: [B-202, B-203]
+tasks:
+  - id: B-201
+    description: "Batch one"
+    status: completed
+  - id: B-202
+    description: "Batch two"
+    status: pending
+---
+Body
+""",
+                encoding="utf-8",
+            )
+
+            doc = parse_document_file(path, root / ".claude" / "progress", project_root=root)
+            self.assertIsNotNone(doc)
+            assert doc is not None
+            self.assertIn(
+                "docs/project_plans/implementation_plans/features/feature-b-v1.md",
+                doc.frontmatter.relatedRefs,
+            )
+            self.assertIn(
+                "parallelization",
+                doc.metadata.docTypeFields,
+            )
+            self.assertEqual(
+                doc.metadata.docTypeFields["parallelization"],
+                {
+                    "batch_1": ["B-201"],
+                    "batch_2": ["B-202", "B-203"],
+                },
+            )
+            self.assertEqual(doc.statusNormalized, "completed")
+
     def test_parse_lineage_frontmatter_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

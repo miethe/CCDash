@@ -59,6 +59,47 @@ def _expand_model(short: str) -> str:
     return _MODEL_MAP.get(short.lower().strip(), short)
 
 
+def _flatten_string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        values: list[str] = []
+        for entry in value:
+            values.extend(_flatten_string_list(entry))
+        return values
+    return []
+
+
+def _normalize_batch_task_map(parallelization: object) -> dict[str, str]:
+    if not isinstance(parallelization, dict):
+        return {}
+
+    task_to_batch: dict[str, str] = {}
+    for batch_id, batch_value in parallelization.items():
+        batch_token = str(batch_id or "").strip()
+        if not batch_token.startswith("batch_"):
+            continue
+        task_values = _flatten_string_list(batch_value)
+        if isinstance(batch_value, dict):
+            task_values = _flatten_string_list(
+                batch_value.get("tasks")
+                or batch_value.get("task_ids")
+                or batch_value.get("items")
+            )
+        for task_id in task_values:
+            token = str(task_id or "").strip()
+            if token and token not in task_to_batch:
+                task_to_batch[token] = batch_token
+    return task_to_batch
+
+
+def _normalize_raw_status_tag(prefix: str, raw_status: object) -> str:
+    token = str(raw_status or "").strip().lower()
+    token = re.sub(r"[^a-z0-9]+", "-", token).strip("-")
+    return f"{prefix}:{token}" if token else ""
+
+
 def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
     """Parse a single progress file into a list of ProjectTask objects."""
     try:
@@ -85,6 +126,7 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
     phase_name = fm.get("name", fm.get("title", ""))
     phase_status = fm.get("status", "")
     updated = fm.get("updated", fm.get("completed_at", ""))
+    batch_by_task_id = _normalize_batch_task_map(fm.get("parallelization"))
     files_modified = fm.get("files_modified", [])
     if not isinstance(files_modified, list):
         files_modified = []
@@ -115,7 +157,8 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
 
         # Handle both `name` and `description` fields
         title = task_raw.get("name", task_raw.get("description", task_id))
-        status = _map_status(task_raw.get("status", "pending"))
+        raw_task_status = str(task_raw.get("status", "pending"))
+        status = _map_status(raw_task_status)
 
         # Owner: first assigned_to entry
         assigned = task_raw.get("assigned_to", [])
@@ -149,6 +192,17 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
         session_id = str(task_raw.get("session_id", task_raw.get("sessionId", ""))) if task_raw.get("session_id") or task_raw.get("sessionId") else ""
         commit_hash = str(task_raw.get("git_commit", task_raw.get("commitHash", ""))) if task_raw.get("git_commit") or task_raw.get("commitHash") else ""
 
+        extra_tags = []
+        phase_status_tag = _normalize_raw_status_tag("raw-phase-status", phase_status)
+        if phase_status_tag:
+            extra_tags.append(phase_status_tag)
+        task_status_tag = _normalize_raw_status_tag("raw-task-status", raw_task_status)
+        if task_status_tag:
+            extra_tags.append(task_status_tag)
+        batch_id = batch_by_task_id.get(str(task_id))
+        if batch_id:
+            extra_tags.append(f"batch:{batch_id}")
+
         tasks.append(ProjectTask(
             id=task_id,
             title=title,
@@ -160,7 +214,7 @@ def parse_progress_file(path: Path, base_dir: Path) -> list[ProjectTask]:
             priority=priority,
             projectType=str(prd),
             projectLevel=f"Phase {phase}" if phase else "",
-            tags=base_tags + [str(d) for d in deps[:3]],
+            tags=base_tags + [str(d) for d in deps[:3]] + extra_tags,
             updatedAt=str(updated) if updated else "",
             relatedFiles=files_modified[:10],
             sourceFile=source_file,

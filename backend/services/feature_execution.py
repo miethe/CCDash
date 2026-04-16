@@ -29,6 +29,15 @@ from backend.models import (
     FeatureDocumentCoverage,
     FeatureQualitySignals,
     LinkedDocument,
+    LinkedFeatureRef,
+    PlanningEdge,
+    PlanningEffectiveStatus,
+    PlanningGraph,
+    PlanningMismatchState,
+    PlanningNode,
+    PlanningPhaseBatch,
+    PlanningStatusEvidence,
+    PlanningStatusProvenance,
     RecommendedStack,
     StackRecommendationEvidence,
 )
@@ -38,6 +47,140 @@ _FINAL_FEATURE_STATUSES = {"done", "deferred", "completed"}
 _DOC_COMPLETION_STATUSES = {"completed", "deferred", "inferred_complete"}
 _DOC_WRITE_THROUGH_TYPES = {"prd", "implementation_plan", "phase_plan"}
 _FAMILY_STATUS_ORDER = {"done": 0, "deferred": 0, "completed": 0, "review": 1, "in-progress": 2, "backlog": 3}
+_PLANNING_FINAL_STATUSES = {"done", "deferred", "completed"}
+_PHASE_ACTIVE_STATUSES = {"in-progress", "review"}
+_DOC_NODE_TYPE_MAP = {
+    "design_doc": "design_spec",
+    "implementation_plan": "implementation_plan",
+    "phase_plan": "implementation_plan",
+    "prd": "prd",
+    "progress": "progress",
+    "report": "report",
+}
+
+
+def _safe_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _string_list(*values: Any) -> list[str]:
+    items: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            token = value.strip()
+            if token:
+                items.append(token)
+            continue
+        if isinstance(value, list):
+            for raw in value:
+                if isinstance(raw, str):
+                    token = raw.strip()
+                    if token:
+                        items.append(token)
+    return list(dict.fromkeys(items))
+
+
+def _linked_feature_refs(*values: Any) -> list[LinkedFeatureRef]:
+    refs: list[LinkedFeatureRef] = []
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for raw in value:
+            if isinstance(raw, str) and raw.strip():
+                refs.append(LinkedFeatureRef(feature=raw.strip()))
+                continue
+            if isinstance(raw, dict):
+                try:
+                    refs.append(LinkedFeatureRef.model_validate(raw))
+                except Exception:
+                    feature_value = str(raw.get("feature") or "").strip()
+                    if feature_value:
+                        refs.append(
+                            LinkedFeatureRef(
+                                feature=feature_value,
+                                type=str(raw.get("type") or ""),
+                                source=str(raw.get("source") or ""),
+                            )
+                        )
+    deduped: dict[tuple[str, str, str], LinkedFeatureRef] = {}
+    for ref in refs:
+        key = (
+            _feature_key(ref.feature),
+            str(ref.type or "").strip().lower(),
+            str(ref.source or "").strip().lower(),
+        )
+        deduped[key] = ref
+    return list(deduped.values())
+
+
+def _doc_ref_tokens(value: str) -> list[str]:
+    token = str(value or "").strip()
+    if not token:
+        return []
+    lowered = token.lower().lstrip("/")
+    stem = lowered.rsplit("/", 1)[-1]
+    if stem.endswith(".md"):
+        stem = stem[:-3]
+    canonical = canonical_slug(stem)
+    ordered = [
+        lowered,
+        lowered.lstrip("/"),
+        stem,
+        canonical,
+    ]
+    return [candidate for candidate in dict.fromkeys(ordered) if candidate]
+
+
+def _planning_evidence(
+    evidence_id: str,
+    label: str,
+    detail: str,
+    source_type: str,
+    *,
+    source_id: str = "",
+    source_path: str = "",
+) -> PlanningStatusEvidence:
+    return PlanningStatusEvidence(
+        id=evidence_id,
+        label=label,
+        detail=detail,
+        sourceType=source_type,
+        sourceId=source_id,
+        sourcePath=source_path,
+    )
+
+
+def _planning_result(
+    *,
+    raw_status: str,
+    effective_status: str,
+    provenance_source: str,
+    provenance_reason: str,
+    evidence: list[PlanningStatusEvidence],
+    mismatch_state: str,
+    mismatch_reason: str,
+) -> PlanningEffectiveStatus:
+    is_mismatch = bool(raw_status and effective_status and raw_status != effective_status)
+    return PlanningEffectiveStatus(
+        rawStatus=raw_status,
+        effectiveStatus=effective_status,
+        provenance=PlanningStatusProvenance(
+            source=provenance_source,
+            reason=provenance_reason,
+            evidence=evidence,
+        ),
+        mismatchState=PlanningMismatchState(
+            state=mismatch_state,
+            reason=mismatch_reason,
+            isMismatch=is_mismatch or mismatch_state in {"blocked", "reversed", "mismatched", "derived"},
+            evidence=evidence,
+        ),
+    )
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -80,36 +223,91 @@ def _feature_key(value: str) -> str:
 
 
 def _document_to_linked(row: dict[str, Any]) -> LinkedDocument:
-    metadata = row.get("metadata_json")
-    frontmatter = row.get("frontmatter_json")
-    if isinstance(metadata, str):
-        try:
-            metadata = json.loads(metadata)
-        except Exception:
-            metadata = {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    if isinstance(frontmatter, str):
-        try:
-            frontmatter = json.loads(frontmatter)
-        except Exception:
-            frontmatter = {}
-    if not isinstance(frontmatter, dict):
-        frontmatter = {}
+    metadata = _safe_json_dict(row.get("metadata_json"))
+    frontmatter = _safe_json_dict(row.get("frontmatter_json"))
+    file_path = str(row.get("file_path") or "")
+    slug = str(row.get("slug") or metadata.get("slug") or frontmatter.get("slug") or "").strip()
+    if not slug and file_path:
+        slug = file_path.rsplit("/", 1)[-1]
+        if slug.endswith(".md"):
+            slug = slug[:-3]
+    canonical = str(
+        row.get("canonical_slug")
+        or metadata.get("canonicalSlug")
+        or metadata.get("canonical_slug")
+        or frontmatter.get("canonicalSlug")
+        or frontmatter.get("canonical_slug")
+        or canonical_slug(slug)
+        or ""
+    ).strip()
     return LinkedDocument(
         id=str(row.get("id") or ""),
-        title=str(row.get("title") or row.get("file_path") or "Untitled"),
-        filePath=str(row.get("file_path") or ""),
+        title=str(row.get("title") or file_path or "Untitled"),
+        filePath=file_path,
         docType=str(row.get("doc_type") or "").strip() or "spec",
         category=str(row.get("category") or ""),
-        featureFamily=str(metadata.get("featureFamily") or ""),
-        primaryDocRole=str(metadata.get("primaryDocRole") or ""),
-        blockedBy=[str(v) for v in (frontmatter.get("blockedBy") or frontmatter.get("blocked_by") or []) if isinstance(v, str)],
+        slug=slug,
+        canonicalSlug=canonical,
+        featureFamily=str(
+            row.get("feature_family")
+            or metadata.get("featureFamily")
+            or frontmatter.get("feature_family")
+            or frontmatter.get("featureFamily")
+            or ""
+        ),
+        primaryDocRole=str(metadata.get("primaryDocRole") or frontmatter.get("primary_doc_role") or frontmatter.get("primaryDocRole") or ""),
+        blockedBy=_string_list(frontmatter.get("blockedBy"), frontmatter.get("blocked_by"), metadata.get("blockedBy")),
         sequenceOrder=metadata.get(
             "sequenceOrder",
             frontmatter.get("sequenceOrder") if frontmatter.get("sequenceOrder") is not None else frontmatter.get("sequence_order"),
         ),
-        prdRef=str(row.get("prd_ref") or ""),
+        frontmatterKeys=sorted(str(key) for key in frontmatter.keys()),
+        relatedRefs=_string_list(
+            metadata.get("relatedRefs"),
+            metadata.get("related_refs"),
+            frontmatter.get("relatedRefs"),
+            frontmatter.get("related_refs"),
+            frontmatter.get("related"),
+            frontmatter.get("references"),
+            frontmatter.get("links"),
+            frontmatter.get("plan_ref"),
+            frontmatter.get("implementation_plan_ref"),
+        ),
+        prdRef=str(row.get("prd_ref") or frontmatter.get("prd_ref") or frontmatter.get("prdRef") or metadata.get("prdRef") or ""),
+        lineageFamily=str(
+            row.get("lineage_family")
+            or metadata.get("lineageFamily")
+            or frontmatter.get("lineage_family")
+            or frontmatter.get("lineageFamily")
+            or ""
+        ),
+        lineageParent=str(
+            row.get("lineage_parent")
+            or metadata.get("lineageParent")
+            or frontmatter.get("lineage_parent")
+            or frontmatter.get("lineageParent")
+            or ""
+        ),
+        lineageChildren=_string_list(
+            row.get("lineage_children"),
+            metadata.get("lineageChildren"),
+            frontmatter.get("lineage_children"),
+            frontmatter.get("lineageChildren"),
+        ),
+        lineageType=str(
+            row.get("lineage_type")
+            or metadata.get("lineageType")
+            or frontmatter.get("lineage_type")
+            or frontmatter.get("lineageType")
+            or ""
+        ),
+        linkedFeatures=_linked_feature_refs(
+            metadata.get("linkedFeatureRefs"),
+            metadata.get("linkedFeatures"),
+            frontmatter.get("linkedFeatureRefs"),
+            frontmatter.get("linked_features"),
+            frontmatter.get("linkedFeatures"),
+        ),
     )
 
 
@@ -259,6 +457,293 @@ def _feature_completion_snapshot(feature: Feature, doc_rows: list[dict[str, Any]
     return (prd_complete or plan_complete or phased_plan_complete or progress_complete, evidence, completion_doc_ids, [
         f"prd:{status}" for status in prd_statuses
     ] + [f"implementation_plan:{status}" for status in plan_statuses] + [f"phase_plan:{status}" for status in phase_plan_statuses])
+
+
+def _phase_task_counts(phase: FeaturePhase) -> tuple[int, int, int, int]:
+    tasks = list(getattr(phase, "tasks", []) or [])
+    total = max(_safe_int(getattr(phase, "totalTasks", 0), 0), 0)
+    completed = max(_safe_int(getattr(phase, "completedTasks", 0), 0), 0)
+    deferred = max(_safe_int(getattr(phase, "deferredTasks", 0), 0), 0)
+    if total <= 0 and tasks:
+        total = len(tasks)
+    if tasks:
+        inferred_completed = sum(1 for task in tasks if str(getattr(task, "status", "") or "").strip().lower() == "done")
+        inferred_deferred = sum(1 for task in tasks if str(getattr(task, "status", "") or "").strip().lower() == "deferred")
+        completed = max(completed, inferred_completed)
+        deferred = max(deferred, inferred_deferred)
+    terminal_count = min(total, completed + deferred) if total > 0 else 0
+    remaining = max(total - terminal_count, 0)
+    return total, completed, deferred, remaining
+
+
+def _derive_phase_planning_status(phase: FeaturePhase) -> PlanningEffectiveStatus:
+    raw_status = str(phase.status or "backlog").strip().lower() or "backlog"
+    total, completed, deferred, remaining = _phase_task_counts(phase)
+    all_terminal = total > 0 and remaining == 0
+    partial_progress = total > 0 and 0 < (completed + deferred) < total
+    review_like = raw_status == "review"
+    active_like = raw_status in _PHASE_ACTIVE_STATUSES
+
+    evidence = [
+        _planning_evidence(
+            f"phase:{phase.id or phase.phase}:raw",
+            "Raw phase status",
+            f"Phase '{phase.title or phase.phase}' is marked '{raw_status}'.",
+            "phase",
+            source_id=str(phase.id or phase.phase),
+        )
+    ]
+    if total > 0:
+        evidence.append(
+            _planning_evidence(
+                f"phase:{phase.id or phase.phase}:tasks",
+                "Phase task counts",
+                f"Completed/deferred tasks: {completed + deferred}/{total}.",
+                "phase",
+                source_id=str(phase.id or phase.phase),
+            )
+        )
+
+    if raw_status in _PLANNING_FINAL_STATUSES and total > 0 and not all_terminal:
+        effective_status = "review" if review_like else ("in-progress" if partial_progress or completed > 0 else "backlog")
+        evidence.append(
+            _planning_evidence(
+                f"phase:{phase.id or phase.phase}:reversal",
+                "Phase reversal",
+                "Raw phase status is terminal, but task counts are not completion-equivalent.",
+                "phase",
+                source_id=str(phase.id or phase.phase),
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=effective_status,
+            provenance_source="derived",
+            provenance_reason="Task completion evidence reverses the raw phase status.",
+            evidence=evidence,
+            mismatch_state="reversed",
+            mismatch_reason="Task counts and raw phase status disagree.",
+        )
+
+    if raw_status not in _PLANNING_FINAL_STATUSES and all_terminal:
+        effective_status = "deferred" if deferred == total and total > 0 else "done"
+        evidence.append(
+            _planning_evidence(
+                f"phase:{phase.id or phase.phase}:inferred-complete",
+                "Inferred completion",
+                "All phase tasks are terminal, so the phase is completion-equivalent.",
+                "phase",
+                source_id=str(phase.id or phase.phase),
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=effective_status,
+            provenance_source="inferred_complete",
+            provenance_reason="Phase completion was inferred from task counts.",
+            evidence=evidence,
+            mismatch_state="derived",
+            mismatch_reason="Task counts imply completion beyond the raw phase status.",
+        )
+
+    if raw_status == "backlog" and (partial_progress or active_like):
+        effective_status = "review" if review_like else "in-progress"
+        evidence.append(
+            _planning_evidence(
+                f"phase:{phase.id or phase.phase}:progress",
+                "Derived activity",
+                "Task progress indicates active work even though the raw phase status is backlog.",
+                "phase",
+                source_id=str(phase.id or phase.phase),
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=effective_status,
+            provenance_source="derived",
+            provenance_reason="Task progress indicates active phase work.",
+            evidence=evidence,
+            mismatch_state="mismatched",
+            mismatch_reason="Raw phase status lags observed task progress.",
+        )
+
+    return _planning_result(
+        raw_status=raw_status,
+        effective_status=raw_status,
+        provenance_source="raw",
+        provenance_reason="Raw phase status is used directly.",
+        evidence=evidence,
+        mismatch_state="aligned",
+        mismatch_reason="Raw and effective phase status agree.",
+    )
+
+
+def _phase_rollup_status(phases: list[FeaturePhase]) -> tuple[str, list[PlanningStatusEvidence]]:
+    effective_statuses = [str(phase.planningStatus.effectiveStatus or "").strip().lower() for phase in phases if phase.planningStatus]
+    if not effective_statuses:
+        return "backlog", []
+    summary = ", ".join(effective_statuses)
+    evidence = [
+        _planning_evidence(
+            "feature:phases:rollup",
+            "Phase rollup",
+            f"Phase effective statuses: {summary}.",
+            "feature",
+        )
+    ]
+    if any(status == "blocked" for status in effective_statuses):
+        return "blocked", evidence
+    if any(status == "review" for status in effective_statuses):
+        return "review", evidence
+    if any(status == "in-progress" for status in effective_statuses):
+        return "in-progress", evidence
+    if effective_statuses and all(status in _PLANNING_FINAL_STATUSES for status in effective_statuses):
+        return ("deferred" if all(status == "deferred" for status in effective_statuses) else "done"), evidence
+    return "backlog", evidence
+
+
+def _derive_feature_planning_status(
+    feature: Feature,
+    doc_rows: list[dict[str, Any]],
+    dependency_state: FeatureDependencyState | None,
+) -> PlanningEffectiveStatus:
+    raw_status = str(feature.status or "backlog").strip().lower() or "backlog"
+    completion_equivalent, completion_evidence, completion_doc_ids, doc_statuses = _feature_completion_snapshot(feature, doc_rows)
+    phase_rollup, phase_evidence = _phase_rollup_status(feature.phases)
+    evidence = [
+        _planning_evidence(
+            f"feature:{feature.id}:raw",
+            "Raw feature status",
+            f"Feature '{feature.name or feature.id}' is marked '{raw_status}'.",
+            "feature",
+            source_id=feature.id,
+        )
+    ]
+    evidence.extend(phase_evidence)
+    for index, marker in enumerate(completion_evidence, start=1):
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:completion:{index}",
+                "Completion evidence",
+                marker.replace("_", " "),
+                "feature",
+                source_id=feature.id,
+            )
+        )
+    for index, doc_status in enumerate(doc_statuses, start=1):
+        source_id = completion_doc_ids[index - 1] if index - 1 < len(completion_doc_ids) else ""
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:doc-status:{index}",
+                "Document status",
+                doc_status,
+                "document",
+                source_id=source_id,
+            )
+        )
+
+    if dependency_state and dependency_state.state in {"blocked", "blocked_unknown"} and not completion_equivalent:
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:dependency",
+                "Dependency gate",
+                dependency_state.blockingReason or "Dependencies are currently blocking execution.",
+                "dependency",
+                source_id=dependency_state.firstBlockingDependencyId,
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status="blocked",
+            provenance_source="derived",
+            provenance_reason="Dependency evidence blocks execution.",
+            evidence=evidence,
+            mismatch_state="blocked",
+            mismatch_reason=dependency_state.blockingReason or "Dependencies are blocking this feature.",
+        )
+
+    if raw_status in _PLANNING_FINAL_STATUSES and not completion_equivalent and phase_rollup not in _PLANNING_FINAL_STATUSES:
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:reversal",
+                "Feature reversal",
+                "Phase or document evidence does not support the raw finalized feature status.",
+                "feature",
+                source_id=feature.id,
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=phase_rollup,
+            provenance_source="derived",
+            provenance_reason="Feature status was reversed using phase and document evidence.",
+            evidence=evidence,
+            mismatch_state="reversed",
+            mismatch_reason="Raw feature status appears ahead of the available completion evidence.",
+        )
+
+    if raw_status not in _PLANNING_FINAL_STATUSES and completion_equivalent:
+        effective_status = "deferred" if phase_rollup == "deferred" else "done"
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:inferred-complete",
+                "Inferred completion",
+                "Phase or document evidence is completion-equivalent even though the raw feature status is not final.",
+                "feature",
+                source_id=feature.id,
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=effective_status,
+            provenance_source="inferred_complete",
+            provenance_reason="Feature completion was inferred from phase and document evidence.",
+            evidence=evidence,
+            mismatch_state="derived",
+            mismatch_reason="Derived completion goes beyond the raw feature status.",
+        )
+
+    if raw_status not in _PLANNING_FINAL_STATUSES and phase_rollup in {"in-progress", "review"} and phase_rollup != raw_status:
+        evidence.append(
+            _planning_evidence(
+                f"feature:{feature.id}:activity",
+                "Derived activity",
+                "Phase activity indicates the feature is active beyond the raw feature status.",
+                "feature",
+                source_id=feature.id,
+            )
+        )
+        return _planning_result(
+            raw_status=raw_status,
+            effective_status=phase_rollup,
+            provenance_source="derived",
+            provenance_reason="Feature status was derived from phase activity.",
+            evidence=evidence,
+            mismatch_state="mismatched",
+            mismatch_reason="Raw feature status lags the observed phase activity.",
+        )
+
+    return _planning_result(
+        raw_status=raw_status,
+        effective_status=raw_status,
+        provenance_source="raw",
+        provenance_reason="Raw feature status is used directly.",
+        evidence=evidence,
+        mismatch_state="aligned",
+        mismatch_reason="Raw and effective feature status agree.",
+    )
+
+
+def _apply_planning_projection(
+    feature: Feature,
+    doc_rows: list[dict[str, Any]] | None,
+    dependency_state: FeatureDependencyState | None,
+) -> Feature:
+    for phase in feature.phases:
+        phase.planningStatus = _derive_phase_planning_status(phase)
+        phase.phaseBatches = list(phase.phaseBatches or [])
+    feature.planningStatus = _derive_feature_planning_status(feature, doc_rows or [], dependency_state)
+    return feature
 
 
 def _feature_dependency_evidence(
@@ -642,6 +1127,12 @@ async def load_feature_execution_derived_state(
     doc_rows = await doc_repo.list_all(project_id)
     dependency_state = _feature_dependency_state(feature, doc_rows, feature_index)
     family_summary, family_position, recommended_family_item = _family_summary(feature, family_features, doc_rows, feature_index)
+    current_doc_rows = [
+        row
+        for row in doc_rows
+        if _feature_key(str(row.get("feature_slug_canonical") or row.get("feature_slug_hint") or "")) == _feature_key(feature.id)
+    ]
+    _apply_planning_projection(feature, current_doc_rows, dependency_state)
 
     execution_gate = _execution_gate_state(feature, dependency_state, family_summary, family_position, recommended_family_item)
 
@@ -670,12 +1161,18 @@ async def load_feature_execution_derived_states(
     derived: dict[str, FeatureExecutionDerivedState] = {}
     for feature in features:
         dependency_state = _feature_dependency_state(feature, doc_rows, feature_index)
+        current_doc_rows = [
+            row
+            for row in doc_rows
+            if _feature_key(str(row.get("feature_slug_canonical") or row.get("feature_slug_hint") or "")) == _feature_key(feature.id)
+        ]
         family_summary, family_position, recommended_family_item = _family_summary(
             feature,
             family_features,
             doc_rows,
             feature_index,
         )
+        _apply_planning_projection(feature, current_doc_rows, dependency_state)
 
         execution_gate = _execution_gate_state(
             feature,
@@ -693,6 +1190,244 @@ async def load_feature_execution_derived_states(
         )
 
     return derived
+
+
+def _planning_node_type(doc: LinkedDocument) -> str | None:
+    doc_type = normalize_doc_type(str(doc.docType or ""))
+    mapped = _DOC_NODE_TYPE_MAP.get(doc_type)
+    if mapped:
+        return mapped
+    role = str(doc.primaryDocRole or "").strip().lower()
+    path = str(doc.filePath or "").strip().lower()
+    if "tracker" in role or "tracker" in path:
+        return "tracker"
+    if "context" in role or "context" in path:
+        return "context"
+    return None
+
+
+def _document_key(doc: LinkedDocument) -> str:
+    return (doc.filePath or doc.id or doc.title).strip().lower()
+
+
+def _linked_document_richness(doc: LinkedDocument) -> tuple[int, int, int]:
+    populated_fields = [
+        str(doc.title or "").strip(),
+        str(doc.slug or "").strip(),
+        str(doc.canonicalSlug or "").strip(),
+        str(doc.featureFamily or "").strip(),
+        str(doc.primaryDocRole or "").strip(),
+        str(doc.prdRef or "").strip(),
+        str(doc.lineageFamily or "").strip(),
+        str(doc.lineageParent or "").strip(),
+        str(doc.lineageType or "").strip(),
+    ]
+    scalar_score = sum(1 for value in populated_fields if value)
+    list_score = sum(
+        len(values)
+        for values in (
+            doc.blockedBy,
+            doc.frontmatterKeys,
+            doc.relatedRefs,
+            doc.lineageChildren,
+            doc.linkedFeatures,
+        )
+    )
+    sequence_score = 1 if isinstance(doc.sequenceOrder, int) else 0
+    return (scalar_score + sequence_score, list_score, len(str(doc.id or "")))
+
+
+def _merge_linked_documents(*document_sets: list[LinkedDocument]) -> list[LinkedDocument]:
+    merged: dict[str, LinkedDocument] = {}
+    for docs in document_sets:
+        for doc in docs or []:
+            key = _document_key(doc)
+            if not key:
+                continue
+            existing = merged.get(key)
+            if existing is None or _linked_document_richness(doc) > _linked_document_richness(existing):
+                merged[key] = doc
+    return list(merged.values())
+
+
+def _resolve_doc_ref(ref: str, doc_lookup: dict[str, str]) -> str:
+    for token in _doc_ref_tokens(ref):
+        resolved = doc_lookup.get(token)
+        if resolved:
+            return resolved
+    return ""
+
+
+def _add_graph_edge(edges: list[PlanningEdge], seen: set[tuple[str, str, str]], source_id: str, target_id: str, relation_type: str) -> None:
+    if not source_id or not target_id or source_id == target_id:
+        return
+    key = (source_id, target_id, relation_type)
+    if key in seen:
+        return
+    seen.add(key)
+    edges.append(PlanningEdge(sourceId=source_id, targetId=target_id, relationType=relation_type))
+
+
+def _build_planning_graph(
+    feature: Feature,
+    documents: list[LinkedDocument],
+    family_summary: FeatureFamilySummary | None,
+) -> PlanningGraph:
+    graph_documents = _merge_linked_documents(documents, feature.linkedDocs)
+
+    family_docs_by_feature: dict[str, LinkedDocument] = {}
+    if family_summary:
+        for item in family_summary.items:
+            if not item.primaryDocPath:
+                continue
+            placeholder = LinkedDocument(
+                id=item.primaryDocId or item.primaryDocPath,
+                title=item.featureName or item.primaryDocPath,
+                filePath=item.primaryDocPath,
+                docType="implementation_plan",
+                featureFamily=family_summary.featureFamily,
+                sequenceOrder=item.sequenceOrder,
+            )
+            family_docs_by_feature[_feature_key(item.featureId)] = placeholder
+            graph_documents.append(placeholder)
+
+    deduped_documents = _merge_linked_documents(graph_documents)
+    nodes: list[PlanningNode] = []
+    node_lookup: dict[str, str] = {}
+    node_types: dict[str, str] = {}
+    family_ordered: list[tuple[int, str]] = []
+
+    for doc in deduped_documents:
+        node_type = _planning_node_type(doc)
+        if node_type is None:
+            continue
+        node_id = str(doc.id or doc.filePath or doc.title)
+        nodes.append(
+            PlanningNode(
+                id=node_id,
+                type=node_type,
+                path=doc.filePath,
+                title=doc.title or doc.filePath,
+                featureSlug=feature.id,
+                rawStatus="",
+                effectiveStatus="",
+            )
+        )
+        node_types[node_id] = node_type
+        for token in _doc_ref_tokens(doc.filePath):
+            node_lookup[token] = node_id
+        for token in _doc_ref_tokens(doc.slug):
+            node_lookup[token] = node_id
+        for token in _doc_ref_tokens(doc.canonicalSlug):
+            node_lookup[token] = node_id
+        if doc.sequenceOrder is not None:
+            family_ordered.append((int(doc.sequenceOrder), node_id))
+
+    edges: list[PlanningEdge] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    current_plan_id = next(
+        (
+            node.id
+            for node in nodes
+            if node.type == "implementation_plan"
+            and _feature_key(node.path.rsplit("/", 1)[-1].removesuffix(".md")) == _feature_key(feature.id)
+        ),
+        "",
+    )
+    if not current_plan_id:
+        current_plan_id = next((node.id for node in nodes if node.type == "implementation_plan"), "")
+
+    for doc in deduped_documents:
+        source_id = str(doc.id or doc.filePath or doc.title)
+        if source_id not in node_types:
+            continue
+        source_type = node_types[source_id]
+
+        prd_target = _resolve_doc_ref(doc.prdRef, node_lookup)
+        if prd_target:
+            _add_graph_edge(edges, seen_edges, prd_target, source_id, "implements")
+
+        for blocked_ref in doc.blockedBy:
+            blocked_source = _resolve_doc_ref(blocked_ref, node_lookup)
+            if blocked_source:
+                _add_graph_edge(edges, seen_edges, blocked_source, source_id, "blocked_by")
+
+        lineage_parent_id = _resolve_doc_ref(doc.lineageParent, node_lookup)
+        if lineage_parent_id:
+            relation = "implements" if "implementation" in str(doc.lineageType or "").lower() else "promotes_to"
+            _add_graph_edge(edges, seen_edges, lineage_parent_id, source_id, relation)
+
+        for lineage_child in doc.lineageChildren:
+            lineage_child_id = _resolve_doc_ref(lineage_child, node_lookup)
+            if lineage_child_id:
+                relation = "implements" if "implementation" in str(doc.lineageType or "").lower() else "promotes_to"
+                _add_graph_edge(edges, seen_edges, source_id, lineage_child_id, relation)
+
+        if source_type == "progress" and current_plan_id:
+            _add_graph_edge(edges, seen_edges, current_plan_id, source_id, "tracked_by")
+        elif source_type == "report" and current_plan_id:
+            _add_graph_edge(edges, seen_edges, current_plan_id, source_id, "executed_by")
+
+        for related_ref in doc.relatedRefs:
+            related_id = _resolve_doc_ref(related_ref, node_lookup)
+            if not related_id or related_id == source_id:
+                continue
+            related_type = node_types.get(related_id, "")
+            if {source_type, related_type} == {"design_spec", "implementation_plan"}:
+                if source_type == "design_spec":
+                    _add_graph_edge(edges, seen_edges, source_id, related_id, "implements")
+                else:
+                    _add_graph_edge(edges, seen_edges, related_id, source_id, "implements")
+            elif {source_type, related_type} == {"implementation_plan", "report"}:
+                if source_type == "report":
+                    _add_graph_edge(edges, seen_edges, related_id, source_id, "executed_by")
+                else:
+                    _add_graph_edge(edges, seen_edges, source_id, related_id, "executed_by")
+            elif {source_type, related_type} == {"implementation_plan", "progress"}:
+                if source_type == "progress":
+                    _add_graph_edge(edges, seen_edges, related_id, source_id, "tracked_by")
+                else:
+                    _add_graph_edge(edges, seen_edges, source_id, related_id, "tracked_by")
+            else:
+                _add_graph_edge(edges, seen_edges, related_id, source_id, "informs")
+
+    if family_summary:
+        ordered_items = [item for item in family_summary.items if item.primaryDocPath]
+        for previous, current in zip(ordered_items, ordered_items[1:]):
+            previous_doc = family_docs_by_feature.get(_feature_key(previous.featureId))
+            current_doc = family_docs_by_feature.get(_feature_key(current.featureId))
+            if previous_doc and current_doc:
+                _add_graph_edge(
+                    edges,
+                    seen_edges,
+                    str(previous_doc.id or previous_doc.filePath),
+                    str(current_doc.id or current_doc.filePath),
+                    "family_member_of",
+                )
+
+    for ref in feature.linkedFeatures:
+        relation = str(getattr(ref, "type", "") or getattr(ref, "source", "") or "").strip().lower().replace("-", "_")
+        if relation != "blocked_by" or not current_plan_id:
+            continue
+        dependency_doc = family_docs_by_feature.get(_feature_key(getattr(ref, "feature", "")))
+        if dependency_doc:
+            _add_graph_edge(
+                edges,
+                seen_edges,
+                str(dependency_doc.id or dependency_doc.filePath),
+                current_plan_id,
+                "blocked_by",
+            )
+
+    return PlanningGraph(
+        nodes=nodes,
+        edges=edges,
+        phaseBatches=[
+            PlanningPhaseBatch.model_validate(batch)
+            for phase in feature.phases
+            for batch in (phase.phaseBatches or [])
+        ],
+    )
 
 
 def _phase_snapshot(feature: Feature) -> list[dict[str, Any]]:
@@ -1007,7 +1742,18 @@ def build_execution_context(
     definition_resolution_warnings: list[FeatureExecutionWarning] | None = None,
     derived_state: FeatureExecutionDerivedState | None = None,
 ) -> FeatureExecutionContext:
+    dependency_state = (
+        derived_state.dependencyState
+        if derived_state is not None
+        else (feature.dependencyState if feature.dependencyState is not None else FeatureDependencyState())
+    )
+    _apply_planning_projection(feature, None, dependency_state)
     recommendation = build_execution_recommendation(feature, documents)
+    planning_graph = _build_planning_graph(
+        feature,
+        documents,
+        derived_state.familySummary if derived_state is not None else feature.familySummary,
+    )
     return FeatureExecutionContext(
         feature=feature,
         documents=documents,
@@ -1024,5 +1770,6 @@ def build_execution_context(
         stackAlternatives=stack_alternatives or [],
         stackEvidence=stack_evidence or [],
         definitionResolutionWarnings=definition_resolution_warnings or [],
+        planningGraph=planning_graph,
         generatedAt=datetime.now(timezone.utc).isoformat(),
     )
