@@ -1917,6 +1917,113 @@ export interface LinkedDocument {
   timeline?: TimelineEvent[];
 }
 
+export type PlanningNodeType =
+  | 'design_spec'
+  | 'prd'
+  | 'implementation_plan'
+  | 'progress'
+  | 'context'
+  | 'tracker'
+  | 'report';
+
+export type PlanningEdgeRelationType =
+  | 'promotes_to'
+  | 'implements'
+  | 'phase_of'
+  | 'informs'
+  | 'blocked_by'
+  | 'family_member_of'
+  | 'tracked_by'
+  | 'executed_by';
+
+export type PlanningStatusProvenanceSource = 'raw' | 'derived' | 'inferred_complete' | 'unknown';
+
+export type PlanningMismatchStateValue =
+  | 'aligned'
+  | 'derived'
+  | 'mismatched'
+  | 'blocked'
+  | 'stale'
+  | 'reversed'
+  | 'unresolved'
+  | 'unknown';
+
+export type PlanningPhaseBatchReadinessState = 'ready' | 'blocked' | 'waiting' | 'unknown';
+
+export interface PlanningStatusEvidence {
+  id: string;
+  label: string;
+  detail: string;
+  sourceType: string;
+  sourceId: string;
+  sourcePath: string;
+}
+
+export interface PlanningStatusProvenance {
+  source: PlanningStatusProvenanceSource;
+  reason: string;
+  evidence: PlanningStatusEvidence[];
+}
+
+export interface PlanningMismatchState {
+  state: PlanningMismatchStateValue;
+  reason: string;
+  isMismatch: boolean;
+  evidence: PlanningStatusEvidence[];
+}
+
+export interface PlanningEffectiveStatus {
+  rawStatus: string;
+  effectiveStatus: string;
+  provenance: PlanningStatusProvenance;
+  mismatchState: PlanningMismatchState;
+}
+
+export interface PlanningNode {
+  id: string;
+  type: PlanningNodeType;
+  path: string;
+  title: string;
+  featureSlug: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  mismatchState: PlanningMismatchState;
+  updatedAt: string;
+  statusDetail?: PlanningEffectiveStatus | null;
+}
+
+export interface PlanningEdge {
+  sourceId: string;
+  targetId: string;
+  relationType: PlanningEdgeRelationType;
+}
+
+export interface PlanningPhaseBatchReadiness {
+  state: PlanningPhaseBatchReadinessState;
+  reason: string;
+  blockingNodeIds: string[];
+  blockingTaskIds: string[];
+  evidence: PlanningStatusEvidence[];
+  isReady: boolean;
+}
+
+export interface PlanningPhaseBatch {
+  featureSlug: string;
+  phase: string;
+  batchId: string;
+  taskIds: string[];
+  assignedAgents: string[];
+  fileScopeHints: string[];
+  readinessState: PlanningPhaseBatchReadinessState;
+  readiness: PlanningPhaseBatchReadiness;
+}
+
+export interface PlanningGraph {
+  nodes: PlanningNode[];
+  edges: PlanningEdge[];
+  phaseBatches: PlanningPhaseBatch[];
+}
+
 export interface FeaturePhase {
   id?: string;
   phase: string;
@@ -1927,6 +2034,8 @@ export interface FeaturePhase {
   completedTasks: number;
   deferredTasks?: number;
   tasks: ProjectTask[];
+  planningStatus?: PlanningEffectiveStatus | null;
+  phaseBatches?: PlanningPhaseBatch[];
 }
 
 export interface Feature {
@@ -1972,6 +2081,7 @@ export interface Feature {
   nextRecommendedFamilyItem?: FeatureFamilyItem | null;
   phases: FeaturePhase[];
   relatedFeatures: string[];
+  planningStatus?: PlanningEffectiveStatus | null;
   dates?: EntityDates;
   timeline?: TimelineEvent[];
 }
@@ -2344,6 +2454,7 @@ export interface FeatureExecutionContext {
   stackAlternatives: RecommendedStack[];
   stackEvidence: StackRecommendationEvidence[];
   definitionResolutionWarnings: FeatureExecutionWarning[];
+  planningGraph?: PlanningGraph | null;
   generatedAt: string;
 }
 

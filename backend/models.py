@@ -1413,6 +1413,113 @@ class LinkedDocument(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
+PlanningNodeType = Literal[
+    "design_spec",
+    "prd",
+    "implementation_plan",
+    "progress",
+    "context",
+    "tracker",
+    "report",
+]
+PlanningEdgeRelationType = Literal[
+    "promotes_to",
+    "implements",
+    "phase_of",
+    "informs",
+    "blocked_by",
+    "family_member_of",
+    "tracked_by",
+    "executed_by",
+]
+PlanningStatusProvenanceSource = Literal["raw", "derived", "inferred_complete", "unknown"]
+PlanningMismatchStateValue = Literal[
+    "aligned",
+    "derived",
+    "mismatched",
+    "blocked",
+    "stale",
+    "reversed",
+    "unresolved",
+    "unknown",
+]
+PlanningPhaseBatchReadinessState = Literal["ready", "blocked", "waiting", "unknown"]
+
+
+class PlanningStatusEvidence(BaseModel):
+    id: str = ""
+    label: str = ""
+    detail: str = ""
+    sourceType: str = ""
+    sourceId: str = ""
+    sourcePath: str = ""
+
+
+class PlanningStatusProvenance(BaseModel):
+    source: PlanningStatusProvenanceSource = "unknown"
+    reason: str = ""
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+
+
+class PlanningMismatchState(BaseModel):
+    state: PlanningMismatchStateValue = "unknown"
+    reason: str = ""
+    isMismatch: bool = False
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+
+
+class PlanningEffectiveStatus(BaseModel):
+    rawStatus: str = ""
+    effectiveStatus: str = ""
+    provenance: PlanningStatusProvenance = Field(default_factory=PlanningStatusProvenance)
+    mismatchState: PlanningMismatchState = Field(default_factory=PlanningMismatchState)
+
+
+class PlanningNode(BaseModel):
+    id: str
+    type: PlanningNodeType
+    path: str
+    title: str = ""
+    featureSlug: str = ""
+    rawStatus: str = ""
+    effectiveStatus: str = ""
+    mismatchState: PlanningMismatchState = Field(default_factory=PlanningMismatchState)
+    updatedAt: str = ""
+    statusDetail: Optional[PlanningEffectiveStatus] = None
+
+
+class PlanningEdge(BaseModel):
+    sourceId: str
+    targetId: str
+    relationType: PlanningEdgeRelationType
+
+
+class PlanningPhaseBatchReadiness(BaseModel):
+    state: PlanningPhaseBatchReadinessState = "unknown"
+    reason: str = ""
+    blockingNodeIds: list[str] = Field(default_factory=list)
+    blockingTaskIds: list[str] = Field(default_factory=list)
+    evidence: list[PlanningStatusEvidence] = Field(default_factory=list)
+    isReady: bool = False
+
+
+class PlanningPhaseBatch(BaseModel):
+    featureSlug: str = ""
+    phase: str = ""
+    batchId: str = ""
+    taskIds: list[str] = Field(default_factory=list)
+    assignedAgents: list[str] = Field(default_factory=list)
+    fileScopeHints: list[str] = Field(default_factory=list)
+    readinessState: PlanningPhaseBatchReadinessState = "unknown"
+    readiness: PlanningPhaseBatchReadiness = Field(default_factory=PlanningPhaseBatchReadiness)
+
+
+class PlanningGraph(BaseModel):
+    nodes: list[PlanningNode] = Field(default_factory=list)
+    edges: list[PlanningEdge] = Field(default_factory=list)
+    phaseBatches: list[PlanningPhaseBatch] = Field(default_factory=list)
+
+
 class FeaturePhase(BaseModel):
     id: Optional[str] = None
     phase: str  # "1", "2", "all"
@@ -1423,6 +1530,8 @@ class FeaturePhase(BaseModel):
     completedTasks: int = 0
     deferredTasks: int = 0
     tasks: list[ProjectTask] = Field(default_factory=list)
+    planningStatus: Optional[PlanningEffectiveStatus] = None
+    phaseBatches: list[PlanningPhaseBatch] = Field(default_factory=list)
 
 
 class FeaturePrimaryDocuments(BaseModel):
@@ -1588,6 +1697,7 @@ class Feature(BaseModel):
     nextRecommendedFamilyItem: Optional[FeatureFamilyItem] = None
     phases: list[FeaturePhase] = Field(default_factory=list)
     relatedFeatures: list[str] = Field(default_factory=list)
+    planningStatus: Optional[PlanningEffectiveStatus] = None
     dates: EntityDates = Field(default_factory=EntityDates)
     timeline: list[TimelineEvent] = Field(default_factory=list)
 
@@ -1737,6 +1847,7 @@ class FeatureExecutionContext(BaseModel):
     stackAlternatives: list[RecommendedStack] = Field(default_factory=list)
     stackEvidence: list[StackRecommendationEvidence] = Field(default_factory=list)
     definitionResolutionWarnings: list[FeatureExecutionWarning] = Field(default_factory=list)
+    planningGraph: Optional[PlanningGraph] = None
     generatedAt: str = ""
 
 class SkillMeatDefinitionSource(BaseModel):
