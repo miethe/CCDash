@@ -20,3 +20,13 @@ export { statusVariant, readinessVariant } from './variants';
 export type { StatusChipVariant, ReadinessVariant } from './variants';
 
 export { castPlanningStatus } from './castPlanningStatus';
+
+export { PhaseOperationsPanel } from './PhaseOperationsPanel';
+export type { PhaseOperationsPanelProps } from './PhaseOperationsPanel';
+export {
+  PhaseOperationsContent,
+  PhaseOperationsBatchSection,
+  PhaseOperationsTaskSection,
+  PhaseOperationsDependencySection,
+  PhaseOperationsEvidenceSection,
+} from './PhaseOperationsPanel';

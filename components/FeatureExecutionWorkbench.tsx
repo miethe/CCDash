@@ -92,6 +92,7 @@ import {
   EffectiveStatusChips,
   LineageRow,
   MismatchBadge,
+  PhaseOperationsPanel,
 } from './Planning/primitives';
 import { computeActivePhase, PLANNING_NODE_TYPE_ORDER } from '../lib/planningHelpers';
 
@@ -2721,12 +2722,34 @@ export const FeatureExecutionWorkbench: React.FC = () => {
                   {phases.length === 0 && (
                     <p className="text-sm text-muted-foreground">No phase details available.</p>
                   )}
+                  {/* Helper card when planning context exists but has no phases */}
+                  {planningContext && planningContext.phases.length === 0 && phases.length > 0 && featureDetail && (
+                    <div className="rounded-lg border border-panel-border bg-surface-overlay/70 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">
+                        Planning graph has no phases recorded for this feature.{' '}
+                        <Link
+                          to={`/planning/features/${encodeURIComponent(featureDetail.id)}`}
+                          className="text-indigo-400 hover:text-indigo-200 underline-offset-2 hover:underline"
+                        >
+                          View planning graph
+                        </Link>
+                      </p>
+                    </div>
+                  )}
                   {phases.map(phase => {
                     const phaseKey = phase.id || phase.phase;
                     const isExpanded = expandedPhases.has(phaseKey);
                     const phaseTasks = dedupePhaseTasks(phase.tasks || []);
                     const phaseRelatedSessions = phaseSessionLinks.get(String(phase.phase || '').trim()) || [];
                     const pendingTasks = getPhasePendingTasks(phase);
+                    // Match this FeaturePhase to a PhaseContextItem by comparing
+                    // the numeric portion of phaseToken (e.g. "PHASE-2" → 2) against phase.phase.
+                    const phaseNum = parseInt(String(phase.phase || ''), 10);
+                    const hasMatchingPlanningPhase = planningContext != null
+                      && !isNaN(phaseNum)
+                      && planningContext.phases.some(
+                          pc => parseInt(pc.phaseToken.replace(/\D+/g, ''), 10) === phaseNum,
+                        );
                     return (
                       <div key={phaseKey} className="rounded-lg border border-panel-border bg-surface-overlay/70 overflow-hidden">
                         <div className="w-full px-3 py-3 text-left hover:bg-panel/70">
@@ -2791,6 +2814,18 @@ export const FeatureExecutionWorkbench: React.FC = () => {
 
                         {isExpanded && (
                           <div className="border-t border-panel-border px-3 py-2 bg-surface-overlay/70 space-y-1.5 overflow-hidden">
+                            {/* Phase Operations Panel — only when planning context includes this phase */}
+                            {hasMatchingPlanningPhase && featureDetail && !isNaN(phaseNum) && (
+                              <div className="mb-3">
+                                <PhaseOperationsPanel
+                                  featureId={featureDetail.id}
+                                  phaseNumber={phaseNum}
+                                  projectId={activeProject?.id}
+                                  fallbackTitle={phase.title}
+                                  embedded={true}
+                                />
+                              </div>
+                            )}
                             {phaseTasks.length === 0 && (
                               <p className="text-xs text-muted-foreground italic">No task details currently available for this phase.</p>
                             )}

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import {
   ExecutionGateStateValue,
@@ -30,6 +30,7 @@ import {
   Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
+import { EffectiveStatusChips, MismatchBadge, PlanningNodeTypeIcon } from './Planning/primitives';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';
@@ -3664,8 +3665,33 @@ const FeatureCard = ({
         <div className="flex items-center gap-2">
           <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
           <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+          {feature.planningStatus && (
+            <EffectiveStatusChips
+              rawStatus={feature.planningStatus.rawStatus}
+              effectiveStatus={feature.planningStatus.effectiveStatus}
+              isMismatch={Boolean(feature.planningStatus.mismatchState?.isMismatch)}
+              provenance={feature.planningStatus.provenance}
+            />
+          )}
         </div>
       </div>
+      {feature.planningStatus?.mismatchState?.isMismatch && (
+        <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
+          <MismatchBadge
+            compact
+            state={feature.planningStatus.mismatchState.state}
+            reason={feature.planningStatus.mismatchState.reason}
+          />
+          <Link
+            to={`/planning/features/${encodeURIComponent(feature.id)}`}
+            onClick={e => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
+            title="View in planning graph"
+          >
+            <PlanningNodeTypeIcon type="implementation_plan" size={10} className="text-indigo-400/70" />
+          </Link>
+        </div>
+      )}
 
       <h4 className="font-medium text-panel-foreground mb-2 line-clamp-2 group-hover:text-indigo-400 transition-colors text-sm">{feature.name}</h4>
       {featureHasDeferred && (
@@ -3747,6 +3773,31 @@ const FeatureListCard = ({
             <span className="font-mono text-xs text-muted-foreground border border-panel-border px-1.5 py-0.5 rounded truncate max-w-[200px]">{feature.id}</span>
             <FeatureSessionIndicator summary={sessionSummary} loading={sessionSummaryLoading} />
             <StatusDropdown status={feature.status} onStatusChange={onStatusChange} size="xs" />
+            {feature.planningStatus && (
+              <EffectiveStatusChips
+                rawStatus={feature.planningStatus.rawStatus}
+                effectiveStatus={feature.planningStatus.effectiveStatus}
+                isMismatch={Boolean(feature.planningStatus.mismatchState?.isMismatch)}
+                provenance={feature.planningStatus.provenance}
+              />
+            )}
+            {feature.planningStatus?.mismatchState?.isMismatch && (
+              <MismatchBadge
+                compact
+                state={feature.planningStatus.mismatchState.state}
+                reason={feature.planningStatus.mismatchState.reason}
+              />
+            )}
+            {feature.planningStatus && (
+              <Link
+                to={`/planning/features/${encodeURIComponent(feature.id)}`}
+                onClick={e => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
+                title="View in planning graph"
+              >
+                <PlanningNodeTypeIcon type="implementation_plan" size={10} className="text-indigo-400/70" />
+              </Link>
+            )}
             {feature.category && (
               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-surface-muted text-muted-foreground capitalize">{feature.category}</span>
             )}
