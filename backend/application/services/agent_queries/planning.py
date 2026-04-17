@@ -360,6 +360,105 @@ class PlanningQueryService:
                 )
             )
 
+        # ── Synthesise FeatureSummaryItems from orphan design_spec / prd docs ──
+        # These are docs whose canonical slug doesn't match any real feature row.
+        # They represent planned work that hasn't spawned an implementation_plan yet.
+        _DESIGN_SPEC_DOC_TYPES = {"design_spec", "design_doc", "spec"}
+        _PRD_DOC_TYPES = {"prd"}
+
+        def _is_design_spec_row(row: dict[str, Any]) -> bool:
+            dt = str(row.get("doc_type") or "").strip().lower()
+            ds = str(row.get("doc_subtype") or "").strip().lower()
+            if dt in ("design_spec", "design_doc"):
+                return True
+            if dt == "spec" and ds in ("design_spec", "design_doc", ""):
+                return True
+            return False
+
+        def _is_prd_row(row: dict[str, Any]) -> bool:
+            return str(row.get("doc_type") or "").strip().lower() in _PRD_DOC_TYPES
+
+        # Keys already covered by real feature summaries.
+        emitted_keys: set[str] = {
+            _feature_key(item.feature_id) for item in feature_summaries
+        }
+
+        # Collect orphan candidates: {slug_key -> (row, kind)} preferring design_spec.
+        _KIND_PRIORITY = {"design_spec": 0, "prd": 1}
+        orphan_candidates: dict[str, tuple[dict[str, Any], str]] = {}
+        for row in doc_rows:
+            if _is_design_spec_row(row):
+                kind = "design_spec"
+            elif _is_prd_row(row):
+                kind = "prd"
+            else:
+                continue
+
+            raw_slug = str(
+                row.get("feature_slug_canonical")
+                or row.get("feature_slug_hint")
+                or ""
+            ).strip()
+            if not raw_slug:
+                # Derive a slug from the file path stem as last resort.
+                fp = str(row.get("file_path") or "")
+                raw_slug = fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] if fp else ""
+            if not raw_slug:
+                continue
+
+            slug_key = _feature_key(raw_slug)
+            if slug_key in emitted_keys:
+                continue
+
+            existing = orphan_candidates.get(slug_key)
+            if existing is None or _KIND_PRIORITY[kind] < _KIND_PRIORITY[existing[1]]:
+                orphan_candidates[slug_key] = (row, kind)
+
+        for slug_key, (row, kind) in orphan_candidates.items():
+            # Pull status from frontmatter if available.
+            fp_raw = row.get("frontmatter_json") or row.get("frontmatter") or {}
+            if isinstance(fp_raw, str):
+                import json as _json  # noqa: PLC0415
+                try:
+                    fp_raw = _json.loads(fp_raw)
+                except Exception:
+                    fp_raw = {}
+            if not isinstance(fp_raw, dict):
+                fp_raw = {}
+            doc_status = str(
+                fp_raw.get("status") or row.get("status") or "draft"
+            ).strip() or "draft"
+
+            slug_id = str(
+                row.get("feature_slug_canonical")
+                or row.get("feature_slug_hint")
+                or slug_key
+            )
+            feature_summaries.append(
+                FeatureSummaryItem(
+                    feature_id=slug_id,
+                    feature_name=str(row.get("title") or slug_id),
+                    raw_status=doc_status,
+                    effective_status=doc_status,
+                    is_mismatch=False,
+                    mismatch_state="unknown",
+                    has_blocked_phases=False,
+                    phase_count=0,
+                    blocked_phase_count=0,
+                    node_count=1,
+                    source_artifact_kind=kind,  # type: ignore[arg-type]
+                )
+            )
+            emitted_keys.add(slug_key)
+
+        # ── Aggregate counts (after synthesis) ───────────────────────────────
+        planned_statuses = {"draft", "approved"}
+        planned_count = sum(
+            1
+            for item in feature_summaries
+            if item.effective_status.lower() in planned_statuses
+        )
+
         active_count = sum(
             1
             for f in projected
@@ -385,7 +484,8 @@ class PlanningQueryService:
             status="partial" if partial else "ok",
             project_id=project.id,
             project_name=project.name,
-            total_feature_count=len(projected),
+            total_feature_count=len(feature_summaries),
+            planned_feature_count=planned_count,
             active_feature_count=active_count,
             stale_feature_count=len(stale_ids),
             blocked_feature_count=len(blocked_ids),

@@ -228,6 +228,7 @@ class FeatureSummaryItem(BaseModel):
     phase_count: int = 0
     blocked_phase_count: int = 0
     node_count: int = 0
+    source_artifact_kind: Literal["feature", "design_spec", "prd"] = "feature"
 
 
 class PlanningNodeCountsByType(BaseModel):
@@ -260,6 +261,7 @@ class ProjectPlanningSummaryDTO(AgentQueryEnvelope):
     project_id: str
     project_name: str = ""
     total_feature_count: int = 0
+    planned_feature_count: int = 0
     active_feature_count: int = 0
     stale_feature_count: int = 0
     blocked_feature_count: int = 0

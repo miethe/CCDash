@@ -228,7 +228,9 @@ function PhaseAccordion({ phase }: { phase: PhaseContextItem }) {
           )}
           <div className="min-w-0">
             <p className="text-sm font-medium text-panel-foreground truncate">
-              {phase.phaseTitle || phase.phaseToken}
+              {phase.phaseNumber != null
+                ? `Phase ${phase.phaseNumber}${phase.phaseTitle || phase.phaseToken ? `: ${phase.phaseTitle || phase.phaseToken}` : ''}`
+                : (phase.phaseTitle || phase.phaseToken)}
             </p>
             <p className="text-[10px] text-muted-foreground">
               {phase.completedTasks}/{phase.totalTasks} tasks complete

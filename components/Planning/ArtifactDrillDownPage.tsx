@@ -16,7 +16,6 @@ export type ArtifactDrillDownType =
   | 'design-specs'
   | 'prds'
   | 'implementation-plans'
-  | 'progress'
   | 'contexts'
   | 'reports';
 
@@ -43,13 +42,7 @@ const ARTIFACT_TYPE_CONFIGS: Record<ArtifactDrillDownType, ArtifactTypeConfig> =
   'implementation-plans': {
     label: 'Implementation Plans',
     singularLabel: 'Implementation Plan',
-    docTypeTokens: ['implementation_plan', 'phase_plan'],
-  },
-  'progress': {
-    label: 'Progress Files',
-    singularLabel: 'Progress File',
-    docTypeTokens: ['progress'],
-    rootKindTokens: ['progress'],
+    docTypeTokens: ['implementation_plan'],
   },
   'contexts': {
     label: 'Context Files',

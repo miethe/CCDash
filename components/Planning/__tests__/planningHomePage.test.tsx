@@ -135,7 +135,7 @@ describe('PlanningSummaryPanel', () => {
     expect(html).toContain('PRDs');
     expect(html).toContain('Design Specs');
     expect(html).toContain('Implementation Plans');
-    expect(html).toContain('Progress');
+    expect(html).not.toContain('Progress'); // evidence-only; not surfaced as standalone chip
     expect(html).toContain('Trackers');
     expect(html).toContain('Artifact Composition');
   });

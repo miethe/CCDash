@@ -803,5 +803,207 @@ class PlanningQueryServiceImportTests(unittest.TestCase):
         )
 
 
+# ── Orphan doc synthesis tests ────────────────────────────────────────────────
+
+
+def _orphan_doc_row(
+    *,
+    did: str = "orphan-1",
+    title: str = "Orphan Spec",
+    doc_type: str = "design_spec",
+    doc_subtype: str = "",
+    file_path: str = "docs/specs/my-feature.md",
+    feature_slug: str = "my-feature",
+    status: str = "draft",
+) -> dict:
+    """Build a doc row that looks like a design_spec or PRD with no matching feature."""
+    import json
+    return {
+        "id": did,
+        "title": title,
+        "doc_type": doc_type,
+        "doc_subtype": doc_subtype,
+        "file_path": file_path,
+        "feature_slug_canonical": feature_slug,
+        "feature_slug_hint": feature_slug,
+        "updated_at": "2026-04-17T10:00:00+00:00",
+        "status": status,
+        "metadata_json": "{}",
+        "frontmatter_json": json.dumps({"status": status}),
+    }
+
+
+class OrphanDocSynthesisTests(unittest.IsolatedAsyncioTestCase):
+    """Synthesis of FeatureSummaryItems from design_spec / prd orphan docs."""
+
+    def setUp(self):
+        clear_cache()
+
+    async def test_design_spec_without_impl_plan_appears_in_summary(self) -> None:
+        """A design_spec doc with no matching feature row appears with source_artifact_kind='design_spec'."""
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        doc_rows = [
+            _orphan_doc_row(
+                did="spec-1",
+                title="My Feature Spec",
+                doc_type="design_spec",
+                feature_slug="my-feature",
+                status="draft",
+            )
+        ]
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(), ports
+        )
+
+        self.assertEqual(result.total_feature_count, 1)
+        self.assertEqual(len(result.feature_summaries), 1)
+        item = result.feature_summaries[0]
+        self.assertEqual(item.source_artifact_kind, "design_spec")
+        self.assertEqual(item.effective_status, "draft")
+        self.assertEqual(item.feature_name, "My Feature Spec")
+
+    async def test_prd_without_impl_plan_appears_in_summary(self) -> None:
+        """A PRD doc with no matching feature row appears with source_artifact_kind='prd'."""
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        doc_rows = [
+            _orphan_doc_row(
+                did="prd-1",
+                title="My Feature PRD",
+                doc_type="prd",
+                feature_slug="my-feature-prd",
+                status="approved",
+            )
+        ]
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(), ports
+        )
+
+        self.assertEqual(result.total_feature_count, 1)
+        item = result.feature_summaries[0]
+        self.assertEqual(item.source_artifact_kind, "prd")
+        self.assertEqual(item.effective_status, "approved")
+
+    async def test_design_spec_matching_existing_feature_not_duplicated(self) -> None:
+        """A design_spec whose slug matches an existing feature row is NOT emitted twice."""
+        feat = _feature(fid="my-feature", name="My Feature", status="in-progress")
+        rows = [_feature_row(feat)]
+        doc_rows = [
+            _orphan_doc_row(
+                did="spec-dup",
+                title="My Feature Spec",
+                doc_type="design_spec",
+                feature_slug="my-feature",
+                status="draft",
+            )
+        ]
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=rows),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(), ports
+        )
+
+        # Only 1 summary item — the real feature, not the orphan spec.
+        self.assertEqual(result.total_feature_count, 1)
+        self.assertEqual(len(result.feature_summaries), 1)
+        self.assertEqual(result.feature_summaries[0].source_artifact_kind, "feature")
+
+    async def test_design_spec_preferred_over_prd_for_same_slug(self) -> None:
+        """When both a design_spec and a PRD share a slug, design_spec wins."""
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=[]),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        doc_rows = [
+            _orphan_doc_row(
+                did="prd-slug",
+                title="PRD Version",
+                doc_type="prd",
+                feature_slug="shared-slug",
+                status="draft",
+            ),
+            _orphan_doc_row(
+                did="spec-slug",
+                title="Spec Version",
+                doc_type="design_spec",
+                feature_slug="shared-slug",
+                status="draft",
+            ),
+        ]
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(), ports
+        )
+
+        self.assertEqual(result.total_feature_count, 1)
+        item = result.feature_summaries[0]
+        self.assertEqual(item.source_artifact_kind, "design_spec")
+
+    async def test_planned_feature_count_reflects_draft_and_approved(self) -> None:
+        """planned_feature_count counts real + synthesized items in draft/approved."""
+        feat_active = _feature(fid="feat-active", name="Active", status="in-progress")
+        feat_draft = _feature(fid="feat-draft", name="Draft Feature", status="draft")
+        rows = [_feature_row(feat_active), _feature_row(feat_draft)]
+
+        # One orphan PRD in approved state.
+        doc_rows = [
+            _orphan_doc_row(
+                did="prd-approved",
+                title="Approved PRD",
+                doc_type="prd",
+                feature_slug="orphan-approved",
+                status="approved",
+            )
+        ]
+        features_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=rows),
+            get_by_id=AsyncMock(return_value=None),
+        )
+        docs_repo = types.SimpleNamespace(
+            list_all=AsyncMock(return_value=doc_rows),
+            list_paginated=AsyncMock(return_value=doc_rows),
+        )
+        ports = _ports(features_repo=features_repo, docs_repo=docs_repo)
+
+        result = await PlanningQueryService().get_project_planning_summary(
+            _context(), ports
+        )
+
+        # total = 3 (2 real + 1 synthesized)
+        self.assertEqual(result.total_feature_count, 3)
+        # planned = 2: feat-draft (draft) + orphan-approved (approved)
+        self.assertEqual(result.planned_feature_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

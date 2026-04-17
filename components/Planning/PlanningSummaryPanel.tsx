@@ -212,7 +212,6 @@ export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: 
     { label: 'PRDs', count: summary.nodeCountsByType.prd, drillDownType: 'prds' },
     { label: 'Design Specs', count: summary.nodeCountsByType.designSpec, drillDownType: 'design-specs' },
     { label: 'Implementation Plans', count: summary.nodeCountsByType.implementationPlan, drillDownType: 'implementation-plans' },
-    { label: 'Progress', count: summary.nodeCountsByType.progress, drillDownType: 'progress' },
     { label: 'Context', count: summary.nodeCountsByType.context, drillDownType: 'contexts' },
     { label: 'Trackers', count: summary.nodeCountsByType.tracker },
     { label: 'Reports', count: summary.nodeCountsByType.report, drillDownType: 'reports' },

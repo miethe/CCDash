@@ -119,31 +119,29 @@ describe('ArtifactDrillDownPage — implementation-plans', () => {
     expect(html).toContain('Implementation Plans');
   });
 
-  it('also matches phase_plan doc type', () => {
+  it('does NOT surface phase_plan as a standalone artifact under implementation-plans', () => {
     mockDocuments.push(
       makeDoc({ id: 'plan-2', title: 'Phase 1 Plan', docType: 'phase_plan' }),
+      makeDoc({ id: 'plan-3', title: 'Real Impl Plan', docType: 'implementation_plan' }),
     );
     const html = renderAtPath('/planning/artifacts/implementation-plans');
-    expect(html).toContain('Phase 1 Plan');
+    // phase_plan is evidence-only; it must not appear in the drill-down list
+    expect(html).not.toContain('Phase 1 Plan');
+    // implementation_plan still visible
+    expect(html).toContain('Real Impl Plan');
   });
 });
 
-describe('ArtifactDrillDownPage — progress', () => {
-  it('renders matching progress documents via docType', () => {
+describe('ArtifactDrillDownPage — progress (removed as standalone category)', () => {
+  it('returns the unknown-type fallback for /planning/artifacts/progress', () => {
     mockDocuments.push(
       makeDoc({ id: 'prog-1', title: 'Auth Progress', docType: 'progress' }),
     );
     const html = renderAtPath('/planning/artifacts/progress');
-    expect(html).toContain('Auth Progress');
-    expect(html).toContain('Progress Files');
-  });
-
-  it('also matches docs with rootKind=progress', () => {
-    mockDocuments.push(
-      makeDoc({ id: 'prog-2', title: 'Progress via RootKind', rootKind: 'progress' }),
-    );
-    const html = renderAtPath('/planning/artifacts/progress');
-    expect(html).toContain('Progress via RootKind');
+    // 'progress' is no longer a valid ArtifactDrillDownType — page shows fallback
+    expect(html).toContain('progress');
+    expect(html).not.toContain('Progress Files');
+    expect(html).not.toContain('Auth Progress');
   });
 });
 

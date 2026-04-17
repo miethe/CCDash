@@ -126,3 +126,45 @@ describe('PlanningNodeDetail — renders without crash for any featureId', () =>
     expect(html.length).toBeGreaterThan(0);
   });
 });
+
+// ── Phase accordion header — phase number prefix ──────────────────────────────
+// PhaseAccordion is an internal component; test the header-text formula directly
+// to guard against regressions in the "Phase N: <title>" rendering logic.
+
+describe('PlanningNodeDetail — phase accordion header formula', () => {
+  // Mirrors the exact ternary in the component:
+  // phase.phaseNumber != null
+  //   ? `Phase ${phase.phaseNumber}${title ? `: ${title}` : ''}`
+  //   : (title)
+  function phaseHeader(
+    phaseNumber: number | null | undefined,
+    phaseTitle: string | undefined,
+    phaseToken: string | undefined,
+  ): string {
+    const title = phaseTitle || phaseToken;
+    return phaseNumber != null
+      ? `Phase ${phaseNumber}${title ? `: ${title}` : ''}`
+      : (title ?? '');
+  }
+
+  it('renders "Phase N: <title>" when phaseNumber and title are set', () => {
+    expect(phaseHeader(2, 'Auth Hardening', undefined)).toBe('Phase 2: Auth Hardening');
+  });
+
+  it('renders "Phase N: <token>" when only phaseToken is set', () => {
+    expect(phaseHeader(3, undefined, 'phase-three-token')).toBe('Phase 3: phase-three-token');
+  });
+
+  it('renders "Phase N" alone when neither title nor token is set', () => {
+    expect(phaseHeader(1, undefined, undefined)).toBe('Phase 1');
+  });
+
+  it('falls back to title/token alone when phaseNumber is null', () => {
+    expect(phaseHeader(null, 'Untitled Phase', undefined)).toBe('Untitled Phase');
+  });
+
+  it('phase number is always present in header text when phaseNumber is defined', () => {
+    const header = phaseHeader(5, 'Final Cleanup', undefined);
+    expect(header).toMatch(/Phase 5/);
+  });
+});

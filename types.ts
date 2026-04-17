@@ -3024,6 +3024,7 @@ export interface ProjectPlanningGraph extends AgentQueryEnvelope {
 /** One phase's planning context inside FeaturePlanningContext. */
 export interface PhaseContextItem {
   phaseId: string;
+  phaseNumber?: number | null;
   phaseToken: string;
   phaseTitle: string;
   rawStatus: string;

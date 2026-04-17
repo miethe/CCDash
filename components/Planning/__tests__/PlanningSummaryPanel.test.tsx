@@ -113,14 +113,15 @@ describe('PlanningSummaryPanel — ArtifactChip as button when count > 0', () =>
     expect(html).toContain('aria-label="View 4 Implementation Plans"');
   });
 
-  it('renders Progress chip as a button when count > 0', () => {
+  it('does NOT render a Progress chip regardless of count (evidence-only artifact)', () => {
     const html = wrap(
       <PlanningSummaryPanel
-        summary={makeSummary({ nodeCountsByType: { prd: 0, designSpec: 0, implementationPlan: 0, progress: 1, context: 0, tracker: 0, report: 0 } })}
+        summary={makeSummary({ nodeCountsByType: { prd: 0, designSpec: 0, implementationPlan: 0, progress: 5, context: 0, tracker: 0, report: 0 } })}
         onDrillDown={vi.fn()}
       />,
     );
-    expect(html).toContain('aria-label="View 1 Progress"');
+    expect(html).not.toContain('Progress');
+    expect(html).not.toContain('aria-label="View 5 Progress"');
   });
 
   it('renders Context chip as a button when count > 0', () => {
