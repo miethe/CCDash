@@ -8,18 +8,19 @@ prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.m
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
 phase: 7
 title: Planning UI Consolidation — Foundation & Extraction
-status: pending
+status: in_progress
 created: '2026-04-17'
 updated: '2026-04-17'
 started: null
 completed: null
-commit_refs: []
+commit_refs:
+- 6d7a4e9
 pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 4
-completed_tasks: 1
-in_progress_tasks: 0
+completed_tasks: 3
+in_progress_tasks: 1
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -48,7 +49,7 @@ tasks:
     plans with status draft/approved) columns/tabs on planning home, reusing board
     column/list primitives from ProjectBoard. Clicking a feature must open ProjectBoard
     feature modal, not planning-only detail.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -62,7 +63,7 @@ tasks:
     status/mismatch/batch-readiness badge and chip components. Migrate or deprecate
     planning-only variants following PCP-701 extraction manifest. Update all imports
     across planning, board, and catalog surfaces.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -77,7 +78,7 @@ tasks:
     semver. Update CCDash imports to use extracted components. Mark task with [pkg]
     for model tracking. Reference .claude/skills/planning/references/ui-extraction-guidance.md
     § "9-Step Extraction Process".
-  status: pending
+  status: in_progress
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -110,7 +111,7 @@ notes:
   with PCP-702 and PCP-706 extraction/consolidation work.
 - Active plans columns (PCP-702) use extracted/shared components from PCP-709 and
   consolidated metadata from PCP-706.
-progress: 25
+progress: 75
 ---
 
 # Phase 7 Progress: Planning UI Consolidation — Foundation & Extraction
@@ -204,3 +205,21 @@ Mark task with [pkg] for model tracking.
 Assigned: ui-engineer-enhanced, frontend-developer.
 Dependency: PCP-701.")
 ```
+
+## PCP-709 Execution Log
+
+**Skillmeat-side prep complete (awaiting human publish):**
+
+- 5 primitives ported to `@miethe/ui/src/primitives/`: `StatusChip`, `EffectiveStatusChips`, `MismatchBadge`, `BatchReadinessPill`, `PlanningNodeTypeIcon` (+ supporting `variants.ts`).
+- 55/55 tests passing in `@miethe/ui`; new unit test added for `PlanningNodeTypeIcon` (CCDash had no coverage — audit blocker resolved).
+- `package.json` bumped `0.2.0 → 0.3.0`. `CHANGELOG.md` and `README.md` updated. `tsc -p tsconfig.build.json` exit 0.
+- Storybook stories skipped: `@miethe/ui` has no Storybook setup. Deferred as follow-up.
+- No commit made in skillmeat repo; no `npm publish` run — human operator reviews & publishes.
+
+**CCDash post-publish follow-ups (blocks phase 7 completion):**
+
+1. Bump `@miethe/ui` in CCDash `package.json` to `^0.3.0` and install.
+2. In `components/shared/PlanningMetadata.tsx`, flip 5 re-exports from `@/components/Planning/primitives/...` → `@miethe/ui/primitives` (StatusChip, EffectiveStatusChips, MismatchBadge, BatchReadinessPill, PlanningNodeTypeIcon). Leave `LineageRow` and `castPlanningStatus` re-exports on local primitives (keep-local per manifest).
+3. Refactor `components/Planning/PlanningGraphPanel.tsx` lines 66–78 (duplicate `NodeTypeIcon` logic) to use the extracted `PlanningNodeTypeIcon`.
+4. After parity verified, delete `components/Planning/primitives/StatusChip.tsx`, `EffectiveStatusChips.tsx`, `MismatchBadge.tsx`, `BatchReadinessPill.tsx`, `PlanningNodeTypeIcon.tsx`, and `variants.ts`. Update `components/Planning/primitives/index.ts` accordingly.
+5. Run `npm run build` + vitest suite; confirm no regressions. Mark PCP-709 `completed` and phase-7 `completed`.
