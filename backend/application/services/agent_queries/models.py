@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -204,3 +204,169 @@ class AARReportDTO(AgentQueryEnvelope):
     successful_patterns: list[str] = Field(default_factory=list)
     lessons_learned: list[str] = Field(default_factory=list)
     evidence_links: list[str] = Field(default_factory=list)
+
+
+# ── Planning query DTOs (PCP-201) ────────────────────────────────────────────
+# These DTOs wrap the backend/models.py planning primitives (PlanningNode,
+# PlanningEdge, PlanningGraph, PlanningEffectiveStatus, PlanningPhaseBatch)
+# and add the standard agent-query envelope fields.  They use snake_case field
+# names with camelCase JSON aliases to match the pattern of the existing DTOs
+# above.  The raw planning model types from backend.models are imported inline
+# to avoid circular imports at module load time.
+
+
+class FeatureSummaryItem(BaseModel):
+    """Lightweight per-feature summary used in project-level planning views."""
+
+    feature_id: str
+    feature_name: str = ""
+    raw_status: str = ""
+    effective_status: str = ""
+    is_mismatch: bool = False
+    mismatch_state: str = "unknown"
+    has_blocked_phases: bool = False
+    phase_count: int = 0
+    blocked_phase_count: int = 0
+    node_count: int = 0
+
+
+class PlanningNodeCountsByType(BaseModel):
+    """Counts of PlanningNode instances bucketed by PlanningNodeType."""
+
+    prd: int = 0
+    design_spec: int = 0
+    implementation_plan: int = 0
+    progress: int = 0
+    context: int = 0
+    tracker: int = 0
+    report: int = 0
+
+
+class ProjectPlanningSummaryDTO(AgentQueryEnvelope):
+    """Project-level planning health summary (PCP-201, query 1).
+
+    Provides aggregate counts and status snapshots without returning raw
+    graph data.  Use ``ProjectPlanningGraphDTO`` when you need node/edge lists.
+
+    Field notes:
+    - ``stale_feature_ids`` — features whose raw status is terminal but whose
+      phase or document evidence does not yet corroborate completion.
+    - ``reversal_feature_ids`` — features where a planning mismatch of type
+      ``reversed`` was detected (raw status is ahead of evidence).
+    - ``mismatch_count`` — total count of features with *any* mismatch state
+      that is not ``aligned``.
+    """
+
+    project_id: str
+    project_name: str = ""
+    total_feature_count: int = 0
+    active_feature_count: int = 0
+    stale_feature_count: int = 0
+    blocked_feature_count: int = 0
+    mismatch_count: int = 0
+    reversal_count: int = 0
+    stale_feature_ids: list[str] = Field(default_factory=list)
+    reversal_feature_ids: list[str] = Field(default_factory=list)
+    blocked_feature_ids: list[str] = Field(default_factory=list)
+    node_counts_by_type: PlanningNodeCountsByType = Field(
+        default_factory=PlanningNodeCountsByType
+    )
+    feature_summaries: list[FeatureSummaryItem] = Field(default_factory=list)
+
+
+class ProjectPlanningGraphDTO(AgentQueryEnvelope):
+    """Aggregated planning graph for a project or feature seed (PCP-201, query 2).
+
+    When ``feature_id`` is supplied the graph is scoped to that feature's
+    subgraph (plus family-level relationships).  When omitted all features
+    in the project are included.
+
+    The ``nodes`` and ``edges`` lists are flat representations of
+    ``PlanningNode`` / ``PlanningEdge`` models from ``backend.models``.  They
+    are serialised as plain dicts here so the DTO remains JSON-serialisable
+    without a separate Pydantic discriminator layer.
+    """
+
+    project_id: str
+    feature_id: str | None = None
+    depth: int | None = None
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    phase_batches: list[dict[str, Any]] = Field(default_factory=list)
+    node_count: int = 0
+    edge_count: int = 0
+
+
+class PhaseContextItem(BaseModel):
+    """One phase's planning context inside ``FeaturePlanningContextDTO``."""
+
+    phase_id: str = ""
+    phase_token: str = ""
+    phase_title: str = ""
+    raw_status: str = ""
+    effective_status: str = ""
+    is_mismatch: bool = False
+    mismatch_state: str = "unknown"
+    planning_status: dict[str, Any] = Field(default_factory=dict)
+    batches: list[dict[str, Any]] = Field(default_factory=list)
+    blocked_batch_ids: list[str] = Field(default_factory=list)
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    deferred_tasks: int = 0
+
+
+class FeaturePlanningContextDTO(AgentQueryEnvelope):
+    """Single-feature planning context including graph, status, and phases (PCP-201, query 3).
+
+    Preserves raw vs effective status provenance — never collapse them.
+    ``planning_status`` is the feature-level ``PlanningEffectiveStatus`` serialised
+    as a dict.  ``mismatch_state`` is a convenience copy of
+    ``planning_status.mismatchState.state`` for quick filtering.
+    """
+
+    feature_id: str
+    feature_name: str = ""
+    raw_status: str = ""
+    effective_status: str = ""
+    mismatch_state: str = "unknown"
+    planning_status: dict[str, Any] = Field(default_factory=dict)
+    graph: dict[str, Any] = Field(default_factory=dict)
+    phases: list[PhaseContextItem] = Field(default_factory=list)
+    blocked_batch_ids: list[str] = Field(default_factory=list)
+    linked_artifact_refs: list[str] = Field(default_factory=list)
+
+
+class PhaseTaskItem(BaseModel):
+    """Task summary within a phase operations response."""
+
+    task_id: str = ""
+    title: str = ""
+    status: str = ""
+    assignees: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    batch_id: str = ""
+
+
+class PhaseOperationsDTO(AgentQueryEnvelope):
+    """Operational detail for a single phase (PCP-201, query 4).
+
+    Returns batch readiness, per-task assignee / blocker data, and any
+    evidence extracted from progress frontmatter.  ``phase_batches`` preserves
+    the ``parallelization.batch_N`` semantics from ``PlanningPhaseBatch``.
+    ``dependency_resolution`` summarises whether the phase's upstream
+    dependencies are cleared.
+    """
+
+    feature_id: str
+    phase_number: int
+    phase_token: str = ""
+    phase_title: str = ""
+    raw_status: str = ""
+    effective_status: str = ""
+    is_ready: bool = False
+    readiness_state: str = "unknown"
+    phase_batches: list[dict[str, Any]] = Field(default_factory=list)
+    blocked_batch_ids: list[str] = Field(default_factory=list)
+    tasks: list[PhaseTaskItem] = Field(default_factory=list)
+    dependency_resolution: dict[str, Any] = Field(default_factory=dict)
+    progress_evidence: list[str] = Field(default_factory=list)

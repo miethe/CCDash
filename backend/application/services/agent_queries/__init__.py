@@ -23,7 +23,15 @@ from backend.application.services.agent_queries.models import (
     CostSummary,
     DocumentRef,
     FeatureForensicsDTO,
+    FeaturePlanningContextDTO,
+    FeatureSummaryItem,
     KeyMetrics,
+    PhaseContextItem,
+    PhaseOperationsDTO,
+    PhaseTaskItem,
+    PlanningNodeCountsByType,
+    ProjectPlanningSummaryDTO,
+    ProjectPlanningGraphDTO,
     ProjectStatusDTO,
     QueryStatus,
     SessionRef,
@@ -37,6 +45,7 @@ from backend.application.services.agent_queries.models import (
     WorkflowSummary,
 )
 from backend.application.services.agent_queries.feature_forensics import FeatureForensicsQueryService
+from backend.application.services.agent_queries.planning import PlanningQueryService
 from backend.application.services.agent_queries.project_status import ProjectStatusQueryService
 from backend.application.services.agent_queries.reporting import ReportingQueryService
 from backend.application.services.agent_queries.workflow_intelligence import WorkflowDiagnosticsQueryService
@@ -78,4 +87,14 @@ __all__ = [
     "normalize_entity_ids",
     "resolve_project_scope",
     "resolve_time_window",
+    # Planning query service and DTOs (PCP-201)
+    "PlanningQueryService",
+    "FeaturePlanningContextDTO",
+    "FeatureSummaryItem",
+    "PhaseContextItem",
+    "PhaseOperationsDTO",
+    "PhaseTaskItem",
+    "PlanningNodeCountsByType",
+    "ProjectPlanningSummaryDTO",
+    "ProjectPlanningGraphDTO",
 ]

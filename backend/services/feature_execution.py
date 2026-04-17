@@ -1773,3 +1773,58 @@ def build_execution_context(
         planningGraph=planning_graph,
         generatedAt=datetime.now(timezone.utc).isoformat(),
     )
+
+
+# ── Public planning wrappers (promoted for agent-query layer, PCP-201) ───────
+# These thin re-exports promote module-private derivation helpers so
+# PlanningQueryService can call them without duplicating logic. The underscore
+# originals are preserved for internal use within this module.
+
+def derive_phase_planning_status(phase: "FeaturePhase") -> "PlanningEffectiveStatus":
+    """Public wrapper around ``_derive_phase_planning_status`` (PCP-201)."""
+    return _derive_phase_planning_status(phase)
+
+
+def derive_feature_planning_status(
+    feature: "Feature",
+    doc_rows: "list[dict[str, Any]]",
+    dependency_state: "FeatureDependencyState | None",
+) -> "PlanningEffectiveStatus":
+    """Public wrapper around ``_derive_feature_planning_status`` (PCP-201)."""
+    return _derive_feature_planning_status(feature, doc_rows, dependency_state)
+
+
+def apply_planning_projection(
+    feature: "Feature",
+    doc_rows: "list[dict[str, Any]] | None",
+    dependency_state: "FeatureDependencyState | None",
+) -> "Feature":
+    """Public wrapper around ``_apply_planning_projection`` (PCP-201)."""
+    return _apply_planning_projection(feature, doc_rows, dependency_state)
+
+
+def build_planning_graph(
+    feature: "Feature",
+    documents: "list[LinkedDocument]",
+    family_summary: "FeatureFamilySummary | None",
+) -> "PlanningGraph":
+    """Public wrapper around ``_build_planning_graph`` (PCP-201)."""
+    return _build_planning_graph(feature, documents, family_summary)
+
+
+def feature_from_row(row: "dict[str, Any]") -> "Feature":
+    """Public wrapper around ``_feature_from_row`` (PCP-201).
+
+    Lets the agent-query layer rehydrate DB rows into Feature objects without
+    reimplementing the mapping logic.
+    """
+    return _feature_from_row(row)
+
+
+def feature_dependency_state(
+    feature: "Feature",
+    doc_rows: "list[dict[str, Any]]",
+    feature_index: "dict[str, Feature]",
+) -> "FeatureDependencyState":
+    """Public wrapper around ``_feature_dependency_state`` (PCP-201)."""
+    return _feature_dependency_state(feature, doc_rows, feature_index)
