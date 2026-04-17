@@ -2458,6 +2458,135 @@ export interface FeatureExecutionContext {
   generatedAt: string;
 }
 
+// ── Planning Launch Preparation (PCP-504) ────────────────────────────────────
+
+export type LaunchBatchReadinessState = 'ready' | 'blocked' | 'partial' | 'unknown';
+export type LaunchApprovalRequirement = 'none' | 'optional' | 'required';
+export type LaunchRiskLevel = 'low' | 'medium' | 'high';
+export type WorktreeContextStatus = 'draft' | 'ready' | 'in_use' | 'archived' | 'error';
+
+export interface LaunchProviderCapability {
+  provider: string;
+  label: string;
+  supported: boolean;
+  supportsWorktrees: boolean;
+  supportsModelSelection: boolean;
+  defaultModel: string;
+  availableModels: string[];
+  requiresApproval: boolean;
+  unsupportedReason: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface LaunchBatchTaskSummary {
+  taskId: string;
+  title: string;
+  status: string;
+  assignees: string[];
+  blockers: string[];
+}
+
+export interface LaunchBatchSummary {
+  batchId: string;
+  phaseNumber: number;
+  featureId: string;
+  featureName: string;
+  phaseTitle: string;
+  readinessState: LaunchBatchReadinessState;
+  isReady: boolean;
+  blockedReason: string;
+  taskIds: string[];
+  tasks: LaunchBatchTaskSummary[];
+  owners: string[];
+  dependencies: string[];
+}
+
+export interface LaunchWorktreeSelection {
+  worktreeContextId: string;
+  createIfMissing: boolean;
+  branch: string;
+  worktreePath: string;
+  baseBranch: string;
+  notes: string;
+}
+
+export interface LaunchApprovalRequirementDetail {
+  requirement: LaunchApprovalRequirement;
+  reasonCodes: string[];
+  riskLevel: LaunchRiskLevel;
+}
+
+export interface WorktreeContext {
+  id: string;
+  projectId: string;
+  featureId: string;
+  phaseNumber: number | null;
+  batchId: string;
+  branch: string;
+  worktreePath: string;
+  baseBranch: string;
+  baseCommitSha: string;
+  status: WorktreeContextStatus;
+  lastRunId: string;
+  provider: string;
+  notes: string;
+  metadata: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LaunchPreparationRequest {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  providerPreference?: string;
+  modelPreference?: string;
+  worktreeContextId?: string;
+}
+
+export interface LaunchPreparation {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  batch: LaunchBatchSummary;
+  providers: LaunchProviderCapability[];
+  selectedProvider: string;
+  selectedModel: string;
+  worktreeCandidates: WorktreeContext[];
+  worktreeSelection: LaunchWorktreeSelection;
+  approval: LaunchApprovalRequirementDetail;
+  warnings: string[];
+  generatedAt: string;
+}
+
+export interface LaunchStartRequest {
+  projectId: string;
+  featureId: string;
+  phaseNumber: number;
+  batchId: string;
+  provider: string;
+  model?: string;
+  worktree: LaunchWorktreeSelection;
+  commandOverride?: string;
+  envProfile?: string;
+  approvalDecision?: 'approved' | '';
+  actor?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LaunchStartResponse {
+  runId: string;
+  worktreeContextId: string;
+  status: string;
+  requiresApproval: boolean;
+  warnings: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type ExecutionPolicyVerdict = 'allow' | 'requires_approval' | 'deny';
 export type ExecutionRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'blocked';
 export type ExecutionRiskLevel = 'low' | 'medium' | 'high';

@@ -16,11 +16,12 @@ completed: ''
 commit_refs:
 - a98738e
 - 287fe92
+- ccc7e6f
 pr_refs: []
 overall_progress: 0
 completion_estimate: 5-7 days
 total_tasks: 5
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -68,7 +69,7 @@ tasks:
 - id: PCP-504
   description: Build a launch sheet/panel that lets operators review batch context,
     choose provider/model, select or create worktree context, and launch.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -117,7 +118,7 @@ notes:
 - Launch preparation leverages Phase 4 getPhaseOperations contract (PCP-401) and Phase
   2 planning graph derivation (PCP-201); see services/planning.ts and backend/routers/agent.py
   for the upstream data surface.
-progress: 60
+progress: 80
 ---
 
 # Phase 5 Progress: Launch Preparation, Worktrees, and Provider Routing

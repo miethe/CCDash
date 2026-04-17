@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, Loader2, RefreshCw, Rocket, X } from 'lucide-react';
 
-import type { PhaseOperations, PlanningPhaseBatch, PhaseTaskItem } from '../../../types';
+import type { PhaseOperations, PlanningPhaseBatch, PhaseTaskItem, LaunchStartResponse } from '../../../types';
 import { getPhaseOperations, PlanningApiError } from '../../../services/planning';
 import {
   featurePlanningTopic,
@@ -12,6 +12,7 @@ import { EffectiveStatusChips } from './EffectiveStatusChips';
 import { MismatchBadge } from './MismatchBadge';
 import { StatusChip } from './StatusChip';
 import { statusVariant } from './variants';
+import { PlanningLaunchSheet } from '../PlanningLaunchSheet';
 
 export interface PhaseOperationsPanelProps {
   featureId: string;
@@ -28,10 +29,20 @@ export interface PhaseOperationsPanelProps {
 const CARD = 'rounded-xl border border-panel-border bg-surface-overlay/70 p-4 space-y-3';
 const SECTION_LABEL = 'text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5';
 
+export interface PhaseOperationsBatchSectionProps {
+  batches: PlanningPhaseBatch[];
+  projectId?: string;
+  onLaunch?: (batchId: string) => void;
+}
+
 /**
  * Renders the batch table section.
  */
-export function PhaseOperationsBatchSection({ batches }: { batches: PlanningPhaseBatch[] }) {
+export function PhaseOperationsBatchSection({
+  batches,
+  projectId,
+  onLaunch,
+}: PhaseOperationsBatchSectionProps) {
   if (batches.length === 0) {
     return <p className="text-xs text-muted-foreground italic">No batches for this phase.</p>;
   }
@@ -63,6 +74,18 @@ export function PhaseOperationsBatchSection({ batches }: { batches: PlanningPhas
               Scope: {batch.fileScopeHints.slice(0, 2).join(', ')}
               {batch.fileScopeHints.length > 2 && ` +${batch.fileScopeHints.length - 2}`}
             </span>
+          )}
+          {onLaunch && (
+            <button
+              type="button"
+              onClick={() => onLaunch(batch.batchId)}
+              disabled={!projectId}
+              title={!projectId ? 'Select a project to launch' : `Launch ${batch.batchId}`}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-600/10 text-indigo-300 text-[11px] hover:bg-indigo-600/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              <Rocket size={12} />
+              Launch
+            </button>
           )}
         </div>
       ))}
@@ -183,11 +206,17 @@ export function PhaseOperationsEvidenceSection({
   );
 }
 
+export interface PhaseOperationsContentProps {
+  data: PhaseOperations;
+  projectId?: string;
+  onLaunch?: (batchId: string) => void;
+}
+
 /**
  * Inner content renderer for PhaseOperationsPanel — accepts already-loaded data
  * and is separately testable via renderToStaticMarkup.
  */
-export function PhaseOperationsContent({ data }: { data: PhaseOperations }) {
+export function PhaseOperationsContent({ data, projectId, onLaunch }: PhaseOperationsContentProps) {
   const isMismatch = data.rawStatus !== data.effectiveStatus && Boolean(data.effectiveStatus);
 
   // Collect all blocking ids across batches
@@ -228,7 +257,11 @@ export function PhaseOperationsContent({ data }: { data: PhaseOperations }) {
       {/* ── Batches ───────────────────────────────────────────────────── */}
       <section>
         <p className={SECTION_LABEL}>Batches</p>
-        <PhaseOperationsBatchSection batches={data.phaseBatches ?? []} />
+        <PhaseOperationsBatchSection
+          batches={data.phaseBatches ?? []}
+          projectId={projectId}
+          onLaunch={onLaunch}
+        />
       </section>
 
       {/* ── Tasks ─────────────────────────────────────────────────────── */}
@@ -283,6 +316,10 @@ export function PhaseOperationsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+
+  // ── Launch state ──────────────────────────────────────────────────────────
+  const [activeLaunchBatchId, setActiveLaunchBatchId] = useState<string | null>(null);
+  const [launchBanner, setLaunchBanner] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!featureId) return;
@@ -372,13 +409,48 @@ export function PhaseOperationsPanel({
   // ── Loaded ────────────────────────────────────────────────────────────────
   if (!data) return null;
 
+  const handleLaunch = (batchId: string) => setActiveLaunchBatchId(batchId);
+  const handleLaunched = (result: LaunchStartResponse) => {
+    setLaunchBanner(`Run ${result.runId} queued`);
+  };
+
+  const contentNode = (
+    <>
+      {launchBanner && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs text-indigo-300 mb-3">
+          <span>{launchBanner}</span>
+          <button
+            type="button"
+            onClick={() => setLaunchBanner(null)}
+            className="shrink-0 text-indigo-400/70 hover:text-indigo-200"
+            aria-label="Dismiss"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+      <PhaseOperationsContent data={data} projectId={projectId} onLaunch={handleLaunch} />
+      {activeLaunchBatchId && projectId && (
+        <PlanningLaunchSheet
+          open={!!activeLaunchBatchId}
+          projectId={projectId}
+          featureId={featureId}
+          phaseNumber={phaseNumber}
+          batchId={activeLaunchBatchId}
+          onClose={() => setActiveLaunchBatchId(null)}
+          onLaunched={handleLaunched}
+        />
+      )}
+    </>
+  );
+
   if (embedded) {
-    return <PhaseOperationsContent data={data} />;
+    return contentNode;
   }
 
   return (
     <div className={CARD}>
-      <PhaseOperationsContent data={data} />
+      {contentNode}
     </div>
   );
 }
