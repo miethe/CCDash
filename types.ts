@@ -2820,3 +2820,137 @@ export interface LinkAuditResponse {
   generated_at?: string;
   suspects: LinkAuditSuspect[];
 }
+
+// ── Planning Control Plane types (PCP-204) ────────────────────────────────────
+// Wire format is snake_case (backend publishes no camelCase aliases).
+// services/planning.ts adapts to camelCase on ingestion; these types reflect
+// the adapted (camelCase) shape that the rest of the frontend consumes.
+
+/** Common envelope fields present on every agent-query planning response. */
+export interface AgentQueryEnvelope {
+  /** Query resolution status: "ok" | "partial" | "error" */
+  status: 'ok' | 'partial' | 'error';
+  /** ISO-8601 timestamp indicating when the underlying data was last synced. */
+  dataFreshness: string;
+  /** ISO-8601 timestamp of when this response was generated. */
+  generatedAt: string;
+  /** Stable identifiers for the primary data sources consulted. */
+  sourceRefs: string[];
+}
+
+/** Counts of PlanningNode instances bucketed by node type. */
+export interface PlanningNodeCountsByType {
+  prd: number;
+  designSpec: number;
+  implementationPlan: number;
+  progress: number;
+  context: number;
+  tracker: number;
+  report: number;
+}
+
+/** Lightweight per-feature summary used in project-level planning views. */
+export interface FeatureSummaryItem {
+  featureId: string;
+  featureName: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isMismatch: boolean;
+  mismatchState: string;
+  hasBlockedPhases: boolean;
+  phaseCount: number;
+  blockedPhaseCount: number;
+  nodeCount: number;
+}
+
+/** Project-level planning health summary (PCP-201 query 1). */
+export interface ProjectPlanningSummary extends AgentQueryEnvelope {
+  projectId: string;
+  projectName: string;
+  totalFeatureCount: number;
+  activeFeatureCount: number;
+  staleFeatureCount: number;
+  blockedFeatureCount: number;
+  mismatchCount: number;
+  reversalCount: number;
+  staleFeatureIds: string[];
+  reversalFeatureIds: string[];
+  blockedFeatureIds: string[];
+  nodeCountsByType: PlanningNodeCountsByType;
+  featureSummaries: FeatureSummaryItem[];
+}
+
+/** Aggregated planning graph for a project or feature seed (PCP-201 query 2). */
+export interface ProjectPlanningGraph extends AgentQueryEnvelope {
+  projectId: string;
+  featureId: string | null;
+  depth: number | null;
+  nodes: PlanningNode[];
+  edges: PlanningEdge[];
+  phaseBatches: PlanningPhaseBatch[];
+  nodeCount: number;
+  edgeCount: number;
+}
+
+/** One phase's planning context inside FeaturePlanningContext. */
+export interface PhaseContextItem {
+  phaseId: string;
+  phaseToken: string;
+  phaseTitle: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isMismatch: boolean;
+  mismatchState: string;
+  /** Serialised PlanningEffectiveStatus dict from the backend. */
+  planningStatus: Record<string, unknown>;
+  /** Serialised PlanningPhaseBatch dicts. */
+  batches: PlanningPhaseBatch[];
+  blockedBatchIds: string[];
+  totalTasks: number;
+  completedTasks: number;
+  deferredTasks: number;
+}
+
+/** Single-feature planning context including graph, status, and phases (PCP-201 query 3). */
+export interface FeaturePlanningContext extends AgentQueryEnvelope {
+  featureId: string;
+  featureName: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  mismatchState: string;
+  /** Serialised PlanningEffectiveStatus dict from the backend. */
+  planningStatus: Record<string, unknown>;
+  /** Serialised subgraph as a PlanningGraph-compatible object. */
+  graph: PlanningGraph;
+  phases: PhaseContextItem[];
+  blockedBatchIds: string[];
+  linkedArtifactRefs: string[];
+}
+
+/** Task summary within a phase operations response. */
+export interface PhaseTaskItem {
+  taskId: string;
+  title: string;
+  status: string;
+  assignees: string[];
+  blockers: string[];
+  batchId: string;
+}
+
+/** Operational detail for a single phase (PCP-201 query 4). */
+export interface PhaseOperations extends AgentQueryEnvelope {
+  featureId: string;
+  phaseNumber: number;
+  phaseToken: string;
+  phaseTitle: string;
+  rawStatus: string;
+  effectiveStatus: string;
+  isReady: boolean;
+  readinessState: string;
+  phaseBatches: PlanningPhaseBatch[];
+  blockedBatchIds: string[];
+  tasks: PhaseTaskItem[];
+  /** Serialised dependency resolution summary from the backend. */
+  dependencyResolution: Record<string, unknown>;
+  progressEvidence: string[];
+}
