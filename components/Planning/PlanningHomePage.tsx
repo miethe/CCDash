@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GitBranch, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
@@ -6,6 +7,8 @@ import type { ProjectPlanningSummary } from '../../types';
 import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import type { LiveConnectionStatus } from '../../services/live';
+import { PlanningSummaryPanel } from './PlanningSummaryPanel';
+import { PlanningGraphPanel } from './PlanningGraphPanel';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -115,9 +118,11 @@ function EmptyShell({ hasProject }: { hasProject: boolean }) {
 function PlanningShell({
   summary,
   liveStatus,
+  onSelectFeature,
 }: {
   summary: ProjectPlanningSummary;
   liveStatus: LiveConnectionStatus;
+  onSelectFeature: (featureId: string) => void;
 }) {
   return (
     <div className="max-w-screen-2xl space-y-6">
@@ -143,17 +148,18 @@ function PlanningShell({
         </div>
       </div>
 
-      {/* Placeholder sections — filled by PCP-302, 303, 304 */}
-      <PlaceholderSection
-        testId="planning-summary-section"
-        title="Planning Summary"
-        badge="Summary coming soon (PCP-302)"
-      />
-      <PlaceholderSection
-        testId="planning-graph-section"
-        title="Planning Graph"
-        badge="Graph coming soon (PCP-303)"
-      />
+      {/* PCP-302: Planning Summary */}
+      <div data-testid="planning-summary-section">
+        <PlanningSummaryPanel summary={summary} onSelectFeature={onSelectFeature} />
+      </div>
+
+      {/* PCP-303: Planning Graph Panel */}
+      <div data-testid="planning-graph-section" className="rounded-xl border border-panel-border bg-surface-elevated p-5">
+        <PlanningGraphPanel
+          projectId={summary.projectId ?? null}
+          onSelectFeature={onSelectFeature}
+        />
+      </div>
       <PlaceholderSection
         testId="planning-tracker-section"
         title="Tracker &amp; Intake"
@@ -173,6 +179,7 @@ type FetchState =
 
 export default function PlanningHomePage() {
   const { activeProject } = useData();
+  const navigate = useNavigate();
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
 
   const loadSummary = useCallback(async () => {
@@ -242,5 +249,11 @@ export default function PlanningHomePage() {
     );
   }
 
-  return <PlanningShell summary={summary} liveStatus={liveStatus} />;
+  return (
+    <PlanningShell
+      summary={summary}
+      liveStatus={liveStatus}
+      onSelectFeature={(featureId) => navigate(`/planning/feature/${featureId}`)}
+    />
+  );
 }

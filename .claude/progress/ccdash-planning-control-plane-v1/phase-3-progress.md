@@ -10,7 +10,7 @@ phase: 3
 title: Planning Home, Graph, and Tracker/Intake Surfaces
 status: pending
 created: '2026-04-16'
-updated: '2026-04-16'
+updated: '2026-04-17'
 started: '2026-04-16'
 completed: ''
 commit_refs: []
@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 4
-completed_tasks: 1
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -41,7 +41,7 @@ tasks:
 - id: PCP-302
   description: Build summary cards and lists for intake, active plans, stale phases,
     mismatches, and tracker backlog.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -52,7 +52,7 @@ tasks:
 - id: PCP-303
   description: Build graph/list detail surfaces that explain lineage, blockers, and
     related entities.
-  status: pending
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -105,7 +105,7 @@ success_criteria:
     in existing workflow semantics.
   status: pending
 files_modified: []
-progress: 25
+progress: 75
 ---
 
 # ccdash-planning-control-plane-v1 - Phase 3
