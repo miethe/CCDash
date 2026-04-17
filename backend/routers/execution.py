@@ -11,6 +11,7 @@ from backend.application.services import resolve_application_request
 from backend.application.services.common import require_project
 from backend.application.services.execution import ExecutionApplicationService
 from backend.application.services.launch_preparation import LaunchPreparationApplicationService
+from backend import config
 from backend.models import (
     ExecutionApprovalRequest,
     ExecutionCancelRequest,
@@ -21,6 +22,7 @@ from backend.models import (
     ExecutionRunDTO,
     ExecutionRunEventDTO,
     ExecutionRunEventPageDTO,
+    LaunchCapabilitiesDTO,
     LaunchPreparationDTO,
     LaunchPreparationRequest,
     LaunchStartRequest,
@@ -31,11 +33,24 @@ from backend.models import (
     WorktreeContextUpdateRequest,
 )
 from backend.request_scope import get_core_ports, get_request_context
+from backend.services.launch_providers import default_provider_catalog
 
 
 execution_router = APIRouter(prefix="/api/execution", tags=["execution"])
 execution_application_service = ExecutionApplicationService()
 launch_preparation_service = LaunchPreparationApplicationService()
+
+
+def _require_launch_enabled() -> None:
+    if not config.CCDASH_LAUNCH_PREP_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "launch_disabled",
+                "message": "Plan-driven launch preparation is disabled.",
+                "hint": "Set CCDASH_LAUNCH_PREP_ENABLED=true to enable.",
+            },
+        )
 
 
 def _to_policy_dto(result: Any) -> ExecutionPolicyResultDTO:
@@ -236,7 +251,22 @@ def _to_worktree_dto(row: dict[str, Any]) -> WorktreeContextDTO:
 # ── Launch preparation endpoints ──────────────────────────────────────────────
 
 
-@execution_router.post("/launch/prepare", response_model=LaunchPreparationDTO)
+@execution_router.get("/launch/capabilities", response_model=LaunchCapabilitiesDTO)
+async def get_launch_capabilities() -> LaunchCapabilitiesDTO:
+    enabled = bool(config.CCDASH_LAUNCH_PREP_ENABLED)
+    providers = default_provider_catalog() if enabled else []
+    return LaunchCapabilitiesDTO(
+        enabled=enabled,
+        disabledReason="" if enabled else "CCDASH_LAUNCH_PREP_ENABLED is false",
+        providers=providers,
+    )
+
+
+@execution_router.post(
+    "/launch/prepare",
+    response_model=LaunchPreparationDTO,
+    dependencies=[Depends(_require_launch_enabled)],
+)
 async def prepare_launch(
     req: LaunchPreparationRequest,
     request_context: RequestContext = Depends(get_request_context),
@@ -246,7 +276,11 @@ async def prepare_launch(
     return await launch_preparation_service.prepare(app_request.context, app_request.ports, req)
 
 
-@execution_router.post("/launch/start", response_model=LaunchStartResponse)
+@execution_router.post(
+    "/launch/start",
+    response_model=LaunchStartResponse,
+    dependencies=[Depends(_require_launch_enabled)],
+)
 async def start_launch(
     req: LaunchStartRequest,
     request_context: RequestContext = Depends(get_request_context),

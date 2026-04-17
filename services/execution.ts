@@ -17,6 +17,7 @@ import {
   StackRecommendationEvidence,
   LaunchPreparationRequest,
   LaunchPreparation,
+  LaunchProviderCapability,
   LaunchStartRequest,
   LaunchStartResponse,
   WorktreeContext,
@@ -397,5 +398,17 @@ export async function createWorktreeContext(payload: {
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Failed to create worktree context (${res.status})`);
+  return res.json();
+}
+
+export interface LaunchCapabilities {
+  enabled: boolean;
+  disabledReason: string;
+  providers: LaunchProviderCapability[];
+}
+
+export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {
+  const res = await fetch(`${EXECUTION_API_BASE}/launch/capabilities`);
+  if (!res.ok) throw new Error(`Failed to load launch capabilities (${res.status})`);
   return res.json();
 }

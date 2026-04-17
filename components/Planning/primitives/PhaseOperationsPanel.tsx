@@ -3,6 +3,7 @@ import { AlertCircle, Loader2, RefreshCw, Rocket, X } from 'lucide-react';
 
 import type { PhaseOperations, PlanningPhaseBatch, PhaseTaskItem, LaunchStartResponse } from '../../../types';
 import { getPhaseOperations, PlanningApiError } from '../../../services/planning';
+import { getLaunchCapabilities } from '../../../services/execution';
 import {
   featurePlanningTopic,
 } from '../../../services/live/topics';
@@ -320,6 +321,22 @@ export function PhaseOperationsPanel({
   // ── Launch state ──────────────────────────────────────────────────────────
   const [activeLaunchBatchId, setActiveLaunchBatchId] = useState<string | null>(null);
   const [launchBanner, setLaunchBanner] = useState<string | null>(null);
+  const [launchEnabled, setLaunchEnabled] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const caps = await getLaunchCapabilities();
+        if (!cancelled) setLaunchEnabled(Boolean(caps.enabled));
+      } catch {
+        if (!cancelled) setLaunchEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!featureId) return;
@@ -429,7 +446,16 @@ export function PhaseOperationsPanel({
           </button>
         </div>
       )}
-      <PhaseOperationsContent data={data} projectId={projectId} onLaunch={handleLaunch} />
+      <PhaseOperationsContent
+        data={data}
+        projectId={projectId}
+        onLaunch={launchEnabled ? handleLaunch : undefined}
+      />
+      {!launchEnabled && (
+        <p className="mt-2 text-[10px] text-muted-foreground/70 italic">
+          Plan-driven launch is disabled (CCDASH_LAUNCH_PREP_ENABLED=false).
+        </p>
+      )}
       {activeLaunchBatchId && projectId && (
         <PlanningLaunchSheet
           open={!!activeLaunchBatchId}

@@ -2636,6 +2636,17 @@ class LaunchStartResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class LaunchCapabilitiesDTO(BaseModel):
+    """Capability snapshot advertising whether plan-driven launch is usable.
+
+    Frontend consumes this to gate the Launch entrypoint; backend routers
+    return 503 with `error="launch_disabled"` when `enabled` is False.
+    """
+    enabled: bool = False
+    disabledReason: str = ""
+    providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
+
+
 # ── Test Visualizer DTOs ───────────────────────────────────────────
 
 class TestRunDTO(BaseModel):

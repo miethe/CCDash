@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.m
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
 phase: 5
 title: Launch Preparation, Worktrees, and Provider Routing
-status: pending
+status: completed
 created: '2026-04-17'
 updated: '2026-04-17'
 started: '2026-04-17'
@@ -17,11 +17,12 @@ commit_refs:
 - a98738e
 - 287fe92
 - ccc7e6f
+- c18f865
 pr_refs: []
 overall_progress: 0
 completion_estimate: 5-7 days
 total_tasks: 5
-completed_tasks: 4
+completed_tasks: 5
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -80,7 +81,7 @@ tasks:
 - id: PCP-505
   description: Gate advanced launch actions behind provider capability checks and
     rollout flags, keeping unsupported paths clearly disabled.
-  status: pending
+  status: completed
   assigned_to:
   - python-backend-engineer
   - frontend-developer
@@ -118,7 +119,7 @@ notes:
 - Launch preparation leverages Phase 4 getPhaseOperations contract (PCP-401) and Phase
   2 planning graph derivation (PCP-201); see services/planning.ts and backend/routers/agent.py
   for the upstream data surface.
-progress: 80
+progress: 100
 ---
 
 # Phase 5 Progress: Launch Preparation, Worktrees, and Provider Routing
