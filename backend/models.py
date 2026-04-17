@@ -2502,6 +2502,140 @@ class WorktreeContextListResponse(BaseModel):
     total: int = 0
 
 
+# ── Planning Launch Preparation (PCP-502) ───────────────────────────
+
+LaunchBatchReadinessState = Literal["ready", "blocked", "partial", "unknown"]
+LaunchApprovalRequirement = Literal["none", "optional", "required"]
+
+
+class LaunchProviderCapabilityDTO(BaseModel):
+    """Describes what a provider can do for plan-driven launches.
+
+    Capabilities are advisory: the UI gates choices via `supported`, and the
+    backend enforces in PCP-505 via the execution policy layer.
+    """
+    provider: str
+    label: str = ""
+    supported: bool = False
+    supportsWorktrees: bool = False
+    supportsModelSelection: bool = False
+    defaultModel: str = ""
+    availableModels: list[str] = Field(default_factory=list)
+    requiresApproval: bool = False
+    unsupportedReason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LaunchBatchTaskSummary(BaseModel):
+    """Compact task view inside a launch preparation payload."""
+    taskId: str
+    title: str = ""
+    status: str = ""
+    assignees: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+
+
+class LaunchBatchSummaryDTO(BaseModel):
+    """Plan-derived snapshot of the batch targeted by a launch."""
+    batchId: str
+    phaseNumber: int
+    featureId: str
+    featureName: str = ""
+    phaseTitle: str = ""
+    readinessState: LaunchBatchReadinessState = "unknown"
+    isReady: bool = False
+    blockedReason: str = ""
+    taskIds: list[str] = Field(default_factory=list)
+    tasks: list[LaunchBatchTaskSummary] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class LaunchWorktreeSelectionDTO(BaseModel):
+    """References or creates a worktree context for the launch.
+
+    When `worktreeContextId` is set, backend will resolve and reuse the existing
+    record. When blank plus `createIfMissing` is true, a new context will be
+    provisioned from the accompanying fields during launch-start.
+    """
+    worktreeContextId: str = ""
+    createIfMissing: bool = False
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    notes: str = ""
+
+
+class LaunchApprovalRequirementDTO(BaseModel):
+    requirement: LaunchApprovalRequirement = "none"
+    reasonCodes: list[str] = Field(default_factory=list)
+    riskLevel: ExecutionRiskLevel = "low"
+
+
+class LaunchPreparationRequest(BaseModel):
+    """Operator asks the backend to assemble a launch preview for a batch.
+
+    Inputs identify the target batch; backend pulls PhaseOperationsDTO + worktree
+    candidates + provider capabilities and returns a LaunchPreparationDTO.
+    """
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    providerPreference: str = ""
+    modelPreference: str = ""
+    worktreeContextId: str = ""
+
+
+class LaunchPreparationDTO(BaseModel):
+    """Full launch-prep payload combining plan + providers + worktree + approval."""
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    batch: LaunchBatchSummaryDTO
+    providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
+    selectedProvider: str = ""
+    selectedModel: str = ""
+    worktreeCandidates: list[WorktreeContextDTO] = Field(default_factory=list)
+    worktreeSelection: LaunchWorktreeSelectionDTO = Field(default_factory=LaunchWorktreeSelectionDTO)
+    approval: LaunchApprovalRequirementDTO = Field(default_factory=LaunchApprovalRequirementDTO)
+    warnings: list[str] = Field(default_factory=list)
+    generatedAt: str = ""
+
+
+class LaunchStartRequest(BaseModel):
+    """Operator confirms and initiates a plan-driven launch.
+
+    `commandOverride` is optional — when blank, backend composes the command
+    from batch metadata + provider defaults (implemented in PCP-503/505).
+    """
+    projectId: str
+    featureId: str
+    phaseNumber: int
+    batchId: str
+    provider: str
+    model: str = ""
+    worktree: LaunchWorktreeSelectionDTO = Field(default_factory=LaunchWorktreeSelectionDTO)
+    commandOverride: str = ""
+    envProfile: str = "default"
+    approvalDecision: str = ""
+    actor: str = "user"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LaunchStartResponse(BaseModel):
+    """Successful launch initiation. `runId` references execution_runs.id.
+
+    `worktreeContextId` points to the (created or reused) planning_worktree_contexts row.
+    """
+    runId: str
+    worktreeContextId: str = ""
+    status: ExecutionRunStatus = "queued"
+    requiresApproval: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 # ── Test Visualizer DTOs ───────────────────────────────────────────
 
 class TestRunDTO(BaseModel):
