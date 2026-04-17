@@ -315,6 +315,51 @@ class ExecutionOutcomePayload(BaseModel):
         )
 
 
+class ArtifactOutcomePayload(BaseModel):
+    """Outbound payload: CCDash → SAM POST /api/v1/analytics/artifact-outcomes
+    Mirrors SAM's ArtifactOutcomeEventRequest.
+    """
+
+    event_id: UUID  # added for queue idempotency (CCDash convention; SAM ignores)
+    definition_type: str = Field(min_length=1)
+    external_id: str = Field(min_length=1)  # format: 'type:name'
+    content_hash: Optional[str] = Field(default=None, min_length=64, max_length=71)  # 'sha256:<hex>' or bare hex
+    period_label: str = Field(min_length=1)  # e.g. 'all', '7d', '30d'
+    period_start: datetime
+    period_end: datetime
+    execution_count: int = Field(ge=0)
+    success_count: int = Field(ge=0)
+    failure_count: int = Field(ge=0)
+    token_input: int = Field(ge=0)
+    token_output: int = Field(ge=0)
+    cost_usd: float = Field(ge=0.0)
+    duration_ms: int = Field(ge=0)
+    attributed_tokens: Optional[int] = Field(default=None, ge=0)
+    ccdash_client_version: Optional[str] = None
+    extra_metrics: Optional[dict[str, Any]] = None
+    timestamp: datetime  # CCDash-side emission time (SAM uses period_end for bucketing)
+
+    # Serialize datetimes as ISO8601 UTC with 'Z' suffix, matching ExecutionOutcomePayload convention
+    @field_serializer("period_start", "period_end", "timestamp")
+    def _serialize_dt(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def event_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class ArtifactVersionOutcomePayload(ArtifactOutcomePayload):
+    """Outbound payload: CCDash → SAM POST /api/v1/analytics/artifact-version-outcomes
+    Identical shape to ArtifactOutcomePayload BUT content_hash MUST be non-null.
+    """
+
+    @model_validator(mode="after")
+    def _require_content_hash(self) -> "ArtifactVersionOutcomePayload":
+        if not self.content_hash:
+            raise ValueError("content_hash is required for ArtifactVersionOutcomePayload")
+        return self
+
+
 SessionUsageTokenFamily = Literal[
     "model_input",
     "model_output",

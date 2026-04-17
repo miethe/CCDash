@@ -81,6 +81,7 @@ CCDASH_TELEMETRY_EXPORT_TIMEOUT_SECONDS = _env_int("CCDASH_TELEMETRY_EXPORT_TIME
 CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE = _env_int("CCDASH_TELEMETRY_EXPORT_MAX_QUEUE_SIZE", 10000)
 CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS = _env_int("CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS", 30)
 CCDASH_TELEMETRY_ALLOW_INSECURE = _env_bool("CCDASH_TELEMETRY_ALLOW_INSECURE", False)
+CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED = _env_bool("CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED", False)
 CCDASH_VERSION = os.getenv("CCDASH_VERSION", "0.1.0").strip() or "0.1.0"
 CCDASH_API_BEARER_TOKEN_ENV = "CCDASH_API_BEARER_TOKEN"
 CCDASH_WORKER_PROJECT_ID_ENV = "CCDASH_WORKER_PROJECT_ID"
@@ -211,6 +212,7 @@ class TelemetryExporterConfig(BaseModel):
     queue_retention_days: int = Field(default=30, ge=1)
     allow_insecure: bool = False
     ccdash_version: str = Field(default="0.1.0", min_length=1)
+    artifact_telemetry_enabled: bool = False
 
     @property
     def configured(self) -> bool:
@@ -236,6 +238,7 @@ TELEMETRY_EXPORTER_CONFIG = TelemetryExporterConfig(
     queue_retention_days=CCDASH_TELEMETRY_QUEUE_RETENTION_DAYS,
     allow_insecure=CCDASH_TELEMETRY_ALLOW_INSECURE,
     ccdash_version=CCDASH_VERSION,
+    artifact_telemetry_enabled=CCDASH_SAM_ARTIFACT_TELEMETRY_ENABLED,
 )
 STORAGE_PROFILE = resolve_storage_profile_config()
 

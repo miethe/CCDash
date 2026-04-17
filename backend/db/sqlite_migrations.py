@@ -1134,6 +1134,66 @@ async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, defi
     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+async def _migrate_outbound_telemetry_queue_add_event_type(db: aiosqlite.Connection) -> None:
+    """Idempotent: add event_type column and remove the sessions FK from outbound_telemetry_queue.
+
+    SQLite does not support ALTER TABLE DROP CONSTRAINT, so we use the
+    rename-create-copy-drop pattern.  The UNIQUE(session_id) constraint is
+    preserved on the new table because session-level rows still rely on it for
+    idempotent inserts; artifact-level rows use a UUID primary key and a
+    distinct dedup_key column instead.
+    """
+    if await _column_exists(db, "outbound_telemetry_queue", "event_type"):
+        return  # Already migrated
+
+    # Disable FK enforcement for the duration of this migration.
+    await db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        await db.execute("ALTER TABLE outbound_telemetry_queue RENAME TO _otq_backup")
+        await db.execute(
+            """
+            CREATE TABLE outbound_telemetry_queue (
+                id              TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                project_slug    TEXT NOT NULL,
+                payload_json    TEXT NOT NULL,
+                event_type      TEXT NOT NULL DEFAULT 'execution_outcome',
+                status          TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'synced', 'failed', 'abandoned')),
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                last_attempt_at TEXT,
+                attempt_count   INTEGER NOT NULL DEFAULT 0,
+                last_error      TEXT,
+                UNIQUE(session_id)
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO outbound_telemetry_queue
+                (id, session_id, project_slug, payload_json, event_type,
+                 status, created_at, last_attempt_at, attempt_count, last_error)
+            SELECT id, session_id, project_slug, payload_json,
+                   'execution_outcome',
+                   status, created_at, last_attempt_at, attempt_count, last_error
+            FROM _otq_backup
+            """
+        )
+        await db.execute("DROP TABLE _otq_backup")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_status ON outbound_telemetry_queue(status)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_created_at ON outbound_telemetry_queue(created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outbound_telemetry_queue_event_type ON outbound_telemetry_queue(event_type, status)"
+        )
+        await db.commit()
+    finally:
+        await db.execute("PRAGMA foreign_keys=ON")
+
+
 async def _ensure_column_if_table_exists(
     db: aiosqlite.Connection,
     table: str,
@@ -1687,6 +1747,9 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         db,
         "CREATE INDEX IF NOT EXISTS idx_effectiveness_rollups_period ON effectiveness_rollups(project_id, period, updated_at DESC)",
     )
+
+    # Migrate outbound_telemetry_queue: add event_type, drop sessions FK
+    await _migrate_outbound_telemetry_queue_add_event_type(db)
 
     # Seed metric types
     await db.executescript(_SEED_METRIC_TYPES)
