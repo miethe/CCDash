@@ -499,6 +499,34 @@ class TestIntegrityRepository(Protocol):
 # ── Execution Workbench Repository ────────────────────────────────
 
 @runtime_checkable
+class WorktreeContextRepository(Protocol):
+    async def create(self, data: dict) -> dict: ...
+    async def update(self, context_id: str, updates: dict) -> dict | None: ...
+    async def get_by_id(self, context_id: str) -> dict | None: ...
+    async def list(
+        self,
+        project_id: str,
+        *,
+        feature_id: str | None = None,
+        phase_number: int | None = None,
+        batch_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]: ...
+    async def count(
+        self,
+        project_id: str,
+        *,
+        feature_id: str | None = None,
+        phase_number: int | None = None,
+        batch_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    async def delete(self, context_id: str) -> bool: ...
+
+
+@runtime_checkable
 class ExecutionRepository(Protocol):
     async def create_run(self, run_data: dict) -> dict: ...
     async def update_run(self, run_id: str, updates: dict) -> dict | None: ...

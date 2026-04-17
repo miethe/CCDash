@@ -13,7 +13,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -898,6 +898,36 @@ CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
     ON execution_approvals(run_id, requested_at DESC);
 """
 
+_PLANNING_WORKTREE_CONTEXTS_DDL = """
+-- ── 15. Planning Worktree Contexts (PCP-501) ──────────────────────
+CREATE TABLE IF NOT EXISTS planning_worktree_contexts (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL,
+    feature_id        TEXT DEFAULT '',
+    phase_number      INTEGER,
+    batch_id          TEXT DEFAULT '',
+    branch            TEXT DEFAULT '',
+    worktree_path     TEXT DEFAULT '',
+    base_branch       TEXT DEFAULT '',
+    base_commit_sha   TEXT DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'draft',
+    last_run_id       TEXT DEFAULT '',
+    provider          TEXT DEFAULT 'local',
+    notes             TEXT DEFAULT '',
+    metadata_json     TEXT DEFAULT '{}',
+    created_by        TEXT DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_project_feature
+    ON planning_worktree_contexts(project_id, feature_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_project_status
+    ON planning_worktree_contexts(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_feature_phase_batch
+    ON planning_worktree_contexts(feature_id, phase_number, batch_id);
+"""
+
 _TEST_VISUALIZER_TABLES = """
 -- ── 14. Test Visualizer ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS test_runs (
@@ -1125,6 +1155,11 @@ async def _ensure_test_visualizer_tables(db: aiosqlite.Connection) -> None:
     await db.executescript(_TEST_VISUALIZER_TABLES)
 
 
+async def _ensure_planning_worktree_contexts_table(db: aiosqlite.Connection) -> None:
+    """Idempotent: create planning_worktree_contexts table and indexes if missing."""
+    await db.executescript(_PLANNING_WORKTREE_CONTEXTS_DDL)
+
+
 async def _prepare_legacy_tables_for_bootstrap(db: aiosqlite.Connection) -> None:
     # Legacy v18 databases can have session_logs without source_log_id, but the
     # main bootstrap script now creates indexes that depend on that column.
@@ -1151,6 +1186,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
 
     await _ensure_test_visualizer_tables(db)
+    await _ensure_planning_worktree_contexts_table(db)
 
     # Explicit table upgrades for existing DBs.
     await _ensure_column(db, "sessions", "root_session_id", "TEXT DEFAULT ''")

@@ -2446,6 +2446,62 @@ class ExecutionRetryRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# ── Planning Worktree Context DTOs (PCP-501) ───────────────────────
+
+WorktreeContextStatus = Literal["draft", "ready", "in_use", "archived", "error"]
+
+
+class WorktreeContextDTO(BaseModel):
+    id: str
+    projectId: str
+    featureId: str = ""
+    phaseNumber: Optional[int] = None
+    batchId: str = ""
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    baseCommitSha: str = ""
+    status: WorktreeContextStatus = "draft"
+    lastRunId: str = ""
+    provider: str = ""
+    notes: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdBy: str = ""
+    createdAt: str = ""
+    updatedAt: str = ""
+
+
+class WorktreeContextCreateRequest(BaseModel):
+    projectId: str
+    featureId: str = ""
+    phaseNumber: Optional[int] = None
+    batchId: str = ""
+    branch: str = ""
+    worktreePath: str = ""
+    baseBranch: str = ""
+    baseCommitSha: str = ""
+    provider: str = "local"
+    notes: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdBy: str = "user"
+
+
+class WorktreeContextUpdateRequest(BaseModel):
+    status: Optional[WorktreeContextStatus] = None
+    branch: Optional[str] = None
+    worktreePath: Optional[str] = None
+    baseBranch: Optional[str] = None
+    baseCommitSha: Optional[str] = None
+    lastRunId: Optional[str] = None
+    notes: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class WorktreeContextListResponse(BaseModel):
+    items: list[WorktreeContextDTO] = Field(default_factory=list)
+    total: int = 0
+
+
 # ── Test Visualizer DTOs ───────────────────────────────────────────
 
 class TestRunDTO(BaseModel):

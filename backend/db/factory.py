@@ -179,3 +179,11 @@ def get_telemetry_queue_repository(db: Any):
         return SqliteTelemetryQueueRepository(db)
     from backend.db.repositories.postgres.telemetry_queue import PostgresTelemetryQueueRepository
     return PostgresTelemetryQueueRepository(db)
+
+
+def get_worktree_context_repository(db: Any):
+    if isinstance(db, aiosqlite.Connection):
+        from backend.db.repositories.worktree_contexts import SqliteWorktreeContextRepository
+        return SqliteWorktreeContextRepository(db)
+    from backend.db.repositories.postgres.worktree_contexts import PostgresWorktreeContextRepository
+    return PostgresWorktreeContextRepository(db)
