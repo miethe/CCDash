@@ -6,16 +6,22 @@ doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
 status: in-progress
 category: enhancements
-title: "Implementation Plan: CCDash Planning Control Plane V1"
-description: "Implement a planning-first control plane in CCDash that unifies planning artifacts, derived status, phase operations, tracker intake, and plan-driven agent-team launch preparation."
-summary: "Build a derived planning graph, planning APIs, live planning updates, planning home and drill-down surfaces, and plan-driven launch preparation with worktree and provider/model awareness."
+title: 'Implementation Plan: CCDash Planning Control Plane V1'
+description: Implement a planning-first control plane in CCDash that unifies planning
+  artifacts, derived status, phase operations, tracker intake, and plan-driven agent-team
+  launch preparation.
+summary: Build a derived planning graph, planning APIs, live planning updates, planning
+  home and drill-down surfaces, and plan-driven launch preparation with worktree and
+  provider/model awareness.
 created: 2026-04-16
-updated: 2026-04-16
+updated: '2026-04-17'
+phase_7_status: pending
+phase_8_status: pending
 priority: high
 risk_level: high
 complexity: High
 track: Planning / Execution / Orchestration
-timeline_estimate: 4-8 weeks across 6 phases
+timeline_estimate: 4-8 weeks across 6 phases; +2 weeks for Phase 7-8 consolidation and extraction
 feature_slug: ccdash-planning-control-plane-v1
 feature_family: planning-control-plane
 feature_version: v1
@@ -27,53 +33,54 @@ lineage_children: []
 lineage_type: enhancement
 owner: platform-engineering
 owners:
-  - platform-engineering
-  - fullstack-engineering
-  - ai-integrations
+- platform-engineering
+- fullstack-engineering
+- ai-integrations
 contributors:
-  - ai-agents
+- ai-agents
 audience:
-  - ai-agents
-  - developers
-  - platform-engineering
-  - engineering-leads
+- ai-agents
+- developers
+- platform-engineering
+- engineering-leads
 tags:
-  - implementation
-  - planning
-  - execution
-  - orchestration
-  - worktrees
-  - workflow
-  - frontend
-  - backend
+- implementation
+- planning
+- execution
+- orchestration
+- worktrees
+- workflow
+- frontend
+- backend
 prd: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 related:
-  - docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
-  - docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-future-phases-roadmap-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
-  - docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-4-sdk-orchestration-v1.md
-  - docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
-  - docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
-  - backend/parsers/documents.py
-  - backend/parsers/progress.py
-  - backend/db/sync_engine.py
-  - backend/services/feature_execution.py
-  - backend/routers/features.py
-  - backend/routers/execution.py
-  - backend/routers/live.py
-  - components/FeatureExecutionWorkbench.tsx
-  - components/PlanCatalog.tsx
-  - components/ProjectBoard.tsx
-  - components/DocumentModal.tsx
-  - services/live/
-  - types.ts
+- docs/project_plans/design-specs/ccdash-planning-control-plane-architecture.md
+- docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-future-phases-roadmap-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-3-platform-connectors-v1.md
+- docs/project_plans/PRDs/enhancements/feature-execution-workbench-phase-4-sdk-orchestration-v1.md
+- docs/project_plans/implementation_plans/enhancements/dependency-aware-execution-and-family-views-v1.md
+- docs/project_plans/implementation_plans/enhancements/workflow-registry-and-correlation-v1.md
+- backend/parsers/documents.py
+- backend/parsers/progress.py
+- backend/db/sync_engine.py
+- backend/services/feature_execution.py
+- backend/routers/features.py
+- backend/routers/execution.py
+- backend/routers/live.py
+- components/FeatureExecutionWorkbench.tsx
+- components/PlanCatalog.tsx
+- components/ProjectBoard.tsx
+- components/DocumentModal.tsx
+- services/live/
+- types.ts
 plan_ref: ccdash-planning-control-plane-v1
 linked_sessions: []
-request_log_id: ""
+request_log_id: ''
 commits: []
 prs: []
+phase_4_status: completed
 ---
 
 # Implementation Plan: CCDash Planning Control Plane V1
@@ -179,8 +186,10 @@ Persist only derived or operational state in CCDash storage, such as:
 | 4 | Feature Control Plane and Phase Operations Integration | 10 pts | 4-5 days | Yes | Extend execution workbench and related surfaces with planning-aware phase operations |
 | 5 | Launch Preparation, Worktrees, and Provider Routing | 12 pts | 5-6 days | Yes | Add plan-driven batch launch preparation with worktree and provider/model awareness |
 | 6 | Validation, Telemetry, and Rollout | 6 pts | 2-3 days | Final gate | Harden, validate, instrument, and stage the rollout safely |
+| 7 | Planning UI Consolidation — Foundation & Extraction | 10-12 pts | 4-5 days | Post-gate | Audit planning components, extract reusable UI to @miethe/ui, consolidate metadata primitives, implement active/planned features columns |
+| 8 | Planning UI Integration — Modals, Drill-Downs & Validation | 10-12 pts | 4-5 days | Post-gate | Integrate artifact composition drill-down screens, unify feature and document modals, complete navigation consistency, frontend test coverage |
 
-**Total**: ~58 story points over 4-8 weeks depending on connector/worktree scope
+**Total**: ~76-82 story points over 5-10 weeks depending on connector/worktree scope
 
 ## Phase 1: Planning Graph and Derived State Foundation
 
@@ -379,6 +388,86 @@ Persist only derived or operational state in CCDash storage, such as:
 2. Telemetry distinguishes planning-home usage, graph navigation, phase operations, and launch-preparation actions.
 3. Rollout can be staged and reversed cleanly if drift or confusion is observed.
 
+## Phase 7: Planning UI Consolidation — Foundation & Extraction
+
+### Objectives
+
+1. Audit planning surfaces and inventory reusable UI components for extraction to @miethe/ui.
+2. Extract qualifying UI primitives to @miethe/ui, publish, and wire back into CCDash with proper imports.
+3. Consolidate metadata primitives (status/mismatch/batch-readiness badges) into `components/shared/PlanningMetadata.tsx`.
+4. Implement active plans and planned features columns on planning home using board list primitives.
+5. Ensure Phase 6 validation gates remain satisfied throughout consolidation.
+
+### Primary Targets
+
+1. `components/Planning/` (audit and component inventory)
+2. `@miethe/ui` (package extraction and publication)
+3. `components/shared/PlanningMetadata.tsx` (new consolidated metadata component)
+4. `components/Planning/PlanningHomePage.tsx` (active/planned features columns)
+5. `services/planning.ts`
+6. `types.ts`
+
+### Tasks
+
+| Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
+|--------|-----------|-------------|---------------------|----------|-------------|--------------|
+| PCP-701 | Audit Planning Primitives and @miethe/ui Extraction Manifest | Codebase explorer: identify all planning-only metadata components in `components/Planning/` (badges, status chips, list renderers). For each, determine: (a) import from @miethe/ui if exists, (b) extract to @miethe/ui if reusable, or (c) keep-local if planning-specific. Produce extraction manifest with location, purpose, and strategy. Reference `.claude/skills/planning/references/ui-extraction-guidance.md`. | Audit report and extraction manifest list every planning-only primitive with location, extraction decision (import/extract/keep-local), and rationale. Manifest is actionable for implementation. | 2 pts | codebase-explorer, frontend-developer, ui-engineer-enhanced | PCP-604 |
+| PCP-702 | Active Plans + Planned Features Columns | Implement active plans (status: in-progress) and planned features (implementation plans with status: draft/approved) columns/tabs on planning home, reusing board column/list primitives from ProjectBoard. Ensure clicking a feature opens feature modal (not planning detail). | Planning home surfaces active and planned features using the same list component as /board. Clicking a feature opens feature modal. No planning-only feature detail panels remain. | 3 pts | frontend-developer, ui-engineer-enhanced | PCP-701, PCP-302 |
+| PCP-706 | Consolidate Planning Metadata Components | Create or promote `components/shared/PlanningMetadata.tsx` with shared status/mismatch/batch-readiness badge and chip components. Migrate or deprecate planning-only variants in `components/Planning/` following PCP-701 extraction manifest. Update all imports across planning, board, and catalog surfaces. | No planning-only badges or status chips exist in `components/Planning/`; all such rendering delegates to `components/shared/PlanningMetadata.tsx` or upstream /board components. Extraction manifest is fully actioned. | 2 pts | ui-engineer-enhanced, frontend-developer | PCP-701 |
+| PCP-709 | Extract and Publish Components to @miethe/ui | For each "extract" decision in PCP-701 manifest: fork component to temp branch in @miethe/ui; refactor dependencies; add package entry; port tests; add Storybook story; document; publish with semver. Update imports in CCDash to pull from @miethe/ui. Reference `.claude/skills/planning/references/ui-extraction-guidance.md` § "9-Step Extraction Process". Mark task description with `[pkg]` for model tracking. | All extraction candidates have been moved to @miethe/ui with published npm packages. CCDash imports updated to use extracted components from @miethe/ui. No inline/duplicated library-eligible primitives remain. | 3-5 pts | ui-engineer-enhanced, frontend-developer | PCP-701 |
+
+### Success Criteria
+
+1. Planning component inventory is complete and extraction decisions documented in manifest.
+2. All extraction candidates have moved to @miethe/ui with proper package structure, tests (>80% coverage), and Storybook stories.
+3. CCDash imports all applicable shared UI from @miethe/ui instead of maintaining inline copies.
+4. `components/shared/PlanningMetadata.tsx` is the single source of truth for planning status/badge rendering.
+5. Active plans and planned features are visible on planning home using shared board list components.
+6. Phase 6 validation gates remain satisfied; no regressions in existing Phase 3-6 behavior.
+7. No planning-specific UI duplications of library-eligible primitives remain in codebase.
+
+## Phase 8: Planning UI Integration — Modals, Drill-Downs & Validation
+
+### Objectives
+
+1. Make artifact composition indicators clickable with dedicated drill-down screens.
+2. Unify feature clicks across planning surfaces to open the ProjectBoard feature modal.
+3. Unify artifact clicks to open the DocumentModal from `/plans`.
+4. Ensure all navigation follows a consistent modal ➜ page pattern with proper deep linking and back-button behavior.
+5. Add comprehensive frontend test coverage for all new and refactored flows.
+
+### Primary Targets
+
+1. `components/Planning/PlanningHomePage.tsx`
+2. `components/Planning/PlanningSummaryPanel.tsx`
+3. `components/Planning/PlanningGraphPanel.tsx`
+4. `components/Planning/PlanningNodeDetail.tsx`
+5. `components/Planning/TrackerIntakePanel.tsx`
+6. `components/ProjectBoard.tsx`
+7. `components/DocumentModal.tsx`
+8. `services/planning.ts`
+9. `types.ts`
+
+### Tasks
+
+| Task ID | Task Name | Description | Acceptance Criteria | Estimate | Subagent(s) | Dependencies |
+|--------|-----------|-------------|---------------------|----------|-------------|--------------|
+| PCP-703 | Artifact Composition Drill-Down Screens | Make each artifact-composition badge clickable; open a dedicated screen listing artifacts of that type (Design Specs, PRDs, Progress Files, etc.) with title, status, updated date, and key metadata, reusing DocumentsList or similar from /plans/documents. | Clicking "3 Design Specs" opens a filterable list screen using /plans document list components; users can click rows to open full DocumentModal. Drill-down screens are accessible from planning home and phase operations. | 3 pts | frontend-developer, ui-engineer-enhanced | PCP-702, PCP-303 |
+| PCP-704 | Feature Modal Unification for Planning | Refactor planning surfaces (feature cards, feature lists, graph nodes representing features) to delegate to the ProjectBoard feature modal on click instead of planning-only detail panels. Add "Expand" button in modal that navigates to full feature page if needed. | Clicking any planned feature (on home, graph, list) opens the same feature modal as /board. Modal has an "Expand" button navigating to `/planning/feature/:id/detail` for advanced views. No planning-only feature detail panels remain. | 3 pts | frontend-developer, ui-engineer-enhanced | PCP-702, PCP-401 |
+| PCP-705 | Document Modal Integration for Planning Artifacts | Refactor all planning artifact clicks (design spec, PRD, progress file, context file, report) to open DocumentModal from `/plans` instead of planning-only viewers. Ensure modal renders content, metadata, and navigation the same way as /plans. | Clicking a design spec, PRD, or progress file on any planning surface opens the full DocumentModal. Modal renders the document using UnifiedContentViewer and provides the same nav/metadata as /plans. No planning-only artifact viewers remain. | 2 pts | frontend-developer | PCP-706, PCP-303 |
+| PCP-707 | Navigation and State Consistency | Ensure all planning surface modals and detail-page transitions follow the same pattern. Test modal ↔ page transitions, deep linking, and browser back/forward. Update route definitions and link generation to use consistent paths. | Users can navigate planning home ➜ feature modal ➜ full page ➜ back consistently. Deep links to features and artifacts work. Back button returns to previous planning view. State persists through modal/page transitions. | 2 pts | frontend-developer | PCP-703, PCP-704, PCP-705 |
+| PCP-708 | Frontend Tests for Consolidation Flows | Add/update UI tests covering active plans/planned features columns (from Phase 7), artifact drill-down screens, feature modal integration, document modal flows, and badge consolidation. Confirm Phase 6 validation tests still pass. Run full test suite including Phase 3-6 tests to verify no regressions. | All new consolidation flows (Phases 7-8) have test coverage. Phase 6 and earlier validation tests pass without modification. No regressions in planning home, phase operations, or launch prep navigation. Mutation testing confirms coverage quality. | 2 pts | frontend-developer, task-completion-validator | PCP-707 |
+
+### Success Criteria
+
+1. Planning surfaces (home, graph, operations, launch prep) reuse `/board` and `/plans` components instead of maintaining planning-only primitives.
+2. Artifact composition indicators are clickable; drill-down screens reuse document-list rendering from `/plans`.
+3. All feature clicks open the feature modal (consistent with /board); artifact clicks open DocumentModal (consistent with /plans).
+4. All planning navigation follows the same modal ➜ page pattern as `/board` and `/plans`.
+5. Phase 6 validation gates remain satisfied; no behavior changes, only component consolidation.
+6. Deep links to features and artifacts work; browser back/forward navigation is consistent.
+7. Comprehensive test coverage confirms all Phase 7-8 flows work and Phase 3-6 behavior is unchanged.
+
 ## Cross-Phase Risks and Mitigations
 
 ### Risk 1: Duplicate planning truth
@@ -412,23 +501,58 @@ Mitigation:
 2. Keep feature control plane and planning home as the default entry points.
 3. Make deeper graph and batch views opt-in rather than mandatory for simple workflows.
 
+### Risk 5: Consolidation churn and @miethe/ui extraction coordination
+
+Mitigation:
+
+1. Phase 7-8 is a progressive refactor (data contracts stay stable); Phase 6 validation gates remain valid.
+2. PCP-701 audit and extraction manifest is a blocking prerequisite; all downstream refactoring depends on decisions documented there.
+3. Preserve Phase 3/4 UI behavior during consolidation; only swap underlying components.
+4. Test all Phase 3/4 scenarios after Phase 7-8 to confirm no regressions.
+5. @miethe/ui extraction follows established 9-step process; extracted components must have >80% test coverage and Storybook stories before merge.
+6. Extracted components use published npm versioning; CCDash pins specific versions to avoid API drift.
+
+### Risk 6: @miethe/ui API stability during parallel extraction
+
+Mitigation:
+
+1. Extracted planning components must have stable APIs (unchanged for 2+ weeks) before extraction.
+2. @miethe/ui package versions are semver-strict; breaking changes trigger major version bumps and documented migration paths.
+3. CCDash imports pin specific versions, not floating ranges; updates are explicit.
+4. If @miethe/ui updates break planning surfaces, revert/pin, and file issue for collaborative fix.
+
 ## Testing Plan
 
-### Backend Tests
+### Backend Tests (Phases 1-6)
 
 1. Planning graph derivation and artifact relationship assembly.
 2. Effective status, mismatch, stale, and reversal cases.
 3. Planning query service payload coverage.
 4. Launch-preparation and worktree contract validation.
 
-### Frontend Tests
+### Frontend Tests (Phases 3-6)
 
 1. Planning home summary rendering and navigation.
 2. Planning graph/detail drill-down flows.
 3. Phase operations states, including blocked and mismatch conditions.
 4. Launch sheet states, capability gating, and approval prompts.
 
-### Integration / Rollout Checks
+### Phase 7 Tests (@miethe/ui Extraction & Consolidation)
+
+1. Extracted components have >80% unit test coverage and pass Storybook rendering.
+2. Planning metadata component consolidation — status/mismatch/batch-readiness badges render consistently across surfaces.
+3. Active plans and planned features columns render on planning home using shared board list components.
+4. Phase 6 validation tests still pass without modification.
+
+### Phase 8 Tests (Modal Integration & Navigation)
+
+1. Artifact composition drill-down screens open and filter correctly.
+2. Feature modal unification — all feature clicks open ProjectBoard modal.
+3. Document modal integration — all artifact clicks open DocumentModal from /plans.
+4. Navigation consistency — modal ↔ page transitions, deep linking, back/forward.
+5. Full test suite regression check — Phase 3-6 tests pass; no behavior regressions.
+
+### Integration / Rollout Checks (Phases 1-6)
 
 1. Live planning invalidation and REST recovery.
 2. Feature control plane integration with planning payloads.
@@ -442,3 +566,10 @@ Mitigation:
 3. Users can inspect phase batches, blockers, and supporting evidence from a dedicated phase operations surface.
 4. Operators can prepare a plan-driven batch launch with worktree and provider/model awareness.
 5. The implementation reuses existing execution, workflow, dependency, and live-update foundations instead of creating a disconnected second product inside CCDash.
+6. Planning surfaces (home, graph, phase operations, launch prep) reuse `/board` feature modals and `/plans` document modals instead of maintaining planning-only viewers.
+7. Active plans and planned features are visible on planning home, surfaced with the same list primitives as `/board`.
+8. Artifact composition indicators are clickable, delegating to shared document-list components from `/plans`.
+9. All navigation follows a consistent pattern: click feature ➜ feature modal ➜ expand to detail page; click artifact ➜ document modal.
+10. No inline planning-specific duplications of library-eligible primitives remain in codebase; all reusable components are extracted to `@miethe/ui` with published npm packages, proper tests (>80% coverage), and Storybook stories.
+11. `components/shared/PlanningMetadata.tsx` is the single source of truth for planning status/mismatch/batch-readiness rendering.
+12. Phase 6 validation gates remain satisfied; all Phase 3-6 behavior is preserved through Phase 7-8 consolidation.
