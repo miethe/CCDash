@@ -40,6 +40,7 @@ import {
   projectFeaturesTopic,
   useLiveInvalidation,
 } from '../services/live';
+import { planningFeatureDetailHref, planningFeatureModalHref } from '../services/planningRoutes';
 
 interface FeatureSessionLink {
   sessionId: string;
@@ -2503,7 +2504,7 @@ const FeatureModal = ({
               </button>
               <button
                 onClick={() => {
-                  navigate(`/planning/feature/${encodeURIComponent(feature.id)}`);
+                  navigate(planningFeatureDetailHref(feature.id));
                   onClose();
                 }}
                 title="Open full planning detail"
@@ -2715,7 +2716,7 @@ const FeatureModal = ({
                       {blockedByRelations.map((relation, index) => (
                         <button
                           key={`${relation.feature}-${index}`}
-                          onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                          onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
                           className="text-[10px] font-semibold rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200"
                         >
                           {relation.feature}
@@ -3170,7 +3171,7 @@ const FeatureModal = ({
                             onClick={() => {
                               if (!evidence.dependencyFeatureId) return;
                               onClose();
-                              navigate(`/board?feature=${encodeURIComponent(evidence.dependencyFeatureId)}&tab=overview`);
+                              navigate(planningFeatureModalHref(evidence.dependencyFeatureId));
                             }}
                             className="font-mono text-indigo-300 hover:text-indigo-200 text-left truncate"
                           >
@@ -3219,7 +3220,7 @@ const FeatureModal = ({
                   {(activeFeature.linkedFeatures || []).map((relation, index) => (
                     <div key={`${relation.feature}-${relation.type}-${relation.source}-${index}`} className="flex flex-wrap items-center gap-2 rounded border border-panel-border bg-surface-overlay px-3 py-2 text-xs">
                       <button
-                        onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(relation.feature)}&tab=overview`); }}
+                        onClick={() => { onClose(); navigate(planningFeatureModalHref(relation.feature)); }}
                         className="font-mono text-indigo-300 hover:text-indigo-200"
                       >
                         {relation.feature}
@@ -3243,7 +3244,7 @@ const FeatureModal = ({
                   {activeFeature.relatedFeatures.map(rel => (
                     <button
                       key={rel}
-                      onClick={() => { onClose(); navigate(`/board?feature=${encodeURIComponent(rel)}&tab=overview`); }}
+                      onClick={() => { onClose(); navigate(planningFeatureModalHref(rel)); }}
                       className="text-xs bg-surface-muted text-indigo-400 px-2 py-1 rounded border border-panel-border"
                     >
                       {rel}
@@ -3694,7 +3695,7 @@ const FeatureCard = ({
             reason={feature.planningStatus.mismatchState.reason}
           />
           <Link
-            to={`/planning/features/${encodeURIComponent(feature.id)}`}
+            to={planningFeatureDetailHref(feature.id)}
             onClick={e => e.stopPropagation()}
             className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
             title="View in planning graph"
@@ -3801,7 +3802,7 @@ const FeatureListCard = ({
             )}
             {feature.planningStatus && (
               <Link
-                to={`/planning/features/${encodeURIComponent(feature.id)}`}
+                to={planningFeatureDetailHref(feature.id)}
                 onClick={e => e.stopPropagation()}
                 className="inline-flex items-center gap-1 text-[10px] text-indigo-400/70 hover:text-indigo-300"
                 title="View in planning graph"

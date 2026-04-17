@@ -7,6 +7,7 @@ import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
+import { planningFeatureModalHref, planningArtifactsHref } from '../../services/planningRoutes';
 import type { LiveConnectionStatus } from '../../services/live';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
 import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
@@ -454,10 +455,10 @@ export default function PlanningHomePage() {
       summary={summary}
       liveStatus={liveStatus}
       onSelectFeature={(featureId) =>
-        navigate(`/board?feature=${encodeURIComponent(featureId)}&tab=overview`)
+        navigate(planningFeatureModalHref(featureId))
       }
       onDrillDown={(type) =>
-        navigate(`/planning/artifacts/${type}`)
+        navigate(planningArtifactsHref(type))
       }
     />
   );

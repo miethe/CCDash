@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 5
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -73,7 +73,7 @@ tasks:
   description: Ensure all planning surface modals and detail-page transitions follow
     the same pattern. Test modal-to-page transitions, deep linking, and browser back/forward.
     Update route definitions and link generation for consistent paths.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -120,7 +120,7 @@ notes:
   test suite including Phase 3-6 must pass.
 - Phase 8 is the final UI consolidation phase. After completion, no planning-only
   viewers, modals, or navigation patterns remain.
-progress: 60
+progress: 80
 ---
 
 # Phase 8 Progress: Planning UI Integration — Modals, Drill-Downs & Validation
