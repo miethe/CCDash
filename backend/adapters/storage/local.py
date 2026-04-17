@@ -32,6 +32,7 @@ from backend.db.repositories.test_mappings import SqliteTestMappingRepository
 from backend.db.repositories.test_results import SqliteTestResultRepository
 from backend.db.repositories.test_runs import SqliteTestRunRepository
 from backend.db.repositories.usage_attribution import SqliteSessionUsageRepository
+from backend.db.repositories.worktree_contexts import SqliteWorktreeContextRepository
 
 
 class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
@@ -61,6 +62,7 @@ class LocalStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "test_integrity": SqliteTestIntegrityRepository,
                 "execution": SqliteExecutionRepository,
                 "agentic_intelligence": SqliteAgenticIntelligenceRepository,
+                "worktree_contexts": SqliteWorktreeContextRepository,
                 "principals": LocalPrincipalRepository,
                 "scope_identifiers": LocalScopeIdentifierRepository,
                 "memberships": LocalMembershipRepository,

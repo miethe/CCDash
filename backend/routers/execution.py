@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
+from backend.application.services.common import require_project
 from backend.application.services.execution import ExecutionApplicationService
+from backend.application.services.launch_preparation import LaunchPreparationApplicationService
 from backend.models import (
     ExecutionApprovalRequest,
     ExecutionCancelRequest,
@@ -19,12 +21,21 @@ from backend.models import (
     ExecutionRunDTO,
     ExecutionRunEventDTO,
     ExecutionRunEventPageDTO,
+    LaunchPreparationDTO,
+    LaunchPreparationRequest,
+    LaunchStartRequest,
+    LaunchStartResponse,
+    WorktreeContextCreateRequest,
+    WorktreeContextDTO,
+    WorktreeContextListResponse,
+    WorktreeContextUpdateRequest,
 )
 from backend.request_scope import get_core_ports, get_request_context
 
 
 execution_router = APIRouter(prefix="/api/execution", tags=["execution"])
 execution_application_service = ExecutionApplicationService()
+launch_preparation_service = LaunchPreparationApplicationService()
 
 
 def _to_policy_dto(result: Any) -> ExecutionPolicyResultDTO:
@@ -194,3 +205,159 @@ async def retry_execution_run(
     app_request = await _resolve_request(request_context, core_ports)
     row = await execution_application_service.retry_run(app_request.context, app_request.ports, run_id, req)
     return _to_run_dto(row)
+
+
+# ── Worktree context helpers ──────────────────────────────────────────────────
+
+
+def _to_worktree_dto(row: dict[str, Any]) -> WorktreeContextDTO:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    return WorktreeContextDTO(
+        id=str(row.get("id") or ""),
+        projectId=str(row.get("project_id") or ""),
+        featureId=str(row.get("feature_id") or ""),
+        phaseNumber=row.get("phase_number"),
+        batchId=str(row.get("batch_id") or ""),
+        branch=str(row.get("branch") or ""),
+        worktreePath=str(row.get("worktree_path") or ""),
+        baseBranch=str(row.get("base_branch") or ""),
+        baseCommitSha=str(row.get("base_commit_sha") or ""),
+        status=str(row.get("status") or "draft"),
+        lastRunId=str(row.get("last_run_id") or ""),
+        provider=str(row.get("provider") or "local"),
+        notes=str(row.get("notes") or ""),
+        metadata=metadata if isinstance(metadata, dict) else {},
+        createdBy=str(row.get("created_by") or ""),
+        createdAt=str(row.get("created_at") or ""),
+        updatedAt=str(row.get("updated_at") or ""),
+    )
+
+
+# ── Launch preparation endpoints ──────────────────────────────────────────────
+
+
+@execution_router.post("/launch/prepare", response_model=LaunchPreparationDTO)
+async def prepare_launch(
+    req: LaunchPreparationRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> LaunchPreparationDTO:
+    app_request = await _resolve_request(request_context, core_ports)
+    return await launch_preparation_service.prepare(app_request.context, app_request.ports, req)
+
+
+@execution_router.post("/launch/start", response_model=LaunchStartResponse)
+async def start_launch(
+    req: LaunchStartRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> LaunchStartResponse:
+    app_request = await _resolve_request(request_context, core_ports)
+    return await launch_preparation_service.start(app_request.context, app_request.ports, req)
+
+
+# ── Worktree context CRUD endpoints ──────────────────────────────────────────
+
+
+@execution_router.get("/worktree-contexts", response_model=WorktreeContextListResponse)
+async def list_worktree_contexts(
+    feature_id: str | None = None,
+    phase_number: int | None = None,
+    batch_id: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> WorktreeContextListResponse:
+    app_request = await _resolve_request(request_context, core_ports)
+    project = require_project(app_request.context, app_request.ports)
+    repo = app_request.ports.storage.worktree_contexts()
+    safe_limit = min(200, max(1, int(limit or 50)))
+    safe_offset = max(0, int(offset or 0))
+    rows = await repo.list(
+        project.id,
+        feature_id=str(feature_id or "").strip() or None,
+        phase_number=phase_number,
+        batch_id=str(batch_id or "").strip() or None,
+        status=str(status or "").strip() or None,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+    total = await repo.count(
+        project.id,
+        feature_id=str(feature_id or "").strip() or None,
+        phase_number=phase_number,
+        batch_id=str(batch_id or "").strip() or None,
+        status=str(status or "").strip() or None,
+    )
+    return WorktreeContextListResponse(
+        items=[_to_worktree_dto(row) for row in rows],
+        total=int(total),
+    )
+
+
+@execution_router.post("/worktree-contexts", response_model=WorktreeContextDTO)
+async def create_worktree_context(
+    req: WorktreeContextCreateRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> WorktreeContextDTO:
+    app_request = await _resolve_request(request_context, core_ports)
+    project = require_project(app_request.context, app_request.ports)
+    repo = app_request.ports.storage.worktree_contexts()
+    row = await repo.create(
+        {
+            "project_id": project.id,
+            "feature_id": req.featureId,
+            "phase_number": req.phaseNumber,
+            "batch_id": req.batchId,
+            "branch": req.branch,
+            "worktree_path": req.worktreePath,
+            "base_branch": req.baseBranch,
+            "base_commit_sha": req.baseCommitSha,
+            "status": "draft",
+            "provider": req.provider,
+            "notes": req.notes,
+            "metadata_json": req.metadata or {},
+            "created_by": req.createdBy,
+        }
+    )
+    return _to_worktree_dto(row)
+
+
+@execution_router.patch(
+    "/worktree-contexts/{context_id}",
+    response_model=WorktreeContextDTO,
+)
+async def update_worktree_context(
+    context_id: str,
+    req: WorktreeContextUpdateRequest,
+    request_context: RequestContext = Depends(get_request_context),
+    core_ports: CorePorts = Depends(get_core_ports),
+) -> WorktreeContextDTO:
+    app_request = await _resolve_request(request_context, core_ports)
+    project = require_project(app_request.context, app_request.ports)
+    repo = app_request.ports.storage.worktree_contexts()
+    existing = await repo.get_by_id(context_id)
+    if existing is None or str(existing.get("project_id") or "") != project.id:
+        raise HTTPException(status_code=404, detail=f"Worktree context '{context_id}' not found")
+    updates: dict[str, Any] = {}
+    for camel, snake in (
+        ("status", "status"),
+        ("branch", "branch"),
+        ("worktreePath", "worktree_path"),
+        ("baseBranch", "base_branch"),
+        ("baseCommitSha", "base_commit_sha"),
+        ("lastRunId", "last_run_id"),
+        ("notes", "notes"),
+    ):
+        value = getattr(req, camel)
+        if value is not None:
+            updates[snake] = value
+    if req.metadata is not None:
+        updates["metadata_json"] = req.metadata
+    if not updates:
+        return _to_worktree_dto(existing)
+    row = await repo.update(context_id, updates)
+    return _to_worktree_dto(row or existing)
