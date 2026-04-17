@@ -68,6 +68,12 @@ class DocumentLinkingTests(unittest.TestCase):
         feature_slug = feature_slug_from_path("progress/marketplace-source-detection-improvements/phase-3-progress.md")
         self.assertEqual(feature_slug, "marketplace-source-detection-improvements")
 
+    def test_feature_slug_from_path_supports_phase_plans_dir(self) -> None:
+        feature_slug = feature_slug_from_path(
+            "docs/project_plans/implementation_plans/phase-plans/planning-control-plane-phase-8.md"
+        )
+        self.assertEqual(feature_slug, "planning-control-plane-phase-8")
+
     def test_classify_doc_type_detects_progress(self) -> None:
         self.assertEqual(classify_doc_type("progress/collection-data-consistency/phase-1-progress.md"), "progress")
 

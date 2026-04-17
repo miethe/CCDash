@@ -4545,7 +4545,21 @@ class SyncEngine:
             if not token:
                 return False
             feature_token = feature_id.lower()
-            return token == feature_token or _canonical_slug(token) == _canonical_slug(feature_token)
+            if token == feature_token:
+                return True
+            if _canonical_slug(token) == _canonical_slug(feature_token):
+                return True
+            # Accept variant suffixes so phase/iteration/version plan files
+            # still resolve back to the parent feature (e.g. "foo-phase-2",
+            # "foo-iter-3", "foo-v2" all match feature_id "foo").
+            for base in {feature_token, _canonical_slug(feature_token)}:
+                if not base:
+                    continue
+                for separator in ("-phase-", "_phase_", "-iter-", "_iter_", "-iteration-", "-v"):
+                    prefix = f"{base}{separator}"
+                    if token.startswith(prefix) and token[len(prefix):len(prefix) + 1].isdigit():
+                        return True
+            return False
 
         feature_ref_paths: dict[str, set[str]] = {}
         feature_slug_aliases: dict[str, set[str]] = {}
