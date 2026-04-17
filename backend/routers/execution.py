@@ -5,13 +5,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
 from backend.application.services.common import require_project
 from backend.application.services.execution import ExecutionApplicationService
 from backend.application.services.launch_preparation import LaunchPreparationApplicationService
-from backend import config
+from backend.observability import otel
 from backend.models import (
     ExecutionApprovalRequest,
     ExecutionCancelRequest,
@@ -253,13 +254,15 @@ def _to_worktree_dto(row: dict[str, Any]) -> WorktreeContextDTO:
 
 @execution_router.get("/launch/capabilities", response_model=LaunchCapabilitiesDTO)
 async def get_launch_capabilities() -> LaunchCapabilitiesDTO:
-    enabled = bool(config.CCDASH_LAUNCH_PREP_ENABLED)
-    providers = default_provider_catalog() if enabled else []
-    return LaunchCapabilitiesDTO(
-        enabled=enabled,
-        disabledReason="" if enabled else "CCDASH_LAUNCH_PREP_ENABLED is false",
-        providers=providers,
-    )
+    with otel.start_span("launch.capabilities"):
+        enabled = bool(config.CCDASH_LAUNCH_PREP_ENABLED)
+        providers = default_provider_catalog() if enabled else []
+        return LaunchCapabilitiesDTO(
+            enabled=enabled,
+            disabledReason="" if enabled else "CCDASH_LAUNCH_PREP_ENABLED is false",
+            providers=providers,
+            planningEnabled=bool(config.CCDASH_PLANNING_CONTROL_PLANE_ENABLED),
+        )
 
 
 @execution_router.post(
@@ -272,8 +275,17 @@ async def prepare_launch(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> LaunchPreparationDTO:
-    app_request = await _resolve_request(request_context, core_ports)
-    return await launch_preparation_service.prepare(app_request.context, app_request.ports, req)
+    with otel.start_span(
+        "launch.prepare",
+        {
+            "project_id": req.projectId,
+            "feature_id": req.featureId,
+            "phase_number": req.phaseNumber,
+            "batch_id": req.batchId,
+        },
+    ):
+        app_request = await _resolve_request(request_context, core_ports)
+        return await launch_preparation_service.prepare(app_request.context, app_request.ports, req)
 
 
 @execution_router.post(
@@ -286,8 +298,18 @@ async def start_launch(
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> LaunchStartResponse:
-    app_request = await _resolve_request(request_context, core_ports)
-    return await launch_preparation_service.start(app_request.context, app_request.ports, req)
+    with otel.start_span(
+        "launch.start",
+        {
+            "project_id": req.projectId,
+            "feature_id": req.featureId,
+            "phase_number": req.phaseNumber,
+            "batch_id": req.batchId,
+            "provider": req.provider,
+        },
+    ):
+        app_request = await _resolve_request(request_context, core_ports)
+        return await launch_preparation_service.start(app_request.context, app_request.ports, req)
 
 
 # ── Worktree context CRUD endpoints ──────────────────────────────────────────

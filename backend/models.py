@@ -2641,10 +2641,12 @@ class LaunchCapabilitiesDTO(BaseModel):
 
     Frontend consumes this to gate the Launch entrypoint; backend routers
     return 503 with `error="launch_disabled"` when `enabled` is False.
+    `planningEnabled` gates the planning control plane surfaces (PCP-603).
     """
     enabled: bool = False
     disabledReason: str = ""
     providers: list[LaunchProviderCapabilityDTO] = Field(default_factory=list)
+    planningEnabled: bool = True
 
 
 # ── Test Visualizer DTOs ───────────────────────────────────────────

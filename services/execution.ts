@@ -405,6 +405,8 @@ export interface LaunchCapabilities {
   enabled: boolean;
   disabledReason: string;
   providers: LaunchProviderCapability[];
+  /** Whether the planning control plane surfaces are enabled (PCP-603). */
+  planningEnabled: boolean;
 }
 
 export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {

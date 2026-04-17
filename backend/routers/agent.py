@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
+from backend import config
 from backend.application.context import RequestContext
 from backend.application.ports import CorePorts
 from backend.application.services import resolve_application_request
@@ -22,10 +23,25 @@ from backend.application.services.agent_queries import (
     WorkflowDiagnosticsDTO,
     WorkflowDiagnosticsQueryService,
 )
+from backend.observability import otel
 from backend.request_scope import get_core_ports, get_request_context
 
 
 agent_router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+def _require_planning_enabled() -> None:
+    if not config.CCDASH_PLANNING_CONTROL_PLANE_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "planning_disabled",
+                "message": "Planning control plane is disabled.",
+                "hint": "Set CCDASH_PLANNING_CONTROL_PLANE_ENABLED=true to enable.",
+            },
+        )
+
+
 project_status_query_service = ProjectStatusQueryService()
 feature_forensics_query_service = FeatureForensicsQueryService()
 workflow_diagnostics_query_service = WorkflowDiagnosticsQueryService()
@@ -133,26 +149,35 @@ async def generate_aar_report(
 # get the correct status code — the service itself stays transport-neutral.
 
 
-@agent_router.get("/planning/summary", response_model=ProjectPlanningSummaryDTO)
+@agent_router.get(
+    "/planning/summary",
+    response_model=ProjectPlanningSummaryDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
 async def get_planning_summary(
     project_id: str | None = Query(default=None, description="Optional project override."),
     request_context: RequestContext = Depends(get_request_context),
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ProjectPlanningSummaryDTO:
     """Return project-level planning health counts and per-feature summaries."""
-    app_request = await _resolve_app_request(
-        request_context,
-        core_ports,
-        requested_project_id=project_id,
-    )
-    return await planning_query_service.get_project_planning_summary(
-        app_request.context,
-        app_request.ports,
-        project_id_override=project_id,
-    )
+    with otel.start_span("planning.summary", {"project_id": project_id or ""}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        return await planning_query_service.get_project_planning_summary(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+        )
 
 
-@agent_router.get("/planning/graph", response_model=ProjectPlanningGraphDTO)
+@agent_router.get(
+    "/planning/graph",
+    response_model=ProjectPlanningGraphDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
 async def get_planning_graph(
     project_id: str | None = Query(default=None, description="Optional project override."),
     feature_id: str | None = Query(default=None, description="Scope graph to a single feature."),
@@ -161,25 +186,30 @@ async def get_planning_graph(
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> ProjectPlanningGraphDTO:
     """Return aggregated planning graph nodes and edges for the project or a feature seed."""
-    app_request = await _resolve_app_request(
-        request_context,
-        core_ports,
-        requested_project_id=project_id,
-    )
-    result = await planning_query_service.get_project_planning_graph(
-        app_request.context,
-        app_request.ports,
-        project_id_override=project_id,
-        feature_id=feature_id,
-        depth=depth,
-    )
-    # The service returns status="error" when a requested feature_id is not found.
-    if result.status == "error" and feature_id and not result.nodes:
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found in planning graph.")
-    return result
+    with otel.start_span("planning.graph", {"project_id": project_id or "", "feature_id": feature_id or ""}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_project_planning_graph(
+            app_request.context,
+            app_request.ports,
+            project_id_override=project_id,
+            feature_id=feature_id,
+            depth=depth,
+        )
+        # The service returns status="error" when a requested feature_id is not found.
+        if result.status == "error" and feature_id and not result.nodes:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found in planning graph.")
+        return result
 
 
-@agent_router.get("/planning/features/{feature_id}", response_model=FeaturePlanningContextDTO)
+@agent_router.get(
+    "/planning/features/{feature_id}",
+    response_model=FeaturePlanningContextDTO,
+    dependencies=[Depends(_require_planning_enabled)],
+)
 async def get_feature_planning_context(
     feature_id: str = Path(..., description="Feature id to inspect."),
     project_id: str | None = Query(default=None, description="Optional project override."),
@@ -187,25 +217,27 @@ async def get_feature_planning_context(
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> FeaturePlanningContextDTO:
     """Return one feature's planning subgraph, status provenance, and per-phase context."""
-    app_request = await _resolve_app_request(
-        request_context,
-        core_ports,
-        requested_project_id=project_id,
-    )
-    result = await planning_query_service.get_feature_planning_context(
-        app_request.context,
-        app_request.ports,
-        feature_id=feature_id,
-        project_id_override=project_id,
-    )
-    if result.status == "error" and not result.feature_name:
-        raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
-    return result
+    with otel.start_span("planning.feature_context", {"feature_id": feature_id}):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
+        )
+        result = await planning_query_service.get_feature_planning_context(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            project_id_override=project_id,
+        )
+        if result.status == "error" and not result.feature_name:
+            raise HTTPException(status_code=404, detail=f"Feature '{feature_id}' not found.")
+        return result
 
 
 @agent_router.get(
     "/planning/features/{feature_id}/phases/{phase_number}",
     response_model=PhaseOperationsDTO,
+    dependencies=[Depends(_require_planning_enabled)],
 )
 async def get_phase_operations(
     feature_id: str = Path(..., description="Feature id containing the target phase."),
@@ -215,25 +247,29 @@ async def get_phase_operations(
     core_ports: CorePorts = Depends(get_core_ports),
 ) -> PhaseOperationsDTO:
     """Return operational detail — batch readiness, tasks, and dependency state — for a single phase."""
-    app_request = await _resolve_app_request(
-        request_context,
-        core_ports,
-        requested_project_id=project_id,
-    )
-    result = await planning_query_service.get_phase_operations(
-        app_request.context,
-        app_request.ports,
-        feature_id=feature_id,
-        phase_number=phase_number,
-        project_id_override=project_id,
-    )
-    # status="error" covers both missing feature and missing phase; no phase_token
-    # confirms the phase was not located (a found phase always has a non-empty token).
-    if result.status == "error" and not result.phase_token:
-        detail = (
-            f"Phase {phase_number} not found for feature '{feature_id}'."
-            if result.feature_id
-            else f"Feature '{feature_id}' not found."
+    with otel.start_span(
+        "planning.phase_operations",
+        {"feature_id": feature_id, "phase_number": phase_number},
+    ):
+        app_request = await _resolve_app_request(
+            request_context,
+            core_ports,
+            requested_project_id=project_id,
         )
-        raise HTTPException(status_code=404, detail=detail)
-    return result
+        result = await planning_query_service.get_phase_operations(
+            app_request.context,
+            app_request.ports,
+            feature_id=feature_id,
+            phase_number=phase_number,
+            project_id_override=project_id,
+        )
+        # status="error" covers both missing feature and missing phase; no phase_token
+        # confirms the phase was not located (a found phase always has a non-empty token).
+        if result.status == "error" and not result.phase_token:
+            detail = (
+                f"Phase {phase_number} not found for feature '{feature_id}'."
+                if result.feature_id
+                else f"Feature '{feature_id}' not found."
+            )
+            raise HTTPException(status_code=404, detail=detail)
+        return result

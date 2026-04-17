@@ -5,6 +5,7 @@ import { GitBranch, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from '
 import { useData } from '../../contexts/DataContext';
 import type { ProjectPlanningSummary } from '../../types';
 import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
+import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import type { LiveConnectionStatus } from '../../services/live';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
@@ -66,6 +67,26 @@ function ErrorShell({ message, onRetry }: { message: string; onRetry: () => void
           <RefreshCw size={13} />
           Retry
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Disabled state ────────────────────────────────────────────────────────────
+
+function DisabledShell() {
+  return (
+    <div className="flex items-center justify-center py-24" data-testid="planning-disabled-shell">
+      <div className="flex max-w-md flex-col items-center gap-4 rounded-xl border border-panel-border bg-surface-elevated/60 px-10 py-10 text-center">
+        <AlertCircle size={28} className="text-muted-foreground/60" />
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">
+            Planning control plane is disabled
+          </p>
+          <p className="mt-1.5 text-xs text-muted-foreground/70">
+            Set <code className="rounded bg-surface-base px-1 py-0.5 font-mono text-xs">CCDASH_PLANNING_CONTROL_PLANE_ENABLED=true</code> to enable planning surfaces.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -163,6 +184,16 @@ export default function PlanningHomePage() {
   const { activeProject } = useData();
   const navigate = useNavigate();
   const [fetchState, setFetchState] = useState<FetchState>({ phase: 'idle' });
+  const [planningEnabled, setPlanningEnabled] = useState<boolean>(true);
+
+  // Check capability flag on mount. Defaults to true; silently falls back to
+  // true if the capabilities endpoint is unreachable so existing deploys are
+  // unaffected.
+  useEffect(() => {
+    getLaunchCapabilities()
+      .then((caps) => setPlanningEnabled(caps.planningEnabled ?? true))
+      .catch(() => setPlanningEnabled(true));
+  }, []);
 
   const loadSummary = useCallback(async () => {
     if (!activeProject?.id) {
@@ -198,6 +229,14 @@ export default function PlanningHomePage() {
   });
 
   // Render
+  if (!planningEnabled) {
+    return (
+      <div className="max-w-screen-2xl space-y-6">
+        <DisabledShell />
+      </div>
+    );
+  }
+
   if (!activeProject) {
     return (
       <div className="max-w-screen-2xl space-y-6">
