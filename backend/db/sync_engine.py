@@ -65,6 +65,7 @@ from backend.application.live_updates.domain_events import (
     SessionTranscriptAppendPayload,
     publish_feature_invalidation,
     publish_ops_invalidation,
+    publish_planning_invalidation,
     publish_session_transcript_append,
     publish_session_snapshot,
 )
@@ -2818,17 +2819,25 @@ class SyncEngine:
                 int(stats.get(key, 0) or 0) > 0
                 for key in ("documents_synced", "tasks_synced", "features_synced", "links_created")
             ):
+                _sync_payload = {
+                    "documentsSynced": int(stats.get("documents_synced", 0) or 0),
+                    "tasksSynced": int(stats.get("tasks_synced", 0) or 0),
+                    "featuresSynced": int(stats.get("features_synced", 0) or 0),
+                    "linksCreated": int(stats.get("links_created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project.id,
                     reason="sync_project_completed",
                     source="sync_engine",
-                    payload={
-                        "documentsSynced": int(stats.get("documents_synced", 0) or 0),
-                        "tasksSynced": int(stats.get("tasks_synced", 0) or 0),
-                        "featuresSynced": int(stats.get("features_synced", 0) or 0),
-                        "linksCreated": int(stats.get("links_created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_sync_payload,
+                )
+                # Fan out to planning topics — a full sync may change planning state.
+                await publish_planning_invalidation(
+                    project.id,
+                    reason="sync_project_completed",
+                    source="sync_engine",
+                    payload=_sync_payload,
                 )
             return stats
         except Exception as exc:
@@ -2908,14 +2917,22 @@ class SyncEngine:
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
             if int(stats.get("created", 0) or 0) > 0:
+                _links_payload = {
+                    "linksCreated": int(stats.get("created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project_id,
                     reason="rebuild_links_completed",
                     source="sync_engine",
-                    payload={
-                        "linksCreated": int(stats.get("created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_links_payload,
+                )
+                # Fan out: link rebuilds can alter cross-feature planning relationships.
+                await publish_planning_invalidation(
+                    project_id,
+                    reason="rebuild_links_completed",
+                    source="sync_engine",
+                    payload=_links_payload,
                 )
             return stats
         except Exception as exc:
@@ -3571,17 +3588,25 @@ class SyncEngine:
             if should_finalize_operation:
                 await self._finish_operation(operation_id, status="completed", stats=stats)
             if any(int(stats.get(key, 0) or 0) > 0 for key in ("documents", "tasks", "features", "links_created")):
+                _changed_payload = {
+                    "documentsSynced": int(stats.get("documents", 0) or 0),
+                    "tasksSynced": int(stats.get("tasks", 0) or 0),
+                    "featuresSynced": int(stats.get("features", 0) or 0),
+                    "linksCreated": int(stats.get("links_created", 0) or 0),
+                    "operationId": operation_id,
+                }
                 await publish_feature_invalidation(
                     project_id,
                     reason="sync_changed_files_completed",
                     source="sync_engine",
-                    payload={
-                        "documentsSynced": int(stats.get("documents", 0) or 0),
-                        "tasksSynced": int(stats.get("tasks", 0) or 0),
-                        "featuresSynced": int(stats.get("features", 0) or 0),
-                        "linksCreated": int(stats.get("links_created", 0) or 0),
-                        "operationId": operation_id,
-                    },
+                    payload=_changed_payload,
+                )
+                # Fan out: changed feature files may update planning projection.
+                await publish_planning_invalidation(
+                    project_id,
+                    reason="sync_changed_files_completed",
+                    source="sync_engine",
+                    payload=_changed_payload,
                 )
             return stats
         except Exception as exc:
