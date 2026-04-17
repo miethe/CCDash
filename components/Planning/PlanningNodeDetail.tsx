@@ -7,21 +7,16 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Clock,
-  FileCheck2,
-  FileText,
   FolderSearch,
   Link2,
   PackageOpen,
   RefreshCw,
-  Tag,
   Users,
 } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
 import type {
   FeaturePlanningContext,
-  PlanningEffectiveStatus,
   PlanningNode,
   PlanningNodeType,
   PlanningPhaseBatch,
@@ -31,6 +26,15 @@ import { getFeaturePlanningContext, PlanningApiError } from '../../services/plan
 import { featurePlanningTopic } from '../../services/live/topics';
 import { useLiveInvalidation } from '../../services/live/useLiveInvalidation';
 import type { LiveConnectionStatus } from '../../services/live';
+import {
+  castPlanningStatus,
+  EffectiveStatusChips,
+  LineageRow,
+  MismatchBadge,
+  BatchReadinessPill,
+  StatusChip,
+  statusVariant,
+} from './primitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,50 +52,6 @@ function sortNodesByType(nodes: PlanningNode[]): PlanningNode[] {
   return [...nodes].sort(
     (a, b) => NODE_TYPE_ORDER.indexOf(a.type) - NODE_TYPE_ORDER.indexOf(b.type),
   );
-}
-
-function formatTimestamp(value?: string): string {
-  if (!value) return 'n/a';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
-}
-
-/**
- * Defensively cast a `Record<string, unknown>` planningStatus dict to a
- * PlanningEffectiveStatus-shaped object. Only accesses known keys via narrowing.
- */
-function castPlanningStatus(raw: Record<string, unknown>): PlanningEffectiveStatus | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const rawStatus = typeof raw.rawStatus === 'string' ? raw.rawStatus : (typeof raw.raw_status === 'string' ? raw.raw_status : '');
-  const effectiveStatus = typeof raw.effectiveStatus === 'string' ? raw.effectiveStatus : (typeof raw.effective_status === 'string' ? raw.effective_status : '');
-  if (!rawStatus && !effectiveStatus) return null;
-
-  const provenanceRaw = raw.provenance;
-  const provenanceObj = provenanceRaw && typeof provenanceRaw === 'object' && !Array.isArray(provenanceRaw)
-    ? (provenanceRaw as Record<string, unknown>)
-    : null;
-
-  const mismatchRaw = raw.mismatchState ?? raw.mismatch_state;
-  const mismatchObj = mismatchRaw && typeof mismatchRaw === 'object' && !Array.isArray(mismatchRaw)
-    ? (mismatchRaw as Record<string, unknown>)
-    : null;
-
-  return {
-    rawStatus,
-    effectiveStatus,
-    provenance: {
-      source: (typeof provenanceObj?.source === 'string' ? provenanceObj.source : 'unknown') as PlanningEffectiveStatus['provenance']['source'],
-      reason: typeof provenanceObj?.reason === 'string' ? provenanceObj.reason : '',
-      evidence: Array.isArray(provenanceObj?.evidence) ? provenanceObj.evidence as PlanningEffectiveStatus['provenance']['evidence'] : [],
-    },
-    mismatchState: {
-      state: (typeof mismatchObj?.state === 'string' ? mismatchObj.state : 'unknown') as PlanningEffectiveStatus['mismatchState']['state'],
-      reason: typeof mismatchObj?.reason === 'string' ? mismatchObj.reason : '',
-      isMismatch: mismatchObj?.isMismatch === true || mismatchObj?.is_mismatch === true,
-      evidence: Array.isArray(mismatchObj?.evidence) ? mismatchObj.evidence as PlanningEffectiveStatus['mismatchState']['evidence'] : [],
-    },
-  };
 }
 
 // ── Small shared UI pieces ────────────────────────────────────────────────────
@@ -112,47 +72,6 @@ function LiveStatusDot({ status }: { status: LiveConnectionStatus }) {
       <span className="text-xs text-muted-foreground">{cfg.label}</span>
     </span>
   );
-}
-
-function StatusChip({ label, variant = 'neutral' }: { label: string; variant?: 'neutral' | 'ok' | 'warn' | 'error' | 'info' }) {
-  const base = 'inline-flex items-center rounded px-2 py-0.5 text-xs font-medium';
-  const colors = {
-    neutral: 'bg-slate-700/60 text-slate-300',
-    ok:      'bg-emerald-600/20 text-emerald-400',
-    warn:    'bg-amber-600/20 text-amber-400',
-    error:   'bg-rose-600/20 text-rose-400',
-    info:    'bg-blue-600/20 text-blue-400',
-  };
-  return <span className={`${base} ${colors[variant]}`}>{label}</span>;
-}
-
-function statusVariant(status: string): 'ok' | 'warn' | 'error' | 'neutral' {
-  const s = status.toLowerCase();
-  if (['complete', 'completed', 'done', 'active', 'in_progress'].some(v => s.includes(v))) return 'ok';
-  if (['blocked', 'stale', 'reversed', 'mismatch'].some(v => s.includes(v))) return 'error';
-  if (['pending', 'waiting', 'deferred'].some(v => s.includes(v))) return 'warn';
-  return 'neutral';
-}
-
-function readinessVariant(r: string): 'ok' | 'warn' | 'error' | 'neutral' {
-  if (r === 'ready') return 'ok';
-  if (r === 'blocked') return 'error';
-  if (r === 'waiting') return 'warn';
-  return 'neutral';
-}
-
-function NodeTypeIcon({ type }: { type: PlanningNodeType }) {
-  const p = { size: 13, className: 'shrink-0 text-muted-foreground' };
-  switch (type) {
-    case 'design_spec': return <FolderSearch {...p} />;
-    case 'prd': return <FileText {...p} />;
-    case 'implementation_plan': return <FileCheck2 {...p} />;
-    case 'progress': return <BookOpen {...p} />;
-    case 'context': return <Tag {...p} />;
-    case 'tracker': return <AlertCircle {...p} />;
-    case 'report': return <FileText {...p} />;
-    default: return <FileText {...p} />;
-  }
 }
 
 // ── Loading / Error / No-project shells ──────────────────────────────────────
@@ -203,32 +122,6 @@ function NoProjectShell() {
   );
 }
 
-// ── Mismatch Banner ───────────────────────────────────────────────────────────
-
-function MismatchBanner({ reason, evidenceLabels }: { reason: string; evidenceLabels: string[] }) {
-  return (
-    <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-amber-300">Status mismatch detected</p>
-        <p className="mt-0.5 text-xs text-amber-300/80">{reason}</p>
-        {evidenceLabels.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {evidenceLabels.map((label, i) => (
-              <span
-                key={i}
-                className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-300"
-              >
-                {label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Lineage Panel ─────────────────────────────────────────────────────────────
 
 function LineagePanel({ nodes }: { nodes: PlanningNode[] }) {
@@ -243,39 +136,9 @@ function LineagePanel({ nodes }: { nodes: PlanningNode[] }) {
 
   return (
     <div className="divide-y divide-panel-border rounded-lg border border-panel-border overflow-hidden">
-      {sorted.map((node) => {
-        const isMismatch = node.mismatchState?.isMismatch;
-        return (
-          <div key={node.id} className="flex items-start gap-3 px-4 py-3 bg-surface-elevated">
-            <div className="mt-0.5">
-              <NodeTypeIcon type={node.type} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-panel-foreground truncate" title={node.title}>
-                {node.title || node.id}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground/70 truncate" title={node.path}>
-                {node.path}
-              </p>
-              {node.updatedAt && (
-                <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/50">
-                  <Clock size={9} />
-                  {formatTimestamp(node.updatedAt)}
-                </p>
-              )}
-            </div>
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              <StatusChip label={node.rawStatus} variant={statusVariant(node.rawStatus)} />
-              {node.effectiveStatus && node.effectiveStatus !== node.rawStatus && (
-                <StatusChip
-                  label={`eff: ${node.effectiveStatus}`}
-                  variant={isMismatch ? 'warn' : statusVariant(node.effectiveStatus)}
-                />
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {sorted.map((node) => (
+        <LineageRow key={node.id} node={node} />
+      ))}
     </div>
   );
 }
@@ -289,9 +152,10 @@ function PhaseBatchRow({ batch }: { batch: PlanningPhaseBatch }) {
         <span className="text-xs font-medium text-panel-foreground truncate">
           Batch {batch.batchId}
         </span>
-        <StatusChip
-          label={batch.readinessState}
-          variant={readinessVariant(batch.readinessState)}
+        <BatchReadinessPill
+          readinessState={batch.readinessState}
+          blockingNodeIds={batch.readiness?.blockingNodeIds}
+          blockingTaskIds={batch.readiness?.blockingTaskIds}
         />
       </div>
       {batch.assignedAgents?.length > 0 && (
@@ -303,16 +167,6 @@ function PhaseBatchRow({ batch }: { batch: PlanningPhaseBatch }) {
       {batch.fileScopeHints?.length > 0 && (
         <div className="text-[10px] text-muted-foreground/70 truncate">
           Scope: {batch.fileScopeHints.join(', ')}
-        </div>
-      )}
-      {batch.readiness?.blockingNodeIds?.length > 0 && (
-        <div className="text-[10px] text-rose-400/80 truncate">
-          Blocking nodes: {batch.readiness.blockingNodeIds.join(', ')}
-        </div>
-      )}
-      {batch.readiness?.blockingTaskIds?.length > 0 && (
-        <div className="text-[10px] text-rose-400/80 truncate">
-          Blocking tasks: {batch.readiness.blockingTaskIds.join(', ')}
         </div>
       )}
     </div>
@@ -567,31 +421,17 @@ export function PlanningNodeDetail() {
           </div>
 
           {/* Status chips with provenance tooltip */}
-          <div className="flex items-center gap-2">
-            <div className="group relative">
-              <StatusChip label={`raw: ${context.rawStatus}`} variant={statusVariant(context.rawStatus)} />
-              {planningStatus?.provenance && (
-                <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-64 rounded-lg border border-panel-border bg-slate-900 p-3 shadow-xl group-hover:block">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Provenance</p>
-                  <p className="text-xs text-panel-foreground">Source: {planningStatus.provenance.source}</p>
-                  {planningStatus.provenance.reason && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{planningStatus.provenance.reason}</p>
-                  )}
-                </div>
-              )}
-            </div>
-            {context.effectiveStatus && context.effectiveStatus !== context.rawStatus && (
-              <StatusChip
-                label={`eff: ${context.effectiveStatus}`}
-                variant={isMismatch ? 'warn' : statusVariant(context.effectiveStatus)}
-              />
-            )}
-          </div>
+          <EffectiveStatusChips
+            rawStatus={context.rawStatus}
+            effectiveStatus={context.effectiveStatus}
+            isMismatch={isMismatch}
+            provenance={planningStatus?.provenance}
+          />
         </div>
 
         {/* Mismatch banner */}
         {isMismatch && (
-          <MismatchBanner reason={mismatchReason} evidenceLabels={evidenceLabels} />
+          <MismatchBadge state={context.mismatchState} reason={mismatchReason} evidenceLabels={evidenceLabels} />
         )}
       </div>
 
