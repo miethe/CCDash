@@ -92,8 +92,8 @@ import {
   EffectiveStatusChips,
   LineageRow,
   MismatchBadge,
-  PhaseOperationsPanel,
-} from './Planning/primitives';
+} from '@/components/shared/PlanningMetadata';
+import { PhaseOperationsPanel } from '@/components/Planning/primitives/PhaseOperationsPanel';
 import { computeActivePhase, PLANNING_NODE_TYPE_ORDER } from '../lib/planningHelpers';
 
 const TERMINAL_PHASE_STATUSES = new Set(['done', 'deferred']);

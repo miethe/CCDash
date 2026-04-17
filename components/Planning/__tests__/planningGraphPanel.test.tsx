@@ -262,7 +262,7 @@ import {
   EffectiveStatusChips,
   LineageRow,
   BatchReadinessPill,
-} from '../primitives';
+} from '@/components/shared/PlanningMetadata';
 
 describe('PlanningNodeDetail sub-components — lineage', () => {
   it('renders lineage node title via LineageRow', () => {

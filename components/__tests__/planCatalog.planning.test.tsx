@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { Feature, PlanningEffectiveStatus } from '../../types';
-import { EffectiveStatusChips, MismatchBadge } from '../Planning/primitives';
+import { EffectiveStatusChips, MismatchBadge } from '@/components/shared/PlanningMetadata';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

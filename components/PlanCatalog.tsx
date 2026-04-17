@@ -15,7 +15,7 @@ import { FileText, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDo
 import { DocumentModal, getFileContent } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { getFeatureStatusStyle } from './featureStatus';
-import { EffectiveStatusChips, MismatchBadge } from './Planning/primitives';
+import { EffectiveStatusChips, MismatchBadge } from '@/components/shared/PlanningMetadata';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
 import { buildDocumentFileTree } from '../lib/documentFileTree';

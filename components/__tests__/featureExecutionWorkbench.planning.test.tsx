@@ -24,7 +24,7 @@ import {
   EffectiveStatusChips,
   MismatchBadge,
   LineageRow,
-} from '../Planning/primitives';
+} from '@/components/shared/PlanningMetadata';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

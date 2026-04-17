@@ -30,7 +30,7 @@ import {
   Terminal, GitCommit, GitBranch, Link2, Play, TestTube2,
 } from 'lucide-react';
 import { FEATURE_STATUS_OPTIONS, getFeatureStatusStyle } from './featureStatus';
-import { EffectiveStatusChips, MismatchBadge, PlanningNodeTypeIcon } from './Planning/primitives';
+import { EffectiveStatusChips, MismatchBadge, PlanningNodeTypeIcon } from '@/components/shared/PlanningMetadata';
 import { getMotionPreset, useAnimatedListDiff, useReducedMotionPreference } from './animations';
 import { formatPercent, formatTokenCount, resolveTokenMetrics } from '../lib/tokenMetrics';
 import { resolveDisplayCost } from '../lib/sessionSemantics';

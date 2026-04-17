@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitBranch, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
+import { GitBranch, Inbox, Loader2, RefreshCw, AlertCircle, PackageOpen, Clock } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
-import type { ProjectPlanningSummary } from '../../types';
+import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
 import { getProjectPlanningSummary, PlanningApiError } from '../../services/planning';
 import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
@@ -11,6 +11,11 @@ import type { LiveConnectionStatus } from '../../services/live';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
 import { TrackerIntakePanel } from './TrackerIntakePanel';
+import {
+  EffectiveStatusChips,
+  MismatchBadge,
+  PlanningNodeTypeIcon,
+} from './primitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,6 +119,158 @@ function EmptyShell({ hasProject }: { hasProject: boolean }) {
   );
 }
 
+// ── Planning feature row ──────────────────────────────────────────────────────
+
+function PlanningFeatureRow({
+  feature,
+  onClick,
+}: {
+  feature: FeatureSummaryItem;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={`planning-feature-row-${feature.featureId}`}
+      className="flex w-full items-start gap-2.5 rounded-lg border border-panel-border bg-surface-base px-3 py-2.5 text-left transition-all hover:border-indigo-500/40 hover:bg-surface-elevated hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
+    >
+      <span className="mt-0.5 shrink-0 text-indigo-400/70">
+        <PlanningNodeTypeIcon type="implementation_plan" size={13} />
+      </span>
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="truncate text-sm font-medium leading-snug text-panel-foreground">
+            {feature.featureName}
+          </span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <EffectiveStatusChips
+              rawStatus={feature.rawStatus}
+              effectiveStatus={feature.effectiveStatus}
+              isMismatch={feature.isMismatch}
+            />
+          </div>
+        </div>
+        {feature.isMismatch && (
+          <MismatchBadge compact state={feature.mismatchState} reason="" />
+        )}
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="font-mono">{feature.featureId}</span>
+          {feature.phaseCount > 0 && (
+            <span>
+              {feature.phaseCount} phase{feature.phaseCount !== 1 ? 's' : ''}
+            </span>
+          )}
+          {feature.hasBlockedPhases && (
+            <span className="text-amber-400">{feature.blockedPhaseCount} blocked</span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── Column empty state ────────────────────────────────────────────────────────
+
+function ColumnEmptyState({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-panel-border/60 py-8 text-center">
+      <Inbox size={18} className="text-muted-foreground/40" />
+      <p className="text-xs text-muted-foreground/60">{label}</p>
+    </div>
+  );
+}
+
+// ── Active plans column ───────────────────────────────────────────────────────
+
+/**
+ * Features whose effectiveStatus is "in_progress" or "in-progress".
+ * Reads effectiveStatus directly from FeatureSummaryItem — castPlanningStatus
+ * is not needed here because the field is already a plain string on this type.
+ */
+export function ActivePlansColumn({
+  features,
+  onSelectFeature,
+}: {
+  features: FeatureSummaryItem[];
+  onSelectFeature: (featureId: string) => void;
+}) {
+  const active = features.filter(
+    (f) => f.effectiveStatus === 'in_progress' || f.effectiveStatus === 'in-progress',
+  );
+
+  return (
+    <div
+      data-testid="active-plans-column"
+      className="space-y-3 rounded-xl border border-panel-border bg-surface-elevated p-5"
+    >
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-panel-foreground">Active Plans</h2>
+        <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-400">
+          {active.length}
+        </span>
+      </div>
+      {active.length === 0 ? (
+        <ColumnEmptyState label="No active implementation plans" />
+      ) : (
+        <div className="space-y-1.5">
+          {active.map((f) => (
+            <PlanningFeatureRow
+              key={f.featureId}
+              feature={f}
+              onClick={() => onSelectFeature(f.featureId)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Planned features column ───────────────────────────────────────────────────
+
+/**
+ * Features whose effectiveStatus is "draft" or "approved" (not yet started).
+ */
+export function PlannedFeaturesColumn({
+  features,
+  onSelectFeature,
+}: {
+  features: FeatureSummaryItem[];
+  onSelectFeature: (featureId: string) => void;
+}) {
+  const planned = features.filter(
+    (f) => f.effectiveStatus === 'draft' || f.effectiveStatus === 'approved',
+  );
+
+  return (
+    <div
+      data-testid="planned-features-column"
+      className="space-y-3 rounded-xl border border-panel-border bg-surface-elevated p-5"
+    >
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-panel-foreground">Planned Features</h2>
+        <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          {planned.length}
+        </span>
+      </div>
+      {planned.length === 0 ? (
+        <ColumnEmptyState label="No draft or approved features" />
+      ) : (
+        <div className="space-y-1.5">
+          {planned.map((f) => (
+            <PlanningFeatureRow
+              key={f.featureId}
+              feature={f}
+              onClick={() => onSelectFeature(f.featureId)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page shell (ready state) ──────────────────────────────────────────────────
 
 function PlanningShell({
@@ -152,6 +309,21 @@ function PlanningShell({
       {/* PCP-302: Planning Summary */}
       <div data-testid="planning-summary-section">
         <PlanningSummaryPanel summary={summary} onSelectFeature={onSelectFeature} />
+      </div>
+
+      {/* PCP-702: Active Plans + Planned Features columns */}
+      <div
+        data-testid="planning-feature-columns"
+        className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+      >
+        <ActivePlansColumn
+          features={summary.featureSummaries}
+          onSelectFeature={onSelectFeature}
+        />
+        <PlannedFeaturesColumn
+          features={summary.featureSummaries}
+          onSelectFeature={onSelectFeature}
+        />
       </div>
 
       {/* PCP-303: Planning Graph Panel */}
@@ -274,7 +446,9 @@ export default function PlanningHomePage() {
     <PlanningShell
       summary={summary}
       liveStatus={liveStatus}
-      onSelectFeature={(featureId) => navigate(`/planning/feature/${featureId}`)}
+      onSelectFeature={(featureId) =>
+        navigate(`/board?selectedFeature=${encodeURIComponent(featureId)}&tab=overview`)
+      }
     />
   );
 }

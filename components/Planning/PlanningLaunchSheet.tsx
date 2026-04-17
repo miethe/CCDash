@@ -17,9 +17,7 @@ import type {
   WorktreeContext,
 } from '../../types';
 import { prepareLaunch, startLaunch } from '../../services/execution';
-import { BatchReadinessPill } from './primitives/BatchReadinessPill';
-import { StatusChip } from './primitives/StatusChip';
-import { statusVariant } from './primitives/variants';
+import { BatchReadinessPill, StatusChip, statusVariant } from '@/components/shared/PlanningMetadata';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

@@ -34,7 +34,7 @@ import {
   BatchReadinessPill,
   StatusChip,
   statusVariant,
-} from './primitives';
+} from '@/components/shared/PlanningMetadata';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
