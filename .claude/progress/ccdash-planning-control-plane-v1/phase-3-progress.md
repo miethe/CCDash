@@ -8,7 +8,7 @@ prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.m
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
 phase: 3
 title: Planning Home, Graph, and Tracker/Intake Surfaces
-status: pending
+status: completed
 created: '2026-04-16'
 updated: '2026-04-17'
 started: '2026-04-16'
@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 4
-completed_tasks: 3
+completed_tasks: 4
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -64,7 +64,7 @@ tasks:
 - id: PCP-304
   description: Add panels or tabs for ready-for-promotion specs, stale shaping work,
     deferred tracker items, and validation warnings.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -105,7 +105,7 @@ success_criteria:
     in existing workflow semantics.
   status: pending
 files_modified: []
-progress: 75
+progress: 100
 ---
 
 # ccdash-planning-control-plane-v1 - Phase 3

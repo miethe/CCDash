@@ -9,6 +9,7 @@ import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import type { LiveConnectionStatus } from '../../services/live';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
+import { TrackerIntakePanel } from './TrackerIntakePanel';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,27 +37,6 @@ function LiveStatusDot({ status }: { status: LiveConnectionStatus }) {
     </span>
   );
 }
-
-function PlaceholderSection({
-  title,
-  testId,
-  badge,
-}: {
-  title: string;
-  testId: string;
-  badge: string;
-}) {
-  return (
-    <div
-      data-testid={testId}
-      className="rounded-xl border border-dashed border-panel-border bg-surface-elevated/40 p-8 text-center"
-    >
-      <p className="text-sm font-medium text-muted-foreground">{title}</p>
-      <p className="mt-1 text-xs text-muted-foreground/60">{badge}</p>
-    </div>
-  );
-}
-
 
 // ── Loading state ─────────────────────────────────────────────────────────────
 
@@ -160,11 +140,13 @@ function PlanningShell({
           onSelectFeature={onSelectFeature}
         />
       </div>
-      <PlaceholderSection
-        testId="planning-tracker-section"
-        title="Tracker &amp; Intake"
-        badge="Tracker coming soon (PCP-304)"
-      />
+      <div data-testid="planning-tracker-section" className="rounded-xl border border-panel-border bg-surface-elevated p-5">
+        <TrackerIntakePanel
+          projectId={summary.projectId ?? null}
+          summary={summary}
+          onSelectFeature={onSelectFeature}
+        />
+      </div>
     </div>
   );
 }
