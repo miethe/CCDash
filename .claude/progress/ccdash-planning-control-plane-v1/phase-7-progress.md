@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 4
-completed_tasks: 0
+completed_tasks: 1
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -34,7 +34,7 @@ tasks:
     that duplicate /board or /plans logic. For each component record location, purpose,
     and replacement strategy (import from @miethe/ui, extract to @miethe/ui, or keep-local).
     Produce audit report and extraction manifest. Reference .claude/skills/planning/references/ui-extraction-guidance.md.
-  status: pending
+  status: completed
   assigned_to:
   - codebase-explorer
   - frontend-developer
@@ -73,9 +73,9 @@ tasks:
 - id: PCP-709
   description: Extract and publish components to @miethe/ui. For each "extract" decision
     in PCP-701 manifest fork component to @miethe/ui; refactor dependencies; add package
-    entry; port tests (>80% coverage); add Storybook story; document; publish with semver.
-    Update CCDash imports to use extracted components. Mark task with [pkg] for model
-    tracking. Reference .claude/skills/planning/references/ui-extraction-guidance.md
+    entry; port tests (>80% coverage); add Storybook story; document; publish with
+    semver. Update CCDash imports to use extracted components. Mark task with [pkg]
+    for model tracking. Reference .claude/skills/planning/references/ui-extraction-guidance.md
     § "9-Step Extraction Process".
   status: pending
   assigned_to:
@@ -103,14 +103,14 @@ notes:
 - Phase 7 is a post-gate foundation and extraction phase. Phase 6 validation gates
   must remain satisfied throughout; all behavior is preserved and only component internals
   are swapped and extracted.
-- PCP-701 audit is a blocking prerequisite — the extraction manifest it produces
-  governs all downstream refactor and extraction decisions in PCP-702, PCP-706, and
-  PCP-709.
+- PCP-701 audit is a blocking prerequisite — the extraction manifest it produces governs
+  all downstream refactor and extraction decisions in PCP-702, PCP-706, and PCP-709.
 - PCP-702 and PCP-706 can proceed in parallel once PCP-701 audit report is available.
 - PCP-709 extraction work depends on PCP-701 decisions but can proceed in parallel
   with PCP-702 and PCP-706 extraction/consolidation work.
 - Active plans columns (PCP-702) use extracted/shared components from PCP-709 and
   consolidated metadata from PCP-706.
+progress: 25
 ---
 
 # Phase 7 Progress: Planning UI Consolidation — Foundation & Extraction
