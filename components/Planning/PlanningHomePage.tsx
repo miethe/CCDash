@@ -9,6 +9,7 @@ import { getLaunchCapabilities } from '../../services/execution';
 import { projectPlanningTopic, useLiveInvalidation } from '../../services/live';
 import type { LiveConnectionStatus } from '../../services/live';
 import { PlanningSummaryPanel } from './PlanningSummaryPanel';
+import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 import { PlanningGraphPanel } from './PlanningGraphPanel';
 import { TrackerIntakePanel } from './TrackerIntakePanel';
 import {
@@ -277,10 +278,12 @@ function PlanningShell({
   summary,
   liveStatus,
   onSelectFeature,
+  onDrillDown,
 }: {
   summary: ProjectPlanningSummary;
   liveStatus: LiveConnectionStatus;
   onSelectFeature: (featureId: string) => void;
+  onDrillDown: (type: ArtifactDrillDownType) => void;
 }) {
   return (
     <div className="max-w-screen-2xl space-y-6">
@@ -308,7 +311,11 @@ function PlanningShell({
 
       {/* PCP-302: Planning Summary */}
       <div data-testid="planning-summary-section">
-        <PlanningSummaryPanel summary={summary} onSelectFeature={onSelectFeature} />
+        <PlanningSummaryPanel
+          summary={summary}
+          onSelectFeature={onSelectFeature}
+          onDrillDown={onDrillDown}
+        />
       </div>
 
       {/* PCP-702: Active Plans + Planned Features columns */}
@@ -447,7 +454,10 @@ export default function PlanningHomePage() {
       summary={summary}
       liveStatus={liveStatus}
       onSelectFeature={(featureId) =>
-        navigate(`/board?selectedFeature=${encodeURIComponent(featureId)}&tab=overview`)
+        navigate(`/board?feature=${encodeURIComponent(featureId)}&tab=overview`)
+      }
+      onDrillDown={(type) =>
+        navigate(`/planning/artifacts/${type}`)
       }
     />
   );

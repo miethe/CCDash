@@ -2501,6 +2501,17 @@ const FeatureModal = ({
                 <Play size={14} />
                 Begin Work
               </button>
+              <button
+                onClick={() => {
+                  navigate(`/planning/feature/${encodeURIComponent(feature.id)}`);
+                  onClose();
+                }}
+                title="Open full planning detail"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-panel-border bg-surface-elevated text-muted-foreground text-xs font-medium hover:text-panel-foreground hover:bg-slate-700/30 transition-colors"
+              >
+                <ExternalLink size={13} />
+                Expand
+              </button>
               <button onClick={onClose} className="text-muted-foreground hover:text-panel-foreground transition-colors p-1 hover:bg-surface-muted rounded">
                 <X size={24} />
               </button>

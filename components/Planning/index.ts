@@ -1,4 +1,6 @@
 export { default as PlanningHomePage } from './PlanningHomePage';
+export { ArtifactDrillDownPage } from './ArtifactDrillDownPage';
+export type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 export { PlanningSummaryPanel } from './PlanningSummaryPanel';
 export type { PlanningSummaryPanelProps } from './PlanningSummaryPanel';
 export { PlanningGraphPanel } from './PlanningGraphPanel';

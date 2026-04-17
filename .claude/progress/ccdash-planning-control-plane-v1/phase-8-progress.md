@@ -18,7 +18,7 @@ pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 5
-completed_tasks: 0
+completed_tasks: 3
 in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
@@ -33,7 +33,7 @@ tasks:
     listing artifacts of that type (Design Specs, PRDs, Progress Files, etc.) with
     title, status, updated date, and key metadata. Reuse DocumentsList or similar
     from /plans/documents. Rows open DocumentModal on click.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -47,7 +47,7 @@ tasks:
     features) to delegate to the ProjectBoard feature modal on click instead of planning-only
     detail panels. Add Expand button in modal navigating to /planning/feature/:id/detail
     for advanced views.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   - ui-engineer-enhanced
@@ -61,7 +61,7 @@ tasks:
     context file, report) to open DocumentModal from /plans instead of planning-only
     viewers. Ensure modal renders content, metadata, and navigation the same way as
     /plans.
-  status: pending
+  status: completed
   assigned_to:
   - frontend-developer
   dependencies:
@@ -84,8 +84,9 @@ tasks:
   priority: high
 - id: PCP-708
   description: Add/update UI tests covering active plans/planned features columns,
-    artifact drill-down screens, feature modal integration, document modal flows, and
-    badge consolidation. Run Phase 6 and earlier validation tests to confirm no regressions.
+    artifact drill-down screens, feature modal integration, document modal flows,
+    and badge consolidation. Run Phase 6 and earlier validation tests to confirm no
+    regressions.
   status: pending
   assigned_to:
   - frontend-developer
@@ -119,6 +120,7 @@ notes:
   test suite including Phase 3-6 must pass.
 - Phase 8 is the final UI consolidation phase. After completion, no planning-only
   viewers, modals, or navigation patterns remain.
+progress: 60
 ---
 
 # Phase 8 Progress: Planning UI Integration — Modals, Drill-Downs & Validation

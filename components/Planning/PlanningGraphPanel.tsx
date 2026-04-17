@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import type {
+  PlanDocument,
   PlanningMismatchStateValue,
   PlanningNode,
   PlanningNodeType,
@@ -18,6 +19,8 @@ import type {
 } from '../../types';
 import { getProjectPlanningGraph, PlanningApiError } from '../../services/planning';
 import { PlanningNodeTypeIcon } from '@miethe/ui/primitives';
+import { useData } from '../../contexts/DataContext';
+import { DocumentModal } from '../DocumentModal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,9 +120,10 @@ interface FeatureCardProps {
   slug: string;
   nodes: PlanningNode[];
   onSelectFeature?: (featureId: string) => void;
+  onNodeClick?: (node: PlanningNode) => void;
 }
 
-function FeatureLineageCard({ slug, nodes, onSelectFeature }: FeatureCardProps) {
+function FeatureLineageCard({ slug, nodes, onSelectFeature, onNodeClick }: FeatureCardProps) {
   const [expanded, setExpanded] = useState(false);
   const sorted = sortNodesByType(nodes);
   const hasMismatch = nodes.some(n => n.mismatchState?.isMismatch);
@@ -160,11 +164,8 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature }: FeatureCardProps) 
           {sorted.map((node) => {
             const isMismatch = node.mismatchState?.isMismatch;
             const effectiveVariant = isMismatch ? 'mismatch' : 'ok';
-            return (
-              <div
-                key={node.id}
-                className="flex items-center gap-2 py-1 text-xs"
-              >
+            const nodeRow = (
+              <div className="flex items-center gap-2 py-1 text-xs">
                 <span className="text-muted-foreground/70">
                   <PlanningNodeTypeIcon type={node.type} size={12} />
                 </span>
@@ -179,6 +180,19 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature }: FeatureCardProps) 
                 </div>
               </div>
             );
+            if (onNodeClick && node.path) {
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  onClick={() => onNodeClick(node)}
+                  className="w-full text-left rounded hover:bg-slate-700/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info"
+                >
+                  {nodeRow}
+                </button>
+              );
+            }
+            return <div key={node.id}>{nodeRow}</div>;
           })}
         </div>
       )}
@@ -311,7 +325,20 @@ type GraphFetchState =
   | { phase: 'ready'; graph: ProjectPlanningGraph };
 
 export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraphPanelProps) {
+  const { documents } = useData();
   const [state, setState] = useState<GraphFetchState>({ phase: 'idle' });
+  const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+
+  const handleNodeClick = useCallback((node: PlanningNode) => {
+    if (!node.path) return;
+    const doc =
+      documents.find(d => d.filePath === node.path) ||
+      documents.find(d => d.canonicalPath === node.path) ||
+      documents.find(d => node.path!.endsWith(d.filePath)) ||
+      documents.find(d => d.filePath.endsWith(node.path!)) ||
+      null;
+    if (doc) setSelectedDoc(doc);
+  }, [documents]);
 
   const loadGraph = useCallback(async () => {
     if (!projectId) {
@@ -419,6 +446,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
                   slug={slug}
                   nodes={sortNodesByType(bySlug.get(slug) ?? [])}
                   onSelectFeature={onSelectFeature}
+                  onNodeClick={handleNodeClick}
                 />
               ))}
               {/* Also show single-type features if they exist */}
@@ -430,6 +458,7 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
                     slug={slug}
                     nodes={nodes}
                     onSelectFeature={onSelectFeature}
+                    onNodeClick={handleNodeClick}
                   />
                 ))}
             </div>
@@ -486,6 +515,15 @@ export function PlanningGraphPanel({ projectId, onSelectFeature }: PlanningGraph
           )}
         </div>
       </div>
+
+      {selectedDoc && (
+        <DocumentModal
+          doc={selectedDoc}
+          onClose={() => setSelectedDoc(null)}
+          onBack={() => setSelectedDoc(null)}
+          backLabel="Planning Graph"
+        />
+      )}
     </div>
   );
 }

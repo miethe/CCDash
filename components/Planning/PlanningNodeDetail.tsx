@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../../contexts/DataContext';
+import type { PlanDocument } from '../../types';
+import { DocumentModal } from '../DocumentModal';
 import type {
   FeaturePlanningContext,
   PlanningNode,
@@ -124,7 +126,26 @@ function NoProjectShell() {
 
 // ── Lineage Panel ─────────────────────────────────────────────────────────────
 
-function LineagePanel({ nodes }: { nodes: PlanningNode[] }) {
+function resolveDocumentByPath(documents: PlanDocument[], nodePath: string): PlanDocument | null {
+  if (!nodePath) return null;
+  return (
+    documents.find(d => d.filePath === nodePath) ||
+    documents.find(d => d.canonicalPath === nodePath) ||
+    documents.find(d => nodePath.endsWith(d.filePath)) ||
+    documents.find(d => d.filePath.endsWith(nodePath)) ||
+    null
+  );
+}
+
+function LineagePanel({
+  nodes,
+  documents,
+  onSelectDoc,
+}: {
+  nodes: PlanningNode[];
+  documents: PlanDocument[];
+  onSelectDoc: (doc: PlanDocument) => void;
+}) {
   const sorted = sortNodesByType(nodes);
   if (sorted.length === 0) {
     return (
@@ -136,9 +157,22 @@ function LineagePanel({ nodes }: { nodes: PlanningNode[] }) {
 
   return (
     <div className="divide-y divide-panel-border rounded-lg border border-panel-border overflow-hidden">
-      {sorted.map((node) => (
-        <LineageRow key={node.id} node={node} />
-      ))}
+      {sorted.map((node) => {
+        const doc = resolveDocumentByPath(documents, node.path || '');
+        if (doc) {
+          return (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => onSelectDoc(doc)}
+              className="w-full text-left hover:bg-slate-700/20 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info"
+            >
+              <LineageRow node={node} />
+            </button>
+          );
+        }
+        return <LineageRow key={node.id} node={node} />;
+      })}
     </div>
   );
 }
@@ -278,7 +312,15 @@ function BlockersPanel({ blockedBatchIds, nodes }: { blockedBatchIds: string[]; 
 
 // ── Linked Artifacts ──────────────────────────────────────────────────────────
 
-function LinkedArtifactsPanel({ refs }: { refs: string[] }) {
+function LinkedArtifactsPanel({
+  refs,
+  documents,
+  onSelectDoc,
+}: {
+  refs: string[];
+  documents: PlanDocument[];
+  onSelectDoc: (doc: PlanDocument) => void;
+}) {
   if (refs.length === 0) {
     return (
       <p className="text-xs text-muted-foreground/60 italic">No linked artifacts.</p>
@@ -286,12 +328,34 @@ function LinkedArtifactsPanel({ refs }: { refs: string[] }) {
   }
   return (
     <ul className="space-y-1">
-      {refs.map((ref, i) => (
-        <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Link2 size={11} className="shrink-0 text-info/60" />
-          <span className="truncate font-mono" title={ref}>{ref}</span>
-        </li>
-      ))}
+      {refs.map((ref, i) => {
+        const doc =
+          documents.find(d => d.filePath === ref) ||
+          documents.find(d => d.canonicalPath === ref) ||
+          documents.find(d => ref.endsWith(d.filePath)) ||
+          documents.find(d => d.filePath.endsWith(ref)) ||
+          null;
+        if (doc) {
+          return (
+            <li key={i}>
+              <button
+                type="button"
+                onClick={() => onSelectDoc(doc)}
+                className="flex w-full items-center gap-2 rounded text-xs text-info hover:text-info/80 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info"
+              >
+                <Link2 size={11} className="shrink-0 text-info/60" />
+                <span className="truncate font-mono text-left" title={ref}>{ref}</span>
+              </button>
+            </li>
+          );
+        }
+        return (
+          <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Link2 size={11} className="shrink-0 text-info/60" />
+            <span className="truncate font-mono" title={ref}>{ref}</span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -323,8 +387,9 @@ type DetailFetchState =
 export function PlanningNodeDetail() {
   const { featureId } = useParams<{ featureId: string }>();
   const navigate = useNavigate();
-  const { activeProject } = useData();
+  const { activeProject, documents } = useData();
   const [state, setState] = useState<DetailFetchState>({ phase: 'idle' });
+  const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
 
   const loadContext = useCallback(async () => {
     if (!featureId) {
@@ -440,7 +505,11 @@ export function PlanningNodeDetail() {
         title="Lineage"
         icon={<FolderSearch size={15} />}
       >
-        <LineagePanel nodes={sortNodesByType(context.graph.nodes)} />
+        <LineagePanel
+          nodes={sortNodesByType(context.graph.nodes)}
+          documents={documents}
+          onSelectDoc={setSelectedDoc}
+        />
       </SectionCard>
 
       {/* Phases */}
@@ -473,8 +542,21 @@ export function PlanningNodeDetail() {
         title="Linked Artifacts"
         icon={<Link2 size={15} />}
       >
-        <LinkedArtifactsPanel refs={context.linkedArtifactRefs} />
+        <LinkedArtifactsPanel
+          refs={context.linkedArtifactRefs}
+          documents={documents}
+          onSelectDoc={setSelectedDoc}
+        />
       </SectionCard>
+
+      {selectedDoc && (
+        <DocumentModal
+          doc={selectedDoc}
+          onClose={() => setSelectedDoc(null)}
+          onBack={() => setSelectedDoc(null)}
+          backLabel="Planning Detail"
+        />
+      )}
     </div>
   );
 }

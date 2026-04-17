@@ -8,12 +8,14 @@ import {
 } from 'lucide-react';
 
 import type { FeatureSummaryItem, ProjectPlanningSummary } from '../../types';
+import type { ArtifactDrillDownType } from './ArtifactDrillDownPage';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface PlanningSummaryPanelProps {
   summary: ProjectPlanningSummary;
   onSelectFeature?: (featureId: string) => void;
+  onDrillDown?: (type: ArtifactDrillDownType) => void;
 }
 
 // ── Health metric tile ────────────────────────────────────────────────────────
@@ -42,9 +44,26 @@ function MetricTile({ label, value, accent = 'text-panel-foreground', dimWhenZer
 interface ArtifactChipProps {
   label: string;
   count: number;
+  drillDownType?: ArtifactDrillDownType;
+  onDrillDown?: (type: ArtifactDrillDownType) => void;
 }
 
-function ArtifactChip({ label, count }: ArtifactChipProps) {
+function ArtifactChip({ label, count, drillDownType, onDrillDown }: ArtifactChipProps) {
+  if (drillDownType && onDrillDown && count > 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => onDrillDown(drillDownType)}
+        aria-label={`View ${count} ${label}`}
+        className="inline-flex items-center gap-1.5 rounded-full border border-panel-border bg-surface-elevated/70 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-info/50 hover:bg-slate-700/40 hover:text-panel-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info/50"
+      >
+        {label}
+        <span className="rounded-full bg-slate-600/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-panel-foreground">
+          {count}
+        </span>
+      </button>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-panel-border bg-surface-elevated/70 px-3 py-1 text-xs text-muted-foreground">
       {label}
@@ -149,7 +168,7 @@ function AttentionColumn({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function PlanningSummaryPanel({ summary, onSelectFeature }: PlanningSummaryPanelProps) {
+export function PlanningSummaryPanel({ summary, onSelectFeature, onDrillDown }: PlanningSummaryPanelProps) {
   // Graceful empty state
   if (summary.featureSummaries.length === 0) {
     return (
@@ -189,14 +208,14 @@ export function PlanningSummaryPanel({ summary, onSelectFeature }: PlanningSumma
   const mismatchItems = Array.from(mismatchSet.values());
 
   // Artifact composition entries
-  const artifactEntries: { label: string; count: number }[] = [
-    { label: 'PRDs', count: summary.nodeCountsByType.prd },
-    { label: 'Design Specs', count: summary.nodeCountsByType.designSpec },
-    { label: 'Implementation Plans', count: summary.nodeCountsByType.implementationPlan },
-    { label: 'Progress', count: summary.nodeCountsByType.progress },
-    { label: 'Context', count: summary.nodeCountsByType.context },
+  const artifactEntries: { label: string; count: number; drillDownType?: ArtifactDrillDownType }[] = [
+    { label: 'PRDs', count: summary.nodeCountsByType.prd, drillDownType: 'prds' },
+    { label: 'Design Specs', count: summary.nodeCountsByType.designSpec, drillDownType: 'design-specs' },
+    { label: 'Implementation Plans', count: summary.nodeCountsByType.implementationPlan, drillDownType: 'implementation-plans' },
+    { label: 'Progress', count: summary.nodeCountsByType.progress, drillDownType: 'progress' },
+    { label: 'Context', count: summary.nodeCountsByType.context, drillDownType: 'contexts' },
     { label: 'Trackers', count: summary.nodeCountsByType.tracker },
-    { label: 'Reports', count: summary.nodeCountsByType.report },
+    { label: 'Reports', count: summary.nodeCountsByType.report, drillDownType: 'reports' },
   ];
 
   return (
@@ -241,8 +260,14 @@ export function PlanningSummaryPanel({ summary, onSelectFeature }: PlanningSumma
           Artifact Composition
         </div>
         <div className="flex flex-wrap gap-2">
-          {artifactEntries.map(({ label, count }) => (
-            <ArtifactChip key={label} label={label} count={count} />
+          {artifactEntries.map(({ label, count, drillDownType }) => (
+            <ArtifactChip
+              key={label}
+              label={label}
+              count={count}
+              drillDownType={drillDownType}
+              onDrillDown={onDrillDown}
+            />
           ))}
         </div>
       </div>

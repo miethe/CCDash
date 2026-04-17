@@ -13,6 +13,7 @@ import {
 
 import type {
   FeatureSummaryItem,
+  PlanDocument,
   PlanningMismatchStateValue,
   PlanningNode,
   PlanningNodeType,
@@ -20,6 +21,8 @@ import type {
   ProjectPlanningSummary,
 } from '../../types';
 import { getProjectPlanningGraph, PlanningApiError } from '../../services/planning';
+import { useData } from '../../contexts/DataContext';
+import { DocumentModal } from '../DocumentModal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -216,9 +219,11 @@ interface PromotionNode {
 function PromotionCandidatesTab({
   items,
   onSelectFeature,
+  onNodeClick,
 }: {
   items: PromotionNode[];
   onSelectFeature?: (featureId: string) => void;
+  onNodeClick?: (node: PlanningNode) => void;
 }) {
   if (items.length === 0) {
     return <EmptyTabState message="No specs are ready to promote yet." />;
@@ -237,6 +242,7 @@ function PromotionCandidatesTab({
               node={node}
               showStatusPair
               onSelectFeature={onSelectFeature}
+              onNodeClick={onNodeClick}
             />
           ))}
         </div>
@@ -252,6 +258,7 @@ function PromotionCandidatesTab({
               node={node}
               showStatusPair
               onSelectFeature={onSelectFeature}
+              onNodeClick={onNodeClick}
             />
           ))}
         </div>
@@ -270,9 +277,11 @@ interface StaleItem {
 function StaleShapingTab({
   items,
   onSelectFeature,
+  onNodeClick,
 }: {
   items: StaleItem[];
   onSelectFeature?: (featureId: string) => void;
+  onNodeClick?: (node: PlanningNode) => void;
 }) {
   if (items.length === 0) {
     return <EmptyTabState message="No stale shaping work detected." />;
@@ -286,6 +295,7 @@ function StaleShapingTab({
           showStatusPair
           showReason
           onSelectFeature={onSelectFeature}
+          onNodeClick={onNodeClick}
         />
       ))}
     </div>
@@ -297,9 +307,11 @@ function StaleShapingTab({
 function TrackersTab({
   nodes,
   onSelectFeature,
+  onNodeClick,
 }: {
   nodes: PlanningNode[];
   onSelectFeature?: (featureId: string) => void;
+  onNodeClick?: (node: PlanningNode) => void;
 }) {
   if (nodes.length === 0) {
     return <EmptyTabState message="No open tracker or context notes." />;
@@ -313,6 +325,7 @@ function TrackersTab({
           showTypeChip
           showStatusPair
           onSelectFeature={onSelectFeature}
+          onNodeClick={onNodeClick}
         />
       ))}
     </div>
@@ -474,17 +487,19 @@ function NodeRow({
   showReason = false,
   showTypeChip = false,
   onSelectFeature,
+  onNodeClick,
 }: {
   node: PlanningNode;
   showStatusPair?: boolean;
   showReason?: boolean;
   showTypeChip?: boolean;
   onSelectFeature?: (featureId: string) => void;
+  onNodeClick?: (node: PlanningNode) => void;
 }) {
   const slug = node.featureSlug;
   const reason = node.mismatchState?.reason;
 
-  return (
+  const inner = (
     <div className="rounded-lg border border-panel-border/60 bg-slate-800/40 px-3 py-2 space-y-1">
       <div className="flex items-center gap-2">
         <div className="flex-1 min-w-0">
@@ -521,6 +536,20 @@ function NodeRow({
       {node.path && <PathLabel path={node.path} />}
     </div>
   );
+
+  if (onNodeClick) {
+    return (
+      <button
+        type="button"
+        onClick={() => onNodeClick(node)}
+        className="w-full text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info rounded-lg hover:opacity-80 transition-opacity"
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return inner;
 }
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
@@ -572,8 +601,21 @@ export function TrackerIntakePanel({
   summary,
   onSelectFeature,
 }: TrackerIntakePanelProps) {
+  const { documents } = useData();
   const [graphState, setGraphState] = useState<GraphFetchState>({ phase: 'idle' });
   const [activeTab, setActiveTab] = useState<TabId>('promotion');
+  const [selectedDoc, setSelectedDoc] = useState<PlanDocument | null>(null);
+
+  const handleNodeClick = useCallback((node: PlanningNode) => {
+    if (!node.path) return;
+    const doc =
+      documents.find(d => d.filePath === node.path) ||
+      documents.find(d => d.canonicalPath === node.path) ||
+      documents.find(d => node.path!.endsWith(d.filePath)) ||
+      documents.find(d => d.filePath.endsWith(node.path!)) ||
+      null;
+    if (doc) setSelectedDoc(doc);
+  }, [documents]);
 
   const loadGraph = useCallback(async () => {
     if (!projectId) {
@@ -763,6 +805,7 @@ export function TrackerIntakePanel({
               <PromotionCandidatesTab
                 items={tabData.promotionItems}
                 onSelectFeature={onSelectFeature}
+                onNodeClick={handleNodeClick}
               />
             </div>
 
@@ -776,6 +819,7 @@ export function TrackerIntakePanel({
               <StaleShapingTab
                 items={tabData.staleItems}
                 onSelectFeature={onSelectFeature}
+                onNodeClick={handleNodeClick}
               />
             </div>
 
@@ -789,6 +833,7 @@ export function TrackerIntakePanel({
               <TrackersTab
                 nodes={tabData.trackerNodes}
                 onSelectFeature={onSelectFeature}
+                onNodeClick={handleNodeClick}
               />
             </div>
 
@@ -808,6 +853,15 @@ export function TrackerIntakePanel({
             </div>
           </div>
         </div>
+      )}
+
+      {selectedDoc && (
+        <DocumentModal
+          doc={selectedDoc}
+          onClose={() => setSelectedDoc(null)}
+          onBack={() => setSelectedDoc(null)}
+          backLabel="Tracker"
+        />
       )}
     </section>
   );
