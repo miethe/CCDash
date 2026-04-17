@@ -23,7 +23,10 @@ Set `CCDASH_QUERY_CACHE_TTL_SECONDS` to control cache lifetime:
 - **Recommended ranges:**
   - **Fresh data (10–30s):** High-traffic dashboards with frequent user checks; higher CPU load.
   - **Warm dashboards (60–300s):** Standard deployments; balances freshness with query cost.
+  - **Keep-warm (600+):** Pair with a lower warmer interval (see below) so entries never expire between warm cycles. This is the recommended posture for single-operator workstations.
   - **Disable (0):** Set to `0` to bypass cache entirely; use for debugging or ultra-fresh reads.
+
+> **Cold-window pitfall.** The defaults ship as TTL=60 and warmer=300, which guarantees four five-minute windows per warmer cycle in which every query hits cold. If you want the warmer to actually keep entries hot, set `TTL >= REFRESH_INTERVAL`. A common good pairing is TTL=600 + refresh=300.
 
 Example:
 ```bash

@@ -436,6 +436,22 @@ _PHASE_FROM_TEXT_PATTERN = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
 _PHASE_RANGE_PATTERN = re.compile(r"^(\d+)\s*-\s*(\d+)$")
 _TITLE_TOKEN_SANITIZER_PATTERN = re.compile(r"[^a-z0-9]+")
 
+# Workflow command verb tokens that unambiguously indicate a session was
+# launched to execute work on a specific feature.  Matched as case-insensitive
+# substrings against each command string so that prefix variants like
+# "/dev:execute-phase", "/planning:plan-feature", and bare "execute-phase" all
+# match without needing to enumerate every possible prefix.
+_PRIMARY_WORKFLOW_COMMAND_TOKENS: tuple[str, ...] = (
+    "execute-phase",
+    "plan-feature",
+    "implement-story",
+    "complete-user-story",
+    "quick-feature",
+    "create-feature",
+    "new-feature",
+    "plan-story",
+)
+
 
 def _safe_json(raw: str | None) -> dict:
     if not raw:
@@ -463,6 +479,11 @@ def _is_primary_session_link(
     commands: list[str],
 ) -> bool:
     if strategy == "task_frontmatter":
+        return True
+    if "command_args_path" in signal_types and any(
+        any(token in cmd.lower() for token in _PRIMARY_WORKFLOW_COMMAND_TOKENS)
+        for cmd in commands
+    ):
         return True
     if confidence >= 0.9:
         return True

@@ -5025,10 +5025,12 @@ class SyncEngine:
                     else 0.0
                 )
                 confidence = float(candidate["baseConfidence"])
-                if share < 0.50:
-                    confidence -= 0.20
-                elif share < 0.70:
-                    confidence -= 0.10
+                has_command_path_signal = bool(candidate.get("hasCommandPath"))
+                if not has_command_path_signal:
+                    if share < 0.50:
+                        confidence -= 0.20
+                    elif share < 0.70:
+                        confidence -= 0.10
                 if candidate["hasReadOnlySignals"]:
                     confidence -= 0.08
                 confidence = round(max(0.35, min(0.95, confidence)), 3)
