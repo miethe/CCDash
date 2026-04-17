@@ -16,6 +16,7 @@ import { CodebaseExplorer } from './components/CodebaseExplorer';
 import { FeatureExecutionWorkbench } from './components/FeatureExecutionWorkbench';
 import { TestingPage } from './components/TestVisualizer/TestingPage';
 import { WorkflowRegistryPage } from './components/Workflows/WorkflowRegistryPage';
+import { PlanningHomePage } from './components/Planning';
 
 const App: React.FC = () => {
   return (
@@ -30,6 +31,7 @@ const App: React.FC = () => {
                 <Route path="/plans" element={<PlanCatalog />} />
                 <Route path="/sessions" element={<SessionInspector />} />
                 <Route path="/execution" element={<FeatureExecutionWorkbench />} />
+                <Route path="/planning" element={<PlanningHomePage />} />
                 <Route path="/tests" element={<TestingPage />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
                 <Route path="/workflows" element={<WorkflowRegistryPage />} />
