@@ -1,23 +1,35 @@
-export { StatusChip } from './StatusChip';
-export type { StatusChipProps } from './StatusChip';
-
-export { EffectiveStatusChips } from './EffectiveStatusChips';
-export type { EffectiveStatusChipsProps } from './EffectiveStatusChips';
-
-export { MismatchBadge } from './MismatchBadge';
-export type { MismatchBadgeProps } from './MismatchBadge';
-
-export { BatchReadinessPill } from './BatchReadinessPill';
-export type { BatchReadinessPillProps } from './BatchReadinessPill';
+/**
+ * Planning primitives barrel.
+ *
+ * Most visual primitives (StatusChip, EffectiveStatusChips, MismatchBadge,
+ * BatchReadinessPill, PlanningNodeTypeIcon, statusVariant, readinessVariant)
+ * now live in @miethe/ui (PCP-709). Consumers should import from
+ * `@/components/shared/PlanningMetadata` instead of reaching in here.
+ *
+ * Re-exports below are kept for planning-local items and for a compatibility
+ * bridge to the extracted primitives so existing deep imports still resolve.
+ */
+export {
+  StatusChip,
+  EffectiveStatusChips,
+  MismatchBadge,
+  BatchReadinessPill,
+  PlanningNodeTypeIcon,
+  statusVariant,
+  readinessVariant,
+} from '@miethe/ui/primitives';
+export type {
+  StatusChipProps,
+  EffectiveStatusChipsProps,
+  MismatchBadgeProps,
+  BatchReadinessPillProps,
+  PlanningNodeTypeIconProps,
+  StatusChipVariant,
+  ReadinessVariant,
+} from '@miethe/ui/primitives';
 
 export { LineageRow } from './LineageRow';
 export type { LineageRowProps } from './LineageRow';
-
-export { PlanningNodeTypeIcon } from './PlanningNodeTypeIcon';
-export type { PlanningNodeTypeIconProps } from './PlanningNodeTypeIcon';
-
-export { statusVariant, readinessVariant } from './variants';
-export type { StatusChipVariant, ReadinessVariant } from './variants';
 
 export { castPlanningStatus } from './castPlanningStatus';
 

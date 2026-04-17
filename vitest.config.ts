@@ -8,7 +8,14 @@ export default defineConfig({
         },
     },
     test: {
-        exclude: [...configDefaults.exclude, '.claude/**'],
+        exclude: [...configDefaults.exclude, '.claude/**', 'examples/**'],
+        server: {
+            deps: {
+                // @miethe/ui ships extensionless ESM imports (tsc emit); inline it
+                // through Vite's resolver instead of Node's native ESM loader.
+                inline: [/@miethe\/ui/],
+            },
+        },
     },
 });
 

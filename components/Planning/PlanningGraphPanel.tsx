@@ -2,15 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
-  BookOpen,
   ChevronDown,
   ChevronRight,
   Clock,
-  FileCheck2,
-  FileText,
   FolderSearch,
   RefreshCw,
-  Tag,
 } from 'lucide-react';
 
 import type {
@@ -21,6 +17,7 @@ import type {
   ProjectPlanningGraph,
 } from '../../types';
 import { getProjectPlanningGraph, PlanningApiError } from '../../services/planning';
+import { PlanningNodeTypeIcon } from '@miethe/ui/primitives';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,20 +59,6 @@ function groupByFeatureSlug(nodes: PlanningNode[]): Map<string, PlanningNode[]> 
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-function NodeTypeIcon({ type }: { type: PlanningNodeType }) {
-  const iconProps = { size: 12, className: 'shrink-0' };
-  switch (type) {
-    case 'design_spec': return <FolderSearch {...iconProps} />;
-    case 'prd': return <FileText {...iconProps} />;
-    case 'implementation_plan': return <FileCheck2 {...iconProps} />;
-    case 'progress': return <BookOpen {...iconProps} />;
-    case 'context': return <Tag {...iconProps} />;
-    case 'tracker': return <AlertCircle {...iconProps} />;
-    case 'report': return <FileText {...iconProps} />;
-    default: return <FileText {...iconProps} />;
-  }
-}
 
 function nodeTypeLabel(type: PlanningNodeType): string {
   switch (type) {
@@ -183,7 +166,7 @@ function FeatureLineageCard({ slug, nodes, onSelectFeature }: FeatureCardProps) 
                 className="flex items-center gap-2 py-1 text-xs"
               >
                 <span className="text-muted-foreground/70">
-                  <NodeTypeIcon type={node.type} />
+                  <PlanningNodeTypeIcon type={node.type} size={12} />
                 </span>
                 <span className="flex-1 truncate text-muted-foreground" title={node.title}>
                   {node.title || nodeTypeLabel(node.type)}

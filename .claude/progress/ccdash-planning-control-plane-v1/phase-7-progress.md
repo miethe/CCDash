@@ -7,20 +7,21 @@ feature_slug: ccdash-planning-control-plane-v1
 prd_ref: docs/project_plans/PRDs/enhancements/ccdash-planning-control-plane-v1.md
 plan_ref: docs/project_plans/implementation_plans/enhancements/ccdash-planning-control-plane-v1.md
 phase: 7
-title: Planning UI Consolidation — Foundation & Extraction
-status: in_progress
+title: "Planning UI Consolidation \u2014 Foundation & Extraction"
+status: completed
 created: '2026-04-17'
 updated: '2026-04-17'
 started: null
 completed: null
 commit_refs:
 - 6d7a4e9
+- cc7d7a9
 pr_refs: []
 overall_progress: 0
 completion_estimate: 4-5 days
 total_tasks: 4
-completed_tasks: 3
-in_progress_tasks: 1
+completed_tasks: 4
+in_progress_tasks: 0
 blocked_tasks: 0
 at_risk_tasks: 0
 owners:
@@ -72,13 +73,13 @@ tasks:
   estimated_effort: 2 pts
   priority: high
 - id: PCP-709
-  description: Extract and publish components to @miethe/ui. For each "extract" decision
-    in PCP-701 manifest fork component to @miethe/ui; refactor dependencies; add package
-    entry; port tests (>80% coverage); add Storybook story; document; publish with
-    semver. Update CCDash imports to use extracted components. Mark task with [pkg]
-    for model tracking. Reference .claude/skills/planning/references/ui-extraction-guidance.md
-    § "9-Step Extraction Process".
-  status: in_progress
+  description: "Extract and publish components to @miethe/ui. For each \"extract\"\
+    \ decision in PCP-701 manifest fork component to @miethe/ui; refactor dependencies;\
+    \ add package entry; port tests (>80% coverage); add Storybook story; document;\
+    \ publish with semver. Update CCDash imports to use extracted components. Mark\
+    \ task with [pkg] for model tracking. Reference .claude/skills/planning/references/ui-extraction-guidance.md\
+    \ \xA7 \"9-Step Extraction Process\"."
+  status: completed
   assigned_to:
   - ui-engineer-enhanced
   - frontend-developer
@@ -104,14 +105,15 @@ notes:
 - Phase 7 is a post-gate foundation and extraction phase. Phase 6 validation gates
   must remain satisfied throughout; all behavior is preserved and only component internals
   are swapped and extracted.
-- PCP-701 audit is a blocking prerequisite — the extraction manifest it produces governs
-  all downstream refactor and extraction decisions in PCP-702, PCP-706, and PCP-709.
+- "PCP-701 audit is a blocking prerequisite \u2014 the extraction manifest it produces\
+  \ governs all downstream refactor and extraction decisions in PCP-702, PCP-706,\
+  \ and PCP-709."
 - PCP-702 and PCP-706 can proceed in parallel once PCP-701 audit report is available.
 - PCP-709 extraction work depends on PCP-701 decisions but can proceed in parallel
   with PCP-702 and PCP-706 extraction/consolidation work.
 - Active plans columns (PCP-702) use extracted/shared components from PCP-709 and
   consolidated metadata from PCP-706.
-progress: 75
+progress: 100
 ---
 
 # Phase 7 Progress: Planning UI Consolidation — Foundation & Extraction
@@ -223,3 +225,17 @@ Dependency: PCP-701.")
 3. Refactor `components/Planning/PlanningGraphPanel.tsx` lines 66–78 (duplicate `NodeTypeIcon` logic) to use the extracted `PlanningNodeTypeIcon`.
 4. After parity verified, delete `components/Planning/primitives/StatusChip.tsx`, `EffectiveStatusChips.tsx`, `MismatchBadge.tsx`, `BatchReadinessPill.tsx`, `PlanningNodeTypeIcon.tsx`, and `variants.ts`. Update `components/Planning/primitives/index.ts` accordingly.
 5. Run `npm run build` + vitest suite; confirm no regressions. Mark PCP-709 `completed` and phase-7 `completed`.
+
+## PCP-709 Completion Note (post-publish)
+
+`@miethe/ui@0.3.0` published to public npm. CCDash-side follow-ups executed:
+- `.npmrc` removed (was pinning `@miethe` to GitHub Packages; now obsolete — package is public on npm).
+- `package.json`: `@miethe/ui` `^0.1.0 → ^0.3.0`; `npm install` added the new primitives.
+- `components/shared/PlanningMetadata.tsx`: 5 extracted primitives + `statusVariant`/`readinessVariant` now sourced from `@miethe/ui/primitives`.
+- `components/Planning/primitives/index.ts`: barrel rewritten to re-export extracted primitives from `@miethe/ui/primitives` for backward compat.
+- Deleted local: `StatusChip.tsx`, `EffectiveStatusChips.tsx`, `MismatchBadge.tsx`, `BatchReadinessPill.tsx`, `PlanningNodeTypeIcon.tsx`, `variants.ts`, + 5 accompanying test files.
+- `PhaseOperationsPanel.tsx`, `LineageRow.tsx`: migrated to `@miethe/ui/primitives` (so nothing depends on the deleted local `variants.ts`).
+- `PlanningGraphPanel.tsx`: removed duplicated local `NodeTypeIcon` (lines 66–78) in favour of `PlanningNodeTypeIcon` from `@miethe/ui/primitives`; dropped now-unused lucide imports.
+- `vitest.config.ts`: added `server.deps.inline: [/@miethe\/ui/]` (the published package uses extensionless ESM imports which Node's native loader rejects; Vite's resolver handles them) and excluded `examples/**` (untracked mirror with Jest-style tests).
+
+Quality gates: `npm run build` ✓; `npx vitest run` → 37/37 test files, **260/260 tests pass**.

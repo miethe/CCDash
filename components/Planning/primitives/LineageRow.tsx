@@ -1,9 +1,7 @@
 import { Clock } from 'lucide-react';
 
 import type { PlanningNode } from '../../../types';
-import { StatusChip } from './StatusChip';
-import { PlanningNodeTypeIcon } from './PlanningNodeTypeIcon';
-import { statusVariant } from './variants';
+import { PlanningNodeTypeIcon, StatusChip, statusVariant } from '@miethe/ui/primitives';
 
 export interface LineageRowProps {
   node: PlanningNode;
