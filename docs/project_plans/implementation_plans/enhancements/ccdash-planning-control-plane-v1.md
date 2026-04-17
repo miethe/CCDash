@@ -4,7 +4,7 @@ schema_version: 3
 doc_type: implementation_plan
 doc_subtype: enhancement_implementation_plan
 primary_doc_role: supporting_document
-status: in-progress
+status: completed
 category: enhancements
 title: 'Implementation Plan: CCDash Planning Control Plane V1'
 description: Implement a planning-first control plane in CCDash that unifies planning
