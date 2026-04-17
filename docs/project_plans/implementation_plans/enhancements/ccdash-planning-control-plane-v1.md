@@ -15,8 +15,8 @@ summary: Build a derived planning graph, planning APIs, live planning updates, p
   provider/model awareness.
 created: 2026-04-16
 updated: '2026-04-17'
-phase_7_status: pending
-phase_8_status: pending
+phase_7_status: completed
+phase_8_status: completed
 priority: high
 risk_level: high
 complexity: High
