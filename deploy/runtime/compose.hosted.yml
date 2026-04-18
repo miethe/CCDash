@@ -18,12 +18,12 @@ services:
       context: ../..
       dockerfile: deploy/runtime/api/Dockerfile
     environment:
-      CCDASH_STORAGE_PROFILE: enterprise
-      CCDASH_DB_BACKEND: postgres
+      CCDASH_STORAGE_PROFILE: ${CCDASH_STORAGE_PROFILE:-enterprise}
+      CCDASH_DB_BACKEND: ${CCDASH_DB_BACKEND:-postgres}
       CCDASH_DATABASE_URL: postgresql://${CCDASH_POSTGRES_USER:-ccdash}:${CCDASH_POSTGRES_PASSWORD:-ccdash}@postgres:5432/${CCDASH_POSTGRES_DB:-ccdash}
       CCDASH_API_BEARER_TOKEN: ${CCDASH_API_BEARER_TOKEN:-ccdash-dev-token}
       CCDASH_FRONTEND_ORIGIN: ${CCDASH_FRONTEND_ORIGIN:-http://localhost:3000}
-      CCDASH_PROJECT_ROOT: /app
+      CCDASH_PROJECT_ROOT: ${CCDASH_PROJECT_ROOT:-/app}
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,13 +41,17 @@ services:
       context: ../..
       dockerfile: deploy/runtime/worker/Dockerfile
     environment:
-      CCDASH_STORAGE_PROFILE: enterprise
-      CCDASH_DB_BACKEND: postgres
+      CCDASH_STORAGE_PROFILE: ${CCDASH_STORAGE_PROFILE:-enterprise}
+      CCDASH_DB_BACKEND: ${CCDASH_DB_BACKEND:-postgres}
       CCDASH_DATABASE_URL: postgresql://${CCDASH_POSTGRES_USER:-ccdash}:${CCDASH_POSTGRES_PASSWORD:-ccdash}@postgres:5432/${CCDASH_POSTGRES_DB:-ccdash}
       CCDASH_WORKER_PROJECT_ID: ${CCDASH_WORKER_PROJECT_ID:-smoke-stack}
-      CCDASH_PROJECT_ROOT: /app
-      CCDASH_WORKER_PROBE_HOST: 0.0.0.0
-      CCDASH_WORKER_PROBE_PORT: 9465
+      CCDASH_PROJECT_ROOT: ${CCDASH_PROJECT_ROOT:-/app}
+      CCDASH_WORKER_PROBE_HOST: ${CCDASH_WORKER_PROBE_HOST:-0.0.0.0}
+      CCDASH_WORKER_PROBE_PORT: ${CCDASH_WORKER_PROBE_PORT:-9465}
+      CCDASH_TELEMETRY_EXPORT_ENABLED: ${CCDASH_TELEMETRY_EXPORT_ENABLED:-true}
+      CCDASH_SAM_ENDPOINT: ${CCDASH_SAM_ENDPOINT:-https://telemetry.invalid.example/api/v1/analytics/execution-outcomes}
+      CCDASH_SAM_API_KEY: ${CCDASH_SAM_API_KEY:-smoke-api-key}
+      CCDASH_TELEMETRY_ALLOW_INSECURE: ${CCDASH_TELEMETRY_ALLOW_INSECURE:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,8 +71,8 @@ services:
       args:
         VITE_CCDASH_API_BASE_URL: ${VITE_CCDASH_API_BASE_URL:-/api}
     environment:
-      CCDASH_FRONTEND_PORT: 3000
-      CCDASH_API_UPSTREAM: http://api:8000
+      CCDASH_FRONTEND_PORT: ${CCDASH_FRONTEND_PORT:-3000}
+      CCDASH_API_UPSTREAM: ${CCDASH_API_UPSTREAM:-http://api:8000}
     depends_on:
       api:
         condition: service_healthy
