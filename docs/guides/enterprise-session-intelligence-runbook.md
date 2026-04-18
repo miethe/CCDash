@@ -123,7 +123,8 @@ Operator rules:
 
 - `backend.runtime.bootstrap_api:app` is the stateless hosted API runtime.
 - `backend.worker` is the background-only runtime for sync, refresh, and scheduled jobs.
-- `backend.main:app`, `npm run dev`, `npm run dev:backend`, and `npm run start:backend` are local-convenience entrypoints and are not the canonical hosted API posture.
+- `backend.main:app` and `npm run dev` are local-convenience entrypoints and are not the hosted API posture.
+- `npm run dev:backend` and `npm run start:backend` are wrappers around `backend.runtime.bootstrap_api:app`; they are useful local helpers, but the canonical hosted entrypoint remains the bootstrap module itself.
 - If you are validating locally against enterprise Postgres, keep the same API/worker split. Do not rely on the desktop `local` runtime profile for enterprise validation.
 
 ## 4. Initial Health Validation

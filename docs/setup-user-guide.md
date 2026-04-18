@@ -183,7 +183,7 @@ Canonical runtime entrypoints:
 | `worker` | `python -m backend.worker` | hosted or local background sync, refresh, and scheduled jobs |
 | `test` | `backend.runtime.bootstrap_test:app` | deterministic test harness with incidental background work disabled |
 
-The matrix above is the operator-facing contract. Wrapper scripts are not equivalent just because they start Python. In the current Phase 1 repo state, `npm run dev:backend` and `npm run start:backend` still route through the local-convenience backend path, so they are valid local workflows but not the canonical hosted API entrypoint.
+The matrix above is the operator-facing contract. Wrapper scripts are only equivalent when they select the same runtime explicitly. `npm run dev:backend` and `npm run start:backend` are repo wrappers for the hosted `api` runtime; `npm run dev` remains the local-convenience path.
 
 Build frontend assets:
 
@@ -191,13 +191,13 @@ Build frontend assets:
 npm run build
 ```
 
-Start local-convenience backend:
+Start API via the repo wrapper:
 
 ```bash
 npm run start:backend
 ```
 
-Start hosted API explicitly:
+Start hosted API directly:
 
 ```bash
 backend/.venv/bin/python -m uvicorn backend.runtime.bootstrap_api:app --host 0.0.0.0 --port 8000
@@ -215,7 +215,7 @@ Serve built frontend:
 npm run start:frontend
 ```
 
-For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app`, `npm run dev`, `npm run dev:backend`, and `npm run start:backend` remain local-convenience entrypoints in this Phase 1 contract.
+For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` and `npm run dev` remain the local-convenience entrypoints; `npm run dev:backend` and `npm run start:backend` are convenience wrappers around the hosted `api` runtime.
 
 Enterprise operator split:
 
