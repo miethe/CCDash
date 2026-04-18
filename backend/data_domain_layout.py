@@ -598,6 +598,18 @@ REPOSITORY_OWNERSHIP = MappingProxyType(
             inherited_ownership_concerns=("session_stack_observations", "session_stack_components"),
             notes="These tables remain operational until a future plan splits analytics and intelligence further.",
         ),
+        "worktree_contexts": RepositoryOwnership(
+            key="worktree_contexts",
+            domain="operational_job_data",
+            boundary="operational_state",
+            sqlite_module="backend.db.repositories.worktree_contexts",
+            postgres_module="backend.db.repositories.postgres.worktree_contexts",
+            concerns=("planning_worktree_contexts",),
+            ownership_mode="scope-aware-only",
+            scope_owned_concerns=("planning_worktree_contexts",),
+            inherited_ownership_concerns=(),
+            notes="Worktree context metadata for plan-driven launches (PCP-501). No git plumbing yet.",
+        ),
     }
 )
 

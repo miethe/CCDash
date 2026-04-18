@@ -9,7 +9,7 @@ title: "PRD: CCDash Planning Control Plane V1"
 description: "Turn CCDash into the GUI control plane for frontmatter-driven planning, phase operations, and agent-team execution preparation."
 summary: "Add a planning-first control plane to CCDash that unifies planning artifacts, derived status, blockers, tracker intake, and plan-driven agent team launch on top of existing execution and workflow foundations."
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-17
 priority: high
 risk_level: high
 complexity: High
@@ -372,6 +372,59 @@ The normal experience should be stream-first with REST recovery rather than heav
 3. At least 60% of eligible parallel batch launches in pilot projects start from plan-driven launch preparation rather than ad hoc command entry.
 4. Planning mismatch and stale-state issues are surfaced early enough that manual status remediation incidents drop by at least 40%.
 5. Operator satisfaction for planning/execution coordination improves materially in pilot feedback.
+
+## UI Integration & Consolidation (Amendment)
+
+### Problem
+
+Phases 1–5 of the Planning Control Plane V1 introduced planning-specific UI surfaces (`/planning` route with `PlanningHomePage`, `PlanningGraphPanel`, `PlanningNodeDetail`, `TrackerIntakePanel`, and shared planning metadata badges) in isolation. However, the existing `/board` and `/plans` pages already provide powerful, proven navigation, modal interactions, and artifact viewing patterns. The current planning UI creates **parallel primitive sets instead of reusing shared components**, leading to:
+
+1. **UI Inconsistency**: Planning surfaces use planning-only badges and list views instead of the same feature modals, document modals, and board column patterns used elsewhere.
+2. **Data Gaps**: No unified view of **active plans** as a workflow column; no distinct view of **planned features** (features with implementation plans but no start date); no way to see both sides of execution readiness.
+3. **Navigation Friction**: Clicking planning artifacts opens planning-specific detail panels rather than the familiar feature modal (/board) or full document modal (/plans) that operators already use.
+4. **Component Debt**: `components/Planning/` contains planning-only metadata primitives instead of delegating to existing `components/DocumentModal.tsx`, `components/ProjectBoard.tsx` feature modal logic, and shared board/catalog components.
+
+### Requirements
+
+**R-A: Active Plans Column + Planned Features View**
+Planning home must provide an additional column or tab showing active implementation plans (plans with `status: in-progress`) and a separate column for planned features (features with implementation plans and `status: [draft|approved]` but no execution start). Both should reuse the same list/column primitives from `/board` (e.g., `SessionCard` or feature card components) for consistency.
+
+**R-B: Clickable Artifact Composition Indicators**
+Each artifact-composition badge (e.g., "3 Design Specs", "1 PRD", "2 Progress Files") on planning surfaces should be clickable. Clicking should open a dedicated screen listing all artifacts of that type, with one row per artifact showing title, status, last updated, and key metadata. This screen should reuse the same components as the Documents tab on `/board` (LinkedDocumentsList or similar) and the full document list on `/plans`.
+
+**R-C: Feature Modal First, Expand to Detail**
+Clicking on any planned feature or feature-related planning artifact should open the **same feature modal component used on /board** (not a planning-only detail panel). The modal must include an "Expand" button that navigates to the full dedicated page (e.g., `/planning/feature/:featureId/detail`) for deeper phase/batch operations. This unifies navigation: planning home ➜ feature modal ➜ full page drill-down.
+
+**R-D: Planning Artifact ➜ Document Modal Integration**
+Clicking on an individual planning artifact (design spec, PRD, progress file, context file, report) should open the **full document modal from `/plans`** with the same rendering, metadata, and navigation UI. Planning surfaces should not introduce planning-only document viewers; instead, delegate to the existing DocumentModal component and its content viewing capabilities.
+
+**R-E: Replace Planning-Only Primitives with Board/Plans Components**
+Audit `components/Planning/` and identify all planning-only metadata components (badges, status chips, list renderers) that duplicate logic from `/board` or `/plans` (e.g., `EffectiveStatusChips`, `MismatchBadge`, planning-only feature cards). Replace with shared components or upstream the planning-aware variants to a truly shared location (e.g., `components/shared/PlanningMetadata.tsx`) so adoption is automatic across `/board`, `/plans`, and `/planning`.
+
+### Rationale
+
+Phases 1–5 ship working planning surfaces but introduce **primitive duplication** that fragments the operator experience. A consolidation pass in Phase 7 (before final validation) ensures:
+
+1. **Consistency**: Planning operators see the same UI patterns and modal behaviors as feature/board operators.
+2. **Reusability**: Shared components reduce maintenance surface and make new planning-aware features cheaper to add elsewhere.
+3. **Navigation Clarity**: "Click something" always leads to a predictable modal ➜ page pattern, not different modals in different surfaces.
+4. **Phase 6 Compatibility**: Phase 6 validation gates remain valid because Phase 7 consolidation refactors UI only, not data contracts or behavior.
+
+### Acceptance Criteria Additions
+
+1. Active plans and planned features columns/views render using the same list primitives as `/board` feature lists.
+2. Clicking an artifact-composition badge opens a screen with the same component set as the Documents tab or `/plans` artifact list.
+3. Clicking a feature opens the feature modal; "Expand" navigates to full page (no separate planning modals for features).
+4. Clicking a planning artifact opens the DocumentModal component from `/plans`, not a planning-only renderer.
+5. `components/Planning/` contains no planning-only metadata primitives; all status/mismatch/batch-readiness rendering delegates to shared components under `components/shared/PlanningMetadata.tsx` or upstream to `/board` components where applicable.
+6. All planning surfaces use the same modal interactions, document viewers, and feature card patterns as `/board` and `/plans`.
+
+### Out of Scope (Consolidation Phase)
+
+1. **No redesign of `/board` or `/plans`** themselves; consolidation flows one direction (planning ➜ reuse board/plans).
+2. **No change to Phase 6 validation gates** or test expectations; Phase 7 is UI refactoring, not behavioral change.
+3. **No new planning-native data structures** or contract changes; Phase 7 uses existing planning and feature APIs.
+4. **No feature flag or partial rollout** needed for Phase 7 (it's a consolidation, not a new capability).
 
 ## Rollout Strategy
 

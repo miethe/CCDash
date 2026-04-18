@@ -17,3 +17,15 @@ export const projectFeaturesTopic = (projectId: string): string => joinLiveTopic
 export const projectTestsTopic = (projectId: string): string => joinLiveTopic('project', projectId, 'tests');
 
 export const projectOpsTopic = (projectId: string): string => joinLiveTopic('project', projectId, 'ops');
+
+// ── Planning Control Plane live topics (PCP-204) ──────────────────────────────
+// Topic strings MUST match backend/application/live_updates/topics.py exactly.
+
+export const projectPlanningTopic = (projectId: string): string =>
+  joinLiveTopic('project', projectId, 'planning');
+
+export const featurePlanningTopic = (featureId: string): string =>
+  joinLiveTopic('feature', featureId, 'planning');
+
+export const featurePhaseTopic = (featureId: string, phaseNumber: number | string): string =>
+  joinLiveTopic('feature', featureId, 'phase', String(phaseNumber));

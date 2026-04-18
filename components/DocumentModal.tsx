@@ -19,7 +19,7 @@ import {
    X,
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { getFeatureStatusStyle } from './featureStatus';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { updateDocument as saveDocument } from '../services/documents';
@@ -552,6 +552,7 @@ export const DocumentModal = ({
                         {doc.docSubtype && <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">{doc.docSubtype}</span>}
                         {doc.rootKind && <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">{doc.rootKind}</span>}
                         {linkedFeatures.slice(0, 3).map(feature => {
+                           const resolvedFeature = featureIndex.get(feature.id.toLowerCase());
                            const style = getFeatureStatusStyle(feature.status);
                            return (
                               <button
@@ -569,6 +570,16 @@ export const DocumentModal = ({
                            <span className="text-[10px] rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-slate-300">
                               +{linkedFeatures.length - 3} features
                            </span>
+                        )}
+                        {primaryExecutionFeature && (
+                           <Link
+                              to={`/planning/features/${encodeURIComponent(primaryExecutionFeature.id)}`}
+                              onClick={onClose}
+                              className="text-[10px] text-indigo-400/70 hover:text-indigo-300 border border-indigo-500/20 hover:border-indigo-500/50 rounded-full px-2 py-0.5 transition-colors"
+                              title="View in planning graph"
+                           >
+                              View in planning graph
+                           </Link>
                         )}
                      </div>
                      <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">

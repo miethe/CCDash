@@ -208,6 +208,7 @@ class TelemetryQueueRepository(Protocol):
         project_slug: str,
         payload: dict[str, Any] | str,
         queue_id: str | None = None,
+        event_type: str = "execution_outcome",
     ) -> dict[str, Any]: ...
     async def fetch_pending_batch(self, batch_size: int) -> list[dict[str, Any]]: ...
     async def mark_synced(self, queue_id: str) -> dict[str, Any] | None: ...
@@ -497,6 +498,34 @@ class TestIntegrityRepository(Protocol):
 
 
 # ── Execution Workbench Repository ────────────────────────────────
+
+@runtime_checkable
+class WorktreeContextRepository(Protocol):
+    async def create(self, data: dict) -> dict: ...
+    async def update(self, context_id: str, updates: dict) -> dict | None: ...
+    async def get_by_id(self, context_id: str) -> dict | None: ...
+    async def list(
+        self,
+        project_id: str,
+        *,
+        feature_id: str | None = None,
+        phase_number: int | None = None,
+        batch_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]: ...
+    async def count(
+        self,
+        project_id: str,
+        *,
+        feature_id: str | None = None,
+        phase_number: int | None = None,
+        batch_id: str | None = None,
+        status: str | None = None,
+    ) -> int: ...
+    async def delete(self, context_id: str) -> bool: ...
+
 
 @runtime_checkable
 class ExecutionRepository(Protocol):

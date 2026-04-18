@@ -11,6 +11,9 @@ import uvicorn
 from backend.runtime.bootstrap_worker import build_worker_probe_app, build_worker_runtime
 from backend.runtime.container import RuntimeContainer
 
+DEFAULT_WORKER_PROBE_HOST = "127.0.0.1"
+DEFAULT_WORKER_PROBE_PORT = 9465
+
 
 class WorkerRuntimeApp:
     def __init__(self) -> None:
@@ -79,11 +82,21 @@ def _resolve_probe_binding(*, probe_host: str | None, probe_port: int | None) ->
     if resolved_port is None:
         raw_port = os.getenv("CCDASH_WORKER_PROBE_PORT", "").strip()
         if not raw_port:
-            return None
-        resolved_port = int(raw_port)
+            resolved_port = DEFAULT_WORKER_PROBE_PORT
+        else:
+            try:
+                resolved_port = int(raw_port)
+            except ValueError as exc:
+                raise RuntimeError(
+                    "CCDASH_WORKER_PROBE_PORT must be an integer greater than 0."
+                ) from exc
     if resolved_port <= 0:
-        return None
-    resolved_host = probe_host or os.getenv("CCDASH_WORKER_PROBE_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        raise RuntimeError("CCDASH_WORKER_PROBE_PORT must be an integer greater than 0.")
+    resolved_host = (
+        probe_host
+        or os.getenv("CCDASH_WORKER_PROBE_HOST", DEFAULT_WORKER_PROBE_HOST).strip()
+        or DEFAULT_WORKER_PROBE_HOST
+    )
     return resolved_host, resolved_port
 
 

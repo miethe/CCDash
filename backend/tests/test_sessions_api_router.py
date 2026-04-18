@@ -483,6 +483,77 @@ class _FakeFeatureRepo:
         return feature_map.get(feature_id)
 
 
+class SessionApiRouterIsPrimaryLinkTests(unittest.TestCase):
+    """Unit tests for api.py _is_primary_session_link heuristic."""
+
+    def test_workflow_command_at_low_confidence_is_primary(self) -> None:
+        # confidence 0.68 is below both 0.75 and 0.9 gates, but command_args_path +
+        # workflow verb should still promote to Primary.
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.68,
+            {"command_args_path"},
+            ["/dev:execute-phase phase 4 docs/plans/feature-v1.md"],
+        )
+
+        self.assertTrue(is_primary)
+
+    def test_workflow_command_no_prefix_variant(self) -> None:
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.68,
+            {"command_args_path"},
+            ["execute-phase foo"],
+        )
+
+        self.assertTrue(is_primary)
+
+    def test_workflow_command_negative_unrecognized_command(self) -> None:
+        # command_args_path present but no recognized workflow verb.
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.68,
+            {"command_args_path"},
+            ["/some-other-command"],
+        )
+
+        self.assertFalse(is_primary)
+
+    def test_manual_related_role_overrides_workflow_command(self) -> None:
+        # Explicit linkRole="related" must win even when workflow verb is present.
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.95,
+            {"command_args_path"},
+            ["/dev:execute-phase"],
+            link_role="related",
+        )
+
+        self.assertFalse(is_primary)
+
+    def test_manual_primary_role_wins_regardless_of_signals(self) -> None:
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.10,
+            set(),
+            [],
+            link_role="primary",
+        )
+
+        self.assertTrue(is_primary)
+
+    def test_workflow_command_requires_command_args_path_signal(self) -> None:
+        # Correct workflow verb but signal does NOT include command_args_path.
+        is_primary = api_router._is_primary_session_link(
+            "session_evidence",
+            0.68,
+            {"file_read"},
+            ["/dev:execute-phase"],
+        )
+
+        self.assertFalse(is_primary)
+
+
 class SessionApiRouterTests(unittest.IsolatedAsyncioTestCase):
     def test_derive_session_title_prefers_subagent_type_for_subagent(self) -> None:
         title = api_router._derive_session_title(

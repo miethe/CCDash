@@ -29,7 +29,7 @@ from backend.runtime.storage_contract import (
     resolve_storage_mode,
 )
 from backend.runtime_ports import build_core_ports
-from backend.worker import serve_worker
+from backend.worker import _resolve_probe_binding, serve_worker
 
 
 class _ResolvedBundle:
@@ -1050,6 +1050,18 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         initialize_observability.assert_not_called()
         get_connection.assert_not_awaited()
+
+    def test_worker_probe_binding_defaults_to_documented_admin_port(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_resolve_probe_binding(probe_host=None, probe_port=None), ("127.0.0.1", 9465))
+
+    def test_worker_probe_binding_rejects_invalid_env_port(self) -> None:
+        with patch.dict("os.environ", {"CCDASH_WORKER_PROBE_PORT": "invalid"}, clear=True):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "CCDASH_WORKER_PROBE_PORT must be an integer greater than 0.",
+            ):
+                _resolve_probe_binding(probe_host=None, probe_port=None)
 
 
 if __name__ == "__main__":

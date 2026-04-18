@@ -114,3 +114,24 @@ def project_tests_topic(project_id: str) -> str:
 
 def project_ops_topic(project_id: str) -> str:
     return join_topic("project", project_id, "ops")
+
+
+# ── Planning topics (PCP-203) ────────────────────────────────────────────────
+# These carry invalidation signals for the Planning Control Plane.
+# PCP-204 must mirror these exact strings on the frontend.
+
+
+def project_planning_topic(project_id: str) -> str:
+    """project.{id}.planning — project-scoped planning state changed."""
+    return join_topic("project", project_id, "planning")
+
+
+def feature_planning_topic(feature_id: str) -> str:
+    """feature.{id}.planning — per-feature planning state changed."""
+    return join_topic("feature", feature_id, "planning")
+
+
+def feature_phase_topic(feature_id: str, phase_number: int | str) -> str:
+    """feature.{id}.phase.{n} — a specific phase within a feature changed."""
+    return join_topic("feature", feature_id, "phase", str(phase_number))
+    # TODO(PCP-Phase5): add worktree_planning_topic when worktree-level hooks land.

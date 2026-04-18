@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { FileTree } from '@miethe/ui/content-viewer';
 import { useData } from '../contexts/DataContext';
 import {
@@ -15,6 +15,7 @@ import { FileText, LayoutGrid, List, Search, FolderTree, ChevronRight, ChevronDo
 import { DocumentModal, getFileContent } from './DocumentModal';
 import { UnifiedContentViewer } from './content/UnifiedContentViewer';
 import { getFeatureStatusStyle } from './featureStatus';
+import { EffectiveStatusChips, MismatchBadge } from '@/components/shared/PlanningMetadata';
 import { SidebarFiltersPortal, SidebarFiltersSection } from './SidebarFilters';
 import { resolveContentViewerFrontmatter } from '../lib/contentViewer';
 import { buildDocumentFileTree } from '../lib/documentFileTree';
@@ -777,20 +778,42 @@ export const PlanCatalog: React.FC = () => {
                                     {linkedFeatures.length > 0 && (
                                         <div className="mb-3 flex flex-wrap gap-1.5">
                                             {linkedFeatures.slice(0, 2).map(linkedFeature => {
-                                                const style = getFeatureStatusStyle(linkedFeature.status);
+                                                const isMismatch = Boolean(linkedFeature.feature?.planningStatus?.mismatchState?.isMismatch);
                                                 return (
-                                                    <button
-                                                        key={linkedFeature.id}
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`);
-                                                        }}
-                                                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors ${style.badge}`}
-                                                        title={`Open Feature ${linkedFeature.id} (${style.label})`}
-                                                    >
-                                                        {linkedFeature.id}
-                                                    </button>
+                                                    <span key={linkedFeature.id} className="inline-flex items-center gap-1.5">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`);
+                                                            }}
+                                                            title={`Open Feature ${linkedFeature.id}`}
+                                                            className="inline-flex items-center gap-1"
+                                                        >
+                                                            <EffectiveStatusChips
+                                                                rawStatus={linkedFeature.feature?.planningStatus?.rawStatus ?? linkedFeature.status}
+                                                                effectiveStatus={linkedFeature.feature?.planningStatus?.effectiveStatus ?? undefined}
+                                                                isMismatch={isMismatch}
+                                                                provenance={linkedFeature.feature?.planningStatus?.provenance ?? undefined}
+                                                            />
+                                                        </button>
+                                                        <span className="font-mono text-[10px] text-slate-400">{linkedFeature.id}</span>
+                                                        {isMismatch && (
+                                                            <MismatchBadge
+                                                                compact
+                                                                state={linkedFeature.feature!.planningStatus!.mismatchState.state}
+                                                                reason={linkedFeature.feature!.planningStatus!.mismatchState.reason}
+                                                            />
+                                                        )}
+                                                        <Link
+                                                            to={`/planning/features/${encodeURIComponent(linkedFeature.id)}`}
+                                                            onClick={e => e.stopPropagation()}
+                                                            className="text-[10px] text-indigo-400/70 hover:text-indigo-300 hover:underline"
+                                                            title="Open planning detail"
+                                                        >
+                                                            plan
+                                                        </Link>
+                                                    </span>
                                                 );
                                             })}
                                             {linkedFeatures.length > 2 && (
@@ -1071,16 +1094,40 @@ export const PlanCatalog: React.FC = () => {
                                         <div className="text-[10px] text-slate-500 uppercase mb-2">Linked Features</div>
                                         <div className="flex flex-wrap gap-1.5">
                                             {activeLinkedFeatures.map(linkedFeature => {
-                                                const style = getFeatureStatusStyle(linkedFeature.status);
+                                                const isMismatch = Boolean(linkedFeature.feature?.planningStatus?.mismatchState?.isMismatch);
                                                 return (
-                                                    <button
-                                                        key={linkedFeature.id}
-                                                        type="button"
-                                                        onClick={() => navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`)}
-                                                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors ${style.badge}`}
-                                                    >
-                                                        {linkedFeature.id}
-                                                    </button>
+                                                    <span key={linkedFeature.id} className="flex flex-col gap-1">
+                                                        <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => navigate(`/board?feature=${encodeURIComponent(linkedFeature.id)}`)}
+                                                                className="inline-flex items-center gap-1"
+                                                                title={`Open Feature ${linkedFeature.id}`}
+                                                            >
+                                                                <EffectiveStatusChips
+                                                                    rawStatus={linkedFeature.feature?.planningStatus?.rawStatus ?? linkedFeature.status}
+                                                                    effectiveStatus={linkedFeature.feature?.planningStatus?.effectiveStatus ?? undefined}
+                                                                    isMismatch={isMismatch}
+                                                                    provenance={linkedFeature.feature?.planningStatus?.provenance ?? undefined}
+                                                                />
+                                                            </button>
+                                                            <span className="font-mono text-[10px] text-slate-400">{linkedFeature.id}</span>
+                                                            <Link
+                                                                to={`/planning/features/${encodeURIComponent(linkedFeature.id)}`}
+                                                                className="text-[10px] text-indigo-400/70 hover:text-indigo-300 hover:underline"
+                                                                title="Open planning detail"
+                                                            >
+                                                                plan
+                                                            </Link>
+                                                        </span>
+                                                        {isMismatch && (
+                                                            <MismatchBadge
+                                                                compact
+                                                                state={linkedFeature.feature!.planningStatus!.mismatchState.state}
+                                                                reason={linkedFeature.feature!.planningStatus!.mismatchState.reason}
+                                                            />
+                                                        )}
+                                                    </span>
                                                     );
                                                 })}
                                             {activeLinkedFeatures.length === 0 && (

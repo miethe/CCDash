@@ -47,7 +47,10 @@ from backend.session_mappings import (
 from backend.model_identity import derive_model_identity
 from backend.session_badges import derive_session_badges
 from backend.document_linking import canonical_slug
-from backend.application.live_updates.domain_events import publish_feature_invalidation
+from backend.application.live_updates.domain_events import (
+    publish_feature_invalidation,
+    publish_planning_invalidation,
+)
 from backend.services.feature_execution import (
     build_execution_recommendation,
     build_execution_context,
@@ -433,6 +436,22 @@ _PHASE_FROM_TEXT_PATTERN = re.compile(r"\bphase[\s:_-]*(\d+)\b", re.IGNORECASE)
 _PHASE_RANGE_PATTERN = re.compile(r"^(\d+)\s*-\s*(\d+)$")
 _TITLE_TOKEN_SANITIZER_PATTERN = re.compile(r"[^a-z0-9]+")
 
+# Workflow command verb tokens that unambiguously indicate a session was
+# launched to execute work on a specific feature.  Matched as case-insensitive
+# substrings against each command string so that prefix variants like
+# "/dev:execute-phase", "/planning:plan-feature", and bare "execute-phase" all
+# match without needing to enumerate every possible prefix.
+_PRIMARY_WORKFLOW_COMMAND_TOKENS: tuple[str, ...] = (
+    "execute-phase",
+    "plan-feature",
+    "implement-story",
+    "complete-user-story",
+    "quick-feature",
+    "create-feature",
+    "new-feature",
+    "plan-story",
+)
+
 
 def _safe_json(raw: str | None) -> dict:
     if not raw:
@@ -460,6 +479,11 @@ def _is_primary_session_link(
     commands: list[str],
 ) -> bool:
     if strategy == "task_frontmatter":
+        return True
+    if "command_args_path" in signal_types and any(
+        any(token in cmd.lower() for token in _PRIMARY_WORKFLOW_COMMAND_TOKENS)
+        for cmd in commands
+    ):
         return True
     if confidence >= 0.9:
         return True
@@ -1749,6 +1773,14 @@ async def update_feature_status(feature_id: str, req: StatusUpdateRequest, reque
         source="features_api",
         payload={"status": req.status},
     )
+    # Fan out: feature status change invalidates the planning projection.
+    await publish_planning_invalidation(
+        active_project.id,
+        feature_id=target_feature_id,
+        reason="feature_status_updated",
+        source="features_api",
+        payload={"status": req.status},
+    )
     return await get_feature(target_feature_id)
 
 
@@ -1785,6 +1817,16 @@ async def update_phase_status(feature_id: str, phase_id: str, req: StatusUpdateR
     await publish_feature_invalidation(
         active_project.id,
         feature_id=target_feature_id,
+        reason="feature_phase_status_updated",
+        source="features_api",
+        payload={"phaseId": phase_id, "status": req.status},
+    )
+    # Fan out with phase granularity — phase_id is used as phase_number since
+    # the planning topic uses identifier-level granularity at this layer.
+    await publish_planning_invalidation(
+        active_project.id,
+        feature_id=target_feature_id,
+        phase_number=phase_id,
         reason="feature_phase_status_updated",
         source="features_api",
         payload={"phaseId": phase_id, "status": req.status},
@@ -1831,6 +1873,15 @@ async def update_task_status(feature_id: str, phase_id: str, task_id: str, req: 
     await publish_feature_invalidation(
         active_project.id,
         feature_id=target_feature_id,
+        reason="feature_task_status_updated",
+        source="features_api",
+        payload={"phaseId": phase_id, "taskId": task_id, "status": req.status},
+    )
+    # Fan out: task completion shifts phase progress, which invalidates planning.
+    await publish_planning_invalidation(
+        active_project.id,
+        feature_id=target_feature_id,
+        phase_number=phase_id,
         reason="feature_task_status_updated",
         source="features_api",
         payload={"phaseId": phase_id, "taskId": task_id, "status": req.status},

@@ -94,6 +94,9 @@ class _OperationalStateView(_RepositoryDomainView):
     def agentic_intelligence(self) -> Any:
         return self._repo("agentic_intelligence")
 
+    def worktree_contexts(self) -> Any:
+        return self._repo("worktree_contexts")
+
 
 class _IdentityAccessView(_RepositoryDomainView):
     def principals(self) -> Any:
@@ -152,6 +155,7 @@ class RepositoryBackedStorageUnitOfWork:
                 "test_integrity",
                 "execution",
                 "agentic_intelligence",
+                "worktree_contexts",
             ),
         )
         self._identity_access_view = _IdentityAccessView(
@@ -266,6 +270,9 @@ class RepositoryBackedStorageUnitOfWork:
 
     def agentic_intelligence(self) -> Any:
         return self._repo("agentic_intelligence")
+
+    def worktree_contexts(self) -> Any:
+        return self._repo("worktree_contexts")
 
     def principals(self) -> Any:
         return self._repo("principals")

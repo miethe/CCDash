@@ -8,7 +8,7 @@ from backend import config
 
 logger = logging.getLogger("ccdash.db.postgres")
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 _TABLES = """
 -- ── Schema version tracking ────────────────────────────────────────
@@ -904,6 +904,38 @@ CREATE INDEX IF NOT EXISTS idx_execution_approvals_run
     ON execution_approvals(run_id, requested_at DESC);
 """
 
+_PLANNING_WORKTREE_CONTEXTS_DDL = """
+-- ── 15. Planning Worktree Contexts (PCP-501) ──────────────────────
+CREATE TABLE IF NOT EXISTS planning_worktree_contexts (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL,
+    feature_id        TEXT DEFAULT '',
+    phase_number      INTEGER,
+    batch_id          TEXT DEFAULT '',
+    branch            TEXT DEFAULT '',
+    worktree_path     TEXT DEFAULT '',
+    base_branch       TEXT DEFAULT '',
+    base_commit_sha   TEXT DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'draft',
+    last_run_id       TEXT DEFAULT '',
+    provider          TEXT DEFAULT 'local',
+    notes             TEXT DEFAULT '',
+    metadata_json     JSONB DEFAULT '{}'::jsonb,
+    created_by        TEXT DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_project_feature
+    ON planning_worktree_contexts(project_id, feature_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_project_status
+    ON planning_worktree_contexts(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_feature_phase_batch
+    ON planning_worktree_contexts(feature_id, phase_number, batch_id);
+CREATE INDEX IF NOT EXISTS idx_planning_worktree_metadata_json
+    ON planning_worktree_contexts USING GIN (metadata_json);
+"""
+
 _TEST_VISUALIZER_TABLES = """
 -- ── 14. Test Visualizer ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS test_runs (
@@ -1297,6 +1329,11 @@ async def _ensure_test_visualizer_tables(db: asyncpg.Connection) -> None:
     await db.execute(_TEST_VISUALIZER_TABLES)
 
 
+async def _ensure_planning_worktree_contexts_table(db: asyncpg.Connection) -> None:
+    """Idempotent: create planning_worktree_contexts table and indexes if missing."""
+    await db.execute(_PLANNING_WORKTREE_CONTEXTS_DDL)
+
+
 async def _ensure_enterprise_identity_audit_tables(db: asyncpg.Connection) -> None:
     """Create enterprise-only identity and audit tables (idempotent)."""
     await db.execute(_ENTERPRISE_IDENTITY_AUDIT_TABLES)
@@ -1348,6 +1385,7 @@ async def run_migrations(db: asyncpg.Connection) -> None:
     else:
         logger.info(f"Schema version {current_version} already recorded; running idempotent column/index checks")
     await _ensure_test_visualizer_tables(db)
+    await _ensure_planning_worktree_contexts_table(db)
     await _ensure_enterprise_identity_audit_tables(db)
     await _ensure_enterprise_session_intelligence_tables(db)
     await _ensure_entity_link_uniqueness(db)

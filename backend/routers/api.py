@@ -48,6 +48,22 @@ from backend.request_scope import get_core_ports, get_request_context
 
 _SHELL_TOOL_NAMES = {"bash", "exec_command", "shell_command", "shell"}
 _SUBAGENT_TOOL_NAMES = {"task", "agent"}
+
+# Workflow command verb tokens that unambiguously indicate a session was
+# launched to execute work on a specific feature.  Matched as case-insensitive
+# substrings against each command string so that prefix variants like
+# "/dev:execute-phase", "/planning:plan-feature", and bare "execute-phase" all
+# match without needing to enumerate every possible prefix.
+_PRIMARY_WORKFLOW_COMMAND_TOKENS: tuple[str, ...] = (
+    "execute-phase",
+    "plan-feature",
+    "implement-story",
+    "complete-user-story",
+    "quick-feature",
+    "create-feature",
+    "new-feature",
+    "plan-story",
+)
 logger = logging.getLogger("ccdash.api")
 session_facet_service = SessionFacetService()
 session_transcript_service = SessionTranscriptService()
@@ -315,6 +331,11 @@ def _is_primary_session_link(
     if normalized_link_role == "related":
         return False
     if strategy == "task_frontmatter":
+        return True
+    if "command_args_path" in signal_types and any(
+        any(token in cmd.lower() for token in _PRIMARY_WORKFLOW_COMMAND_TOKENS)
+        for cmd in commands
+    ):
         return True
     if confidence >= 0.9:
         return True

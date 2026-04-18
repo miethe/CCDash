@@ -35,6 +35,7 @@ from backend.db.repositories.postgres.test_mappings import PostgresTestMappingRe
 from backend.db.repositories.postgres.test_results import PostgresTestResultRepository
 from backend.db.repositories.postgres.test_runs import PostgresTestRunRepository
 from backend.db.repositories.postgres.usage_attribution import PostgresSessionUsageRepository
+from backend.db.repositories.postgres.worktree_contexts import PostgresWorktreeContextRepository
 
 
 class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
@@ -64,6 +65,7 @@ class EnterpriseStorageUnitOfWork(RepositoryBackedStorageUnitOfWork):
                 "test_integrity": PostgresTestIntegrityRepository,
                 "execution": PostgresExecutionRepository,
                 "agentic_intelligence": PostgresAgenticIntelligenceRepository,
+                "worktree_contexts": PostgresWorktreeContextRepository,
                 "principals": PostgresPrincipalRepository,
                 "scope_identifiers": PostgresScopeIdentifierRepository,
                 "memberships": PostgresMembershipRepository,

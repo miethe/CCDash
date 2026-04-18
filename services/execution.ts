@@ -15,6 +15,13 @@ import {
   RecommendedStackComponent,
   SimilarWorkExample,
   StackRecommendationEvidence,
+  LaunchPreparationRequest,
+  LaunchPreparation,
+  LaunchProviderCapability,
+  LaunchStartRequest,
+  LaunchStartResponse,
+  WorktreeContext,
+  WorktreeContextStatus,
 } from '../types';
 
 const API_BASE = '/api/features';
@@ -321,5 +328,89 @@ export async function retryExecutionRun(
   if (!res.ok) {
     throw new Error(`Failed to retry execution run (${res.status})`);
   }
+  return res.json();
+}
+
+export async function prepareLaunch(
+  payload: LaunchPreparationRequest,
+): Promise<LaunchPreparation> {
+  const res = await fetch(`${EXECUTION_API_BASE}/launch/prepare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to prepare launch (${res.status})`);
+  return res.json();
+}
+
+export async function startLaunch(
+  payload: LaunchStartRequest,
+): Promise<LaunchStartResponse> {
+  const res = await fetch(`${EXECUTION_API_BASE}/launch/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Failed to start launch (${res.status})${detail ? `: ${detail}` : ''}`);
+  }
+  return res.json();
+}
+
+export async function listWorktreeContexts(params?: {
+  featureId?: string;
+  phaseNumber?: number;
+  batchId?: string;
+  status?: WorktreeContextStatus;
+  limit?: number;
+  offset?: number;
+}): Promise<{ items: WorktreeContext[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params?.featureId) query.set('feature_id', params.featureId);
+  if (typeof params?.phaseNumber === 'number') query.set('phase_number', String(params.phaseNumber));
+  if (params?.batchId) query.set('batch_id', params.batchId);
+  if (params?.status) query.set('status', params.status);
+  if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
+  if (typeof params?.offset === 'number') query.set('offset', String(params.offset));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const res = await fetch(`${EXECUTION_API_BASE}/worktree-contexts${suffix}`);
+  if (!res.ok) throw new Error(`Failed to list worktree contexts (${res.status})`);
+  return res.json();
+}
+
+export async function createWorktreeContext(payload: {
+  projectId: string;
+  featureId?: string;
+  phaseNumber?: number;
+  batchId?: string;
+  branch?: string;
+  worktreePath?: string;
+  baseBranch?: string;
+  provider?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+  createdBy?: string;
+}): Promise<WorktreeContext> {
+  const res = await fetch(`${EXECUTION_API_BASE}/worktree-contexts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to create worktree context (${res.status})`);
+  return res.json();
+}
+
+export interface LaunchCapabilities {
+  enabled: boolean;
+  disabledReason: string;
+  providers: LaunchProviderCapability[];
+  /** Whether the planning control plane surfaces are enabled (PCP-603). */
+  planningEnabled: boolean;
+}
+
+export async function getLaunchCapabilities(): Promise<LaunchCapabilities> {
+  const res = await fetch(`${EXECUTION_API_BASE}/launch/capabilities`);
+  if (!res.ok) throw new Error(`Failed to load launch capabilities (${res.status})`);
   return res.json();
 }
