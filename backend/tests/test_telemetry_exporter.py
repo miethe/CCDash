@@ -89,6 +89,12 @@ class _FakePromGauge:
         self.set_calls.append(value)
 
 
+class _FakeObservation:
+    def __init__(self, value, attributes=None) -> None:  # noqa: ANN001
+        self.value = value
+        self.attributes = attributes or {}
+
+
 class TelemetryObservabilityHelperTests(unittest.TestCase):
     def test_helper_functions_update_metrics_state_and_prometheus(self) -> None:
         otel_counter = _FakeCounter()
@@ -111,37 +117,135 @@ class TelemetryObservabilityHelperTests(unittest.TestCase):
             patch.object(observability_module, "_prom_telemetry_export_errors_counter", prom_error_counter),
             patch.object(observability_module, "_prom_telemetry_export_queue_depth_gauge", prom_queue_gauge),
             patch.object(observability_module, "_prom_telemetry_export_disabled_gauge", prom_disabled_gauge),
+            patch.object(observability_module, "_telemetry_queue_depth_state", {}),
+            patch.object(observability_module, "_worker_job_freshness_state", {}),
+            patch.object(observability_module, "_worker_job_backpressure_state", {}),
         ):
             observability_module.record_telemetry_export_event(
                 project_id="project-1",
                 status="success",
                 count=2,
+                runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
             )
             observability_module.record_telemetry_export_latency(
                 project_id="project-1",
                 duration_ms=12.5,
+                runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
             )
             observability_module.record_telemetry_export_error(
                 project_id="project-1",
                 error_type="5xx",
+                runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
             )
             observability_module.set_telemetry_export_queue_depth(
                 project_id="project-1",
                 status="pending",
                 depth=4,
+                runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
+            )
+            observability_module.set_worker_job_freshness(
+                job_name="telemetry-exporter",
+                project_id="project-1",
+                freshness_ms=1500,
+                runtime_metadata={"runtimeProfile": "worker", "deploymentMode": "hosted", "storageProfile": "local"},
+            )
+            observability_module.set_worker_job_backpressure(
+                job_name="telemetry-exporter",
+                project_id="project-1",
+                backpressure_ratio=0.25,
+                runtime_metadata={"runtimeProfile": "worker", "deploymentMode": "hosted", "storageProfile": "local"},
             )
             observability_module.set_telemetry_export_disabled(True)
 
-        self.assertEqual(otel_counter.calls, [(2, {"status": "success", "project_id": "project-1"})])
-        self.assertEqual(otel_hist.calls, [(12.5, {"project_id": "project-1"})])
-        self.assertEqual(otel_error_counter.calls, [(1, {"error_type": "5xx", "project_id": "project-1"})])
-        self.assertEqual(prom_counter.inc_calls, [2])
-        self.assertEqual(prom_hist.observe_calls, [12.5])
-        self.assertEqual(prom_error_counter.inc_calls, [1])
-        self.assertEqual(prom_queue_gauge.set_calls, [4])
-        self.assertEqual(prom_disabled_gauge.set_calls, [1])
-        self.assertEqual(observability_module._telemetry_queue_depth_state[("project-1", "pending")], 4)
-        self.assertEqual(observability_module._telemetry_export_disabled_state, 1)
+            self.assertEqual(
+                otel_counter.calls,
+                [(
+                    2,
+                    {
+                        "status": "success",
+                        "project_id": "project-1",
+                        "runtime_profile": "api",
+                        "deployment_mode": "hosted",
+                        "storage_profile": "local",
+                    },
+                )],
+            )
+            self.assertEqual(
+                otel_hist.calls,
+                [(
+                    12.5,
+                    {
+                        "project_id": "project-1",
+                        "runtime_profile": "api",
+                        "deployment_mode": "hosted",
+                        "storage_profile": "local",
+                    },
+                )],
+            )
+            self.assertEqual(
+                otel_error_counter.calls,
+                [(
+                    1,
+                    {
+                        "error_type": "5xx",
+                        "project_id": "project-1",
+                        "runtime_profile": "api",
+                        "deployment_mode": "hosted",
+                        "storage_profile": "local",
+                    },
+                )],
+            )
+            self.assertEqual(prom_counter.inc_calls, [2])
+            self.assertEqual(prom_hist.observe_calls, [12.5])
+            self.assertEqual(prom_error_counter.inc_calls, [1])
+            self.assertEqual(prom_queue_gauge.set_calls, [4])
+            self.assertEqual(prom_disabled_gauge.set_calls, [1])
+            self.assertEqual(
+                observability_module._telemetry_queue_depth_state[
+                    ("project-1", "pending", "api", "hosted", "local")
+                ],
+                4,
+            )
+            self.assertEqual(observability_module._telemetry_export_disabled_state, 1)
+
+            queue_observations = observability_module._observe_telemetry_queue_depth(_FakeObservation)(None)
+            self.assertEqual(len(queue_observations), 1)
+            self.assertEqual(
+                queue_observations[0].attributes,
+                {
+                    "project_id": "project-1",
+                    "status": "pending",
+                    "runtime_profile": "api",
+                    "deployment_mode": "hosted",
+                    "storage_profile": "local",
+                },
+            )
+
+            freshness_observations = observability_module._observe_worker_job_freshness(_FakeObservation)(None)
+            self.assertEqual(len(freshness_observations), 1)
+            self.assertEqual(
+                freshness_observations[0].attributes,
+                {
+                    "job_name": "telemetry-exporter",
+                    "project_id": "project-1",
+                    "runtime_profile": "worker",
+                    "deployment_mode": "hosted",
+                    "storage_profile": "local",
+                },
+            )
+
+            backpressure_observations = observability_module._observe_worker_job_backpressure(_FakeObservation)(None)
+            self.assertEqual(len(backpressure_observations), 1)
+            self.assertEqual(
+                backpressure_observations[0].attributes,
+                {
+                    "job_name": "telemetry-exporter",
+                    "project_id": "project-1",
+                    "runtime_profile": "worker",
+                    "deployment_mode": "hosted",
+                    "storage_profile": "local",
+                },
+            )
 
 
 class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
@@ -293,12 +397,30 @@ class TelemetryExportCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         attrs = start_span.call_args.args[1]
         self.assertEqual(attrs["ccdash.telemetry.project_slug"], "project-1")
         self.assertEqual(attrs["ccdash.telemetry.sam_endpoint_host"], "sam.example")
+        self.assertEqual(
+            start_span.call_args.kwargs["runtime_metadata"],
+            {"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
+        )
         span.set_attribute.assert_called_once_with("ccdash.telemetry.outcome", "success")
         set_disabled.assert_called_once_with(False)
-        record_event.assert_called_once_with(project_id="project-1", status="success", count=1)
-        record_latency.assert_called_once()
+        record_event.assert_called_once_with(
+            project_id="project-1",
+            status="success",
+            count=1,
+            runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
+        )
+        record_latency.assert_called_once_with(
+            project_id="project-1",
+            duration_ms=result.duration_ms,
+            runtime_metadata={"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
+        )
         record_error.assert_not_called()
         self.assertEqual(set_queue_depth.call_count, 3)
+        for call in set_queue_depth.call_args_list:
+            self.assertEqual(
+                call.kwargs["runtime_metadata"],
+                {"runtimeProfile": "api", "deploymentMode": "hosted", "storageProfile": "local"},
+            )
 
     async def test_execute_marks_disabled_state_for_env_locked_config(self) -> None:
         disabled_coordinator = TelemetryExportCoordinator(

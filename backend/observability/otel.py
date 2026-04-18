@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import socket
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Mapping
+from uuid import uuid4
 
 from fastapi import FastAPI
 
@@ -31,6 +34,8 @@ _telemetry_export_latency_hist: Any | None = None
 _telemetry_export_queue_depth_gauge: Any | None = None
 _telemetry_export_errors_counter: Any | None = None
 _telemetry_export_disabled_gauge: Any | None = None
+_worker_job_freshness_gauge: Any | None = None
+_worker_job_backpressure_gauge: Any | None = None
 _agent_query_cache_hit_counter: Any | None = None
 _agent_query_cache_miss_counter: Any | None = None
 
@@ -47,9 +52,17 @@ _prom_telemetry_export_latency_hist: Any | None = None
 _prom_telemetry_export_queue_depth_gauge: Any | None = None
 _prom_telemetry_export_errors_counter: Any | None = None
 _prom_telemetry_export_disabled_gauge: Any | None = None
+_prom_worker_job_freshness_gauge: Any | None = None
+_prom_worker_job_backpressure_gauge: Any | None = None
 
-_telemetry_queue_depth_state: dict[tuple[str, str], int] = {}
+_telemetry_queue_depth_state: dict[tuple[str, str, str, str, str], int] = {}
 _telemetry_export_disabled_state = 1
+_worker_job_freshness_state: dict[tuple[str, str, str, str, str], float] = {}
+_worker_job_backpressure_state: dict[tuple[str, str, str, str, str], float] = {}
+
+_RUNTIME_PROM_LABEL_NAMES = ("runtime_profile", "deployment_mode", "storage_profile")
+_RESOURCE_INSTANCE_ID = os.getenv("OTEL_SERVICE_INSTANCE_ID", "").strip() or str(uuid4())
+_RESOURCE_HOSTNAME = socket.gethostname().strip() or "unknown"
 
 
 def _normalize_otlp_endpoint(base_endpoint: str, signal_path: str) -> str:
@@ -72,13 +85,67 @@ def _prom_labels(*, project_id: str, **extra: str) -> dict[str, str]:
     return labels
 
 
+def _runtime_metric_dimensions(runtime_metadata: Mapping[str, Any] | None = None) -> dict[str, str]:
+    metadata = runtime_metadata or {}
+    return {
+        "runtime_profile": _clean_runtime_dimension(
+            metadata.get("runtime_profile") or metadata.get("runtimeProfile") or metadata.get("profile")
+        ),
+        "deployment_mode": _clean_runtime_dimension(
+            metadata.get("deployment_mode") or metadata.get("deploymentMode")
+        ),
+        "storage_profile": _clean_runtime_dimension(
+            metadata.get("storage_profile") or metadata.get("storageProfile")
+        ),
+    }
+
+
+def _runtime_span_attributes(runtime_metadata: Mapping[str, Any] | None = None) -> dict[str, str]:
+    dimensions = _runtime_metric_dimensions(runtime_metadata)
+    return {
+        "ccdash.runtime.profile": dimensions["runtime_profile"],
+        "ccdash.runtime.deployment_mode": dimensions["deployment_mode"],
+        "ccdash.runtime.storage_profile": dimensions["storage_profile"],
+    }
+
+
+def _clean_runtime_dimension(value: Any) -> str:
+    clean = str(value or "").strip()
+    return clean or "unknown"
+
+
+def _metric_prom_labels(
+    *,
+    project_id: str,
+    runtime_metadata: Mapping[str, Any] | None = None,
+    **extra: str,
+) -> dict[str, str]:
+    return _prom_labels(project_id=project_id, **_runtime_metric_dimensions(runtime_metadata), **extra)
+
+
+def _worker_metric_key(
+    *,
+    job_name: str,
+    project_id: str,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> tuple[str, str, str, str, str]:
+    dimensions = _runtime_metric_dimensions(runtime_metadata)
+    return (
+        _clean_runtime_dimension(job_name),
+        _clean_runtime_dimension(project_id),
+        dimensions["runtime_profile"],
+        dimensions["deployment_mode"],
+        dimensions["storage_profile"],
+    )
+
+
 def initialize(app: FastAPI | None = None) -> None:
     global _initialized, _enabled, _tracer, _trace_provider, _meter_provider, _fastapi_instrumentor
     global _ingestion_counter, _ingestion_latency_hist, _parser_failure_counter
     global _tool_calls_counter, _tool_duration_hist, _tokens_counter, _cost_counter
     global _telemetry_export_events_counter, _telemetry_export_latency_hist
     global _telemetry_export_queue_depth_gauge, _telemetry_export_errors_counter
-    global _telemetry_export_disabled_gauge
+    global _telemetry_export_disabled_gauge, _worker_job_freshness_gauge, _worker_job_backpressure_gauge
     global _agent_query_cache_hit_counter, _agent_query_cache_miss_counter
     global _prom_enabled
     global _prom_ingestion_counter, _prom_ingestion_latency_hist, _prom_parser_failure_counter
@@ -86,6 +153,7 @@ def initialize(app: FastAPI | None = None) -> None:
     global _prom_telemetry_export_events_counter, _prom_telemetry_export_latency_hist
     global _prom_telemetry_export_queue_depth_gauge, _prom_telemetry_export_errors_counter
     global _prom_telemetry_export_disabled_gauge
+    global _prom_worker_job_freshness_gauge, _prom_worker_job_backpressure_gauge
 
     if _initialized:
         if _enabled and app and _fastapi_instrumentor:
@@ -121,6 +189,8 @@ def initialize(app: FastAPI | None = None) -> None:
         {
             "service.name": service_name,
             "service.namespace": "ccdash",
+            "service.instance.id": _RESOURCE_INSTANCE_ID,
+            "host.name": _RESOURCE_HOSTNAME,
         }
     )
 
@@ -209,6 +279,18 @@ def initialize(app: FastAPI | None = None) -> None:
         unit="1",
         description="Whether telemetry export is disabled",
     )
+    _worker_job_freshness_gauge = meter.create_observable_gauge(
+        "ccdash_worker_job_freshness_ms",
+        callbacks=[_observe_worker_job_freshness(Observation)],
+        unit="ms",
+        description="Age since the last successful worker job execution by job and runtime metadata",
+    )
+    _worker_job_backpressure_gauge = meter.create_observable_gauge(
+        "ccdash_worker_job_backpressure_ratio",
+        callbacks=[_observe_worker_job_backpressure(Observation)],
+        unit="1",
+        description="Worker job backlog pressure ratio by job and runtime metadata",
+    )
 
     _trace_provider = trace_provider
     _meter_provider = meter_provider
@@ -263,26 +345,36 @@ def initialize(app: FastAPI | None = None) -> None:
             _prom_telemetry_export_events_counter = Counter(
                 "ccdash_telemetry_export_events_total",
                 "Count of telemetry exporter batch outcomes",
-                ["status", "project"],
+                ["status", "project", *_RUNTIME_PROM_LABEL_NAMES],
             )
             _prom_telemetry_export_latency_hist = Histogram(
                 "ccdash_telemetry_export_latency_ms",
                 "Latency for telemetry export batches",
-                ["project"],
+                ["project", *_RUNTIME_PROM_LABEL_NAMES],
             )
             _prom_telemetry_export_queue_depth_gauge = Gauge(
                 "ccdash_telemetry_export_queue_depth",
                 "Telemetry export queue depth by status and project",
-                ["status", "project"],
+                ["status", "project", *_RUNTIME_PROM_LABEL_NAMES],
             )
             _prom_telemetry_export_errors_counter = Counter(
                 "ccdash_telemetry_export_errors_total",
                 "Telemetry export errors by class",
-                ["error_type", "project"],
+                ["error_type", "project", *_RUNTIME_PROM_LABEL_NAMES],
             )
             _prom_telemetry_export_disabled_gauge = Gauge(
                 "ccdash_telemetry_export_disabled",
                 "Whether telemetry export is disabled",
+            )
+            _prom_worker_job_freshness_gauge = Gauge(
+                "ccdash_worker_job_freshness_ms",
+                "Age since the last successful worker job execution by job and runtime metadata",
+                ["job", "project", *_RUNTIME_PROM_LABEL_NAMES],
+            )
+            _prom_worker_job_backpressure_gauge = Gauge(
+                "ccdash_worker_job_backpressure_ratio",
+                "Worker job backlog pressure ratio by job and runtime metadata",
+                ["job", "project", *_RUNTIME_PROM_LABEL_NAMES],
             )
             logger.info("Prometheus fallback metrics server listening on port %s", config.PROM_PORT)
         except Exception as exc:  # noqa: BLE001
@@ -319,15 +411,18 @@ def shutdown(app: FastAPI | None = None) -> None:
 
 
 @contextmanager
-def start_span(name: str, attributes: dict[str, Any] | None = None):
+def start_span(
+    name: str,
+    attributes: dict[str, Any] | None = None,
+    runtime_metadata: Mapping[str, Any] | None = None,
+):
     if not _enabled or _tracer is None:
         yield None
         return
     with _tracer.start_as_current_span(name) as span:
-        if attributes:
-            for key, value in attributes.items():
-                if value is not None:
-                    span.set_attribute(key, value)
+        for key, value in {**_runtime_span_attributes(runtime_metadata), **(attributes or {})}.items():
+            if value is not None:
+                span.set_attribute(key, value)
         yield span
 
 
@@ -417,54 +512,83 @@ def record_token_cost(
         _prom_cost_counter.labels(**prom_base).inc(float(cost_usd))
 
 
-def record_telemetry_export_event(*, project_id: str, status: str, count: int = 1) -> None:
+def record_telemetry_export_event(
+    *,
+    project_id: str,
+    status: str,
+    count: int = 1,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
     safe_count = max(0, int(count))
     if safe_count == 0:
         return
     labels = {
         "status": (status or "unknown").strip() or "unknown",
         "project_id": project_id or "unknown",
+        **_runtime_metric_dimensions(runtime_metadata),
     }
     if _enabled and _telemetry_export_events_counter is not None:
         _telemetry_export_events_counter.add(safe_count, labels)
     if _prom_enabled and _prom_telemetry_export_events_counter is not None:
-        prom = _prom_labels(project_id=project_id, status=status)
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, status=status)
         _prom_telemetry_export_events_counter.labels(**prom).inc(safe_count)
 
 
-def record_telemetry_export_latency(*, project_id: str, duration_ms: float) -> None:
+def record_telemetry_export_latency(
+    *,
+    project_id: str,
+    duration_ms: float,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
     value = max(0.0, float(duration_ms))
-    labels = {"project_id": project_id or "unknown"}
+    labels = {"project_id": project_id or "unknown", **_runtime_metric_dimensions(runtime_metadata)}
     if _enabled and _telemetry_export_latency_hist is not None:
         _telemetry_export_latency_hist.record(value, labels)
     if _prom_enabled and _prom_telemetry_export_latency_hist is not None:
-        prom = _prom_labels(project_id=project_id)
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata)
         _prom_telemetry_export_latency_hist.labels(**prom).observe(value)
 
 
-def set_telemetry_export_queue_depth(*, project_id: str, status: str, depth: int) -> None:
+def set_telemetry_export_queue_depth(
+    *,
+    project_id: str,
+    status: str,
+    depth: int,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
+    dimensions = _runtime_metric_dimensions(runtime_metadata)
     key = (
-        (project_id or "unknown").strip() or "unknown",
-        (status or "unknown").strip() or "unknown",
+        _clean_runtime_dimension(project_id),
+        _clean_runtime_dimension(status),
+        dimensions["runtime_profile"],
+        dimensions["deployment_mode"],
+        dimensions["storage_profile"],
     )
     _telemetry_queue_depth_state[key] = max(0, int(depth))
     if _prom_enabled and _prom_telemetry_export_queue_depth_gauge is not None:
-        prom = _prom_labels(project_id=project_id, status=status)
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, status=status)
         _prom_telemetry_export_queue_depth_gauge.labels(**prom).set(max(0, int(depth)))
 
 
-def record_telemetry_export_error(*, project_id: str, error_type: str, count: int = 1) -> None:
+def record_telemetry_export_error(
+    *,
+    project_id: str,
+    error_type: str,
+    count: int = 1,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
     safe_count = max(0, int(count))
     if safe_count == 0:
         return
     labels = {
         "error_type": (error_type or "unknown").strip() or "unknown",
         "project_id": project_id or "unknown",
+        **_runtime_metric_dimensions(runtime_metadata),
     }
     if _enabled and _telemetry_export_errors_counter is not None:
         _telemetry_export_errors_counter.add(safe_count, labels)
     if _prom_enabled and _prom_telemetry_export_errors_counter is not None:
-        prom = _prom_labels(project_id=project_id, error_type=error_type)
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, error_type=error_type)
         _prom_telemetry_export_errors_counter.labels(**prom).inc(safe_count)
 
 
@@ -473,6 +597,42 @@ def set_telemetry_export_disabled(disabled: bool) -> None:
     _telemetry_export_disabled_state = 1 if disabled else 0
     if _prom_enabled and _prom_telemetry_export_disabled_gauge is not None:
         _prom_telemetry_export_disabled_gauge.set(_telemetry_export_disabled_state)
+
+
+def set_worker_job_freshness(
+    *,
+    job_name: str,
+    project_id: str,
+    freshness_ms: float | None,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
+    key = _worker_metric_key(job_name=job_name, project_id=project_id, runtime_metadata=runtime_metadata)
+    if freshness_ms is None:
+        _worker_job_freshness_state.pop(key, None)
+        return
+    value = max(0.0, float(freshness_ms))
+    _worker_job_freshness_state[key] = value
+    if _prom_enabled and _prom_worker_job_freshness_gauge is not None:
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, job=job_name)
+        _prom_worker_job_freshness_gauge.labels(**prom).set(value)
+
+
+def set_worker_job_backpressure(
+    *,
+    job_name: str,
+    project_id: str,
+    backpressure_ratio: float | None,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> None:
+    key = _worker_metric_key(job_name=job_name, project_id=project_id, runtime_metadata=runtime_metadata)
+    if backpressure_ratio is None:
+        _worker_job_backpressure_state.pop(key, None)
+        return
+    value = max(0.0, float(backpressure_ratio))
+    _worker_job_backpressure_state[key] = value
+    if _prom_enabled and _prom_worker_job_backpressure_gauge is not None:
+        prom = _metric_prom_labels(project_id=project_id, runtime_metadata=runtime_metadata, job=job_name)
+        _prom_worker_job_backpressure_gauge.labels(**prom).set(value)
 
 
 def record_cache_hit(endpoint: str) -> None:
@@ -501,9 +661,68 @@ def _observe_telemetry_queue_depth(observation_type: Any):
                 {
                     "project_id": project_id,
                     "status": status,
+                    "runtime_profile": runtime_profile,
+                    "deployment_mode": deployment_mode,
+                    "storage_profile": storage_profile,
                 },
             )
-            for (project_id, status), value in sorted(_telemetry_queue_depth_state.items())
+            for (
+                project_id,
+                status,
+                runtime_profile,
+                deployment_mode,
+                storage_profile,
+            ), value in sorted(_telemetry_queue_depth_state.items())
+        ]
+
+    return _callback
+
+
+def _observe_worker_job_freshness(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [
+            observation_type(
+                value,
+                {
+                    "job_name": job_name,
+                    "project_id": project_id,
+                    "runtime_profile": runtime_profile,
+                    "deployment_mode": deployment_mode,
+                    "storage_profile": storage_profile,
+                },
+            )
+            for (
+                job_name,
+                project_id,
+                runtime_profile,
+                deployment_mode,
+                storage_profile,
+            ), value in sorted(_worker_job_freshness_state.items())
+        ]
+
+    return _callback
+
+
+def _observe_worker_job_backpressure(observation_type: Any):
+    def _callback(_options: Any) -> list[Any]:
+        return [
+            observation_type(
+                value,
+                {
+                    "job_name": job_name,
+                    "project_id": project_id,
+                    "runtime_profile": runtime_profile,
+                    "deployment_mode": deployment_mode,
+                    "storage_profile": storage_profile,
+                },
+            )
+            for (
+                job_name,
+                project_id,
+                runtime_profile,
+                deployment_mode,
+                storage_profile,
+            ), value in sorted(_worker_job_backpressure_state.items())
         ]
 
     return _callback

@@ -113,6 +113,7 @@ class TelemetryExportCoordinator:
     async def _run_locked(self, *, trigger: str) -> TelemetryExportOutcome:
         started = time.monotonic()
         settings = self.settings()
+        runtime_metadata = self._runtime_metadata(trigger=trigger)
         observability.set_telemetry_export_disabled(not self._effective_enabled(settings))
         if not self.runtime_config.configured:
             return TelemetryExportOutcome(
@@ -142,7 +143,10 @@ class TelemetryExportCoordinator:
         batch = await self.repository.fetch_pending_batch(self.runtime_config.batch_size)
         if not batch:
             duration_ms = int((time.monotonic() - started) * 1000)
-            await self._record_queue_depth_metrics(project_slug="all-projects")
+            await self._record_queue_depth_metrics(
+                project_slug="all-projects",
+                runtime_metadata=runtime_metadata,
+            )
             return TelemetryExportOutcome(success=True, outcome="idle", batch_size=0, duration_ms=duration_ms)
 
         run_id = str(uuid4())
@@ -154,9 +158,19 @@ class TelemetryExportCoordinator:
             "ccdash.telemetry.project_slug": project_slug,
             "ccdash.telemetry.sam_endpoint_host": self._mask_endpoint(self.runtime_config.sam_endpoint),
         }
-        span_context = observability.start_span("telemetry.export.batch", attributes)
+        span_context = observability.start_span(
+            "telemetry.export.batch",
+            attributes,
+            runtime_metadata=runtime_metadata,
+        )
         with span_context if span_context is not None else nullcontext(None) as span:
-            outcome = await self._push_batch(batch, trigger=trigger, run_id=run_id, started=started)
+            outcome = await self._push_batch(
+                batch,
+                trigger=trigger,
+                run_id=run_id,
+                started=started,
+                runtime_metadata=runtime_metadata,
+            )
             if span is not None:
                 span.set_attribute("ccdash.telemetry.outcome", self._span_outcome(outcome.outcome))
         await self._purge_old_synced_rows()
@@ -169,6 +183,7 @@ class TelemetryExportCoordinator:
         trigger: str,
         run_id: str,
         started: float,
+        runtime_metadata: dict[str, str],
     ) -> TelemetryExportOutcome:
         # Separate rows by event_type for polymorphic dispatch.
         execution_rows: list[dict[str, Any]] = []
@@ -293,13 +308,23 @@ class TelemetryExportCoordinator:
             project_id=project_slug,
             status=self._span_outcome(outcome_name),
             count=len(queue_ids),
+            runtime_metadata=runtime_metadata,
         )
-        observability.record_telemetry_export_latency(project_id=project_slug, duration_ms=duration_ms)
-        await self._record_queue_depth_metrics(project_slug=project_slug, stats=stats)
+        observability.record_telemetry_export_latency(
+            project_id=project_slug,
+            duration_ms=duration_ms,
+            runtime_metadata=runtime_metadata,
+        )
+        await self._record_queue_depth_metrics(
+            project_slug=project_slug,
+            stats=stats,
+            runtime_metadata=runtime_metadata,
+        )
         if error_message:
             observability.record_telemetry_export_error(
                 project_id=project_slug,
                 error_type=self._classify_error_type(error_message, outcome=outcome_name),
+                runtime_metadata=runtime_metadata,
             )
         logger.info(
             "Telemetry export run complete",
@@ -355,6 +380,7 @@ class TelemetryExportCoordinator:
         *,
         project_slug: str,
         stats: dict[str, Any] | None = None,
+        runtime_metadata: dict[str, str] | None = None,
     ) -> None:
         summary = stats or await self.repository.get_queue_stats()
         for status in ("pending", "failed", "abandoned"):
@@ -362,7 +388,20 @@ class TelemetryExportCoordinator:
                 project_id=project_slug,
                 status=status,
                 depth=int(summary.get(status, 0)),
+                runtime_metadata=runtime_metadata,
             )
+
+    def _runtime_metadata(self, *, trigger: str) -> dict[str, str]:
+        runtime_profile = "worker" if trigger == "scheduled" else "api"
+        environment_contract = config.resolve_runtime_environment_contract(
+            runtime_profile,
+            config.STORAGE_PROFILE,
+        )
+        return {
+            "runtimeProfile": runtime_profile,
+            "deploymentMode": environment_contract.deployment_mode,
+            "storageProfile": config.STORAGE_PROFILE.profile,
+        }
 
     def _project_slug_for_batch(self, batch: list[dict[str, Any]]) -> str:
         slugs = {
