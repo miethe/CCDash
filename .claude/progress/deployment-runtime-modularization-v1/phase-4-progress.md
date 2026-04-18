@@ -11,7 +11,7 @@ title: Packaging and Configuration Contracts
 status: completed
 started: '2026-04-18'
 completed: '2026-04-18'
-commit_refs: []
+commit_refs:
 - "4c64bff"
 - "80f3dfc"
 - "20887a8"
