@@ -12,8 +12,7 @@ import type {
   TelemetryPushNowResponse,
 } from '../types';
 import type { PaginatedResponse, SessionFilters } from '../contexts/dataContextShared';
-
-const API_BASE = '/api';
+import { buildApiUrl } from './runtimeBase';
 
 export interface RuntimeHealthResponse {
   status: string;
@@ -107,9 +106,10 @@ export interface ApiClient {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  const url = buildApiUrl(path);
+  const res = await fetch(url, init);
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText} for ${path}`);
+    throw new Error(`API error: ${res.status} ${res.statusText} for ${url}`);
   }
   return res.json() as Promise<T>;
 }

@@ -14,10 +14,14 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "preview": "vite preview",
+    "build:frontend:static": "vite build",
+    "preview": "vite preview --strictPort",
     "start:backend": "node ./scripts/backend.mjs --runtime api --host 0.0.0.0",
     "start:worker": "node ./scripts/worker.mjs",
-    "start:frontend": "vite preview --host 0.0.0.0 --port 3000"
+    "start:frontend": "vite preview --host 0.0.0.0 --port 3000 --strictPort",
+    "docker:hosted:smoke:config": "docker compose -f deploy/runtime/compose.hosted.yml config",
+    "docker:hosted:smoke:up": "docker compose -f deploy/runtime/compose.hosted.yml up --build -d",
+    "docker:hosted:smoke:down": "docker compose -f deploy/runtime/compose.hosted.yml down --remove-orphans"
   },
   "dependencies": {
     "@google/genai": "^1.40.0",
