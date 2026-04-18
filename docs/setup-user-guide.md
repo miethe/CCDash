@@ -217,12 +217,22 @@ npm run start:frontend
 
 For real deployments, run frontend, API, and worker under a process manager (systemd, Docker, or similar) and terminate TLS at a reverse proxy. Hosted enterprise API deployments should serve `backend.runtime.bootstrap_api:app`; `backend.worker` owns startup sync and scheduled/background job execution. `backend.main:app` and `npm run dev` remain the local-convenience entrypoints; `npm run dev:backend` and `npm run start:backend` are convenience wrappers around the hosted `api` runtime.
 
+Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](../deploy/runtime/README.md), including:
+
+- [`deploy/runtime/systemd/ccdash-api.service`](../deploy/runtime/systemd/ccdash-api.service)
+- [`deploy/runtime/systemd/ccdash-worker.service`](../deploy/runtime/systemd/ccdash-worker.service)
+- [`deploy/runtime/systemd/ccdash-frontend.service`](../deploy/runtime/systemd/ccdash-frontend.service)
+- [`deploy/runtime/supervisor/ccdash.conf`](../deploy/runtime/supervisor/ccdash.conf)
+
+Those examples mirror the current split topology only. They do not add container images, compose files, TLS termination, or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
+
 Enterprise operator split:
 
 - API serves HTTP and reads canonical state.
 - Worker runs sync, refresh, and scheduled jobs.
 - Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
 - Check `GET /api/health` to confirm `storageComposition`, `storageCanonicalStore`, `auditStore`, `migrationGovernanceStatus`, `syncProvisioned`, isolation mode/schema, and the runtime/job capability fields.
+- Check the worker probe on `CCDASH_WORKER_PROBE_HOST:CCDASH_WORKER_PROBE_PORT` or the default `127.0.0.1:9465` using `/livez`, `/readyz`, and `/detailz`.
 
 ### Session-Intelligence Validation
 

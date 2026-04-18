@@ -127,6 +127,8 @@ Operator rules:
 - `npm run dev:backend` and `npm run start:backend` are wrappers around `backend.runtime.bootstrap_api:app`; they are useful local helpers, but the canonical hosted entrypoint remains the bootstrap module itself.
 - If you are validating locally against enterprise Postgres, keep the same API/worker split. Do not rely on the desktop `local` runtime profile for enterprise validation.
 
+Repo-shipped non-container launch examples live in [`deploy/runtime/README.md`](../../deploy/runtime/README.md). Use those systemd or supervisor examples when you need the same API/worker/frontend topology on a single host without inventing a separate runtime contract.
+
 ## 4. Initial Health Validation
 
 Before running any backfill, confirm the runtime contract:
@@ -190,6 +192,19 @@ Expected shared-enterprise posture:
 - `sessionIntelligenceIsolationBoundary=schema_or_tenant_boundary`
 
 Stop here if the health contract does not match the intended posture. Fix the deployment before starting backfill.
+
+Worker probe validation:
+
+```bash
+curl -sS http://127.0.0.1:9465/readyz
+curl -sS http://127.0.0.1:9465/detailz
+```
+
+Expected worker posture:
+
+- `runtimeProfile=worker`
+- readiness succeeds only after the worker binding contract is satisfied
+- the worker probe host/port come from `CCDASH_WORKER_PROBE_HOST` and `CCDASH_WORKER_PROBE_PORT` when overridden
 
 ## 5. Pre-Backfill Checklist
 
