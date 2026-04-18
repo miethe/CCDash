@@ -107,7 +107,7 @@ Local upgrade note:
 
 - Existing SQLite installs should stay on `CCDASH_STORAGE_PROFILE=local`; Phase 5/6 does not require enterprise-table backfills in SQLite.
 - Back up the SQLite file if you manage a custom path, then start the updated app and allow migrations to run normally.
-- If you later move to hosted enterprise mode, bootstrap Postgres separately and re-ingest/rebuild instead of trying to promote the SQLite file in place.
+- If you later move to hosted enterprise mode, treat that as a fresh hosted bootstrap plus re-ingest/rebuild. Do not try to promote the SQLite file in place.
 - Expect `GET /api/health` to report a cache-oriented posture such as `sessionIntelligenceProfile=local_cache`, `sessionIntelligenceBackfillStrategy=local_rebuild_from_filesystem`, and `sessionEmbeddingWriteStatus=unsupported`.
 
 Dedicated enterprise Postgres:
@@ -224,7 +224,63 @@ Repo-shipped process-manager examples now live in [`deploy/runtime/README.md`](.
 - [`deploy/runtime/systemd/ccdash-frontend.service`](../deploy/runtime/systemd/ccdash-frontend.service)
 - [`deploy/runtime/supervisor/ccdash.conf`](../deploy/runtime/supervisor/ccdash.conf)
 
-Those examples mirror the current split topology only. They do not add container images, compose files, TLS termination, or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
+Those examples mirror the current split topology only. They do not add TLS termination or a hardened public frontend server beyond the repo's existing `npm run start:frontend` helper.
+
+### Hosted Smoke Validation
+
+Use the hosted compose example when you want one repeatable runtime check for split startup, probes, migrations, one background-job control path, and the shipped CLI/MCP adapters.
+
+1. Edit [`deploy/runtime/compose.hosted.env.example`](../deploy/runtime/compose.hosted.env.example) and replace `CCDASH_WORKER_PROJECT_ID` with a project id the workspace registry can resolve.
+2. Render and start the stack:
+
+```bash
+npm run docker:hosted:smoke:config
+npm run docker:hosted:smoke:up
+npm run docker:hosted:smoke:ps
+```
+
+3. Validate startup, probes, and migrations:
+
+```bash
+npm run docker:hosted:smoke:probes
+```
+
+Expected checks:
+
+- frontend returns `200`
+- API readiness succeeds
+- API detail reports `profile=api`, `migrationStatus=applied`, and `jobsEnabled=false`
+- worker readiness succeeds
+- worker detail reports `runtimeProfile=worker` and a bound project id
+
+4. Validate one representative background-job control path:
+
+```bash
+npm run docker:hosted:smoke:job
+```
+
+This flips the telemetry exporter setting on and calls `POST /api/telemetry/export/push-now`. In a fresh smoke stack the normal result is `success=true` with `batchSize=0`. That proves the worker-owned exporter path is present without claiming the repo ships a real telemetry sink.
+
+5. Validate the shipped query adapters:
+
+```bash
+npm run docker:hosted:smoke:cli-contract
+npm run docker:hosted:smoke:mcp-contract
+```
+
+These are adapter-contract checks run inside the API container. They prove the repo-local CLI and stdio MCP server still expose the current query surface. They are not a substitute for the separately packaged global `ccdash-cli`.
+
+6. Tear the stack down:
+
+```bash
+npm run docker:hosted:smoke:down
+```
+
+Or run the full sequence with:
+
+```bash
+npm run docker:hosted:smoke:validate
+```
 
 Enterprise operator split:
 
@@ -233,6 +289,7 @@ Enterprise operator split:
 - Filesystem ingest is optional in enterprise mode and should be treated as an adapter, not an assumption.
 - Check `GET /api/health` to confirm `storageComposition`, `storageCanonicalStore`, `auditStore`, `migrationGovernanceStatus`, `syncProvisioned`, isolation mode/schema, and the runtime/job capability fields.
 - Check the worker probe on `CCDASH_WORKER_PROBE_HOST:CCDASH_WORKER_PROBE_PORT` or the default `127.0.0.1:9465` using `/livez`, `/readyz`, and `/detailz`.
+- If the worker does not resolve `CCDASH_WORKER_PROJECT_ID`, hosted validation is not complete even if the API is healthy.
 
 ### Session-Intelligence Validation
 
@@ -413,7 +470,7 @@ All backend variables are read in [`backend/config.py`](../backend/config.py); f
 |----------|---------|-------------|
 | `CCDASH_TIMEOUT` | `30` | Standalone `ccdash` CLI HTTP timeout |
 | `CCDASH_TARGET` | — | Active CLI target name |
-| `CCDASH_WORKER_PROJECT_ID` | — | Bind worker to a project slug |
+| `CCDASH_WORKER_PROJECT_ID` | — | Bind worker to a resolvable project id before hosted startup |
 | `CCDASH_WORKER_PROBE_HOST` | `127.0.0.1` | Worker readiness probe host |
 | `CCDASH_WORKER_PROBE_PORT` | `9465` | Worker readiness probe port |
 

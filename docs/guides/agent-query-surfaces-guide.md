@@ -2,6 +2,8 @@
 
 This guide explains what data CCDash exposes through the shared agent query layer, how to use it through CLI or MCP, what practical workflows look like, and which enhancements are likely next.
 
+The guide is intentionally constrained to the operator surface the repo ships today. It does not claim that the hosted runtime bundles the standalone global `ccdash-cli` package.
+
 ## Overview
 
 CCDash now exposes one transport-neutral intelligence layer in `backend/application/services/agent_queries/`.
@@ -12,7 +14,7 @@ That same data is available through three surfaces:
 - CLI via `ccdash`
 - MCP via the `ccdash_*` tools
 
-The current CLI and MCP surfaces expose the same four cross-domain reads:
+The current repo-local CLI and stdio MCP surfaces expose the same four cross-domain reads:
 
 - project status
 - feature forensics
@@ -45,7 +47,7 @@ Use it when you want to understand the current shape of a project before startin
 
 Available through:
 
-- CLI: `ccdash report feature <feature-id>`
+- CLI: `ccdash feature report <feature-id>`
 - MCP: `ccdash_feature_forensics`
 - REST: `GET /api/agent/feature-forensics/{feature_id}`
 
@@ -107,6 +109,12 @@ Use it when you want a structured retrospective or handoff artifact.
 
 ## CLI Versus MCP
 
+Surface boundary:
+
+- repo-local CLI: `backend/.venv/bin/ccdash` or `python -m backend.cli`
+- MCP: `python -m backend.mcp.server`
+- standalone `ccdash-cli`: separate package and targeting model, documented in other guides
+
 ### Use CLI When
 
 - you want deterministic local output
@@ -117,10 +125,10 @@ Use it when you want a structured retrospective or handoff artifact.
 Examples:
 
 ```bash
-ccdash status project
-ccdash report feature FEAT-123 --json
-ccdash workflow failures --md
-ccdash report aar --feature FEAT-123
+backend/.venv/bin/ccdash status project
+backend/.venv/bin/ccdash feature report FEAT-123 --json
+backend/.venv/bin/ccdash workflow failures --md
+backend/.venv/bin/ccdash report aar --feature FEAT-123
 ```
 
 ### Use MCP When
@@ -175,7 +183,7 @@ That order works well for both humans and agents because it moves from broad sit
 
 ## Testing And Validation
 
-CLI smoke coverage:
+Repo-local CLI smoke coverage:
 
 ```bash
 backend/.venv/bin/python -m pytest backend/tests/test_cli_commands.py -q
@@ -193,11 +201,21 @@ Manual MCP startup:
 backend/.venv/bin/python -m backend.mcp.server
 ```
 
+Hosted split-runtime adapter checks:
+
+```bash
+npm run docker:hosted:smoke:cli-contract
+npm run docker:hosted:smoke:mcp-contract
+```
+
+Those helpers run inside the hosted API container and validate the shipped adapter contracts. They do not require the standalone global CLI package to be installed in the container.
+
 ## Current Limitations
 
 - The surface is read-only.
 - The tool set is intentionally small: four high-value composite reads.
-- Data quality depends on CCDash project resolution and the local CCDash cache being healthy.
+- Data quality depends on CCDash project resolution and the active CCDash store being healthy.
+- Hosted bearer auth only applies to `/api/v1/*`; the repo-local CLI surface discussed here is not the standalone HTTP-targeting client.
 - Manual Claude Code discovery/invocation remains the final end-user validation step for the MCP path.
 
 ## Likely Future Enhancements

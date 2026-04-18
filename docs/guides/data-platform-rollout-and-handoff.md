@@ -1,6 +1,6 @@
 # Data-Platform Rollout And Handoff
 
-Updated: 2026-04-01
+Updated: 2026-04-18
 
 This guide closes Phase 6 of `data-platform-modularization-v1`. It records the supported rollout posture for local and enterprise storage profiles, the operator-facing validation contract, and the stable seams that downstream shared-auth and session-intelligence work should inherit without reopening storage fundamentals.
 
@@ -59,6 +59,31 @@ Expected hosted health posture:
 
 If the runtime/storage combination is unsupported, bootstrap should fail instead of silently degrading.
 
+Hosted bootstrap is not a SQLite promotion path. When you move from local SQLite to hosted enterprise Postgres, start from a fresh Postgres bootstrap and rebuild/re-ingest the canonical state instead of trying to lift-and-shift the SQLite file.
+
+## Split Runtime Smoke Flow
+
+Use the hosted compose helpers when you want a repeatable validation pass for the shipped split runtime contract:
+
+```bash
+npm run docker:hosted:smoke:config
+npm run docker:hosted:smoke:up
+npm run docker:hosted:smoke:ps
+npm run docker:hosted:smoke:probes
+npm run docker:hosted:smoke:job
+```
+
+What this covers:
+
+- split API, worker, and frontend startup
+- API readiness plus migration state
+- worker readiness plus project binding
+- one representative worker-owned background-job control path through telemetry `push-now`
+
+Precondition:
+
+- `CCDASH_WORKER_PROJECT_ID` must resolve to a real project before the worker can pass readiness
+
 ## Observability Contract
 
 Use `GET /api/health` as the primary runtime contract check during rollout.
@@ -89,6 +114,45 @@ Interpretation:
 - `auditWriteStatus` tells you whether the active profile can actually author authoritative audit writes.
 - `migrationGovernanceStatus=verified` means the supported storage composition and migration table rules still hold.
 - `migrationStatus=applied` means this runtime finished its startup migration step successfully.
+
+For the hosted smoke flow, add these expected split-runtime checks:
+
+- `profile=api`
+- `jobsEnabled=false`
+- worker `/detailz` reports `runtimeProfile=worker`
+- worker `/detailz` includes a bound project id when startup has resolved `CCDASH_WORKER_PROJECT_ID`
+
+## CLI And MCP Handoff Boundary
+
+The current shipped operator-query posture is intentionally narrow:
+
+- repo-local CLI commands in `backend.cli`
+- stdio MCP tools in `backend.mcp.server`
+- four shared cross-domain reads exposed through both adapters
+
+Use these repo-owned checks during rollout handoff:
+
+```bash
+npm run docker:hosted:smoke:cli-contract
+npm run docker:hosted:smoke:mcp-contract
+```
+
+Those commands validate the shipped adapter surface without claiming the hosted compose stack bundles the separately packaged standalone `ccdash-cli`.
+
+Current operator-surface contract:
+
+- CLI: `status project`, `feature report`, `workflow failures`, `report aar`
+- MCP: `ccdash_project_status`, `ccdash_feature_forensics`, `ccdash_workflow_failure_patterns`, `ccdash_generate_aar`
+
+## Common Failure Modes
+
+| Symptom | Interpretation | Action |
+| --- | --- | --- |
+| API is healthy but worker never reaches ready | split runtime is incomplete because the worker has no valid project binding | set a resolvable `CCDASH_WORKER_PROJECT_ID` and restart the worker |
+| `migrationStatus` is not `applied` | startup did not finish the schema migration step | fix DB connectivity or migration errors before proceeding |
+| telemetry smoke job is env-locked | worker exporter config is disabled by env | set `CCDASH_TELEMETRY_EXPORT_ENABLED=true` |
+| telemetry smoke job is unconfigured | exporter is missing endpoint or API key | set `CCDASH_SAM_ENDPOINT` and `CCDASH_SAM_API_KEY` |
+| CLI or MCP contract check fails | the documented operator surface no longer matches the implementation | fix the adapter/test drift before handoff |
 
 ## Stable Seams For Follow-On Plans
 
