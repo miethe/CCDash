@@ -62,7 +62,7 @@ class RuntimeContainer:
     async def startup(self, app: FastAPI) -> None:
         validate_runtime_storage_pairing(self.profile, self.storage_profile)
         validate_migration_governance_contract()
-        self._validate_startup_auth_contract()
+        config.validate_runtime_environment_contract(self.profile.name, self.storage_profile)
         self.project_binding = self._resolve_startup_project_binding()
         startup_metadata = self._runtime_metadata()
         logger.info(
@@ -626,6 +626,15 @@ class RuntimeContainer:
                     "migrationStatus": migration_status,
                     "migrationGovernanceStatus": status.get("migrationGovernanceStatus"),
                 },
+                "environment": {
+                    "deploymentMode": status.get("deploymentMode"),
+                    "valid": bool(status.get("environmentContractValid", False)),
+                    "requiredVariables": list(status.get("environmentContractRequired", ())),
+                    "secretVariables": list(status.get("environmentContractSecrets", ())),
+                    "errors": list(status.get("environmentContractErrors", ())),
+                    "warnings": list(status.get("environmentContractWarnings", ())),
+                    "contract": dict(status.get("environmentContract", {})),
+                },
                 "binding": {
                     "projectId": self.project_binding.project.id if self.project_binding is not None else None,
                     "projectName": self.project_binding.project.name if self.project_binding is not None else None,
@@ -696,8 +705,19 @@ class RuntimeContainer:
     def _runtime_metadata(self) -> dict[str, Any]:
         metadata = build_runtime_metadata(self.profile, self.storage_profile)
         storage_contract = get_storage_capability_contract(self.storage_profile)
+        environment_contract = config.resolve_runtime_environment_contract(
+            self.profile.name,
+            self.storage_profile,
+        )
         metadata.update(
             {
+                "deploymentMode": environment_contract.deployment_mode,
+                "environmentContract": environment_contract.as_runtime_metadata(),
+                "environmentContractValid": environment_contract.valid,
+                "environmentContractErrors": environment_contract.errors,
+                "environmentContractWarnings": environment_contract.warnings,
+                "environmentContractRequired": environment_contract.required_variables,
+                "environmentContractSecrets": environment_contract.secret_variables,
                 "auditStore": storage_contract.audit_store,
                 "sessionIntelligenceProfile": storage_contract.session_intelligence_profile,
                 "sessionIntelligenceAnalyticsLevel": storage_contract.session_intelligence_analytics_level,
@@ -721,16 +741,6 @@ class RuntimeContainer:
             }
         )
         return metadata
-
-    def _validate_startup_auth_contract(self) -> None:
-        if not self.profile.capabilities.auth:
-            return
-        if config.resolve_api_bearer_token():
-            return
-        raise RuntimeError(
-            f"Runtime profile '{self.profile.name}' requires a non-empty "
-            f"{config.CCDASH_API_BEARER_TOKEN_ENV} before serving traffic."
-        )
 
     def _resolve_startup_project_binding(self) -> ProjectBinding | None:
         if self.profile.name != "worker":

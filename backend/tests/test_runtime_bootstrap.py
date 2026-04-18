@@ -468,7 +468,8 @@ class RuntimeProfileTests(unittest.TestCase):
         app = build_api_app()
         app.state.runtime_container.storage_profile = _enterprise_storage_profile(shared=True)
 
-        payload = _health_payload(app)
+        with patch.dict("os.environ", {"CCDASH_API_BEARER_TOKEN": "secret-token"}, clear=False):
+            payload = _health_payload(app)
 
         self.assertFalse(payload["watchEnabled"])
         self.assertFalse(payload["syncEnabled"])
@@ -482,6 +483,21 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["runtimeJobBehavior"], "no_background_jobs")
         self.assertEqual(payload["runtimeAuthBehavior"], "hosted_auth_expected")
         self.assertEqual(payload["runtimeIntegrationBehavior"], "integrations_available")
+        self.assertEqual(payload["deploymentMode"], "hosted")
+        self.assertTrue(payload["environmentContractValid"])
+        self.assertEqual(
+            payload["environmentContractRequired"],
+            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
+        )
+        self.assertEqual(
+            payload["environmentContractSecrets"],
+            ["CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"],
+        )
+        self.assertEqual(payload["environmentContract"]["deploymentMode"], "hosted")
+        self.assertEqual(payload["environmentContract"]["runtimeProfile"], "api")
+        self.assertIn("CCDASH_DATABASE_URL", payload["environmentContract"]["requiredVariables"])
+        self.assertEqual(payload["environmentContract"]["shared"][2]["name"], "CCDASH_DATABASE_URL")
+        self.assertEqual(payload["environmentContract"]["apiOnly"][0]["name"], "CCDASH_API_BEARER_TOKEN")
         self.assertEqual(payload["storageIsolationMode"], "schema")
         self.assertEqual(payload["supportedStorageIsolationModes"], ["schema", "tenant"])
         self.assertEqual(
@@ -811,6 +827,29 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
         initialize_observability.assert_not_called()
         get_connection.assert_not_awaited()
 
+    async def test_api_profile_rejects_local_database_url_placeholder_before_opening_db(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with (
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'api' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
+            ):
+                async with app.router.lifespan_context(app):
+                    await asyncio.sleep(0)
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
     async def test_worker_profile_rejects_local_storage_before_opening_db(self) -> None:
         local_profile = config.StorageProfileConfig(
             profile="local",
@@ -995,15 +1034,16 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             patch("backend.runtime_ports.project_manager.resolve_project_binding", return_value=binding),
             patch("backend.runtime_ports.project_manager.get_active_project") as get_active_project,
         ):
-            task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
-            await asyncio.sleep(0.05)
-            self.assertTrue(fake_sync.sync_project.await_count >= 1)
-            self.assertEqual(container.project_binding.project.id, project.id)
-            self.assertEqual(container.runtime_status()["boundProjectId"], project.id)
-            watcher_start.assert_not_awaited()
-            get_active_project.assert_not_called()
-            stop_event.set()
-            await task
+            with patch("backend.worker._resolve_probe_binding", return_value=None):
+                task = asyncio.create_task(serve_worker(container=container, stop_event=stop_event))
+                await asyncio.sleep(0.05)
+                self.assertTrue(fake_sync.sync_project.await_count >= 1)
+                self.assertEqual(container.project_binding.project.id, project.id)
+                self.assertEqual(container.runtime_status()["boundProjectId"], project.id)
+                watcher_start.assert_not_awaited()
+                get_active_project.assert_not_called()
+                stop_event.set()
+                await task
 
         watcher_stop.assert_not_awaited()
         close_connection.assert_awaited_once()
@@ -1023,6 +1063,28 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(
                 RuntimeError,
                 "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            ):
+                await serve_worker(container=container, stop_event=asyncio.Event())
+
+        initialize_observability.assert_not_called()
+        get_connection.assert_not_awaited()
+
+    async def test_worker_profile_rejects_local_database_url_placeholder_before_opening_db(self) -> None:
+        container = build_worker_runtime()
+        container.storage_profile = config.resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with (
+            patch("backend.runtime.container.initialize_observability") as initialize_observability,
+            patch("backend.runtime.container.connection.get_connection", AsyncMock()) as get_connection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Runtime profile 'worker' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
             ):
                 await serve_worker(container=container, stop_event=asyncio.Event())
 

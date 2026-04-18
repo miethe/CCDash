@@ -3,7 +3,11 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from backend.config import resolve_storage_profile_config
+from backend.config import (
+    resolve_runtime_environment_contract,
+    resolve_storage_profile_config,
+    validate_runtime_environment_contract,
+)
 from backend.db.migration_governance import (
     SUPPORTED_STORAGE_COMPOSITIONS,
     build_migration_governance_metadata,
@@ -114,6 +118,89 @@ class StorageProfileConfigTests(unittest.TestCase):
         self.assertEqual(resolve_storage_mode(profile), "shared-enterprise")
         self.assertEqual(contract.mode, "shared-enterprise")
         self.assertEqual(contract.supported_isolation_modes, ("schema", "tenant"))
+
+    def test_api_environment_contract_requires_shared_database_url_and_api_secret(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "api",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+                "CCDASH_API_BEARER_TOKEN": "secret-token",
+            },
+        )
+
+        self.assertEqual(contract.deployment_mode, "hosted")
+        self.assertTrue(contract.valid)
+        self.assertEqual(
+            contract.required_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+        )
+        self.assertEqual(
+            contract.secret_variables,
+            ("CCDASH_DATABASE_URL", "CCDASH_API_BEARER_TOKEN"),
+        )
+        self.assertEqual(contract.shared[2].name, "CCDASH_DATABASE_URL")
+        self.assertEqual(contract.shared[2].status, "configured")
+        self.assertEqual(contract.api_only[0].status, "configured")
+
+    def test_hosted_environment_contract_rejects_local_database_url_placeholder(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Runtime profile 'api' requires an explicit non-placeholder CCDASH_DATABASE_URL before serving hosted traffic.",
+        ):
+            validate_runtime_environment_contract(
+                "api",
+                profile,
+                {
+                    "CCDASH_STORAGE_PROFILE": "enterprise",
+                    "CCDASH_DB_BACKEND": "postgres",
+                },
+            )
+
+    def test_worker_environment_contract_requires_project_binding(self) -> None:
+        profile = resolve_storage_profile_config(
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            }
+        )
+
+        contract = resolve_runtime_environment_contract(
+            "worker",
+            profile,
+            {
+                "CCDASH_STORAGE_PROFILE": "enterprise",
+                "CCDASH_DB_BACKEND": "postgres",
+                "CCDASH_DATABASE_URL": "postgresql://db.example/ccdash",
+            },
+        )
+
+        self.assertFalse(contract.valid)
+        self.assertEqual(contract.required_variables, ("CCDASH_DATABASE_URL", "CCDASH_WORKER_PROJECT_ID"))
+        self.assertEqual(contract.worker_only[0].name, "CCDASH_WORKER_PROJECT_ID")
+        self.assertEqual(contract.worker_only[0].status, "missing")
+        self.assertIn(
+            "Runtime profile 'worker' requires a non-empty CCDASH_WORKER_PROJECT_ID before starting background jobs.",
+            contract.errors,
+        )
 
     def test_capability_matrix_freezes_expected_canonical_stores(self) -> None:
         local_profile = resolve_storage_profile_config({"CCDASH_DB_BACKEND": "sqlite"})
