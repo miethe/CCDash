@@ -303,6 +303,14 @@ class RuntimeProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Runtime profile 'worker' only supports storage profiles: enterprise"):
             build_core_ports(object(), runtime_profile=get_runtime_profile("worker"), storage_profile=local_profile)
 
+    def test_local_runtime_rejects_enterprise_storage_profile(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Runtime profile 'local' only supports storage profiles: local"):
+            build_core_ports(
+                object(),
+                runtime_profile=get_runtime_profile("local"),
+                storage_profile=_enterprise_storage_profile(),
+            )
+
     def test_test_runtime_allows_shared_enterprise_storage_profile(self) -> None:
         shared_enterprise = config.StorageProfileConfig(
             profile="enterprise",
@@ -765,6 +773,67 @@ class RuntimeProfileTests(unittest.TestCase):
         check_states = {check["code"]: check["status"] for check in payload["ready"]["checks"]}
         self.assertEqual(check_states["worker_binding"], "fail")
 
+    def test_worker_probe_ready_endpoint_reports_bound_runtime_on_happy_path(self) -> None:
+        project = _active_project()
+        container = build_worker_runtime()
+        container.storage_profile = _enterprise_storage_profile()
+        container.migration_status = "applied"
+        container.project_binding = _project_binding(project, source="explicit")
+        container.job_adapter = types.SimpleNamespace(
+            status_snapshot=lambda: {
+                "watcher": "stopped",
+                "startupSync": "idle",
+                "analyticsSnapshots": "idle",
+                "telemetryExports": "idle",
+                "cacheWarming": "idle",
+                "jobsEnabled": True,
+                "workerProbe": {
+                    "schemaVersion": "ops-203-v1",
+                    "watcherDisabled": True,
+                    "syncLagSeconds": 0,
+                    "backpressure": {
+                        "hasBackpressure": False,
+                        "jobsWithBacklog": [],
+                        "totalBacklogCount": 0,
+                        "maxBacklogCount": 0,
+                    },
+                    "jobs": {
+                        "startupSync": {
+                            "state": "succeeded",
+                            "details": {"projectId": project.id, "projectName": project.name},
+                        }
+                    },
+                    "summary": {
+                        "activeJobs": [],
+                        "backlogCounts": {"startupSync": 0},
+                        "lastSuccessMarkers": {},
+                        "maxCheckpointFreshnessSeconds": 0,
+                    },
+                },
+            }
+        )
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch(
+                "backend.runtime.container.config.resolve_worker_binding_config",
+                return_value=config.WorkerBindingConfig(project_id=project.id),
+            ),
+        ):
+            client = TestClient(build_worker_probe_app(container))
+            response = client.get("/readyz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["schemaVersion"], "ops-201-v1")
+        self.assertEqual(payload["runtimeProfile"], "worker")
+        self.assertEqual(payload["ready"]["state"], "ready")
+        self.assertEqual(payload["ready"]["status"], "pass")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertEqual(payload["worker"]["schemaVersion"], "ops-203-v1")
+        self.assertEqual(payload["worker"]["jobs"]["startupSync"]["details"]["projectId"], project.id)
+        self.assertEqual(payload["worker"]["summary"]["backlogCounts"]["startupSync"], 0)
+
 
 class StorageAdapterCompositionTests(unittest.TestCase):
     """DPM-101 / DPM-102 — Adapter composition and unit-of-work split.
@@ -1087,7 +1156,18 @@ class RuntimeBootstrapLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.05)
                 self.assertTrue(fake_sync.sync_project.await_count >= 1)
                 self.assertEqual(container.project_binding.project.id, project.id)
-                self.assertEqual(container.runtime_status()["boundProjectId"], project.id)
+                runtime_status = container.runtime_status()
+                self.assertEqual(runtime_status["boundProjectId"], project.id)
+                self.assertTrue(runtime_status["projectBindingLocked"])
+                worker_probe = runtime_status["workerProbe"]
+                self.assertEqual(
+                    worker_probe["jobs"]["startupSync"]["details"]["projectId"],
+                    project.id,
+                )
+                self.assertEqual(
+                    worker_probe["jobs"]["startupSync"]["details"]["projectName"],
+                    project.name,
+                )
                 watcher_start.assert_not_awaited()
                 get_active_project.assert_not_called()
                 stop_event.set()
