@@ -385,6 +385,97 @@ class TestCacheWarmingStop(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWorkerProbeTelemetry(unittest.IsolatedAsyncioTestCase):
+    def test_worker_job_helpers_receive_freshness_and_backpressure_values(self):
+        project = _make_project()
+        adapter = _make_adapter(project)
+
+        with patch(
+            "backend.adapters.jobs.runtime.config.resolve_runtime_environment_contract",
+            return_value=SimpleNamespace(deployment_mode="hosted"),
+        ), \
+            patch(
+                "backend.adapters.jobs.runtime._freshness_seconds",
+                side_effect=[None, 12],
+            ), \
+            patch(
+                "backend.adapters.jobs.runtime.observability.set_worker_job_freshness",
+            ) as freshness_mock, \
+            patch(
+                "backend.adapters.jobs.runtime.observability.set_worker_job_backpressure",
+            ) as backpressure_mock:
+            started = adapter._mark_job_started("telemetryExports")
+            adapter._mark_job_success(
+                "telemetryExports",
+                started,
+                backlog_count=7,
+                checkpoint_at="2026-04-15T12:00:00Z",
+                details={"projectId": project.id},
+            )
+
+        self.assertEqual(freshness_mock.call_count, 2)
+        self.assertEqual(backpressure_mock.call_count, 2)
+
+        started_freshness = freshness_mock.call_args_list[0].kwargs
+        success_freshness = freshness_mock.call_args_list[1].kwargs
+        started_backpressure = backpressure_mock.call_args_list[0].kwargs
+        success_backpressure = backpressure_mock.call_args_list[1].kwargs
+
+        self.assertEqual(started_freshness["job_name"], "telemetryExports")
+        self.assertEqual(started_freshness["project_id"], project.id)
+        self.assertIsNone(started_freshness["freshness_ms"])
+        self.assertEqual(started_freshness["runtime_metadata"]["runtimeProfile"], "worker")
+        self.assertEqual(started_freshness["runtime_metadata"]["deploymentMode"], "hosted")
+
+        self.assertEqual(success_freshness["job_name"], "telemetryExports")
+        self.assertEqual(success_freshness["project_id"], project.id)
+        self.assertEqual(success_freshness["freshness_ms"], 12000.0)
+        self.assertEqual(success_freshness["runtime_metadata"]["runtimeProfile"], "worker")
+        self.assertEqual(success_freshness["runtime_metadata"]["deploymentMode"], "hosted")
+
+        self.assertEqual(started_backpressure["job_name"], "telemetryExports")
+        self.assertEqual(started_backpressure["project_id"], project.id)
+        self.assertEqual(started_backpressure["backpressure_ratio"], 0.0)
+        self.assertEqual(started_backpressure["runtime_metadata"]["runtimeProfile"], "worker")
+
+        self.assertEqual(success_backpressure["job_name"], "telemetryExports")
+        self.assertEqual(success_backpressure["project_id"], project.id)
+        self.assertEqual(success_backpressure["backpressure_ratio"], 1.0)
+        self.assertEqual(success_backpressure["runtime_metadata"]["runtimeProfile"], "worker")
+
+    def test_worker_job_helpers_drop_backpressure_after_successful_drain(self):
+        project = _make_project()
+        adapter = _make_adapter(project)
+
+        with patch(
+            "backend.adapters.jobs.runtime.config.resolve_runtime_environment_contract",
+            return_value=SimpleNamespace(deployment_mode="hosted"),
+        ), \
+            patch(
+                "backend.adapters.jobs.runtime._freshness_seconds",
+                side_effect=[None, 0],
+            ), \
+            patch(
+                "backend.adapters.jobs.runtime.observability.set_worker_job_freshness",
+            ) as freshness_mock, \
+            patch(
+                "backend.adapters.jobs.runtime.observability.set_worker_job_backpressure",
+            ) as backpressure_mock:
+            started = adapter._mark_job_started("cacheWarming", backlog_count=1)
+            adapter._mark_job_success(
+                "cacheWarming",
+                started,
+                backlog_count=0,
+                details={"projectId": project.id},
+            )
+
+        self.assertEqual(freshness_mock.call_args_list[-1].kwargs["job_name"], "cacheWarming")
+        self.assertEqual(freshness_mock.call_args_list[-1].kwargs["project_id"], project.id)
+        self.assertEqual(freshness_mock.call_args_list[-1].kwargs["freshness_ms"], 0.0)
+        self.assertEqual(backpressure_mock.call_args_list[0].kwargs["backpressure_ratio"], 1.0)
+        self.assertEqual(backpressure_mock.call_args_list[-1].kwargs["job_name"], "cacheWarming")
+        self.assertEqual(backpressure_mock.call_args_list[-1].kwargs["project_id"], project.id)
+        self.assertEqual(backpressure_mock.call_args_list[-1].kwargs["backpressure_ratio"], 0.0)
+
     async def test_worker_probe_snapshot_tracks_telemetry_backlog_and_checkpoint(self):
         project = _make_project()
         telemetry_job = SimpleNamespace(
@@ -428,12 +519,19 @@ class TestWorkerProbeTelemetry(unittest.IsolatedAsyncioTestCase):
 
         snapshot = adapter.status_snapshot()
         telemetry_probe = snapshot["workerProbe"]["jobs"]["telemetryExports"]
+        worker_probe = snapshot["workerProbe"]
 
         self.assertEqual(telemetry_probe["state"], "succeeded")
         self.assertEqual(telemetry_probe["backlogCount"], 7)
         self.assertEqual(telemetry_probe["checkpointAt"], "2026-04-15T12:00:00Z")
         self.assertEqual(telemetry_probe["details"]["queueDepth"], 7)
         self.assertEqual(telemetry_probe["details"]["eventsPushed24h"], 19)
+        self.assertTrue(worker_probe["watcherDisabled"])
+        self.assertTrue(worker_probe["backpressure"]["hasBackpressure"])
+        self.assertEqual(worker_probe["backpressure"]["jobsWithBacklog"], ["telemetryExports"])
+        self.assertEqual(worker_probe["backpressure"]["totalBacklogCount"], 7)
+        self.assertEqual(worker_probe["backpressure"]["maxBacklogCount"], 7)
+        self.assertIsNone(worker_probe["syncLagSeconds"])
 
     async def test_worker_probe_snapshot_preserves_disabled_telemetry_markers(self):
         project = _make_project()
@@ -538,6 +636,12 @@ class TestWorkerProbeApp(unittest.TestCase):
     def test_detail_route_surfaces_stale_worker_probe_backlog_and_freshness(self):
         project = _make_project()
         adapter = _make_adapter(project)
+        startup_observation = adapter.state.job_observations["startupSync"]
+        startup_observation.state = "succeeded"
+        startup_observation.interval_seconds = 300
+        startup_observation.backlog_count = 0
+        startup_observation.checkpoint_at = "2026-04-15T11:45:00Z"
+        startup_observation.last_success_at = "2026-04-15T11:45:00Z"
         telemetry_observation = adapter.state.job_observations["telemetryExports"]
         telemetry_observation.state = "failed"
         telemetry_observation.interval_seconds = 60
@@ -580,7 +684,8 @@ class TestWorkerProbeApp(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        telemetry_probe = payload["detail"]["worker"]["jobs"]["telemetryExports"]
+        worker_probe = payload["detail"]["worker"]
+        telemetry_probe = worker_probe["jobs"]["telemetryExports"]
         self.assertEqual(telemetry_probe["state"], "failed")
         self.assertEqual(telemetry_probe["backlogCount"], 9)
         self.assertEqual(telemetry_probe["checkpointFreshnessSeconds"], 7200)
@@ -588,8 +693,14 @@ class TestWorkerProbeApp(unittest.TestCase):
         self.assertEqual(telemetry_probe["lastOutcome"], "not_configured")
         self.assertFalse(telemetry_probe["details"]["configured"])
         self.assertTrue(telemetry_probe["details"]["envLocked"])
-        self.assertEqual(payload["detail"]["worker"]["summary"]["backlogCounts"]["telemetryExports"], 9)
-        self.assertEqual(payload["detail"]["worker"]["summary"]["maxCheckpointFreshnessSeconds"], 7200)
+        self.assertTrue(worker_probe["watcherDisabled"])
+        self.assertEqual(worker_probe["syncLagSeconds"], 900)
+        self.assertTrue(worker_probe["backpressure"]["hasBackpressure"])
+        self.assertEqual(worker_probe["backpressure"]["jobsWithBacklog"], ["telemetryExports"])
+        self.assertEqual(worker_probe["backpressure"]["totalBacklogCount"], 9)
+        self.assertEqual(worker_probe["backpressure"]["maxBacklogCount"], 9)
+        self.assertEqual(worker_probe["summary"]["backlogCounts"]["telemetryExports"], 9)
+        self.assertEqual(worker_probe["summary"]["maxCheckpointFreshnessSeconds"], 7200)
 
 
 # ---------------------------------------------------------------------------

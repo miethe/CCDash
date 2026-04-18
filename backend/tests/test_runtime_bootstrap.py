@@ -483,6 +483,17 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(payload["runtimeJobBehavior"], "no_background_jobs")
         self.assertEqual(payload["runtimeAuthBehavior"], "hosted_auth_expected")
         self.assertEqual(payload["runtimeIntegrationBehavior"], "integrations_available")
+        self.assertEqual(payload["authGuardrail"]["mode"], "path_scoped_static_bearer")
+        self.assertEqual(payload["authGuardrail"]["bearerProtectedPathPrefix"], "/api/v1")
+        self.assertTrue(payload["authGuardrail"]["anonymousFallbackEnabled"])
+        self.assertEqual(
+            payload["authGuardrail"]["warningCodes"],
+            ["anonymous_fallback_outside_bearer_path"],
+        )
+        self.assertEqual(
+            payload["probeDetailWarningCodes"],
+            ["anonymous_fallback_outside_bearer_path"],
+        )
         self.assertEqual(payload["deploymentMode"], "hosted")
         self.assertTrue(payload["environmentContractValid"])
         self.assertEqual(
@@ -533,6 +544,8 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertTrue(payload["probeReady"])
         self.assertFalse(payload["probeDegraded"])
         self.assertEqual(payload["degradedReasonCodes"], [])
+        self.assertEqual(payload["probeDetailWarningCodes"], ["anonymous_fallback_outside_bearer_path"])
+        self.assertEqual(payload["authGuardrail"]["anonymousFallbackReasonCode"], "anonymous_fallback_outside_bearer_path")
         self.assertEqual(payload["probeContract"]["ready"]["state"], "ready")
 
     def test_live_probe_endpoint_reports_process_liveness_when_readiness_fails(self) -> None:
@@ -653,6 +666,41 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertEqual(check_categories["storage_pairing"], "storage")
         self.assertEqual(check_categories["schema_migrations"], "migration")
         self.assertEqual(check_categories["watcher_runtime"], "runtime")
+
+    def test_detail_probe_endpoint_surfaces_hosted_auth_guardrail_without_degrading_ready_state(self) -> None:
+        app = build_api_app()
+        app.state.runtime_container.storage_profile = _enterprise_storage_profile()
+        app.state.runtime_container.migration_status = "applied"
+
+        with (
+            patch.object(connection, "_connection", object()),
+            patch("backend.runtime.container.config.resolve_api_bearer_token", return_value="secret-token"),
+        ):
+            status_code, payload = _probe_payload(app, "/api/health/detail")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["ready"]["state"], "ready")
+        self.assertEqual(payload["ready"]["status"], "pass")
+        self.assertTrue(payload["ready"]["ready"])
+        self.assertFalse(payload["ready"]["degraded"])
+        self.assertEqual(payload["ready"]["reasonCodes"], [])
+        self.assertEqual(payload["detail"]["status"], "pass")
+        self.assertEqual(payload["detail"]["warningCodes"], ["anonymous_fallback_outside_bearer_path"])
+        self.assertEqual(payload["detail"]["auth"]["behavior"], "hosted_auth_expected")
+        self.assertTrue(payload["detail"]["auth"]["enabled"])
+        self.assertTrue(payload["detail"]["auth"]["configured"])
+        self.assertEqual(payload["detail"]["auth"]["guardrail"]["mode"], "path_scoped_static_bearer")
+        self.assertEqual(payload["detail"]["auth"]["guardrail"]["bearerProtectedPathPrefix"], "/api/v1")
+        self.assertTrue(payload["detail"]["auth"]["guardrail"]["anonymousFallbackEnabled"])
+        self.assertIn(
+            {
+                "code": "anonymous_fallback_outside_bearer_path",
+                "category": "auth",
+                "severity": "warn",
+                "summary": "Hosted bearer auth only protects /api/v1; other hosted routes may still allow anonymous access.",
+            },
+            payload["detail"]["warnings"],
+        )
 
     def test_detail_probe_endpoint_returns_503_for_pending_migrations(self) -> None:
         app = build_api_app()

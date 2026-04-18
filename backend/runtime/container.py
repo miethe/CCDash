@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from backend.adapters.auth import StaticBearerTokenIdentityProvider
 from backend.adapters.live_updates import InMemoryLiveEventBroker
 from backend.adapters.jobs import RuntimeJobAdapter, RuntimeJobState, TelemetryExporterJob
 from backend.application.context import (
@@ -360,6 +361,9 @@ class RuntimeContainer:
                 "degradedReasonCodes": [
                     str(reason["code"]) for reason in probe_contract["ready"]["reasons"]
                 ],
+                "authGuardrail": dict(probe_contract["detail"]["auth"]["guardrail"]),
+                "probeDetailWarnings": list(probe_contract["detail"]["warnings"]),
+                "probeDetailWarningCodes": list(probe_contract["detail"]["warningCodes"]),
             }
         )
         return status
@@ -369,6 +373,11 @@ class RuntimeContainer:
         db_connected = bool(connection._connection)
         migration_status = str(status.get("migrationStatus", "unknown"))
         auth_configured = bool(config.resolve_api_bearer_token())
+        auth_guardrail = StaticBearerTokenIdentityProvider.describe_runtime_guardrail(
+            runtime_profile=self.profile.name,
+            bearer_token_configured=auth_configured,
+        )
+        detail_warnings = list(auth_guardrail["warnings"])
         worker_binding_config = config.resolve_worker_binding_config()
         watcher_state = str(status.get("watcher", "unknown"))
         startup_sync_state = str(status.get("startupSync", "idle"))
@@ -595,6 +604,8 @@ class RuntimeContainer:
                 "state": ready_state,
                 "status": ready_status,
                 "summary": ready_summary,
+                "warningCodes": [str(warning["code"]) for warning in detail_warnings],
+                "warnings": detail_warnings,
                 "recommendedCadence": dict(status.get("probeCadence", {})),
                 "requiredReadinessChecks": list(status.get("requiredReadinessChecks", ())),
                 "runtime": {
@@ -634,6 +645,12 @@ class RuntimeContainer:
                     "errors": list(status.get("environmentContractErrors", ())),
                     "warnings": list(status.get("environmentContractWarnings", ())),
                     "contract": dict(status.get("environmentContract", {})),
+                },
+                "auth": {
+                    "enabled": bool(status.get("authEnabled", False)),
+                    "configured": auth_configured,
+                    "behavior": status.get("runtimeAuthBehavior"),
+                    "guardrail": auth_guardrail,
                 },
                 "binding": {
                     "projectId": self.project_binding.project.id if self.project_binding is not None else None,

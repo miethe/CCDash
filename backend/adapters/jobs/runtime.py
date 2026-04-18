@@ -13,6 +13,7 @@ from backend import config
 from backend.application.ports import CorePorts
 from backend.application.ports.core import ProjectBinding
 from backend.db.file_watcher import file_watcher
+from backend.observability import otel as observability
 from backend.runtime.profiles import RuntimeProfile
 from backend.adapters.jobs.telemetry_exporter import TelemetryExporterJob
 from backend.services.integrations.skillmeat_refresh import refresh_skillmeat_cache, skillmeat_refresh_configured
@@ -219,10 +220,14 @@ class RuntimeJobAdapter:
         }
         if self.profile.name == "worker":
             worker_jobs = self._worker_probe_jobs()
+            worker_summary = self._worker_probe_summary(worker_jobs)
             snapshot["workerProbe"] = {
                 "schemaVersion": "ops-203-v1",
+                "watcherDisabled": not self.profile.capabilities.watch,
+                "syncLagSeconds": self._worker_probe_sync_lag_seconds(worker_jobs),
+                "backpressure": self._worker_probe_backpressure(worker_jobs),
                 "jobs": worker_jobs,
-                "summary": self._worker_probe_summary(worker_jobs),
+                "summary": worker_summary,
             }
         return snapshot
 
@@ -273,6 +278,7 @@ class RuntimeJobAdapter:
         observation.last_outcome = "running"
         if backlog_count is not None:
             observation.backlog_count = max(0, int(backlog_count))
+        self._record_worker_job_metrics(job_name)
         return time.monotonic()
 
     def _mark_job_success(
@@ -298,6 +304,7 @@ class RuntimeJobAdapter:
         observation.checkpoint_at = checkpoint_at or observation.last_success_at
         if details:
             observation.details.update(details)
+        self._record_worker_job_metrics(job_name)
 
     def _mark_job_failure(
         self,
@@ -324,6 +331,7 @@ class RuntimeJobAdapter:
             observation.checkpoint_at = checkpoint_at
         if details:
             observation.details.update(details)
+        self._record_worker_job_metrics(job_name)
 
     def _mark_job_cancelled(self, job_name: str, started: float, *, backlog_count: int | None = None) -> None:
         observation = self.state.job_observations[job_name]
@@ -338,6 +346,7 @@ class RuntimeJobAdapter:
             observation.state = "idle"
         if backlog_count is not None:
             observation.backlog_count = max(0, int(backlog_count))
+        self._record_worker_job_metrics(job_name)
 
     def _snapshot_job_state(self, job_name: str, task: asyncio.Task[None] | None) -> str:
         if task is not None and not task.done():
@@ -395,6 +404,81 @@ class RuntimeJobAdapter:
             "backlogCounts": backlog,
             "lastSuccessMarkers": last_success_markers,
             "maxCheckpointFreshnessSeconds": max(freshness_values) if freshness_values else None,
+        }
+
+    def _worker_probe_sync_lag_seconds(self, jobs: dict[str, Any]) -> int | None:
+        startup_sync = jobs.get("startupSync", {})
+        lag_seconds = startup_sync.get("checkpointFreshnessSeconds")
+        return int(lag_seconds) if isinstance(lag_seconds, int) else None
+
+    def _worker_probe_backpressure(self, jobs: dict[str, Any]) -> dict[str, Any]:
+        backlog_counts = {
+            name: int(payload["backlogCount"])
+            for name, payload in jobs.items()
+            if isinstance(payload.get("backlogCount"), int)
+        }
+        congested_jobs = [name for name, backlog_count in backlog_counts.items() if backlog_count > 0]
+        return {
+            "hasBackpressure": bool(congested_jobs),
+            "jobsWithBacklog": congested_jobs,
+            "totalBacklogCount": sum(backlog_counts.values()),
+            "maxBacklogCount": max(backlog_counts.values()) if backlog_counts else 0,
+        }
+
+    def _record_worker_job_metrics(self, job_name: str) -> None:
+        if self.profile.name != "worker":
+            return
+        observation = self.state.job_observations[job_name]
+        project_id = self._worker_metric_project_id(observation)
+        if project_id is None:
+            return
+
+        checkpoint_at = observation.checkpoint_at or observation.last_success_at
+        freshness_seconds = _freshness_seconds(checkpoint_at)
+        freshness_ms = float(freshness_seconds * 1000) if isinstance(freshness_seconds, int) else None
+
+        backlog_count = observation.backlog_count
+        backpressure_ratio = None
+        if isinstance(backlog_count, int):
+            backpressure_ratio = 1.0 if backlog_count > 0 else 0.0
+
+        runtime_metadata = self._worker_metric_runtime_metadata()
+        observability.set_worker_job_freshness(
+            job_name=job_name,
+            project_id=project_id,
+            freshness_ms=freshness_ms,
+            runtime_metadata=runtime_metadata,
+        )
+        observability.set_worker_job_backpressure(
+            job_name=job_name,
+            project_id=project_id,
+            backpressure_ratio=backpressure_ratio,
+            runtime_metadata=runtime_metadata,
+        )
+
+    def _worker_metric_project_id(self, observation: RuntimeJobObservation) -> str | None:
+        details_project_id = observation.details.get("projectId")
+        if details_project_id:
+            return str(details_project_id)
+        if self.project_binding is not None and getattr(self.project_binding.project, "id", None):
+            return str(self.project_binding.project.id)
+        workspace_registry = getattr(self.ports, "workspace_registry", None)
+        if workspace_registry is None:
+            return None
+        active_project = workspace_registry.get_active_project()
+        if active_project is None or not getattr(active_project, "id", None):
+            return None
+        return str(active_project.id)
+
+    def _worker_metric_runtime_metadata(self) -> dict[str, object]:
+        environment_contract = config.resolve_runtime_environment_contract(
+            self.profile.name,
+            config.STORAGE_PROFILE,
+        )
+        return {
+            "runtimeProfile": self.profile.name,
+            "deploymentMode": environment_contract.deployment_mode,
+            "storageProfile": config.STORAGE_PROFILE.profile,
         }
 
     async def _run_startup_sync_pipeline(
