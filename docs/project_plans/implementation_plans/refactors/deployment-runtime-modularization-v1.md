@@ -18,7 +18,10 @@ audience:
 - devops
 created: 2026-04-08
 updated: '2026-04-18'
-commit_refs: []
+commit_refs:
+- "4c64bff"
+- "80f3dfc"
+- "20887a8"
 pr_refs: []
 tags:
 - implementation
