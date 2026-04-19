@@ -626,42 +626,51 @@ class SqliteSessionRepository:
         await self.db.commit()
 
     async def upsert_relationships(self, project_id: str, source_file: str, relationships: list[dict]) -> None:
+        import sqlite3
         for relationship in relationships:
-            await self.db.execute(
-                """
-                INSERT INTO session_relationships (
-                    id, project_id, parent_session_id, child_session_id,
-                    relationship_type, context_inheritance, source_platform,
-                    parent_entry_uuid, child_entry_uuid, source_log_id, metadata_json, source_file
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    project_id=excluded.project_id,
-                    parent_session_id=excluded.parent_session_id,
-                    child_session_id=excluded.child_session_id,
-                    relationship_type=excluded.relationship_type,
-                    context_inheritance=excluded.context_inheritance,
-                    source_platform=excluded.source_platform,
-                    parent_entry_uuid=excluded.parent_entry_uuid,
-                    child_entry_uuid=excluded.child_entry_uuid,
-                    source_log_id=excluded.source_log_id,
-                    metadata_json=excluded.metadata_json,
-                    source_file=excluded.source_file
-                """,
-                (
-                    str(relationship.get("id") or ""),
-                    project_id,
-                    str(relationship.get("parentSessionId") or ""),
-                    str(relationship.get("childSessionId") or ""),
-                    str(relationship.get("relationshipType") or ""),
-                    str(relationship.get("contextInheritance") or ""),
-                    str(relationship.get("sourcePlatform") or ""),
-                    str(relationship.get("parentEntryUuid") or ""),
-                    str(relationship.get("childEntryUuid") or ""),
-                    relationship.get("sourceLogId"),
-                    json.dumps(relationship.get("metadata") or {}),
-                    source_file,
-                ),
-            )
+            try:
+                await self.db.execute(
+                    """
+                    INSERT INTO session_relationships (
+                        id, project_id, parent_session_id, child_session_id,
+                        relationship_type, context_inheritance, source_platform,
+                        parent_entry_uuid, child_entry_uuid, source_log_id, metadata_json, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        project_id=excluded.project_id,
+                        parent_session_id=excluded.parent_session_id,
+                        child_session_id=excluded.child_session_id,
+                        relationship_type=excluded.relationship_type,
+                        context_inheritance=excluded.context_inheritance,
+                        source_platform=excluded.source_platform,
+                        parent_entry_uuid=excluded.parent_entry_uuid,
+                        child_entry_uuid=excluded.child_entry_uuid,
+                        source_log_id=excluded.source_log_id,
+                        metadata_json=excluded.metadata_json,
+                        source_file=excluded.source_file
+                    """,
+                    (
+                        str(relationship.get("id") or ""),
+                        project_id,
+                        str(relationship.get("parentSessionId") or ""),
+                        str(relationship.get("childSessionId") or ""),
+                        str(relationship.get("relationshipType") or ""),
+                        str(relationship.get("contextInheritance") or ""),
+                        str(relationship.get("sourcePlatform") or ""),
+                        str(relationship.get("parentEntryUuid") or ""),
+                        str(relationship.get("childEntryUuid") or ""),
+                        relationship.get("sourceLogId"),
+                        json.dumps(relationship.get("metadata") or {}),
+                        source_file,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise sqlite3.IntegrityError(
+                    f"FOREIGN KEY failed for session={relationship.get('id')!r}"
+                    f" parent={relationship.get('parentSessionId')!r}"
+                    f" child={relationship.get('childSessionId')!r}"
+                    f" type={relationship.get('relationshipType')!r}"
+                ) from exc
         await self.db.commit()
 
     async def list_relationships(self, project_id: str, session_id: str) -> list[dict]:
